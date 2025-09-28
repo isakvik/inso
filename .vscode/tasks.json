@@ -6,14 +6,15 @@
             "type": "shell",
             "command": "start build.bat",
             "presentation": {
-                "reveal": "always",
+                "reveal": "never",
                 "panel": "shared",
                 "close": true
             },
             "problemMatcher": [],
             "group": {
                 "kind": "build",
-                "isDefault": true
+                "isDefault": true,
+                "close": true
             }
         }
     ]

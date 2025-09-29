@@ -113,7 +113,8 @@ osu_controller: struct {
     m1: bool,
     m2: bool,
     k1_key: sdl.Scancode,
-    k2_key: sdl.Scancode
+    k2_key: sdl.Scancode,
+    in_gameplay: bool
 }
 
 check_game_input :: proc(event: sdl.Event) {
@@ -341,8 +342,10 @@ main :: proc() {
                 window.swapchain.width = event.window.data1
                 window.swapchain.height = event.window.data2
             }
-
-            check_game_input(event)
+            
+            if (osu_controller.in_gameplay) {
+                check_game_input(event)
+            }
         }
 
         time_last_frame = time_current_frame

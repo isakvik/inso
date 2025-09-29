@@ -107,6 +107,73 @@ cleanup_window :: proc() {
     sdl.DestroyWindow(window.handle)
 }
 
+osu_controller: struct {
+    k1: bool,
+    k2: bool,
+    m1: bool,
+    m2: bool,
+    k1_key: sdl.Scancode,
+    k2_key: sdl.Scancode
+}
+
+check_game_input :: proc(event: sdl.Event) {
+    osu_controller.k1_key = sdl.Scancode.Z
+    osu_controller.k2_key = sdl.Scancode.X
+    if (event.type == sdl.EventType.KEY_DOWN) {
+        if (event.key.scancode == osu_controller.k1_key && osu_controller.k1 == false) {
+            osu_controller.k1 = true
+            //fmt.println("k1 pressed!")
+        }
+        if (event.key.scancode == osu_controller.k2_key && osu_controller.k2 == false) {
+            osu_controller.k2 = true
+            //fmt.println("k2 pressed!")
+        }
+    }
+    if (event.type == sdl.EventType.KEY_UP) {
+        if (event.key.scancode == osu_controller.k1_key) {
+            osu_controller.k1 = false
+            //fmt.println("k1 released!")
+        }
+        if (event.key.scancode == osu_controller.k2_key) {
+            osu_controller.k2 = false
+            //fmt.println("k2 released!")
+        }
+    }
+    if (event.type == sdl.EventType.MOUSE_BUTTON_DOWN) {
+        if (event.button.button == sdl.BUTTON_LEFT) {
+            osu_controller.m1 = true
+            //fmt.println("m1 pressed!")
+        }
+        if (event.button.button == sdl.BUTTON_RIGHT) {
+            osu_controller.m2 = true
+            //fmt.println("m2 pressed!")
+        }
+    }
+    if (event.type == sdl.EventType.MOUSE_BUTTON_UP) {
+        if (event.button.button == sdl.BUTTON_LEFT) {
+            osu_controller.m1 = false
+            //fmt.println("m1 pressed!")
+        }
+        if (event.button.button == sdl.BUTTON_RIGHT) {
+            osu_controller.m2 = false
+            //fmt.println("m2 pressed!")
+        }
+    }
+    /*
+    if (osu_controller.k1) {
+        fmt.println("k1 held!")
+    }
+    if (osu_controller.k2) {
+        fmt.println("k2 held!")
+    }
+    if (osu_controller.m1) {
+        fmt.println("m1 held!")
+    }
+    if (osu_controller.m2) {
+        fmt.println("m2 held!")
+    }*/
+}
+
 main :: proc() {
     _rdtsc_start_time = current_time()
 
@@ -274,6 +341,8 @@ main :: proc() {
                 window.swapchain.width = event.window.data1
                 window.swapchain.height = event.window.data2
             }
+
+            check_game_input(event)
         }
 
         time_last_frame = time_current_frame

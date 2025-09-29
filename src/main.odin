@@ -1,8 +1,11 @@
 package notosu
 
+import "core:sys/windows"
 import "base:runtime"
 import "core:fmt"
-import "core:math/linalg"
+import "core:os"
+import "core:strings"
+import "core:unicode/utf16"
 
 import lua "vendor:lua/5.4"
 
@@ -49,8 +52,10 @@ win32 directory watch
 sokol pipeline rendering
 
 play mode:
-time synchronized audio play (desync proofing, essentially. check if miniaudio can be used)
+audio play (miniaudio)
+    desync proofing (always wait for sound to be able to be played, like osu (so device errors will just freeze the game))
 input handling
+
 figure out if we need some graphical core of a playfield (i'm thinking we have some default implementation; optionally hide it and let people render whatever based on mapset data)
 
 editor mode (viewer mode only? edit functionality is probably low priority):
@@ -70,19 +75,82 @@ window: struct {
     rect: Rect,
 
     handle: ^sdl.Window,
-    glContext: sdl.GLContext,
+    gl_context: sdl.GLContext,
 
+    main_shader: sg.Shader,
     pipeline: sg.Pipeline,
     bindings: sg.Bindings,
     pass_action: sg.Pass_Action,
     swapchain: sg.Swapchain,
+}
 
+shader_error :: enum {
+    NONE,
+    PATH_ERROR,
+    COMPILE_ERROR
+}
+
+
+init_shader :: proc(vs_path, fs_path: string) -> (sg.Shader, shader_error) {
+    vs_filedata, vs_err := os.read_entire_file_or_err(vs_path)
+    if vs_err != os.ERROR_NONE {
+        fmt.printfln("loading vert shader file '{}' failed: {}", vs_path, vs_err)
+    }
+    fs_filedata, fs_err := os.read_entire_file_or_err(fs_path)
+    if fs_err != os.ERROR_NONE {
+        fmt.printfln("loading frag shader file '{}' failed: {}", fs_path, fs_err)
+    }
+
+    if (vs_err != os.ERROR_NONE) || (fs_err != os.ERROR_NONE) {
+        return window.main_shader, .PATH_ERROR
+    }
+
+    temp_shader := sg.make_shader(sg.Shader_Desc{
+        vertex_func = {source = strings.unsafe_string_to_cstring(string(vs_filedata)) },
+        fragment_func = {source = strings.unsafe_string_to_cstring(string(fs_filedata)) },
+        uniform_blocks = [8]sg.Shader_Uniform_Block{
+            0 = { stage = .VERTEX,
+                size = 64,
+                glsl_uniforms = [16]sg.Glsl_Shader_Uniform{
+                    0 = { type = .FLOAT4, array_count = 4, glsl_name = "vs_params" }
+                }
+            }
+        }
+    })
+
+    if sg.query_shader_state(temp_shader) == sg.Resource_State.VALID {
+        return temp_shader, .NONE
+    }
+    return window.main_shader, .COMPILE_ERROR
+}
+
+init_pipeline :: proc(shader: sg.Shader) -> sg.Pipeline {
+    return sg.make_pipeline({
+        shader = shader,
+        layout = {
+            attrs = [16]sg.Vertex_Attr_State{
+                0 = {format = sg.Vertex_Format.FLOAT3},
+                1 = {format = sg.Vertex_Format.FLOAT4},
+            }
+        },
+        index_type = .UINT16,
+        cull_mode = .BACK,
+        depth = {
+            compare = .LESS_EQUAL,
+            write_enabled = true,
+        },
+    })
+}
+
+remake_pipeline :: proc(shader: sg.Shader) {
+    sg.destroy_pipeline(window.pipeline)
+    window.pipeline = init_pipeline(shader)
 }
 
 init_window :: proc(rect: Rect) {
     window.rect = rect
     window.handle = sdl.CreateWindow("notosu!", rect.w, rect.h, sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
-    window.glContext = sdl.GL_CreateContext(window.handle)
+    window.gl_context = sdl.GL_CreateContext(window.handle)
 
     sdl.GetWindowPosition(window.handle, &window.rect.x, &window.rect.y)
 
@@ -103,9 +171,10 @@ init_window :: proc(rect: Rect) {
 }
 
 cleanup_window :: proc() {
-    sdl.GL_DestroyContext(window.glContext)
+    sdl.GL_DestroyContext(window.gl_context)
     sdl.DestroyWindow(window.handle)
 }
+
 
 main :: proc() {
     _rdtsc_start_time = current_time()
@@ -119,6 +188,7 @@ main :: proc() {
     lua.L_dostring(L, script)
 
     if (!sdl.Init(sdl.INIT_VIDEO)) {
+        fmt.printfln("SDL init error: {}", sdl.GetError())
         return;
     }
 
@@ -133,59 +203,17 @@ main :: proc() {
         }},
         logger = { func = slog.func }
     })
+
+    vs_path := "../shaders/main.vs.glsl"
+    fs_path := "../shaders/main.fs.glsl"
     
-    window.pipeline = sg.make_pipeline({
-        shader = sg.make_shader(sg.Shader_Desc{ 
-            vertex_func = {source = `
-                #version 430
-
-                uniform vec4 vs_params[4];
-                layout(location = 0) in vec4 pos;
-                layout(location = 1) in vec4 color0;
-
-                out vec4 color;
-                out vec2 uv;
-            
-                void main()
-                {
-                    gl_Position = mat4(vs_params[0], vs_params[1], vs_params[2], vs_params[3]) * pos;
-                    color = color0;
-                }`},
-            fragment_func = {source = `
-                #version 430
-
-                layout(binding = 0) uniform sampler2D tex_smp;
-            
-                in vec4 color;
-                
-                out vec4 frag_color;
-            
-                void main()
-                {
-                    frag_color = color;
-                }`},
-            uniform_blocks = [8]sg.Shader_Uniform_Block{
-                0 = { stage = .VERTEX,
-                    size = 64,
-                    glsl_uniforms = [16]sg.Glsl_Shader_Uniform{
-                        0 = { type = .FLOAT4, array_count = 4, glsl_name = "vs_params" }
-                    }
-                }
-            }
-        }),
-        layout = {
-            attrs = [16]sg.Vertex_Attr_State{
-                0 = {format = sg.Vertex_Format.FLOAT3},
-                1 = {format = sg.Vertex_Format.FLOAT4},
-            }
-        },
-        index_type = .UINT16,
-        cull_mode = .BACK,
-        depth = {
-            compare = .LESS_EQUAL,
-            write_enabled = true,
-        },
-    })
+    {
+        err: shader_error
+        window.main_shader, err = init_shader(vs_path, fs_path)
+        assert(err == .NONE)
+    }
+    
+    window.pipeline = init_pipeline(window.main_shader)
     defer sg.destroy_pipeline(window.pipeline)
 
     
@@ -243,10 +271,7 @@ main :: proc() {
     defer sg.destroy_buffer(window.bindings.index_buffer)
 
 
-    // arbitrary state
-    rx := f32(0.0)
-    ry := f32(0.0)
-
+    shaders_watch := win32_init_directory_watch("../shaders/")
 
     /*
         todo(isak): some research on timestep (consistent deltatime) would be prudent
@@ -274,6 +299,8 @@ main :: proc() {
                 window.swapchain.width = event.window.data1
                 window.swapchain.height = event.window.data2
             }
+
+            
         }
 
         time_last_frame = time_current_frame
@@ -284,40 +311,48 @@ main :: proc() {
 
         // game update
 
-        rx += 60  * f32(dt)
-        ry += 120 * f32(dt)
-
         vs: struct {
             mvp: mat4
         }
-        vs.mvp = compute_mvp(rx, ry)
-
+        vs.mvp = {1,0,0,0, 0,1,0,0, 0,0,1,2, 0,0,5,1}
 
         // end frame
 
         sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
         sg.apply_pipeline(window.pipeline)
         sg.apply_bindings(window.bindings)
-        sg.apply_uniforms(0, { ptr = &vs, size = size_of(mat4) })
+        sg.apply_uniforms(0, { ptr = &vs, size = size_of(vs) })
         sg.draw(0, 36, 1)
         sg.end_pass()
         sg.commit()
         
         sdl.GL_SwapWindow(window.handle)
 
+        // platform directory watch
+
+        win32_get_directory_changes(&shaders_watch)
+        win32_print_error()
+        if shaders_watch.watch_bytes_written > 0 {
+            notify := (^win32_file_notify_info)(&shaders_watch.notify_buffer)
+
+            filename_cs16 := ([^]u16)(&notify.file_name)
+
+            filename_buf: [windows.MAX_PATH]u16
+            for i in 0 ..< notify.file_name_length {
+                filename_buf[i] = filename_cs16[i]
+            }
+            filename_buf[notify.file_name_length] = 0
+
+            switch (notify.action) {
+                case windows.FILE_ACTION_MODIFIED:
+                    fmt.printfln("%s", filename_buf)
+            }
+            
+        }
+
         // profiling
         
+        // todo(isak): generate texture, draw to bottom right in screenspace
     }
 
 }
-
-compute_mvp :: proc (rx, ry: f32) -> mat4 {
-    proj := linalg.matrix4_perspective(60.0 * linalg.RAD_PER_DEG, f32(window.rect.w) / f32(window.rect.h), 0.01, 10.0)
-    view := linalg.matrix4_look_at_f32({0.0, -1.5, -6.0}, {}, {0.0, 1.0, 0.0})
-    view_proj := proj * view
-    rxm := linalg.matrix4_rotate_f32(rx * linalg.RAD_PER_DEG, {1.0, 0.0, 0.0})
-    rym := linalg.matrix4_rotate_f32(ry * linalg.RAD_PER_DEG, {0.0, 1.0, 0.0})
-    model := rxm * rym
-    return view_proj * model
-}
-

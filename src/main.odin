@@ -9,6 +9,7 @@ import lua "vendor:lua/5.4"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
 import slog "vendor:sokol/log"
+import miniaudio "vendor:miniaudio"
 
 vector3 :: struct { x, y, z: f32 }
 vec3 :: vector3

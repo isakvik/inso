@@ -1,4 +1,4 @@
-#version 430
+#version 430 
 
 layout(binding = 0) uniform sampler2D tex_smp;
             

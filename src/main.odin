@@ -4,7 +4,6 @@ import "core:sys/windows"
 import "base:runtime"
 import "core:fmt"
 import "core:os"
-import "core:strings"
 import "core:unicode/utf16"
 
 import lua "vendor:lua/5.4"
@@ -84,69 +83,6 @@ window: struct {
     swapchain: sg.Swapchain,
 }
 
-shader_error :: enum {
-    NONE,
-    PATH_ERROR,
-    COMPILE_ERROR
-}
-
-
-init_shader :: proc(vs_path, fs_path: string) -> (sg.Shader, shader_error) {
-    vs_filedata, vs_err := os.read_entire_file_or_err(vs_path)
-    if vs_err != os.ERROR_NONE {
-        fmt.printfln("loading vert shader file '{}' failed: {}", vs_path, vs_err)
-    }
-    fs_filedata, fs_err := os.read_entire_file_or_err(fs_path)
-    if fs_err != os.ERROR_NONE {
-        fmt.printfln("loading frag shader file '{}' failed: {}", fs_path, fs_err)
-    }
-
-    if (vs_err != os.ERROR_NONE) || (fs_err != os.ERROR_NONE) {
-        return window.main_shader, .PATH_ERROR
-    }
-
-    temp_shader := sg.make_shader(sg.Shader_Desc{
-        vertex_func = {source = strings.unsafe_string_to_cstring(string(vs_filedata)) },
-        fragment_func = {source = strings.unsafe_string_to_cstring(string(fs_filedata)) },
-        uniform_blocks = [8]sg.Shader_Uniform_Block{
-            0 = { stage = .VERTEX,
-                size = 64,
-                glsl_uniforms = [16]sg.Glsl_Shader_Uniform{
-                    0 = { type = .FLOAT4, array_count = 4, glsl_name = "vs_params" }
-                }
-            }
-        }
-    })
-
-    if sg.query_shader_state(temp_shader) == sg.Resource_State.VALID {
-        return temp_shader, .NONE
-    }
-    return window.main_shader, .COMPILE_ERROR
-}
-
-init_pipeline :: proc(shader: sg.Shader) -> sg.Pipeline {
-    return sg.make_pipeline({
-        shader = shader,
-        layout = {
-            attrs = [16]sg.Vertex_Attr_State{
-                0 = {format = sg.Vertex_Format.FLOAT3},
-                1 = {format = sg.Vertex_Format.FLOAT4},
-            }
-        },
-        index_type = .UINT16,
-        cull_mode = .BACK,
-        depth = {
-            compare = .LESS_EQUAL,
-            write_enabled = true,
-        },
-    })
-}
-
-remake_pipeline :: proc(shader: sg.Shader) {
-    sg.destroy_pipeline(window.pipeline)
-    window.pipeline = init_pipeline(shader)
-}
-
 init_window :: proc(rect: Rect) {
     window.rect = rect
     window.handle = sdl.CreateWindow("notosu!", rect.w, rect.h, sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
@@ -204,8 +140,6 @@ main :: proc() {
         logger = { func = slog.func }
     })
 
-    vs_path := "../shaders/main.vs.glsl"
-    fs_path := "../shaders/main.fs.glsl"
     
     {
         err: shader_error
@@ -328,31 +262,11 @@ main :: proc() {
         
         sdl.GL_SwapWindow(window.handle)
 
-        // platform directory watch
-
-        win32_get_directory_changes(&shaders_watch)
-        win32_print_error()
-        if shaders_watch.watch_bytes_written > 0 {
-            notify := (^win32_file_notify_info)(&shaders_watch.notify_buffer)
-
-            filename_cs16 := ([^]u16)(&notify.file_name)
-
-            filename_buf: [windows.MAX_PATH]u16
-            for i in 0 ..< notify.file_name_length {
-                filename_buf[i] = filename_cs16[i]
-            }
-            filename_buf[notify.file_name_length] = 0
-
-            switch (notify.action) {
-                case windows.FILE_ACTION_MODIFIED:
-                    fmt.printfln("%s", filename_buf)
-            }
-            
-        }
+        process_main_shader_changes(&shaders_watch)
 
         // profiling
         
-        // todo(isak): generate texture, draw to bottom right in screenspace
+        // todo(isak): generate osu profiling texture, draw to bottom right in screenspace
     }
 
 }

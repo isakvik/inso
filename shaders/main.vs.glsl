@@ -9,7 +9,6 @@ out vec2 uv;
             
 void main()
 {
-    
     gl_Position = mat4(vs_params[0], vs_params[1], vs_params[2], vs_params[3]) * pos;
     color = color0;
 }

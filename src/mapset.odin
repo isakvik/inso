@@ -9,6 +9,8 @@ import "core:sys/windows"
 Mapset :: struct {
     path: string,
 
+    num_layers: u32,
+
     watch: Win32_Directory_Watch
 }
 
@@ -61,6 +63,8 @@ mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu
                 break
             }
         }
+
+        watch.notify_bytes_written = 0
     }
 
     return updated_systems

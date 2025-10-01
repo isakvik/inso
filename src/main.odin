@@ -8,12 +8,14 @@ import "core:unicode/utf16"
 
 import lua "vendor:lua/5.4"
 
+import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
 import slog "vendor:sokol/log"
 
-vector3 :: struct { x, y, z: f32 }
-vec3 :: vector3
+vec2 :: struct { x, y: f32 }
+vec3 :: struct { x, y, z: f32 }
+vec4 :: struct { x, y, z, w: f32 }
 mat4 :: matrix[4,4]f32
 
 _rdtsc_frequency := f64(sdl.GetPerformanceFrequency())
@@ -81,6 +83,8 @@ window: struct {
     bindings: sg.Bindings,
     pass_action: sg.Pass_Action,
     swapchain: sg.Swapchain,
+
+    gpu_buffer: Persistent_Buffer,
 }
 
 init_window :: proc(rect: Rect) {
@@ -130,26 +134,10 @@ main :: proc() {
 
     init_window({w = 1024, h = 576})
     defer cleanup_window()
-    
-    sg.setup({
-        environment = { defaults = {
-                sample_count = 4,
-                color_format = sg.Pixel_Format.RGBA8,
-                depth_format = sg.Pixel_Format.DEPTH_STENCIL
-        }},
-        logger = { func = slog.func }
-    })
 
-    
-    {
-        err: shader_error
-        window.main_shader, err = init_shader(vs_path, fs_path)
-        assert(err == .NONE)
-    }
-    
-    window.pipeline = init_pipeline(window.main_shader)
-    defer sg.destroy_pipeline(window.pipeline)
+    init_graphics()
 
+    shaders_watch := win32_init_directory_watch("../shaders/")
     
     // cube vertex buffer
     vertices := [?]f32 {
@@ -184,11 +172,12 @@ main :: proc() {
          1.0,  1.0, -1.0,   1.0, 0.0, 0.5, 1.0,
     }
     
+    /*
     window.bindings.vertex_buffers[0] = sg.make_buffer({
         data = { ptr = &vertices, size = size_of(vertices) },
     })
     defer sg.destroy_buffer(window.bindings.vertex_buffers[0])
-
+    */
     // create an index buffer for the cube
     indices := [?]u16 {
         0, 1, 2,  0, 2, 3,
@@ -198,14 +187,16 @@ main :: proc() {
         16, 17, 18,  16, 18, 19,
         22, 21, 20,  23, 22, 20,
     }
+
+    
+    /*
     window.bindings.index_buffer = sg.make_buffer({
         usage = { index_buffer = true },
         data = { ptr = &indices, size = size_of(indices) },
     })
     defer sg.destroy_buffer(window.bindings.index_buffer)
+    */
 
-
-    shaders_watch := win32_init_directory_watch("../shaders/")
 
     /*
         todo(isak): some research on timestep (consistent deltatime) would be prudent
@@ -217,6 +208,18 @@ main :: proc() {
 
     active := true
     event: sdl.Event
+
+    /* todo(isak): more rendering stuff to do...
+    
+    - sg_desc (sg.begin) pipeline_pool_size... grow pipeline pool size to num layers in mapset?
+    - indexed rendering
+    - screenspace rendering size handling (fixed size, playfield size)
+    - texture residency
+
+    */ 
+
+    gl.Enable(gl.BLEND)
+    gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     for active {
 
@@ -243,7 +246,18 @@ main :: proc() {
 
         // todo(isak): begin frame, set up mapped uniform block
 
+        pbo_lock(&window.gpu_buffer)
+        pbo_bind(&window.gpu_buffer, 0)
+
         // game update
+
+        verts := ([^]Vertex)(pbo_get_current(&window.gpu_buffer))
+        verts[0].pos = {0, 0}; verts[0].color = {1,0,0,0.0}
+        verts[1].pos = {1, 0}; verts[1].color = {0,1,0,1}
+        verts[2].pos = {0, 1}; verts[2].color = {0,0,1,1}
+        verts[3].pos = {1, 0}; verts[3].color = {0,1,0,1}
+        verts[4].pos = {0, 1}; verts[4].color = {0,0,1,1}
+        verts[5].pos = {1, 1}; verts[5].color = {1,1,0,0.0}
 
         vs: struct {
             mvp: mat4
@@ -252,15 +266,23 @@ main :: proc() {
 
         // end frame
 
+        pbo_unlock(&window.gpu_buffer)
+
         sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
         sg.apply_pipeline(window.pipeline)
-        sg.apply_bindings(window.bindings)
+        
+
+
+        //sg.apply_bindings(window.bindings)
+
         sg.apply_uniforms(0, { ptr = &vs, size = size_of(vs) })
-        sg.draw(0, 36, 1)
+        sg.draw(0, 6, 1)
         sg.end_pass()
         sg.commit()
         
         sdl.GL_SwapWindow(window.handle)
+
+        pbo_increment_index(&window.gpu_buffer)
 
         process_main_shader_changes(&shaders_watch)
 
@@ -268,5 +290,7 @@ main :: proc() {
         
         // todo(isak): generate osu profiling texture, draw to bottom right in screenspace
     }
+
+    pbo_cleanup(&window.gpu_buffer)
 
 }

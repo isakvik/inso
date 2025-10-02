@@ -1,5 +1,6 @@
 package notosu
 
+import "core:math"
 import "core:sys/windows"
 import "base:runtime"
 import "core:fmt"
@@ -68,12 +69,10 @@ scrubbing support (jump to arbitrary time, display content)
 // hey, i know you hate questions like this but i'm having a hard time getting started on getting started programming. is it better to get started with setting 
 // up your environment, or should i do all the work in my head so i can feel good about not having done anything at all? thanks, 200 word essay due tomorrow
 
-Rect :: struct {
-    x, y, w, h: i32
-}
+Window_Rect :: _Rect(i32)
 
 window: struct {
-    rect: Rect,
+    rect: Window_Rect,
 
     handle: ^sdl.Window,
     gl_context: sdl.GLContext,
@@ -84,10 +83,11 @@ window: struct {
     pass_action: sg.Pass_Action,
     swapchain: sg.Swapchain,
 
-    gpu_buffer: Persistent_Buffer,
+    vertex_buffer: Persistent_Buffer(Vertex),
+    index_buffer: Persistent_Buffer(u32),
 }
 
-init_window :: proc(rect: Rect) {
+init_window :: proc(rect: Window_Rect) {
     window.rect = rect
     window.handle = sdl.CreateWindow("notosu!", rect.w, rect.h, sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
     window.gl_context = sdl.GL_CreateContext(window.handle)
@@ -135,68 +135,9 @@ main :: proc() {
     init_window({w = 1024, h = 576})
     defer cleanup_window()
 
-    init_graphics()
+    init_renderer()
 
     shaders_watch := win32_init_directory_watch("../shaders/")
-    
-    // cube vertex buffer
-    vertices := [?]f32 {
-        -1.0, -1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
-         1.0, -1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
-         1.0,  1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
-        -1.0,  1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
-
-        -1.0, -1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
-         1.0, -1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
-         1.0,  1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
-        -1.0,  1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
-
-        -1.0, -1.0, -1.0,   0.0, 0.0, 1.0, 1.0,
-        -1.0,  1.0, -1.0,   0.0, 0.0, 1.0, 1.0,
-        -1.0,  1.0,  1.0,   0.0, 0.0, 1.0, 1.0,
-        -1.0, -1.0,  1.0,   0.0, 0.0, 1.0, 1.0,
-
-        1.0, -1.0, -1.0,    1.0, 0.5, 0.0, 1.0,
-        1.0,  1.0, -1.0,    1.0, 0.5, 0.0, 1.0,
-        1.0,  1.0,  1.0,    1.0, 0.5, 0.0, 1.0,
-        1.0, -1.0,  1.0,    1.0, 0.5, 0.0, 1.0,
-
-        -1.0, -1.0, -1.0,   0.0, 0.5, 1.0, 1.0,
-        -1.0, -1.0,  1.0,   0.0, 0.5, 1.0, 1.0,
-         1.0, -1.0,  1.0,   0.0, 0.5, 1.0, 1.0,
-         1.0, -1.0, -1.0,   0.0, 0.5, 1.0, 1.0,
-
-        -1.0,  1.0, -1.0,   1.0, 0.0, 0.5, 1.0,
-        -1.0,  1.0,  1.0,   1.0, 0.0, 0.5, 1.0,
-         1.0,  1.0,  1.0,   1.0, 0.0, 0.5, 1.0,
-         1.0,  1.0, -1.0,   1.0, 0.0, 0.5, 1.0,
-    }
-    
-    /*
-    window.bindings.vertex_buffers[0] = sg.make_buffer({
-        data = { ptr = &vertices, size = size_of(vertices) },
-    })
-    defer sg.destroy_buffer(window.bindings.vertex_buffers[0])
-    */
-    // create an index buffer for the cube
-    indices := [?]u16 {
-        0, 1, 2,  0, 2, 3,
-        6, 5, 4,  7, 6, 4,
-        8, 9, 10,  8, 10, 11,
-        14, 13, 12,  15, 14, 12,
-        16, 17, 18,  16, 18, 19,
-        22, 21, 20,  23, 22, 20,
-    }
-
-    
-    /*
-    window.bindings.index_buffer = sg.make_buffer({
-        usage = { index_buffer = true },
-        data = { ptr = &indices, size = size_of(indices) },
-    })
-    defer sg.destroy_buffer(window.bindings.index_buffer)
-    */
-
 
     /*
         todo(isak): some research on timestep (consistent deltatime) would be prudent
@@ -212,10 +153,10 @@ main :: proc() {
     /* todo(isak): more rendering stuff to do...
     
     - sg_desc (sg.begin) pipeline_pool_size... grow pipeline pool size to num layers in mapset?
-    - indexed rendering
-    - screenspace rendering size handling (fixed size, playfield size)
+    - screenspace rendering size handling
+        - groups
     - texture residency
-
+    
     */ 
 
     gl.Enable(gl.BLEND)
@@ -236,53 +177,38 @@ main :: proc() {
                 window.swapchain.width = event.window.data1
                 window.swapchain.height = event.window.data2
             }
-
-            
         }
 
         time_last_frame = time_current_frame
         time_current_frame = current_time()
         dt := time_current_frame - time_last_frame
 
-        // todo(isak): begin frame, set up mapped uniform block
-
-        pbo_lock(&window.gpu_buffer)
-        pbo_bind(&window.gpu_buffer, 0)
+        pbo_lock(&window.vertex_buffer)
+        pbo_lock(&window.index_buffer)
 
         // game update
 
-        verts := ([^]Vertex)(pbo_get_current(&window.gpu_buffer))
-        verts[0].pos = {0, 0}; verts[0].color = {1,0,0,0.0}
-        verts[1].pos = {1, 0}; verts[1].color = {0,1,0,1}
-        verts[2].pos = {0, 1}; verts[2].color = {0,0,1,1}
-        verts[3].pos = {1, 0}; verts[3].color = {0,1,0,1}
-        verts[4].pos = {0, 1}; verts[4].color = {0,0,1,1}
-        verts[5].pos = {1, 1}; verts[5].color = {1,1,0,0.0}
+        // todo(isak): need a more intelligent bucketing and batching system....
+        // a triple buffer for every layer seems overkill memory wise, since a fixed bucket
+        // has to be allocated for each, so draw calls might need sorting (or depth testing), whichever
+        // is less expensive... profile first.
 
-        vs: struct {
-            mvp: mat4
-        }
-        vs.mvp = {1,0,0,0, 0,1,0,0, 0,0,1,2, 0,0,5,1}
+        draw := begin_draw(.DEFAULT)
+
+        s := i32(math.sin_f32(f32(time_since_beginning_of_program())) * 100)
+                
+        _debug_rect: Window_Rect = { s + window.rect.w, window.rect.h, 600, 200 }
+        debug_rect := rect_translate_by_anchor(_debug_rect, .BOTTOM_RIGHT)
+
+        debug_rect2: Rect = { 0, 0, 1, 0.5 }
+        lol := rect_translate_to_inner(debug_rect2, debug_rect)
+        
+        push_screenspace_rect(draw, debug_rect, {0,0,0,0.25})
+        push_screenspace_rect(draw, lol, {1,0,0,0.25})
 
         // end frame
 
-        pbo_unlock(&window.gpu_buffer)
-
-        sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
-        sg.apply_pipeline(window.pipeline)
-        
-
-
-        //sg.apply_bindings(window.bindings)
-
-        sg.apply_uniforms(0, { ptr = &vs, size = size_of(vs) })
-        sg.draw(0, 6, 1)
-        sg.end_pass()
-        sg.commit()
-        
-        sdl.GL_SwapWindow(window.handle)
-
-        pbo_increment_index(&window.gpu_buffer)
+        end_frame()
 
         process_main_shader_changes(&shaders_watch)
 
@@ -291,6 +217,41 @@ main :: proc() {
         // todo(isak): generate osu profiling texture, draw to bottom right in screenspace
     }
 
-    pbo_cleanup(&window.gpu_buffer)
+    pbo_cleanup(&window.vertex_buffer)
+}
 
+end_frame :: proc() {
+    pbo_unlock(&window.vertex_buffer)
+    pbo_unlock(&window.index_buffer)
+    pbo_bind(&window.vertex_buffer, 0)
+    pbo_bind(&window.index_buffer, 1)
+
+    sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
+    sg.apply_pipeline(window.pipeline)
+
+    //sg.apply_bindings(window.bindings)
+
+    //sg.apply_uniforms(0, { ptr = &vs, size = size_of(vs) })
+    sg.draw(0, renderer.draw_buckets[.DEFAULT].indexCount, 1)
+    sg.end_pass()
+    sg.commit()
+    
+    sdl.GL_SwapWindow(window.handle)
+
+    pbo_increment_index(&window.vertex_buffer)
+    pbo_increment_index(&window.index_buffer)
+}
+
+process_main_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
+    updated_systems := mapset_check_system_file_watch(watch)
+
+    if updated_systems[.SHADERS] {
+        temp_shader, err := init_shader(main_vs_path, main_fs_path)
+        if err == .NONE {
+            fmt.println("reloaded shaders")
+            remake_main_pipeline(temp_shader)
+        } else {
+            fmt.println("shader error: {}", err)
+        }
+    }
 }

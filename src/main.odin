@@ -176,6 +176,72 @@ check_game_input :: proc(event: sdl.Event) {
     }*/
 }
 
+k1_pressed :: proc(event: sdl.Event) -> bool {
+    osu_controller.k1_key = sdl.Scancode.Z
+    if (event.type == sdl.EventType.KEY_DOWN) {
+        if (event.key.scancode == osu_controller.k1_key && osu_controller.k1 == false) {
+            fmt.println("k1 pressed!")
+            osu_controller.k1 = true
+            return true
+        }
+    }
+    return false
+}
+
+k2_pressed :: proc(event: sdl.Event) -> bool {
+    osu_controller.k2_key = sdl.Scancode.X
+    if (event.type == sdl.EventType.KEY_DOWN) {
+        if (event.key.scancode == osu_controller.k2_key && osu_controller.k2 == false) {
+            fmt.println("k2 pressed!")
+            osu_controller.k2 = true
+            return true
+        }
+    }
+    return false
+}
+
+m1_pressed :: proc(event: sdl.Event) -> bool {
+    if (event.type == sdl.EventType.MOUSE_BUTTON_DOWN) {
+        if (event.button.button == sdl.BUTTON_LEFT && osu_controller.m1 == false) {
+            fmt.println("m1 pressed!")
+            osu_controller.m1 = true
+            return true
+        }
+    }
+    return false
+}
+
+m2_pressed :: proc(event: sdl.Event) -> bool {
+    if (event.type == sdl.EventType.MOUSE_BUTTON_DOWN) {
+        if (event.button.button == sdl.BUTTON_RIGHT && osu_controller.m2 == false) {
+            fmt.println("m2 pressed!")
+            osu_controller.m2 = true
+            return true
+        }
+    }
+    return false
+}
+
+any_pressed :: proc(event: sdl.Event) -> bool {
+    return (k1_pressed(event) || k2_pressed(event) || m1_pressed(event) || m2_pressed(event))
+}
+
+was_held :: proc(event: sdl.Event) -> bool {
+    if (event.type == sdl.EventType.KEY_UP) {
+        if (event.key.scancode == osu_controller.k1_key) {
+            osu_controller.k1 = false
+            //fmt.println("k1 released!")
+            return true
+        }
+    }
+    return false
+}
+
+is_held :: proc(osu_controller: bool) -> bool {
+    fmt.printfln("key held: %t", osu_controller)
+    return osu_controller
+}
+
 main :: proc() {
     _rdtsc_start_time = current_time()
 
@@ -347,6 +413,7 @@ main :: proc() {
             if (osu_controller.in_gameplay) {
                 check_game_input(event)
             }
+            check_game_input(event)
         }
 
         time_last_frame = time_current_frame
@@ -356,6 +423,7 @@ main :: proc() {
         // todo(isak): begin frame, set up mapped uniform block
 
         // game update
+        is_held(osu_controller.k1)
 
         rx += 60  * f32(dt)
         ry += 120 * f32(dt)

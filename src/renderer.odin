@@ -1,22 +1,23 @@
 package notosu
 
+import "core:c/libc"
 import "core:fmt"
 import "core:os"
 import "core:strings"
 
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
+import sdli "vendor:sdl3/image"
 import sg "vendor:sokol/gfx"
 import slog "vendor:sokol/log"
+import stbi "vendor:stb/image"
 
 
-main_vs_path :: "../shaders/main.vs.glsl"
-main_fs_path :: "../shaders/main.fs.glsl"
+main_vs_path :: "shaders/main.vs.glsl"
+main_fs_path :: "shaders/main.fs.glsl"
 
+batch_max_vertices :: 64*1024
 
-renderer: struct {
-    draw_buckets: [Layer]Draw_Call
-}
 
 Layer :: enum {
     DEFAULT,
@@ -41,7 +42,7 @@ Vertex :: struct {
     color: vec4,
 }
 
-Draw_Call :: struct {
+Vertex_Batch :: struct {
     vertexCount:   u32,
     indexCount:    u32,
     vertex_buffer: []Vertex,
@@ -67,6 +68,18 @@ _Rect :: struct($T: typeid) {
 
 Rect :: _Rect(f32)
 
+Texture_Handle :: u64 // note(isak): bindless handle
+
+Image :: struct {
+    path: string,
+    x, y: i32,
+    texHandle: Texture_Handle,
+    texture: u32
+}
+
+max_active_texture_resource_size :: 128 * 1024 * 1024
+
+
 //////////////////////////////////////////////////////
 // note(isak): resource api
 
@@ -86,15 +99,29 @@ init_renderer :: proc() {
         },
     )
 
-    {
-        err: Shader_Error
-        window.main_shader, err = init_shader(main_vs_path, main_fs_path)
-        assert(err == .NONE)
-    }
+    err: Shader_Error
+    window.main_shader, err = init_shader(main_vs_path, main_fs_path)
+    assert(err == .NONE)
 
     window.pipeline = init_pipeline(window.main_shader)
     window.vertex_buffer = pbo_init(Vertex, 64 * 1024)
     window.index_buffer = pbo_init(u32, 128 * 1024)
+    window.texture_buffer = pbo_init(u64, 128)
+    
+    window.pass_action = { 
+        colors = {
+            0 = { load_action = .CLEAR, clear_value = { 0.15, 0.10, 0.23, 1 } }, 
+        }
+    }
+
+    window.swapchain = sg.Swapchain{
+        width = window.rect.w,
+        height = window.rect.h,
+        sample_count = 4,
+        color_format = .RGBA8,
+        depth_format = .DEPTH_STENCIL,
+        gl = {0} // default framebuffer
+    }
 }
 
 init_shader :: proc(vs_path, fs_path: string) -> (sg.Shader, Shader_Error) {
@@ -140,9 +167,19 @@ init_pipeline :: proc(shader: sg.Shader) -> sg.Pipeline {
         {
             shader = shader,
             //index_type = .UINT16,
-            cull_mode = .NONE,
-            blend_color = {0.0, 0.0, 0.0, 1.0},
-            depth = {compare = sg.Compare_Func.LESS_EQUAL, write_enabled = true},
+            cull_mode = .BACK,
+            blend_color = {1.0, 1.0, 1.0, 1.0},
+            colors = [4]sg.Color_Target_State {
+                0 = { blend = {
+                    enabled = true,
+                    op_alpha = .SUBTRACT,
+                    src_factor_rgb = .SRC_ALPHA,
+                    src_factor_alpha = .SRC_ALPHA,
+                    dst_factor_rgb = .ONE_MINUS_SRC_ALPHA,
+                    dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
+                }}
+            },
+            depth = {compare = .LESS_EQUAL, write_enabled = true},
         },
     )
 }
@@ -154,54 +191,101 @@ remake_main_pipeline :: proc(shader: sg.Shader) {
     window.pipeline = init_pipeline(window.main_shader)
 }
 
+
+texture_create :: proc(path: string) -> (Image, os.Error) {
+    result: Image
+    data, err := read_entire_file(path)
+    if err != os.General_Error.None {
+        return result, err
+    }
+    
+    channels: i32
+    pixels := stbi.load_from_memory(raw_data(data[:]), i32(len(data)), &result.x, &result.y, &channels, 4)
+    
+    gl.CreateTextures(gl.TEXTURE_2D, 1, &result.texture)
+    gl.TextureStorage2D(result.texture, 1, gl.RGBA8, result.x, result.y)
+    gl.TextureSubImage2D(result.texture, 0, 0, 0, result.x, result.y, gl.RGBA, gl.UNSIGNED_BYTE, pixels)
+    
+    gl.TextureParameteri(result.texture, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.TextureParameteri(result.texture, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+
+
+    // note(isak): this makes texture state immutable
+    result.texHandle = gl.GetTextureHandleARB(result.texture)
+    return result, err
+}
+
+
 //////////////////////////////////////////////////////
 // note(isak): draw api
 
-begin_draw :: proc(layer: Layer) -> ^Draw_Call {
-    renderer.draw_buckets[layer] = {
-        vertex_buffer = pbo_get_current(&window.vertex_buffer),
-        index_buffer = pbo_get_current(&window.index_buffer),
+batch_begin :: proc(batch: ^Vertex_Batch) {
+    pbo_bind(&window.vertex_buffer, 0)
+    pbo_bind(&window.index_buffer, 1)
+    pbo_lock(&window.vertex_buffer)
+    pbo_lock(&window.index_buffer)
+
+    batch.vertexCount = 0
+    batch.indexCount = 0
+
+    batch.vertex_buffer = pbo_get_current(&window.vertex_buffer)
+    batch.index_buffer = pbo_get_current(&window.index_buffer)
+}
+
+batch_end :: proc(batch: ^Vertex_Batch) {
+    pbo_wait(&window.vertex_buffer)
+    pbo_wait(&window.index_buffer)
+
+    sg.draw(0, batch.indexCount, 1)
+
+    pbo_increment_index(&window.vertex_buffer)
+    pbo_increment_index(&window.index_buffer)
+}
+
+push_quad :: proc(batch: ^Vertex_Batch, pos1, pos2, pos3, pos4: vec2, color: vec4) {
+    if batch.vertexCount + 4 > batch_max_vertices {
+        batch_end(batch)
+        batch_begin(batch)
     }
-    return &renderer.draw_buckets[layer]
+    
+    #no_bounds_check {
+        vert_i := batch.vertexCount
+        verts := batch.vertex_buffer
+        verts[vert_i + 0].pos = pos1; verts[vert_i + 0].uv = {0, 0}; verts[vert_i + 0].color = color
+        verts[vert_i + 1].pos = pos2; verts[vert_i + 1].uv = {1, 0}; verts[vert_i + 1].color = color
+        verts[vert_i + 2].pos = pos3; verts[vert_i + 2].uv = {0, 1}; verts[vert_i + 2].color = color
+        verts[vert_i + 3].pos = pos4; verts[vert_i + 3].uv = {1, 1}; verts[vert_i + 3].color = color
+
+        index_i := batch.indexCount
+        indices := batch.index_buffer
+        indices[index_i + 0] = vert_i + 0
+        indices[index_i + 1] = vert_i + 2
+        indices[index_i + 2] = vert_i + 1
+        indices[index_i + 3] = vert_i + 1
+        indices[index_i + 4] = vert_i + 2
+        indices[index_i + 5] = vert_i + 3
+
+        batch.vertexCount += 4
+        batch.indexCount += 6
+    }
 }
 
-push_quad :: proc(draw: ^Draw_Call, pos1, pos2, pos3, pos4: vec2, color: vec4) {
-    vert_i := draw.vertexCount
-    verts := draw.vertex_buffer
-    verts[vert_i + 0].pos = pos1; verts[vert_i + 0].uv = {0, 0}; verts[vert_i + 0].color = color
-    verts[vert_i + 1].pos = pos2; verts[vert_i + 1].uv = {1, 0}; verts[vert_i + 1].color = color
-    verts[vert_i + 2].pos = pos3; verts[vert_i + 2].uv = {0, 1}; verts[vert_i + 2].color = color
-    verts[vert_i + 3].pos = pos4; verts[vert_i + 3].uv = {1, 1}; verts[vert_i + 3].color = color
-
-    index_i := draw.indexCount
-    indices := draw.index_buffer
-    indices[index_i + 0] = vert_i + 0
-    indices[index_i + 1] = vert_i + 1
-    indices[index_i + 2] = vert_i + 2
-    indices[index_i + 3] = vert_i + 1
-    indices[index_i + 4] = vert_i + 2
-    indices[index_i + 5] = vert_i + 3
-
-    draw.vertexCount += 4
-    draw.indexCount += 6
+push_rect :: proc(batch: ^Vertex_Batch, rect: _Rect(f32), color: vec4) {
+    push_quad(batch, {rect.x,          rect.y         },
+                     {rect.x,          rect.y + rect.h},
+                     {rect.x + rect.w, rect.y         },
+                     {rect.x + rect.w, rect.y + rect.h}, color)
 }
 
-push_screenspace_rect :: proc(draw: ^Draw_Call, rect: Window_Rect, color: vec4) {
-    push_rect(draw, to_clipspace_rect(rect), color)
+push_screenspace_rect :: proc(batch: ^Vertex_Batch, rect: Window_Rect, color: vec4) {
+    push_rect(batch, to_clipspace_rect(rect), color)
 }
 
-push_rect :: proc(draw: ^Draw_Call, rect: _Rect(f32), color: vec4) {
-    push_quad(draw, {rect.x,          rect.y         },
-                    {rect.x,          rect.y + rect.h},
-                    {rect.x + rect.w, rect.y         },
-                    {rect.x + rect.w, rect.y + rect.h}, color)
+push_layout_rect :: proc(batch: ^Vertex_Batch, rect: _Rect($T), anchor: Layout_Anchor, color: vec4) {
+    push_rect(batch, rect_translate_by_anchor(rect, anchor), color) 
 }
-
-push_layout_rect :: proc(draw: ^Draw_Call, rect: _Rect($T), anchor: Layout_Anchor, color: vec4) {
-    push_rect(draw, rect_translate_by_anchor(rect, anchor), color) 
-}
-push_layout_screenspace_rect :: proc(draw: ^Draw_Call, rect: _Rect($T), anchor: Layout_Anchor, color: vec4) {
-    push_screenspace_rect(draw, rect_translate_by_anchor(rect, anchor), color) 
+push_screenspace_layout_rect :: proc(batch: ^Vertex_Batch, rect: _Rect($T), anchor: Layout_Anchor, color: vec4) {
+    push_screenspace_rect(batch, rect_translate_by_anchor(rect, anchor), color) 
 }
 
 

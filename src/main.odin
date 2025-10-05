@@ -6,6 +6,8 @@ import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:unicode/utf16"
+import "core:path/filepath"
+import "core:strings"
 
 import lua "vendor:lua/5.4"
 
@@ -50,8 +52,6 @@ core runtime info such as map time and objects
 general:
 ui core (map selector, skin select?)
 .osu support
-win32 directory watch
-sokol pipeline rendering
 
 play mode:
 audio play (miniaudio)
@@ -85,29 +85,21 @@ window: struct {
 
     vertex_buffer: Persistent_Buffer(Vertex),
     index_buffer: Persistent_Buffer(u32),
+    texture_buffer: Persistent_Buffer(u64),
+
+    img_cursor: Image
 }
 
 init_window :: proc(rect: Window_Rect) {
     window.rect = rect
     window.handle = sdl.CreateWindow("notosu!", rect.w, rect.h, sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
+    
+    sdl.GL_SetAttribute(sdl.GL_CONTEXT_MAJOR_VERSION, 4)
+    sdl.GL_SetAttribute(sdl.GL_CONTEXT_MINOR_VERSION, 6)
     window.gl_context = sdl.GL_CreateContext(window.handle)
 
     sdl.GetWindowPosition(window.handle, &window.rect.x, &window.rect.y)
-
-    window.pass_action = { 
-        colors = {
-            0 = { load_action = .CLEAR, clear_value = { 0.15, 0.10, 0.23, 1 } }, 
-        }
-    }
-
-    window.swapchain = sg.Swapchain{
-        width = window.rect.w,
-        height = window.rect.h,
-        sample_count = 4,
-        color_format = .RGBA8,
-        depth_format = .DEPTH_STENCIL,
-        gl = {0} // default framebuffer
-    }
+    v := sdl.HideCursor()
 }
 
 cleanup_window :: proc() {
@@ -119,6 +111,13 @@ cleanup_window :: proc() {
 main :: proc() {
     _rdtsc_start_time = current_time()
 
+    current_dir := os.get_current_directory()
+    if strings.compare("build", filepath.base(current_dir)) == 0 {
+        os.set_current_directory(filepath.dir(current_dir))
+    }
+
+
+    /*
     L := lua.L_newstate()
     defer lua.close(L)
     
@@ -126,6 +125,7 @@ main :: proc() {
     
     script: cstring = "print('Hello from Lua!')"
     lua.L_dostring(L, script)
+    */
 
     if (!sdl.Init(sdl.INIT_VIDEO)) {
         fmt.printfln("SDL init error: {}", sdl.GetError())
@@ -136,8 +136,11 @@ main :: proc() {
     defer cleanup_window()
 
     init_renderer()
+    
+    tex_err: os.Error
+    window.img_cursor, tex_err = texture_create("skins/gn/cursor.png")
 
-    shaders_watch := win32_init_directory_watch("../shaders/")
+    shaders_watch := win32_init_directory_watch("shaders/")
 
     /*
         todo(isak): some research on timestep (consistent deltatime) would be prudent
@@ -154,13 +157,13 @@ main :: proc() {
     
     - sg_desc (sg.begin) pipeline_pool_size... grow pipeline pool size to num layers in mapset?
     - screenspace rendering size handling
-        - groups
+        - build ui element tree and render by that?
     - texture residency
     
     */ 
-
-    gl.Enable(gl.BLEND)
-    gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    
+    pbo_increment_index(&window.vertex_buffer)
+    pbo_increment_index(&window.index_buffer)
 
     for active {
 
@@ -178,37 +181,48 @@ main :: proc() {
                 window.swapchain.height = event.window.data2
             }
         }
+        
+        mouse_x, mouse_y: i32
+        mouse_xf, mouse_yf: f32
+        mouse_flags := sdl.GetGlobalMouseState(&mouse_xf, &mouse_yf)
+        sdl.GetWindowPosition(window.handle, &mouse_x, &mouse_y)
+
+        mouse_x = i32(mouse_xf) - mouse_x
+        mouse_y = i32(mouse_yf) - mouse_y
 
         time_last_frame = time_current_frame
         time_current_frame = current_time()
         dt := time_current_frame - time_last_frame
 
-        pbo_lock(&window.vertex_buffer)
-        pbo_lock(&window.index_buffer)
-
+        begin_frame()
+        
+        _batch: Vertex_Batch
+        batch := &_batch
+        batch_begin(batch)
+        
         // game update
+        
+        cursor_rect: Window_Rect = { mouse_x, mouse_y, 80, 80 }
+        push_screenspace_layout_rect(batch, cursor_rect, .CENTER, {1,1,1,1})
 
-        // todo(isak): need a more intelligent bucketing and batching system....
-        // a triple buffer for every layer seems overkill memory wise, since a fixed bucket
-        // has to be allocated for each, so draw calls might need sorting (or depth testing), whichever
-        // is less expensive... profile first.
-
-        draw := begin_draw(.DEFAULT)
-
-        s := i32(math.sin_f32(f32(time_since_beginning_of_program())) * 100)
-                
-        _debug_rect: Window_Rect = { s + window.rect.w, window.rect.h, 600, 200 }
+        s := i32(math.sin_f32(f32(time_since_beginning_of_program()) * 2) * 50)
+        c := i32(math.cos_f32(f32(time_since_beginning_of_program()) * 2) * 50)
+        
+        _debug_rect: Window_Rect = { s + window.rect.w, c + window.rect.h, 600, 200 }
         debug_rect := rect_translate_by_anchor(_debug_rect, .BOTTOM_RIGHT)
 
         debug_rect2: Rect = { 0, 0, 1, 0.5 }
         lol := rect_translate_to_inner(debug_rect2, debug_rect)
         
-        push_screenspace_rect(draw, debug_rect, {0,0,0,0.25})
-        push_screenspace_rect(draw, lol, {1,0,0,0.25})
+        push_screenspace_rect(batch, debug_rect, {1,1,1,0.25})
+        push_screenspace_rect(batch, lol, {1,0,0,0.25})
+        push_screenspace_rect(batch, lol, {0,1,0,0.25})
+        //push_screenspace_rect(batch, debug_rect, {0,0,0,0.25})
+        //push_screenspace_rect(batch, lol, {0,1,0,0.25})
 
         // end frame
 
-        end_frame()
+        end_frame(batch)
 
         process_main_shader_changes(&shaders_watch)
 
@@ -220,26 +234,34 @@ main :: proc() {
     pbo_cleanup(&window.vertex_buffer)
 }
 
-end_frame :: proc() {
-    pbo_unlock(&window.vertex_buffer)
-    pbo_unlock(&window.index_buffer)
-    pbo_bind(&window.vertex_buffer, 0)
-    pbo_bind(&window.index_buffer, 1)
+first_frame := true
 
+begin_frame :: proc() {
     sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
     sg.apply_pipeline(window.pipeline)
 
+    if first_frame {
+        pbo_bind(&window.texture_buffer, 2)
+        pbo_lock(&window.texture_buffer)
+        data := pbo_get_current(&window.texture_buffer)
+        data[0] = window.img_cursor.texHandle
+        
+        gl.MakeTextureHandleResidentARB(window.img_cursor.texHandle)
+        pbo_wait(&window.texture_buffer)
+        first_frame = false
+    }
+}
+
+end_frame :: proc(batch: ^Vertex_Batch) {
+    
+    batch_end(batch)
     //sg.apply_bindings(window.bindings)
 
     //sg.apply_uniforms(0, { ptr = &vs, size = size_of(vs) })
-    sg.draw(0, renderer.draw_buckets[.DEFAULT].indexCount, 1)
     sg.end_pass()
     sg.commit()
     
     sdl.GL_SwapWindow(window.handle)
-
-    pbo_increment_index(&window.vertex_buffer)
-    pbo_increment_index(&window.index_buffer)
 }
 
 process_main_shader_changes :: proc(watch: ^Win32_Directory_Watch) {

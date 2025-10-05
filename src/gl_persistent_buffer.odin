@@ -1,8 +1,37 @@
 package notosu
 
 import "core:slice"
+import "core:fmt"
 
 import gl "vendor:OpenGL"
+
+
+Storage_Buffer :: struct(T: typeid) {
+    id: u32,
+    count: int,
+    size: int,
+    data: []T
+}
+
+sbo_init :: proc($T: typeid, count: int) -> Storage_Buffer(T) {
+    result: Storage_Buffer(T)
+    gl.CreateBuffers(1, &result.id)
+    
+    result.count = count
+    result.size = count * size_of(T)
+    
+    flags := u32(gl.MAP_WRITE_BIT | gl.MAP_PERSISTENT_BIT | gl.MAP_COHERENT_BIT)
+    gl.NamedBufferStorage(result.id, result.size, nil, flags)
+    mapped_ptr := gl.MapNamedBufferRange(result.id, 0, result.size, flags)
+    result.data = slice.from_ptr(cast(^T) mapped_ptr, count)
+
+    return result
+}
+
+sbo_cleanup :: proc(buf: ^Storage_Buffer($T)) {
+    gl.DeleteBuffers(1, &buf.id);
+    buf.id = 0
+}
 
 // persistent triple buffer object
 
@@ -20,20 +49,21 @@ Persistent_Buffer :: struct(T: typeid) {
 Synced_Buffer :: struct(T: typeid) {
     data: []T,
     offset: int,
-    sync: gl.sync_t
+    sync: gl.sync_t,
+    wait_count: u64
 }
 
 
 pbo_init :: proc($T: typeid, count: int) -> Persistent_Buffer(T) {
     result: Persistent_Buffer(T)
     gl.CreateBuffers(1, &result.id)
-
+    
+    result.count = count
     result.size = count * size_of(T)
     flags := u32(gl.MAP_WRITE_BIT | gl.MAP_PERSISTENT_BIT | gl.MAP_COHERENT_BIT)
     gl.NamedBufferStorage(result.id, result.size * _pbo_multiple_count, nil, flags)
     mapped_ptr := gl.MapNamedBufferRange(result.id, 0, result.size * _pbo_multiple_count, flags)
 
-    result.count = count
     mapped_slices := slice.from_ptr(cast(^T) mapped_ptr, count * _pbo_multiple_count)
     for i in 0..<_pbo_multiple_count {
         result.buffers[i] = { 
@@ -45,9 +75,9 @@ pbo_init :: proc($T: typeid, count: int) -> Persistent_Buffer(T) {
     return result
 }
 
-pbo_lock :: proc(buf: ^Persistent_Buffer($T)) {
+pbo_wait :: proc(buf: ^Persistent_Buffer($T)) {
     sync := buf.buffers[buf.current_index].sync
-    if sync > nil {
+    if sync != nil {
         for true {
             waitReturn := gl.ClientWaitSync(sync, gl.SYNC_FLUSH_COMMANDS_BIT, 0);
             if (waitReturn == gl.ALREADY_SIGNALED ||
@@ -59,12 +89,12 @@ pbo_lock :: proc(buf: ^Persistent_Buffer($T)) {
     }
 }
 
-pbo_unlock :: proc(buf: ^Persistent_Buffer($T)) {
-    sync := buf.buffers[buf.current_index].sync
-    if sync > nil {
-        gl.DeleteSync(sync)
+pbo_lock :: proc(buf: ^Persistent_Buffer($T)) {
+    sync := &buf.buffers[buf.current_index].sync
+    if sync^ > nil {
+        gl.DeleteSync(sync^)
     }
-    sync = gl.FenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)
+    sync^ = gl.FenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)
 }
 
 pbo_get_current :: proc(buf: ^Persistent_Buffer($T)) -> []T {
@@ -87,4 +117,5 @@ pbo_increment_index :: proc(buf: ^Persistent_Buffer($T)) {
 pbo_cleanup :: proc(buf: ^Persistent_Buffer($T)) {
     gl.UnmapNamedBuffer(buf.id)
     gl.DeleteBuffers(1, &buf.id);
+    buf.id = 0
 }

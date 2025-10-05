@@ -42,7 +42,7 @@ win32_init_directory_watch :: proc(path: string) -> Win32_Directory_Watch {
     )
 
     if result.dir_handle == windows.INVALID_HANDLE_VALUE {
-        fmt.printfln("win32_init_directory_watch: invalid path '{}'", path)
+        fmt.println("win32_init_directory_watch, invalid path:", path)
         return result
     }
 
@@ -103,7 +103,6 @@ win32_start_directory_change_io :: proc(watch: ^Win32_Directory_Watch) {
 
 // returns a pointer to the next notify object, plus the given filename length in characters (not bytes)
 win32_watch_get_next_notify :: proc(watch: ^Win32_Directory_Watch, filename_buf: ^[windows.MAX_PATH]u16) -> (^Win32_File_Notify_Info, u32) {
-    
     assert(watch.notify_read_offset < NOTIFY_BUFFER_SIZE, "pointer arithmetic error!")
     
     // note(isak): might be the only way to do pointer arithmetic... thanks microsoft for requiring this

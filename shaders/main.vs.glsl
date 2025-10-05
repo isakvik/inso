@@ -1,4 +1,5 @@
-#version 430
+#version 460
+#extension GL_ARB_bindless_texture : require
 
 #define max_layers 100
 
@@ -16,17 +17,20 @@ layout(binding = 0, std430) buffer vertexData {
     Vertex vertices[];
 };
 layout(binding = 1, std430) buffer indexData {
-    unsigned int indices[];
+    uint indices[];
 };
 
 out vec4 color;
 out vec2 uv;
+flat out uint texIndex;
 
 void main() {
     uint i = indices[gl_VertexID];
     Vertex v = vertices[i];
     uv = v.uv; 
     color = v.color;
+    texIndex = 0;
+
     vec2 mappedPos = v.pos * 2 - 1.0;
     gl_Position = vec4(mappedPos.x, mappedPos.y * -1, layer / max_layers, 1.0);
 }

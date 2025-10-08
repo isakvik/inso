@@ -1,5 +1,6 @@
 #version 460
 #extension GL_ARB_bindless_texture : require
+#extension GL_NV_gpu_shader5 : enable
 
 #define max_layers 100
 
@@ -11,6 +12,7 @@ struct Vertex {
     vec2 pos;
     vec2 uv;
     vec4 color;
+    uint texIndex;
 };
 
 layout(binding = 0, std430) buffer vertexData {
@@ -29,7 +31,7 @@ void main() {
     Vertex v = vertices[i];
     uv = v.uv; 
     color = v.color;
-    texIndex = 0;
+    texIndex = v.texIndex;
 
     vec2 mappedPos = v.pos * 2 - 1.0;
     gl_Position = vec4(mappedPos.x, mappedPos.y * -1, layer / max_layers, 1.0);

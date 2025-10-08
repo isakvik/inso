@@ -4,6 +4,7 @@ import "core:math"
 import "core:sys/windows"
 import "base:runtime"
 import "core:fmt"
+import "core:math/rand"
 import "core:os"
 import "core:unicode/utf16"
 import "core:path/filepath"
@@ -96,6 +97,10 @@ init_window :: proc(rect: Window_Rect) {
     
     sdl.GL_SetAttribute(sdl.GL_CONTEXT_MAJOR_VERSION, 4)
     sdl.GL_SetAttribute(sdl.GL_CONTEXT_MINOR_VERSION, 6)
+    sdl.SetHint(sdl.HINT_RENDER_DRIVER, "opengl");
+
+    sdl.GL_SetSwapInterval(0)
+    sdl.SetWindowSurfaceVSync(window.handle, 0)
     window.gl_context = sdl.GL_CreateContext(window.handle)
 
     sdl.GetWindowPosition(window.handle, &window.rect.x, &window.rect.y)
@@ -132,7 +137,7 @@ main :: proc() {
         return;
     }
 
-    init_window({w = 1024, h = 576})
+    init_window({w = 1280, h = 720})
     defer cleanup_window()
 
     init_renderer()
@@ -150,14 +155,16 @@ main :: proc() {
     time_last_frame := time_current_frame
     dt := 0.0
 
+    frame_count: u64
+    time_first_frame := time_current_frame
+
     active := true
     event: sdl.Event
 
     /* todo(isak): more rendering stuff to do...
     
     - sg_desc (sg.begin) pipeline_pool_size... grow pipeline pool size to num layers in mapset?
-    - screenspace rendering size handling
-        - build ui element tree and render by that?
+    - create ui tree for menus?
     - texture residency
     
     */ 
@@ -204,7 +211,7 @@ main :: proc() {
         
         cursor_rect: Window_Rect = { mouse_x, mouse_y, 80, 80 }
         push_screenspace_layout_rect(batch, cursor_rect, .CENTER, {1,1,1,1})
-
+        
         s := i32(math.sin_f32(f32(time_since_beginning_of_program()) * 2) * 50)
         c := i32(math.cos_f32(f32(time_since_beginning_of_program()) * 2) * 50)
         
@@ -214,21 +221,28 @@ main :: proc() {
         debug_rect2: Rect = { 0, 0, 1, 0.5 }
         lol := rect_translate_to_inner(debug_rect2, debug_rect)
         
+        /*
         push_screenspace_rect(batch, debug_rect, {1,1,1,0.25})
         push_screenspace_rect(batch, lol, {1,0,0,0.25})
         push_screenspace_rect(batch, lol, {0,1,0,0.25})
         //push_screenspace_rect(batch, debug_rect, {0,0,0,0.25})
         //push_screenspace_rect(batch, lol, {0,1,0,0.25})
+        */
 
         // end frame
 
         end_frame(batch)
 
-        process_main_shader_changes(&shaders_watch)
+        //process_main_shader_changes(&shaders_watch)
 
         // profiling
         
         // todo(isak): generate osu profiling texture, draw to bottom right in screenspace
+
+        frame_count += 1
+        if frame_count % 500 == 0 {
+            fmt.println("fps:", f64(frame_count) / (time_current_frame - time_first_frame))
+        }
     }
 
     pbo_cleanup(&window.vertex_buffer)

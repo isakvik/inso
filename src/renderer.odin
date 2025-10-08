@@ -70,13 +70,13 @@ _Rect :: struct($T: typeid) {
 
 Rect :: _Rect(f32)
 
-Texture_Handle :: u64 // note(isak): bindless handle
+Texture_Handle :: u64
 
-Image :: struct {
+Texture :: struct {
     path: string,
     x, y: i32,
-    texHandle: Texture_Handle,
-    texture: u32
+    tex_id: u32, // gl assigned texture id
+    tex_handle: Texture_Handle, // note(isak): bindless handle
 }
 
 max_active_texture_resource_size :: 128 * 1024 * 1024
@@ -124,6 +124,8 @@ init_renderer :: proc() {
         depth_format = .DEPTH_STENCIL,
         gl = {0} // default framebuffer
     }
+
+    window.white_texture = texture_from_data(1, 1, {0xFFFFFFFF})
 }
 
 init_shader :: proc(vs_path, fs_path: string) -> (sg.Shader, Shader_Error) {
@@ -193,9 +195,37 @@ remake_main_pipeline :: proc(shader: sg.Shader) {
     window.pipeline = init_pipeline(window.main_shader)
 }
 
+//////////////////////////////////////////////////////
+// note(isak): texture api
 
-texture_create :: proc(path: string) -> (Image, os.Error) {
-    result: Image
+texture_create :: proc(x, y: i32, pixels: rawptr) -> (u32, Texture_Handle) {
+    texture: u32
+    gl.CreateTextures(gl.TEXTURE_2D, 1, &texture)
+    gl.TextureStorage2D(texture, 1, gl.RGBA8, x, y)
+    gl.TextureSubImage2D(texture, 0, 0, 0, x, y, gl.RGBA, gl.UNSIGNED_BYTE, pixels)
+    
+    gl.TextureParameteri(texture, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.TextureParameteri(texture, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+
+    // note(isak): this makes texture state immutable
+    tex_handle := gl.GetTextureHandleARB(texture)
+
+    return texture, tex_handle
+}
+
+texture_from_data :: proc(x, y: i32, data_rgba: []u32) -> Texture {
+    result: Texture = {
+        x = x,
+        y = y
+    }
+    result.tex_id, result.tex_handle = texture_create(x, y, raw_data(data_rgba))
+    return result
+}
+
+texture_from_file :: proc(path: string) -> (Texture, os.Error) {
+    result: Texture
+    result.path = path
+
     data, err := read_entire_file(path)
     if err != os.General_Error.None {
         return result, err
@@ -203,17 +233,31 @@ texture_create :: proc(path: string) -> (Image, os.Error) {
     
     channels: i32
     pixels := stbi.load_from_memory(raw_data(data[:]), i32(len(data)), &result.x, &result.y, &channels, 4)
-    
-    gl.CreateTextures(gl.TEXTURE_2D, 1, &result.texture)
-    gl.TextureStorage2D(result.texture, 1, gl.RGBA8, result.x, result.y)
-    gl.TextureSubImage2D(result.texture, 0, 0, 0, result.x, result.y, gl.RGBA, gl.UNSIGNED_BYTE, pixels)
-    
-    gl.TextureParameteri(result.texture, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.TextureParameteri(result.texture, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    if channels != 4 {
+        fmt.println("image with less than 4 channels unhandled:", path)
+        assert(channels == 4)
+    }
+    result.tex_id, result.tex_handle = texture_create(result.x, result.y, pixels)
 
-    // note(isak): this makes texture state immutable
-    result.texHandle = gl.GetTextureHandleARB(result.texture)
     return result, err
+}
+
+prepare_textures_for_rendering :: proc() {
+    pbo_bind(&window.texture_buffer, 2)
+    textures := pbo_get_current(&window.texture_buffer)
+
+    textures[0] = window.white_texture.tex_handle
+
+    num_elements := 1
+    for element in Skin_Element {
+        textures[num_elements] = window.skin_textures[element].tex_handle
+        num_elements += 1
+    }
+
+
+    for i in 0..<num_elements {
+        gl.MakeTextureHandleResidentARB(textures[i])
+    }
 }
 
 

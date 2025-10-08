@@ -36,12 +36,6 @@ time_since_beginning_of_program :: proc() -> f64 {
 /*
 note(isak):
 
-mapset definition:
-.osu (core, lets you interface with existing editors)
-.notosu (additional interface, lua scripting capabilities)
-    additional .lua files (for import utilities)
-.glsl (shaders, either merged glsl or .vs.glsl/.fs.glsl)
-
 communication layer:
 core runtime info such as map time and objects
 - state buffer
@@ -61,7 +55,8 @@ input handling
 
 figure out if we need some graphical core of a playfield (i'm thinking we have some default implementation; optionally hide it and let people render whatever based on mapset data)
 
-editor mode (viewer mode only? edit functionality is probably low priority):
+editor mode:
+(viewer mode only? edit functionality is probably low priority, osu can be used for the map)
 automatic reload
 scrubbing support (jump to arbitrary time, display content)
 
@@ -88,7 +83,9 @@ window: struct {
     index_buffer: Persistent_Buffer(u32),
     texture_buffer: Persistent_Buffer(u64),
 
-    img_cursor: Image
+    white_texture: Texture,
+
+    skin_textures: [Skin_Element]Texture,
 }
 
 init_window :: proc(rect: Window_Rect) {
@@ -121,7 +118,6 @@ main :: proc() {
         os.set_current_directory(filepath.dir(current_dir))
     }
 
-
     /*
     L := lua.L_newstate()
     defer lua.close(L)
@@ -142,8 +138,9 @@ main :: proc() {
 
     init_renderer()
     
-    tex_err: os.Error
-    window.img_cursor, tex_err = texture_create("skins/gn/cursor.png")
+    // todo(isak): make a skin selector
+    load_skin_textures("skins/gn/")
+    prepare_textures_for_rendering()
 
     shaders_watch := win32_init_directory_watch("shaders/")
 
@@ -165,13 +162,10 @@ main :: proc() {
     
     - sg_desc (sg.begin) pipeline_pool_size... grow pipeline pool size to num layers in mapset?
     - create ui tree for menus?
-    - texture residency
     
-    */ 
-    
-    pbo_increment_index(&window.vertex_buffer)
-    pbo_increment_index(&window.index_buffer)
+    */
 
+    
     for active {
 
         // message handling, time handling
@@ -209,8 +203,10 @@ main :: proc() {
         
         // game update
         
+        texture := u32(current_time() - time_first_frame) % 6
+
         cursor_rect: Window_Rect = { mouse_x, mouse_y, 80, 80 }
-        push_screenspace_layout_rect(batch, cursor_rect, .CENTER, {1,1,1,1})
+        push_screenspace_layout_rect(batch, cursor_rect, .CENTER, {1,1,1,1}, texture)
         
         s := i32(math.sin_f32(f32(time_since_beginning_of_program()) * 2) * 50)
         c := i32(math.cos_f32(f32(time_since_beginning_of_program()) * 2) * 50)
@@ -248,22 +244,9 @@ main :: proc() {
     pbo_cleanup(&window.vertex_buffer)
 }
 
-first_frame := true
-
 begin_frame :: proc() {
     sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
     sg.apply_pipeline(window.pipeline)
-
-    if first_frame {
-        pbo_bind(&window.texture_buffer, 2)
-        pbo_lock(&window.texture_buffer)
-        data := pbo_get_current(&window.texture_buffer)
-        data[0] = window.img_cursor.texHandle
-        
-        gl.MakeTextureHandleResidentARB(window.img_cursor.texHandle)
-        pbo_wait(&window.texture_buffer)
-        first_frame = false
-    }
 }
 
 end_frame :: proc(batch: ^Vertex_Batch) {

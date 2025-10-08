@@ -5,7 +5,15 @@ import "core:os"
 import "core:path/filepath"
 import "core:sys/windows"
 
+/*
+mapset definition:
+- .osu (core, lets you interface with existing editors)
+- .notosu (additional interface, lua scripting capabilities)
+- .lua files (for import utilities)
+- .glsl (shaders, either merged glsl or .vs.glsl/.fs.glsl)
 
+todo(isak): lots of stuff missing here
+*/
 Mapset :: struct {
     path: string,
 

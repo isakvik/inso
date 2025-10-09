@@ -5,7 +5,8 @@ max_particles :: 1000
 
 Particle :: struct {
     rect: Rect,
-    vel: vec2
+    vel: vec2,
+    tex_index: u32
 }
 
 particles: [max_particles]Particle
@@ -13,11 +14,8 @@ particle_count: u32
 particle_next: u32
 
 
-push_particle :: proc(initial: Rect, velocity: vec2) {
-    particles[particle_next] = {
-        rect = initial,
-        vel = velocity
-    }
+push_particle :: proc(particle: Particle) {
+    particles[particle_next] = particle
     particle_next = (particle_next + 1) % max_particles
     particle_count = min(particle_count + 1, max_particles)
 }

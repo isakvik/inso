@@ -21,7 +21,9 @@ sbo_init :: proc($T: typeid, count: int) -> Storage_Buffer(T) {
     result.size = count * size_of(T)
     
     flags := u32(gl.MAP_WRITE_BIT | gl.MAP_PERSISTENT_BIT | gl.MAP_COHERENT_BIT)
-    gl.NamedBufferStorage(result.id, result.size, nil, flags)
+    create_flags := flags | gl.DYNAMIC_STORAGE_BIT
+
+    gl.NamedBufferStorage(result.id, result.size, nil, create_flags)
     mapped_ptr := gl.MapNamedBufferRange(result.id, 0, result.size, flags)
     result.data = slice.from_ptr(cast(^T) mapped_ptr, count)
 
@@ -29,7 +31,7 @@ sbo_init :: proc($T: typeid, count: int) -> Storage_Buffer(T) {
 }
 
 sbo_cleanup :: proc(buf: ^Storage_Buffer($T)) {
-    gl.DeleteBuffers(1, &buf.id);
+    gl.DeleteBuffers(1, &buf.id)
     buf.id = 0
 }
 
@@ -79,11 +81,11 @@ pbo_wait :: proc(buf: ^Persistent_Buffer($T)) {
     sync := buf.buffers[buf.current_index].sync
     if sync != nil {
         for true {
-            waitReturn := gl.ClientWaitSync(sync, gl.SYNC_FLUSH_COMMANDS_BIT, 0);
+            waitReturn := gl.ClientWaitSync(sync, gl.SYNC_FLUSH_COMMANDS_BIT, 0)
             if (waitReturn == gl.ALREADY_SIGNALED ||
                 waitReturn == gl.CONDITION_SATISFIED ||
                 waitReturn == gl.WAIT_FAILED) {
-                break;
+                break
             }
         }
     }
@@ -116,6 +118,6 @@ pbo_increment_index :: proc(buf: ^Persistent_Buffer($T)) {
 
 pbo_cleanup :: proc(buf: ^Persistent_Buffer($T)) {
     gl.UnmapNamedBuffer(buf.id)
-    gl.DeleteBuffers(1, &buf.id);
+    gl.DeleteBuffers(1, &buf.id)
     buf.id = 0
 }

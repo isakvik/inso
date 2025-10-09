@@ -108,139 +108,67 @@ cleanup_window :: proc() {
     sdl.DestroyWindow(window.handle)
 }
 
+Button_State :: struct {
+    is_down, was_down: bool
+}
+
 osu_controller: struct {
-    k1: bool,
-    k2: bool,
-    m1: bool,
-    m2: bool,
-    k1_key: sdl.Scancode,
-    k2_key: sdl.Scancode,
+    k1, k2, m1, m2: Button_State,
+    k1_key, k2_key: sdl.Scancode, //TODO(yokes): add keybinding menu
     in_gameplay: bool
 }
 
 check_game_input :: proc(event: sdl.Event) {
     osu_controller.k1_key = sdl.Scancode.Z
     osu_controller.k2_key = sdl.Scancode.X
-    if (event.type == sdl.EventType.KEY_DOWN) {
-        if (event.key.scancode == osu_controller.k1_key && osu_controller.k1 == false) {
-            osu_controller.k1 = true
-            //fmt.println("k1 pressed!")
+
+    if (event.type == sdl.EventType.KEY_DOWN) { //TODO(yokes): make this code shorter
+        if (event.key.scancode == osu_controller.k1_key) {
+            osu_controller.k1.is_down = true
         }
-        if (event.key.scancode == osu_controller.k2_key && osu_controller.k2 == false) {
-            osu_controller.k2 = true
-            //fmt.println("k2 pressed!")
+        if (event.key.scancode == osu_controller.k2_key) {
+            osu_controller.k2.is_down = true
         }
     }
     if (event.type == sdl.EventType.KEY_UP) {
         if (event.key.scancode == osu_controller.k1_key) {
-            osu_controller.k1 = false
-            //fmt.println("k1 released!")
+            osu_controller.k1.is_down = false
         }
         if (event.key.scancode == osu_controller.k2_key) {
-            osu_controller.k2 = false
-            //fmt.println("k2 released!")
+            osu_controller.k2.is_down = false
         }
     }
     if (event.type == sdl.EventType.MOUSE_BUTTON_DOWN) {
         if (event.button.button == sdl.BUTTON_LEFT) {
-            osu_controller.m1 = true
-            //fmt.println("m1 pressed!")
+            osu_controller.m1.is_down = true
         }
         if (event.button.button == sdl.BUTTON_RIGHT) {
-            osu_controller.m2 = true
-            //fmt.println("m2 pressed!")
+            osu_controller.m2.is_down = true
         }
     }
     if (event.type == sdl.EventType.MOUSE_BUTTON_UP) {
         if (event.button.button == sdl.BUTTON_LEFT) {
-            osu_controller.m1 = false
-            //fmt.println("m1 pressed!")
+            osu_controller.m1.is_down = false
         }
         if (event.button.button == sdl.BUTTON_RIGHT) {
-            osu_controller.m2 = false
-            //fmt.println("m2 pressed!")
+            osu_controller.m2.is_down = false
         }
     }
-    /*
-    if (osu_controller.k1) {
-        fmt.println("k1 held!")
-    }
-    if (osu_controller.k2) {
-        fmt.println("k2 held!")
-    }
-    if (osu_controller.m1) {
-        fmt.println("m1 held!")
-    }
-    if (osu_controller.m2) {
-        fmt.println("m2 held!")
-    }*/
 }
 
-k1_pressed :: proc(event: sdl.Event) -> bool {
-    osu_controller.k1_key = sdl.Scancode.Z
-    if (event.type == sdl.EventType.KEY_DOWN) {
-        if (event.key.scancode == osu_controller.k1_key && osu_controller.k1 == false) {
-            fmt.println("k1 pressed!")
-            osu_controller.k1 = true
-            return true
-        }
-    }
-    return false
+//NOTE(yokes): API for in-game button input
+is_held :: proc(button: Button_State) -> bool {
+    return button.is_down
 }
 
-k2_pressed :: proc(event: sdl.Event) -> bool {
-    osu_controller.k2_key = sdl.Scancode.X
-    if (event.type == sdl.EventType.KEY_DOWN) {
-        if (event.key.scancode == osu_controller.k2_key && osu_controller.k2 == false) {
-            fmt.println("k2 pressed!")
-            osu_controller.k2 = true
-            return true
-        }
-    }
-    return false
+is_pressed :: proc(button: Button_State) -> bool {
+    return button.is_down && !button.was_down
 }
 
-m1_pressed :: proc(event: sdl.Event) -> bool {
-    if (event.type == sdl.EventType.MOUSE_BUTTON_DOWN) {
-        if (event.button.button == sdl.BUTTON_LEFT && osu_controller.m1 == false) {
-            fmt.println("m1 pressed!")
-            osu_controller.m1 = true
-            return true
-        }
-    }
-    return false
+is_released :: proc(button: Button_State) -> bool {
+    return !button.is_down && button.was_down
 }
 
-m2_pressed :: proc(event: sdl.Event) -> bool {
-    if (event.type == sdl.EventType.MOUSE_BUTTON_DOWN) {
-        if (event.button.button == sdl.BUTTON_RIGHT && osu_controller.m2 == false) {
-            fmt.println("m2 pressed!")
-            osu_controller.m2 = true
-            return true
-        }
-    }
-    return false
-}
-
-any_pressed :: proc(event: sdl.Event) -> bool {
-    return (k1_pressed(event) || k2_pressed(event) || m1_pressed(event) || m2_pressed(event))
-}
-
-was_held :: proc(event: sdl.Event) -> bool {
-    if (event.type == sdl.EventType.KEY_UP) {
-        if (event.key.scancode == osu_controller.k1_key) {
-            osu_controller.k1 = false
-            //fmt.println("k1 released!")
-            return true
-        }
-    }
-    return false
-}
-
-is_held :: proc(osu_controller: bool) -> bool {
-    fmt.printfln("key held: %t", osu_controller)
-    return osu_controller
-}
 
 main :: proc() {
     _rdtsc_start_time = current_time()
@@ -397,7 +325,11 @@ main :: proc() {
     for active {
 
         // message handling, time handling
-        
+        osu_controller.k1.was_down = osu_controller.k1.is_down
+        osu_controller.k2.was_down = osu_controller.k2.is_down
+        osu_controller.m1.was_down = osu_controller.m1.is_down
+        osu_controller.m2.was_down = osu_controller.m2.is_down
+
         for sdl.PollEvent(&event) {
             if event.type == sdl.EventType.QUIT {
                 active = false
@@ -423,7 +355,13 @@ main :: proc() {
         // todo(isak): begin frame, set up mapped uniform block
 
         // game update
-        is_held(osu_controller.k1)
+        if is_pressed(osu_controller.k1) {
+            fmt.printfln("is pressed")
+        } else if is_held(osu_controller.k1) {
+            fmt.printfln("is held")
+        } else if is_released(osu_controller.k1) {
+            fmt.printfln("is released")
+        }
 
         rx += 60  * f32(dt)
         ry += 120 * f32(dt)

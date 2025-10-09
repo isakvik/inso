@@ -36,11 +36,19 @@ load_skin_textures :: proc(skin_path: string) {
             }
 
             if tex_err == os.General_Error.None {
-                break;
+                break
             }
         }
 
         // todo(isak): we handle as much as we handle here, but can supply a default skin like osu here
         assert(tex_err == os.General_Error.None)
     }
+}
+
+unload_skin_textures :: proc() {
+    texture_ids: [len(Skin_Element)]u32
+    for element in Skin_Element {
+        texture_ids[element] = window.skin_textures[element].tex_id
+    }
+    texture_delete(texture_ids[:])
 }

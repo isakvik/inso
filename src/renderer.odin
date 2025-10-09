@@ -17,6 +17,7 @@ main_vs_path :: "shaders/main.vs.glsl"
 main_fs_path :: "shaders/main.fs.glsl"
 
 batch_max_vertices :: 64*1024
+max_texture_handles :: 1024
 
 
 Layer :: enum {
@@ -106,9 +107,9 @@ init_renderer :: proc() {
     assert(err == .NONE)
 
     window.pipeline = init_pipeline(window.main_shader)
-    window.vertex_buffer = pbo_init(Vertex, 64 * 1024)
-    window.index_buffer = pbo_init(u32, 128 * 1024)
-    window.texture_buffer = pbo_init(u64, 128)
+    window.vertex_buffer = pbo_init(Vertex, batch_max_vertices)
+    window.index_buffer = pbo_init(u32, batch_max_vertices * 2)
+    window.texture_buffer = pbo_init(u64, max_texture_handles)
     
     window.pass_action = { 
         colors = {
@@ -126,6 +127,12 @@ init_renderer :: proc() {
     }
 
     window.white_texture = texture_from_data(1, 1, {0xFFFFFFFF})
+}
+
+cleanup_renderer :: proc() {
+    pbo_cleanup(&window.vertex_buffer)
+    pbo_cleanup(&window.index_buffer)
+    pbo_cleanup(&window.texture_buffer)
 }
 
 init_shader :: proc(vs_path, fs_path: string) -> (sg.Shader, Shader_Error) {
@@ -204,13 +211,17 @@ texture_create :: proc(x, y: i32, pixels: rawptr) -> (u32, Texture_Handle) {
     gl.TextureStorage2D(texture, 1, gl.RGBA8, x, y)
     gl.TextureSubImage2D(texture, 0, 0, 0, x, y, gl.RGBA, gl.UNSIGNED_BYTE, pixels)
     
-    gl.TextureParameteri(texture, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.TextureParameteri(texture, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.TextureParameteri(texture, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+    gl.TextureParameteri(texture, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
 
     // note(isak): this makes texture state immutable
     tex_handle := gl.GetTextureHandleARB(texture)
 
     return texture, tex_handle
+}
+
+texture_delete :: proc(textures: []u32) {
+    gl.DeleteTextures(i32(len(textures)), raw_data(textures))
 }
 
 texture_from_data :: proc(x, y: i32, data_rgba: []u32) -> Texture {

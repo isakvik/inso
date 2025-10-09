@@ -9,6 +9,7 @@ import "core:os"
 import "core:unicode/utf16"
 import "core:path/filepath"
 import "core:strings"
+import "core:mem/virtual"
 
 import lua "vendor:lua/5.4"
 
@@ -21,6 +22,8 @@ vec2 :: struct { x, y: f32 }
 vec3 :: struct { x, y, z: f32 }
 vec4 :: struct { x, y, z, w: f32 }
 mat4 :: matrix[4,4]f32
+
+Window_Rect :: _Rect(i32)
 
 _rdtsc_frequency := f64(sdl.GetPerformanceFrequency())
 _rdtsc_start_time: f64
@@ -65,7 +68,25 @@ scrubbing support (jump to arbitrary time, display content)
 // hey, i know you hate questions like this but i'm having a hard time getting started on getting started programming. is it better to get started with setting 
 // up your environment, or should i do all the work in my head so i can feel good about not having done anything at all? thanks, 200 word essay due tomorrow
 
-Window_Rect :: _Rect(i32)
+memory: struct {
+    // note(isak): this is to be used for mapset runtime data, such as timing state, 
+    // judgements, etc. (fill in)
+    // cleared on mapset load
+    mapset_allocator: runtime.Allocator,
+    mapset_arena: virtual.Arena,
+}
+
+// note(isak): this should take care of error printing
+init_memory :: proc() -> runtime.Allocator_Error {
+    alloc_err := virtual.arena_init_growing(&memory.mapset_arena) // note(isak): default size 1 MB
+    if alloc_err != .None {
+        fmt.println("mapset arena init error:", alloc_err)
+        return alloc_err
+    }
+    memory.mapset_allocator = virtual.arena_allocator(&memory.mapset_arena)
+
+    return .None
+}
 
 window: struct {
     rect: Window_Rect,
@@ -81,11 +102,15 @@ window: struct {
 
     vertex_buffer: Persistent_Buffer(Vertex),
     index_buffer: Persistent_Buffer(u32),
-    texture_buffer: Persistent_Buffer(u64),
+    texture_buffer: Persistent_Buffer(u64), // todo(isak): this doesn't need triple buffering
 
     white_texture: Texture,
 
     skin_textures: [Skin_Element]Texture,
+}
+
+lua_ctx: struct {
+    state: ^lua.State
 }
 
 init_window :: proc(rect: Window_Rect) {
@@ -94,7 +119,7 @@ init_window :: proc(rect: Window_Rect) {
     
     sdl.GL_SetAttribute(sdl.GL_CONTEXT_MAJOR_VERSION, 4)
     sdl.GL_SetAttribute(sdl.GL_CONTEXT_MINOR_VERSION, 6)
-    sdl.SetHint(sdl.HINT_RENDER_DRIVER, "opengl");
+    sdl.SetHint(sdl.HINT_RENDER_DRIVER, "opengl")
 
     sdl.GL_SetSwapInterval(0)
     sdl.SetWindowSurfaceVSync(window.handle, 0)
@@ -113,36 +138,50 @@ cleanup_window :: proc() {
 main :: proc() {
     _rdtsc_start_time = current_time()
 
+    if init_memory() != .None {
+        panic("memory init error")
+    }
+
     current_dir := os.get_current_directory()
     if strings.compare("build", filepath.base(current_dir)) == 0 {
         os.set_current_directory(filepath.dir(current_dir))
     }
 
-    /*
-    L := lua.L_newstate()
-    defer lua.close(L)
+
+    lua_ctx.state = lua.L_newstate()
+    defer lua.close(lua_ctx.state)
     
-    lua.L_openlibs(L)
+    lua.L_openlibs(lua_ctx.state)
     
     script: cstring = "print('Hello from Lua!')"
-    lua.L_dostring(L, script)
-    */
+    lua.L_dostring(lua_ctx.state, script)
+
 
     if (!sdl.Init(sdl.INIT_VIDEO)) {
         fmt.printfln("SDL init error: {}", sdl.GetError())
-        return;
+        return
     }
 
     init_window({w = 1280, h = 720})
     defer cleanup_window()
 
     init_renderer()
+    defer cleanup_renderer()
     
     // todo(isak): make a skin selector
     load_skin_textures("skins/gn/")
     prepare_textures_for_rendering()
 
     shaders_watch := win32_init_directory_watch("shaders/")
+
+    {
+        mapset_path := "songs/test/"
+        mapset, ok := mapset_open_for_editing(mapset_path)
+        if !ok {
+            fmt.println("tried to open mapset, but failed:", mapset_path)
+        }
+    }
+
 
     /*
         todo(isak): some research on timestep (consistent deltatime) would be prudent
@@ -155,21 +194,22 @@ main :: proc() {
     frame_count: u64
     time_first_frame := time_current_frame
 
-    active := true
-    event: sdl.Event
-
     /* todo(isak): more rendering stuff to do...
     
     - sg_desc (sg.begin) pipeline_pool_size... grow pipeline pool size to num layers in mapset?
     - create ui tree for menus?
+    - font rendering (sdl? stb_truetype?)
+    - slider rendering (dynamic texture surface)
     
     */
-
+    
+    active := true
+    event: sdl.Event
     
     for active {
 
         // message handling, time handling
-        
+
         for sdl.PollEvent(&event) {
             if event.type == sdl.EventType.QUIT {
                 active = false
@@ -203,33 +243,30 @@ main :: proc() {
         
         // game update
         
-        texture := u32(current_time() - time_first_frame) % 6
+        texture := u32(6 * (current_time() - time_first_frame)) % 6
 
         cursor_rect: Window_Rect = { mouse_x, mouse_y, 80, 80 }
         push_screenspace_layout_rect(batch, cursor_rect, .CENTER, {1,1,1,1}, texture)
-        
-        s := i32(math.sin_f32(f32(time_since_beginning_of_program()) * 2) * 50)
-        c := i32(math.cos_f32(f32(time_since_beginning_of_program()) * 2) * 50)
-        
-        _debug_rect: Window_Rect = { s + window.rect.w, c + window.rect.h, 600, 200 }
-        debug_rect := rect_translate_by_anchor(_debug_rect, .BOTTOM_RIGHT)
 
-        debug_rect2: Rect = { 0, 0, 1, 0.5 }
-        lol := rect_translate_to_inner(debug_rect2, debug_rect)
-        
-        /*
-        push_screenspace_rect(batch, debug_rect, {1,1,1,0.25})
-        push_screenspace_rect(batch, lol, {1,0,0,0.25})
-        push_screenspace_rect(batch, lol, {0,1,0,0.25})
-        //push_screenspace_rect(batch, debug_rect, {0,0,0,0.25})
-        //push_screenspace_rect(batch, lol, {0,1,0,0.25})
-        */
+        push_particle({
+            rect = to_clipspace_rect(cursor_rect), 
+            vel = {rand.float32()*2-1, rand.float32()*2-1},
+            tex_index = texture
+        })
 
+        update_particles(dt)
+        for i in 0..<particle_count {
+            push_rect(batch, particles[i].rect, {1,1,1,1}, particles[i].tex_index)
+        }
+        
         // end frame
+        
+        debug_rect: Window_Rect = { window.rect.w, window.rect.h, 600, 200 }
+        push_screenspace_layout_rect(batch, debug_rect, .BOTTOM_RIGHT, {1,1,1,0.25})
 
         end_frame(batch)
 
-        //process_main_shader_changes(&shaders_watch)
+        process_main_shader_changes(&shaders_watch)
 
         // profiling
         
@@ -240,8 +277,6 @@ main :: proc() {
             fmt.println("fps:", f64(frame_count) / (time_current_frame - time_first_frame))
         }
     }
-
-    pbo_cleanup(&window.vertex_buffer)
 }
 
 begin_frame :: proc() {

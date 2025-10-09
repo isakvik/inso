@@ -1,18 +1,26 @@
 package notosu
 
+import "core:math"
+import "core:sys/windows"
 import "base:runtime"
 import "core:fmt"
-import "core:math/linalg"
+import "core:math/rand"
+import "core:os"
+import "core:unicode/utf16"
+import "core:path/filepath"
+import "core:strings"
 
 import lua "vendor:lua/5.4"
 
+import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
 import slog "vendor:sokol/log"
 import miniaudio "vendor:miniaudio"
 
-vector3 :: struct { x, y, z: f32 }
-vec3 :: vector3
+vec2 :: struct { x, y: f32 }
+vec3 :: struct { x, y, z: f32 }
+vec4 :: struct { x, y, z, w: f32 }
 mat4 :: matrix[4,4]f32
 
 _rdtsc_frequency := f64(sdl.GetPerformanceFrequency())
@@ -29,12 +37,6 @@ time_since_beginning_of_program :: proc() -> f64 {
 /*
 note(isak):
 
-mapset definition:
-.osu (core, lets you interface with existing editors)
-.notosu (additional interface, lua scripting capabilities)
-    additional .lua files (for import utilities)
-.glsl (shaders, either merged glsl or .vs.glsl/.fs.glsl)
-
 communication layer:
 core runtime info such as map time and objects
 - state buffer
@@ -46,15 +48,16 @@ core runtime info such as map time and objects
 general:
 ui core (map selector, skin select?)
 .osu support
-win32 directory watch
-sokol pipeline rendering
 
 play mode:
-time synchronized audio play (desync proofing, essentially. check if miniaudio can be used)
+audio play (miniaudio)
+    desync proofing (always wait for sound to be able to be played, like osu (so device errors will just freeze the game))
 input handling
+
 figure out if we need some graphical core of a playfield (i'm thinking we have some default implementation; optionally hide it and let people render whatever based on mapset data)
 
-editor mode (viewer mode only? edit functionality is probably low priority):
+editor mode:
+(viewer mode only? edit functionality is probably low priority, osu can be used for the map)
 automatic reload
 scrubbing support (jump to arbitrary time, display content)
 
@@ -63,51 +66,51 @@ scrubbing support (jump to arbitrary time, display content)
 // hey, i know you hate questions like this but i'm having a hard time getting started on getting started programming. is it better to get started with setting 
 // up your environment, or should i do all the work in my head so i can feel good about not having done anything at all? thanks, 200 word essay due tomorrow
 
-Rect :: struct {
-    x, y, w, h: i32
-}
+Window_Rect :: _Rect(i32)
 
 window: struct {
-    rect: Rect,
+    rect: Window_Rect,
 
     handle: ^sdl.Window,
-    glContext: sdl.GLContext,
+    gl_context: sdl.GLContext,
 
+    main_shader: sg.Shader,
     pipeline: sg.Pipeline,
     bindings: sg.Bindings,
     pass_action: sg.Pass_Action,
     swapchain: sg.Swapchain,
 
+    vertex_buffer: Persistent_Buffer(Vertex),
+    index_buffer: Persistent_Buffer(u32),
+    texture_buffer: Persistent_Buffer(u64),
+
+    white_texture: Texture,
+
+    skin_textures: [Skin_Element]Texture,
 }
 
-init_window :: proc(rect: Rect) {
+init_window :: proc(rect: Window_Rect) {
     window.rect = rect
     window.handle = sdl.CreateWindow("notosu!", rect.w, rect.h, sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
-    window.glContext = sdl.GL_CreateContext(window.handle)
+    
+    sdl.GL_SetAttribute(sdl.GL_CONTEXT_MAJOR_VERSION, 4)
+    sdl.GL_SetAttribute(sdl.GL_CONTEXT_MINOR_VERSION, 6)
+    sdl.SetHint(sdl.HINT_RENDER_DRIVER, "opengl");
+
+    sdl.GL_SetSwapInterval(0)
+    sdl.SetWindowSurfaceVSync(window.handle, 0)
+    window.gl_context = sdl.GL_CreateContext(window.handle)
 
     sdl.GetWindowPosition(window.handle, &window.rect.x, &window.rect.y)
-
-    window.pass_action = { 
-        colors = {
-            0 = { load_action = .CLEAR, clear_value = { 0.15, 0.10, 0.23, 1 } }, 
-        }
-    }
-
-    window.swapchain = sg.Swapchain{
-        width = window.rect.w,
-        height = window.rect.h,
-        sample_count = 4,
-        color_format = .RGBA8,
-        depth_format = .DEPTH_STENCIL,
-        gl = {0} // default framebuffer
-    }
+    v := sdl.HideCursor()
 }
 
 cleanup_window :: proc() {
-    sdl.GL_DestroyContext(window.glContext)
+    sdl.GL_DestroyContext(window.gl_context)
     sdl.DestroyWindow(window.handle)
 }
 
+<<<<<<< HEAD
 Button_State :: struct {
     is_down, was_down: bool
 }
@@ -169,10 +172,18 @@ is_released :: proc(button: Button_State) -> bool {
     return !button.is_down && button.was_down
 }
 
+=======
+>>>>>>> main
 
 main :: proc() {
     _rdtsc_start_time = current_time()
 
+    current_dir := os.get_current_directory()
+    if strings.compare("build", filepath.base(current_dir)) == 0 {
+        os.set_current_directory(filepath.dir(current_dir))
+    }
+
+    /*
     L := lua.L_newstate()
     defer lua.close(L)
     
@@ -180,136 +191,23 @@ main :: proc() {
     
     script: cstring = "print('Hello from Lua!')"
     lua.L_dostring(L, script)
+    */
 
     if (!sdl.Init(sdl.INIT_VIDEO)) {
+        fmt.printfln("SDL init error: {}", sdl.GetError())
         return;
     }
 
-    init_window({w = 1024, h = 576})
+    init_window({w = 1280, h = 720})
     defer cleanup_window()
+
+    init_renderer()
     
-    sg.setup({
-        environment = { defaults = {
-                sample_count = 4,
-                color_format = sg.Pixel_Format.RGBA8,
-                depth_format = sg.Pixel_Format.DEPTH_STENCIL
-        }},
-        logger = { func = slog.func }
-    })
-    
-    window.pipeline = sg.make_pipeline({
-        shader = sg.make_shader(sg.Shader_Desc{ 
-            vertex_func = {source = `
-                #version 430
+    // todo(isak): make a skin selector
+    load_skin_textures("skins/gn/")
+    prepare_textures_for_rendering()
 
-                uniform vec4 vs_params[4];
-                layout(location = 0) in vec4 pos;
-                layout(location = 1) in vec4 color0;
-
-                out vec4 color;
-                out vec2 uv;
-            
-                void main()
-                {
-                    gl_Position = mat4(vs_params[0], vs_params[1], vs_params[2], vs_params[3]) * pos;
-                    color = color0;
-                }`},
-            fragment_func = {source = `
-                #version 430
-
-                layout(binding = 0) uniform sampler2D tex_smp;
-            
-                in vec4 color;
-                
-                out vec4 frag_color;
-            
-                void main()
-                {
-                    frag_color = color;
-                }`},
-            uniform_blocks = [8]sg.Shader_Uniform_Block{
-                0 = { stage = .VERTEX,
-                    size = 64,
-                    glsl_uniforms = [16]sg.Glsl_Shader_Uniform{
-                        0 = { type = .FLOAT4, array_count = 4, glsl_name = "vs_params" }
-                    }
-                }
-            }
-        }),
-        layout = {
-            attrs = [16]sg.Vertex_Attr_State{
-                0 = {format = sg.Vertex_Format.FLOAT3},
-                1 = {format = sg.Vertex_Format.FLOAT4},
-            }
-        },
-        index_type = .UINT16,
-        cull_mode = .BACK,
-        depth = {
-            compare = .LESS_EQUAL,
-            write_enabled = true,
-        },
-    })
-    defer sg.destroy_pipeline(window.pipeline)
-
-    
-    // cube vertex buffer
-    vertices := [?]f32 {
-        -1.0, -1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
-         1.0, -1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
-         1.0,  1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
-        -1.0,  1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
-
-        -1.0, -1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
-         1.0, -1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
-         1.0,  1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
-        -1.0,  1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
-
-        -1.0, -1.0, -1.0,   0.0, 0.0, 1.0, 1.0,
-        -1.0,  1.0, -1.0,   0.0, 0.0, 1.0, 1.0,
-        -1.0,  1.0,  1.0,   0.0, 0.0, 1.0, 1.0,
-        -1.0, -1.0,  1.0,   0.0, 0.0, 1.0, 1.0,
-
-        1.0, -1.0, -1.0,    1.0, 0.5, 0.0, 1.0,
-        1.0,  1.0, -1.0,    1.0, 0.5, 0.0, 1.0,
-        1.0,  1.0,  1.0,    1.0, 0.5, 0.0, 1.0,
-        1.0, -1.0,  1.0,    1.0, 0.5, 0.0, 1.0,
-
-        -1.0, -1.0, -1.0,   0.0, 0.5, 1.0, 1.0,
-        -1.0, -1.0,  1.0,   0.0, 0.5, 1.0, 1.0,
-         1.0, -1.0,  1.0,   0.0, 0.5, 1.0, 1.0,
-         1.0, -1.0, -1.0,   0.0, 0.5, 1.0, 1.0,
-
-        -1.0,  1.0, -1.0,   1.0, 0.0, 0.5, 1.0,
-        -1.0,  1.0,  1.0,   1.0, 0.0, 0.5, 1.0,
-         1.0,  1.0,  1.0,   1.0, 0.0, 0.5, 1.0,
-         1.0,  1.0, -1.0,   1.0, 0.0, 0.5, 1.0,
-    }
-    
-    window.bindings.vertex_buffers[0] = sg.make_buffer({
-        data = { ptr = &vertices, size = size_of(vertices) },
-    })
-    defer sg.destroy_buffer(window.bindings.vertex_buffers[0])
-
-    // create an index buffer for the cube
-    indices := [?]u16 {
-        0, 1, 2,  0, 2, 3,
-        6, 5, 4,  7, 6, 4,
-        8, 9, 10,  8, 10, 11,
-        14, 13, 12,  15, 14, 12,
-        16, 17, 18,  16, 18, 19,
-        22, 21, 20,  23, 22, 20,
-    }
-    window.bindings.index_buffer = sg.make_buffer({
-        usage = { index_buffer = true },
-        data = { ptr = &indices, size = size_of(indices) },
-    })
-    defer sg.destroy_buffer(window.bindings.index_buffer)
-
-
-    // arbitrary state
-    rx := f32(0.0)
-    ry := f32(0.0)
-
+    shaders_watch := win32_init_directory_watch("shaders/")
 
     /*
         todo(isak): some research on timestep (consistent deltatime) would be prudent
@@ -319,9 +217,20 @@ main :: proc() {
     time_last_frame := time_current_frame
     dt := 0.0
 
+    frame_count: u64
+    time_first_frame := time_current_frame
+
     active := true
     event: sdl.Event
 
+    /* todo(isak): more rendering stuff to do...
+    
+    - sg_desc (sg.begin) pipeline_pool_size... grow pipeline pool size to num layers in mapset?
+    - create ui tree for menus?
+    
+    */
+
+    
     for active {
 
         // message handling, time handling
@@ -347,14 +256,27 @@ main :: proc() {
             }
             check_game_input(event)
         }
+        
+        mouse_x, mouse_y: i32
+        mouse_xf, mouse_yf: f32
+        mouse_flags := sdl.GetGlobalMouseState(&mouse_xf, &mouse_yf)
+        sdl.GetWindowPosition(window.handle, &mouse_x, &mouse_y)
+
+        mouse_x = i32(mouse_xf) - mouse_x
+        mouse_y = i32(mouse_yf) - mouse_y
 
         time_last_frame = time_current_frame
         time_current_frame = current_time()
         dt := time_current_frame - time_last_frame
 
-        // todo(isak): begin frame, set up mapped uniform block
-
+        begin_frame()
+        
+        _batch: Vertex_Batch
+        batch := &_batch
+        batch_begin(batch)
+        
         // game update
+<<<<<<< HEAD
         if is_pressed(osu_controller.k1) {
             fmt.printfln("is pressed")
         } else if is_held(osu_controller.k1) {
@@ -362,41 +284,77 @@ main :: proc() {
         } else if is_released(osu_controller.k1) {
             fmt.printfln("is released")
         }
+=======
+        
+        texture := u32(current_time() - time_first_frame) % 6
+>>>>>>> main
 
-        rx += 60  * f32(dt)
-        ry += 120 * f32(dt)
+        cursor_rect: Window_Rect = { mouse_x, mouse_y, 80, 80 }
+        push_screenspace_layout_rect(batch, cursor_rect, .CENTER, {1,1,1,1}, texture)
+        
+        s := i32(math.sin_f32(f32(time_since_beginning_of_program()) * 2) * 50)
+        c := i32(math.cos_f32(f32(time_since_beginning_of_program()) * 2) * 50)
+        
+        _debug_rect: Window_Rect = { s + window.rect.w, c + window.rect.h, 600, 200 }
+        debug_rect := rect_translate_by_anchor(_debug_rect, .BOTTOM_RIGHT)
 
-        vs: struct {
-            mvp: mat4
-        }
-        vs.mvp = compute_mvp(rx, ry)
-
+        debug_rect2: Rect = { 0, 0, 1, 0.5 }
+        lol := rect_translate_to_inner(debug_rect2, debug_rect)
+        
+        /*
+        push_screenspace_rect(batch, debug_rect, {1,1,1,0.25})
+        push_screenspace_rect(batch, lol, {1,0,0,0.25})
+        push_screenspace_rect(batch, lol, {0,1,0,0.25})
+        //push_screenspace_rect(batch, debug_rect, {0,0,0,0.25})
+        //push_screenspace_rect(batch, lol, {0,1,0,0.25})
+        */
 
         // end frame
 
-        sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
-        sg.apply_pipeline(window.pipeline)
-        sg.apply_bindings(window.bindings)
-        sg.apply_uniforms(0, { ptr = &vs, size = size_of(mat4) })
-        sg.draw(0, 36, 1)
-        sg.end_pass()
-        sg.commit()
-        
-        sdl.GL_SwapWindow(window.handle)
+        end_frame(batch)
+
+        //process_main_shader_changes(&shaders_watch)
 
         // profiling
         
+        // todo(isak): generate osu profiling texture, draw to bottom right in screenspace
+
+        frame_count += 1
+        if frame_count % 500 == 0 {
+            fmt.println("fps:", f64(frame_count) / (time_current_frame - time_first_frame))
+        }
     }
 
+    pbo_cleanup(&window.vertex_buffer)
 }
 
-compute_mvp :: proc (rx, ry: f32) -> mat4 {
-    proj := linalg.matrix4_perspective(60.0 * linalg.RAD_PER_DEG, f32(window.rect.w) / f32(window.rect.h), 0.01, 10.0)
-    view := linalg.matrix4_look_at_f32({0.0, -1.5, -6.0}, {}, {0.0, 1.0, 0.0})
-    view_proj := proj * view
-    rxm := linalg.matrix4_rotate_f32(rx * linalg.RAD_PER_DEG, {1.0, 0.0, 0.0})
-    rym := linalg.matrix4_rotate_f32(ry * linalg.RAD_PER_DEG, {0.0, 1.0, 0.0})
-    model := rxm * rym
-    return view_proj * model
+begin_frame :: proc() {
+    sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
+    sg.apply_pipeline(window.pipeline)
 }
 
+end_frame :: proc(batch: ^Vertex_Batch) {
+    
+    batch_end(batch)
+    //sg.apply_bindings(window.bindings)
+
+    //sg.apply_uniforms(0, { ptr = &vs, size = size_of(vs) })
+    sg.end_pass()
+    sg.commit()
+    
+    sdl.GL_SwapWindow(window.handle)
+}
+
+process_main_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
+    updated_systems := mapset_check_system_file_watch(watch)
+
+    if updated_systems[.SHADERS] {
+        temp_shader, err := init_shader(main_vs_path, main_fs_path)
+        if err == .NONE {
+            fmt.println("reloaded shaders")
+            remake_main_pipeline(temp_shader)
+        } else {
+            fmt.println("shader error: {}", err)
+        }
+    }
+}

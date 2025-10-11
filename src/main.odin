@@ -9,6 +9,7 @@ import "core:os"
 import "core:unicode/utf16"
 import "core:path/filepath"
 import "core:strings"
+import "core:mem"
 import "core:mem/virtual"
 
 import lua "vendor:lua/5.4"
@@ -22,20 +23,9 @@ import miniaudio "vendor:miniaudio"
 vec2 :: struct { x, y: f32 }
 vec3 :: struct { x, y, z: f32 }
 vec4 :: struct { x, y, z, w: f32 }
+vec4_from :: proc(v: vec3, a: f32) -> vec4 { return {v.x,v.y,v.z,a}}
+
 mat4 :: matrix[4,4]f32
-
-Window_Rect :: _Rect(i32)
-
-_rdtsc_frequency := f64(sdl.GetPerformanceFrequency())
-_rdtsc_start_time: f64
-
-current_time :: proc() -> f64 {
-    return f64(sdl.GetPerformanceCounter()) / _rdtsc_frequency
-}
-
-time_since_beginning_of_program :: proc() -> f64 {
-    return current_time() - _rdtsc_start_time
-}
 
 /*
 note(isak):
@@ -91,6 +81,7 @@ init_memory :: proc() -> runtime.Allocator_Error {
 
 window: struct {
     rect: Window_Rect,
+    renderer: Renderer,
 
     handle: ^sdl.Window,
     gl_context: sdl.GLContext,
@@ -106,6 +97,7 @@ window: struct {
     texture_buffer: Persistent_Buffer(u64), // todo(isak): this doesn't need triple buffering
 
     white_texture: Texture,
+    profiler_texture: Texture,
 
     skin_textures: [Skin_Element]Texture,
 }
@@ -133,6 +125,12 @@ init_window :: proc(rect: Window_Rect) {
 cleanup_window :: proc() {
     sdl.GL_DestroyContext(window.gl_context)
     sdl.DestroyWindow(window.handle)
+}
+
+
+Mouse_State :: struct {
+    x, y: i32,
+    xf, yf: f32
 }
 
 Button_State :: struct {
@@ -197,7 +195,7 @@ is_released :: proc(button: Button_State) -> bool {
 }
 
 main :: proc() {
-    _rdtsc_start_time = current_time()
+    _program_start_time = current_time()
 
     if init_memory() != .None {
         panic("memory init error")
@@ -227,6 +225,7 @@ main :: proc() {
     defer cleanup_window()
 
     init_renderer()
+    renderer := &window.renderer
     defer cleanup_renderer()
     
     // todo(isak): make a skin selector
@@ -243,6 +242,7 @@ main :: proc() {
         }
     }
 
+    mouse: Mouse_State
 
     /*
         todo(isak): some research on timestep (consistent deltatime) would be prudent
@@ -268,108 +268,133 @@ main :: proc() {
     event: sdl.Event
     
     for active {
+        profiler_begin()
+        defer profiler_end()
 
-        // message handling, time handling
-        osu_controller.k1.was_down = osu_controller.k1.is_down
-        osu_controller.k2.was_down = osu_controller.k2.is_down
-        osu_controller.m1.was_down = osu_controller.m1.is_down
-        osu_controller.m2.was_down = osu_controller.m2.is_down
+        {
+            profiler_block_begin(.MESSAGE_HANDLING); defer profiler_block_end()
 
-        for sdl.PollEvent(&event) {
-            if event.type == sdl.EventType.QUIT {
-                active = false
-            }
-            
-            if event.type == sdl.EventType.WINDOW_RESIZED {
-                window.rect.w = event.window.data1
-                window.rect.h = event.window.data2
-                window.swapchain.width = event.window.data1
-                window.swapchain.height = event.window.data2
-            }
-            
-            if (osu_controller.in_gameplay) {
+            // message handling, time handling
+            osu_controller.k1.was_down = osu_controller.k1.is_down
+            osu_controller.k2.was_down = osu_controller.k2.is_down
+            osu_controller.m1.was_down = osu_controller.m1.is_down
+            osu_controller.m2.was_down = osu_controller.m2.is_down
+
+            for sdl.PollEvent(&event) {
+                if event.type == sdl.EventType.QUIT {
+                    active = false
+                }
+                
+                if event.type == sdl.EventType.WINDOW_RESIZED {
+                    window.rect.w = event.window.data1
+                    window.rect.h = event.window.data2
+                    window.swapchain.width = event.window.data1
+                    window.swapchain.height = event.window.data2
+                }
+
+                if event.type == sdl.EventType.KEY_DOWN {
+                    #partial switch (event.key.scancode) {
+                        case sdl.Scancode.F11:
+                            profiler_display_enabled = !profiler_display_enabled
+                    }
+                }
+                
+                if (osu_controller.in_gameplay) {
+                    check_game_input(event)
+                }
                 check_game_input(event)
             }
-            check_game_input(event)
-        }
-        
-        mouse_x, mouse_y: i32
-        mouse_xf, mouse_yf: f32
-        mouse_flags := sdl.GetGlobalMouseState(&mouse_xf, &mouse_yf)
-        sdl.GetWindowPosition(window.handle, &mouse_x, &mouse_y)
+            
+            mouse_flags := sdl.GetGlobalMouseState(&mouse.xf, &mouse.yf)
+            sdl.GetWindowPosition(window.handle, &mouse.x, &mouse.y)
 
-        mouse_x = i32(mouse_xf) - mouse_x
-        mouse_y = i32(mouse_yf) - mouse_y
-
-        time_last_frame = time_current_frame
-        time_current_frame = current_time()
-        dt := time_current_frame - time_last_frame
-
-        begin_frame()
-        
-        _batch: Vertex_Batch
-        batch := &_batch
-        batch_begin(batch)
-        
-        // game update
-        if is_pressed(osu_controller.k1) {
-            fmt.printfln("is pressed")
-        } else if is_held(osu_controller.k1) {
-            fmt.printfln("is held")
-        } else if is_released(osu_controller.k1) {
-            fmt.printfln("is released")
+            mouse.x = i32(mouse.xf) - mouse.x
+            mouse.y = i32(mouse.yf) - mouse.y
         }
 
-        texture := u32(6 * (current_time() - time_first_frame)) % 6
+        {   
+            profiler_block_begin(.PREPARE_FRAME); defer profiler_block_end() 
+            
+            time_last_frame = time_current_frame
+            time_current_frame = current_time()
+            dt = time_current_frame - time_last_frame
+            // prepare drawing
+            begin_frame(renderer)
+        }   
+        
+        {   
+            profiler_block_begin(.GAME_UPDATE); defer profiler_block_end() 
+            
+            // game update
+            if is_pressed(osu_controller.k1) {
+                fmt.printfln("is pressed")
+            } else if is_held(osu_controller.k1) {
+                fmt.printfln("is held")
+            } else if is_released(osu_controller.k1) {
+                fmt.printfln("is released")
+            }
+        }   
+        
+        {   
+            profiler_block_begin(.GAME_DRAW); defer profiler_block_end() 
+            texture := u32((current_time() - time_first_frame)) % len(Skin_Element) + len(Reserved_Texture_Slots)
 
-        cursor_rect: Window_Rect = { mouse_x, mouse_y, 80, 80 }
-        push_screenspace_layout_rect(batch, cursor_rect, .CENTER, {1,1,1,1}, texture)
+            cursor_rect: Window_Rect = { mouse.x, mouse.y, 80, 80 }
+            push_screenspace_layout_rect(renderer, cursor_rect, .CENTER, {1,1,1,1}, texture)
 
-        push_particle({
-            rect = to_clipspace_rect(cursor_rect), 
-            vel = {rand.float32()*2-1, rand.float32()*2-1},
-            tex_index = texture
-        })
+            push_particle({
+                rect = to_clipspace_rect(cursor_rect), 
+                vel = {rand.float32()*2-1, rand.float32()*2-1},
+                tex_index = texture
+            })
 
-        update_particles(dt)
-        for i in 0..<particle_count {
-            push_rect(batch, particles[i].rect, {1,1,1,1}, particles[i].tex_index)
+            update_particles(dt)
+            for i in 0..<particle_count {
+                push_rect(renderer, particles[i].rect, {1,1,1,1}, particles[i].tex_index)
+            }
+            
+            if profiler_display_enabled {
+                profiler_push_quads(renderer, frame_count)
+            }
+
+            end_frame(renderer)
+        }   
+
+        {   
+            profiler_block_begin(.SWAP_FRAME); defer profiler_block_end() 
+            swap_frame()
         }
         
-        // end frame
-        
-        debug_rect: Window_Rect = { window.rect.w, window.rect.h, 600, 200 }
-        push_screenspace_layout_rect(batch, debug_rect, .BOTTOM_RIGHT, {1,1,1,0.25})
+        {   
+            profiler_block_begin(.BETWEEN_FRAMES); defer profiler_block_end() 
 
-        end_frame(batch)
+            process_main_shader_changes(&shaders_watch)
 
-        process_main_shader_changes(&shaders_watch)
-
-        // profiling
-        
-        // todo(isak): generate osu profiling texture, draw to bottom right in screenspace
-
-        frame_count += 1
-        if frame_count % 500 == 0 {
-            fmt.println("fps:", f64(frame_count) / (time_current_frame - time_first_frame))
-        }
+            if profiler_display_enabled {
+                profiler_write_texture_column(frame_count, window.profiler_texture)
+            }
+            frame_count += 1
+        }   
     }
 }
 
-begin_frame :: proc() {
+begin_frame :: proc(renderer: ^Renderer) {
     sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
     sg.apply_pipeline(window.pipeline)
+
+    batch_begin(renderer)
 }
 
-end_frame :: proc(batch: ^Vertex_Batch) {
-    
+end_frame :: proc(batch: ^Renderer) {
     batch_end(batch)
     //sg.apply_bindings(window.bindings)
 
     //sg.apply_uniforms(0, { ptr = &vs, size = size_of(vs) })
     sg.end_pass()
     sg.commit()
-    
+}
+
+swap_frame :: proc() {
     sdl.GL_SwapWindow(window.handle)
 }
 

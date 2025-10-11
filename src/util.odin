@@ -5,6 +5,56 @@ import "core:mem/virtual"
 import "core:os"
 import "core:strings"
 
+import sdl "vendor:sdl3"
+
+//////////////////////////////////////////////////////
+// note(isak): time api
+
+_rdtsc_frequency := u64(sdl.GetPerformanceFrequency())
+_program_start_time: f64
+
+
+tsc_to_ms :: proc(tsc: u64) -> f64 {
+    return f64(tsc) / f64(_rdtsc_frequency / 1000)
+}
+
+tsc_to_s :: proc(tsc: u64) -> f64 {
+    return f64(tsc) / f64(_rdtsc_frequency)
+}
+
+current_time :: proc() -> f64 {
+    return tsc_to_s(sdl.GetPerformanceCounter())
+}
+
+time_since_beginning_of_program :: proc() -> f64 {
+    return current_time() - _program_start_time
+}
+
+
+//////////////////////////////////////////////////////
+// note(isak): color api
+
+color_none       :: vec4{0,0,0,0}
+color_white      :: vec4{1,1,1,1}
+color_black      :: vec4{0,0,0,1}
+color_red        :: vec4{1,0,0,1}
+color_green      :: vec4{0,1,0,1}
+color_blue       :: vec4{0,0,1,1}
+color_orange     :: vec4{1, 0.5, 0, 1}
+color_lime_green :: vec4{0.5, 1, 0, 1}
+color_yellow     :: vec4{1, 1, 0, 1}
+color_dark_blue  :: vec4{0, 0, 0.8, 1}
+color_purple     :: vec4{0.5, 0, 1, 1}
+
+with_alpha :: proc(v: vec4, alpha: f32) -> vec4 { return {v.x, v.y, v.z, alpha} }
+
+color_to_pixel :: proc(v: vec4) -> u32 {
+    result := u32(v.x * 0xFF)
+    result |= u32(v.y * 0xFF) << 8
+    result |= u32(v.z * 0xFF) << 16
+    result |= u32(v.w * 0xFF) << 24
+    return result
+}
 
 //////////////////////////////////////////////////////
 // note(isak): io api

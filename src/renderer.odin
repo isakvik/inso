@@ -19,6 +19,11 @@ main_fs_path :: "shaders/main.fs.glsl"
 batch_max_vertices :: 64*1024
 max_texture_handles :: 1024
 
+Reserved_Texture_Slots :: enum {
+    WHITE,
+    PROFILER
+}
+
 
 Layer :: enum {
     DEFAULT,
@@ -45,7 +50,7 @@ Vertex :: struct {
     __padding: [3]u32
 }
 
-Vertex_Batch :: struct {
+Renderer :: struct {
     vertexCount:   u32,
     indexCount:    u32,
     vertex_buffer: []Vertex,
@@ -70,18 +75,18 @@ _Rect :: struct($T: typeid) {
 }
 
 Rect :: _Rect(f32)
+Window_Rect :: _Rect(i32) // note(isak): window space rect measured in pixels
 
 Texture_Handle :: u64
 
 Texture :: struct {
     path: string,
     x, y: i32,
-    tex_id: u32, // gl assigned texture id
+    tex_id: u32, // note(isak): gl assigned texture id
     tex_handle: Texture_Handle, // note(isak): bindless handle
 }
 
 max_active_texture_resource_size :: 128 * 1024 * 1024
-
 
 //////////////////////////////////////////////////////
 // note(isak): resource api
@@ -127,6 +132,9 @@ init_renderer :: proc() {
     }
 
     window.white_texture = texture_from_data(1, 1, {0xFFFFFFFF})
+
+    profiler_pixels := new([profiler_w * profiler_h]u32)
+    window.profiler_texture = texture_from_data(profiler_w, profiler_h, profiler_pixels[:])
 }
 
 cleanup_renderer :: proc() {
@@ -213,6 +221,8 @@ texture_create :: proc(x, y: i32, pixels: rawptr) -> (u32, Texture_Handle) {
     
     gl.TextureParameteri(texture, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
     gl.TextureParameteri(texture, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.TextureParameteri(texture, gl.TEXTURE_WRAP_S, gl.REPEAT)
+    gl.TextureParameteri(texture, gl.TEXTURE_WRAP_T, gl.REPEAT)
 
     // note(isak): this makes texture state immutable
     tex_handle := gl.GetTextureHandleARB(texture)
@@ -253,13 +263,20 @@ texture_from_file :: proc(path: string) -> (Texture, os.Error) {
     return result, err
 }
 
+texture_write_to :: proc(texture: Texture, rect: Window_Rect, pixels: []u32) {
+    assert(int(rect.w * rect.h) <= len(pixels))
+    gl.TextureSubImage2D(texture.tex_id, 0, rect.x, rect.y, rect.w, rect.h, 
+        gl.RGBA, gl.UNSIGNED_BYTE, raw_data(pixels))
+}
+
 prepare_textures_for_rendering :: proc() {
     pbo_bind(&window.texture_buffer, 2)
     textures := pbo_get_current(&window.texture_buffer)
 
-    textures[0] = window.white_texture.tex_handle
+    textures[Reserved_Texture_Slots.WHITE] = window.white_texture.tex_handle
+    textures[Reserved_Texture_Slots.PROFILER] = window.profiler_texture.tex_handle
+    num_elements := len(Reserved_Texture_Slots)
 
-    num_elements := 1
     for element in Skin_Element {
         textures[num_elements] = window.skin_textures[element].tex_handle
         num_elements += 1
@@ -275,7 +292,7 @@ prepare_textures_for_rendering :: proc() {
 //////////////////////////////////////////////////////
 // note(isak): draw api
 
-batch_begin :: proc(batch: ^Vertex_Batch) {
+batch_begin :: proc(batch: ^Renderer) {
     pbo_bind(&window.vertex_buffer, 0)
     pbo_bind(&window.index_buffer, 1)
     pbo_lock(&window.vertex_buffer)
@@ -288,7 +305,7 @@ batch_begin :: proc(batch: ^Vertex_Batch) {
     batch.index_buffer = pbo_get_current(&window.index_buffer)
 }
 
-batch_end :: proc(batch: ^Vertex_Batch) {
+batch_end :: proc(batch: ^Renderer) {
     pbo_wait(&window.vertex_buffer)
     pbo_wait(&window.index_buffer)
 
@@ -298,26 +315,28 @@ batch_end :: proc(batch: ^Vertex_Batch) {
     pbo_increment_index(&window.index_buffer)
 }
 
-push_quad :: proc(batch: ^Vertex_Batch, pos1, pos2, pos3, pos4: vec2, color: vec4, tex_index: u32) {
-    if batch.vertexCount + 4 > batch_max_vertices {
-        batch_end(batch)
-        batch_begin(batch)
+
+push_quad_with_uvs :: proc(renderer: ^Renderer, pos1, uv1, pos2, uv2, pos3, uv3, pos4, uv4: vec2, 
+                           color: vec4, tex_index: u32) {
+    if renderer.vertexCount + 4 > batch_max_vertices {
+        batch_end(renderer)
+        batch_begin(renderer)
     }
     
     #no_bounds_check {
-        vert_i := batch.vertexCount
-        verts := batch.vertex_buffer
-        verts[vert_i + 0].pos = pos1; verts[vert_i + 0].uv = {0, 0}
-        verts[vert_i + 1].pos = pos2; verts[vert_i + 1].uv = {1, 0}
-        verts[vert_i + 2].pos = pos3; verts[vert_i + 2].uv = {0, 1}
-        verts[vert_i + 3].pos = pos4; verts[vert_i + 3].uv = {1, 1}
+        vert_i := renderer.vertexCount
+        verts := renderer.vertex_buffer
+        verts[vert_i + 0].pos = pos1; verts[vert_i + 0].uv = uv1
+        verts[vert_i + 1].pos = pos2; verts[vert_i + 1].uv = uv2
+        verts[vert_i + 2].pos = pos3; verts[vert_i + 2].uv = uv3
+        verts[vert_i + 3].pos = pos4; verts[vert_i + 3].uv = uv4
         for i in 0..<4 {
             verts[vert_i + u32(i)].color = color
             verts[vert_i + u32(i)].tex_index = tex_index
         }
 
-        index_i := batch.indexCount
-        indices := batch.index_buffer
+        index_i := renderer.indexCount
+        indices := renderer.index_buffer
         indices[index_i + 0] = vert_i + 0
         indices[index_i + 1] = vert_i + 2
         indices[index_i + 2] = vert_i + 1
@@ -325,27 +344,35 @@ push_quad :: proc(batch: ^Vertex_Batch, pos1, pos2, pos3, pos4: vec2, color: vec
         indices[index_i + 4] = vert_i + 2
         indices[index_i + 5] = vert_i + 3
 
-        batch.vertexCount += 4
-        batch.indexCount += 6
+        renderer.vertexCount += 4
+        renderer.indexCount += 6
     }
 }
 
-push_rect :: proc(batch: ^Vertex_Batch, rect: _Rect(f32), color: vec4, tex_index: u32 = 0) {
-    push_quad(batch, {rect.x,          rect.y         },
-                     {rect.x,          rect.y + rect.h},
-                     {rect.x + rect.w, rect.y         },
-                     {rect.x + rect.w, rect.y + rect.h}, color, tex_index)
+push_quad :: proc(renderer: ^Renderer, pos1, pos2, pos3, pos4: vec2, color: vec4, tex_index: u32) {
+    push_quad_with_uvs(renderer, 
+                       pos1, {0, 0}, 
+                       pos2, {0, 1}, 
+                       pos3, {1, 0}, 
+                       pos4, {1, 1}, color, tex_index)
 }
 
-push_screenspace_rect :: proc(batch: ^Vertex_Batch, rect: Window_Rect, color: vec4, tex_index: u32 = 0) {
-    push_rect(batch, to_clipspace_rect(rect), color, tex_index)
+push_rect :: proc(renderer: ^Renderer, rect: _Rect(f32), color: vec4, tex_index: u32 = 0) {
+    push_quad(renderer, {rect.x,          rect.y         },
+                        {rect.x,          rect.y + rect.h},
+                        {rect.x + rect.w, rect.y         },
+                        {rect.x + rect.w, rect.y + rect.h}, color, tex_index)
 }
 
-push_layout_rect :: proc(batch: ^Vertex_Batch, rect: _Rect($T), anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
-    push_rect(batch, rect_translate_by_anchor(rect, anchor), color, tex_index) 
+push_screenspace_rect :: proc(renderer: ^Renderer, rect: Window_Rect, color: vec4, tex_index: u32 = 0) {
+    push_rect(renderer, to_clipspace_rect(rect), color, tex_index)
 }
-push_screenspace_layout_rect :: proc(batch: ^Vertex_Batch, rect: _Rect($T), anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
-    push_screenspace_rect(batch, rect_translate_by_anchor(rect, anchor), color, tex_index) 
+
+push_layout_rect :: proc(renderer: ^Renderer, rect: _Rect($T), anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
+    push_rect(renderer, rect_translate_by_anchor(rect, anchor), color, tex_index) 
+}
+push_screenspace_layout_rect :: proc(renderer: ^Renderer, rect: _Rect($T), anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
+    push_screenspace_rect(renderer, rect_translate_by_anchor(rect, anchor), color, tex_index) 
 }
 
 

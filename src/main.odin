@@ -143,9 +143,16 @@ osu_controller: struct {
     in_gameplay: bool
 }
 
+rebind_input :: proc(event: sdl.Event) {
+    if (event.type == sdl.EventType.KEY_DOWN) {
+        osu_controller.k1_key = event.key.scancode
+        fmt.printfln("key set to {}", event.key.scancode)
+    }
+}
+
 check_game_input :: proc(event: sdl.Event) {
-    osu_controller.k1_key = sdl.Scancode.Z
-    osu_controller.k2_key = sdl.Scancode.X
+    //osu_controller.k1_key = sdl.Scancode.Z
+    //osu_controller.k2_key = sdl.Scancode.X
 
     if (event.type == sdl.EventType.KEY_DOWN) { //TODO(yokes): make this code shorter
         if (event.key.scancode == osu_controller.k1_key) {
@@ -303,7 +310,11 @@ main :: proc() {
                     check_game_input(event)
                 }
                 check_game_input(event)
+
+                if is_held(osu_controller.m1) && is_held(osu_controller.m2) {
+                rebind_input(event)
             }
+        }
             
             mouse_flags := sdl.GetGlobalMouseState(&mouse.xf, &mouse.yf)
             sdl.GetWindowPosition(window.handle, &mouse.x, &mouse.y)

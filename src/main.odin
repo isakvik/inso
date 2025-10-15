@@ -337,12 +337,18 @@ main :: proc() {
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end() 
             
             // game update
+            key_input_rect: Rect = { 1, 0.5, 0.05, 0.1 } //TODO(yokes): write in terms of window.rect
             if is_pressed(osu_controller.k1) {
+                //push_layout_rect(&window.renderer, key_input_rect, .CENTER, {1,1,1,1})
                 fmt.printfln("is pressed")
             } else if is_held(osu_controller.k1) {
+                push_layout_rect(&window.renderer, key_input_rect, .BOTTOM_RIGHT, {1,1,1,1})
+                //push_screenspace_layout_rect(&window.renderer, {window.rect.x})
                 fmt.printfln("is held")
             } else if is_released(osu_controller.k1) {
                 fmt.printfln("is released")
+            } else {
+                push_layout_rect(&window.renderer, key_input_rect, .BOTTOM_RIGHT, {0.5,0.5,0.5,1})
             }
         }   
         

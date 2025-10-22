@@ -143,9 +143,9 @@ osu_controller: struct {
     in_gameplay: bool
 }
 
-rebind_input :: proc(event: sdl.Event) {
+rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
     if (event.type == sdl.EventType.KEY_DOWN) {
-        osu_controller.k1_key = event.key.scancode
+        rebind := event.key.scancode //TODO(yokes): this doesn't work, osu_controller.k1_key = event.key.scancode works
         fmt.printfln("key set to {}", event.key.scancode)
     }
 }
@@ -199,6 +199,19 @@ is_pressed :: proc(button: Button_State) -> bool {
 
 is_released :: proc(button: Button_State) -> bool {
     return !button.is_down && button.was_down
+}
+
+input_display :: proc(key: Button_State, rect: Window_Rect, anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
+    if is_pressed(key) {
+        push_screenspace_layout_rect(&window.renderer, rect, anchor, color, tex_index)
+    } else if is_held(key) {
+        push_screenspace_layout_rect(&window.renderer, rect, anchor, color, tex_index)
+    } else if is_released(key) {
+        push_screenspace_layout_rect(&window.renderer, rect, anchor, {0.2,0.2,0.2,1}, tex_index)
+    } else {
+        push_screenspace_layout_rect(&window.renderer, rect, anchor, {0.2,0.2,0.2,1}, tex_index)
+        //push_layout_rect(&window.renderer, key_input_rect, .BOTTOM_RIGHT, {0.5,0.5,0.5,1})
+    }
 }
 
 main :: proc() {
@@ -311,10 +324,14 @@ main :: proc() {
                 }
                 check_game_input(event)
 
-                if is_held(osu_controller.m1) && is_held(osu_controller.m2) {
-                rebind_input(event)
+                if is_held(osu_controller.m1) {
+                    rebind_input(event, &osu_controller.k1_key)
+                }
+
+                if is_held(osu_controller.m2) {
+                    rebind_input(event, &osu_controller.k2_key)
+                }
             }
-        }
             
             mouse_flags := sdl.GetGlobalMouseState(&mouse.xf, &mouse.yf)
             sdl.GetWindowPosition(window.handle, &mouse.x, &mouse.y)
@@ -337,19 +354,10 @@ main :: proc() {
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end() 
             
             // game update
-            key_input_rect: Rect = { 1, 0.5, 0.05, 0.1 } //TODO(yokes): write in terms of window.rect
-            if is_pressed(osu_controller.k1) {
-                //push_layout_rect(&window.renderer, key_input_rect, .CENTER, {1,1,1,1})
-                fmt.printfln("is pressed")
-            } else if is_held(osu_controller.k1) {
-                push_layout_rect(&window.renderer, key_input_rect, .BOTTOM_RIGHT, {1,1,1,1})
-                //push_screenspace_layout_rect(&window.renderer, {window.rect.x})
-                fmt.printfln("is held")
-            } else if is_released(osu_controller.k1) {
-                fmt.printfln("is released")
-            } else {
-                push_layout_rect(&window.renderer, key_input_rect, .BOTTOM_RIGHT, {0.5,0.5,0.5,1})
-            }
+            input_display(osu_controller.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
+            input_display(osu_controller.k2, { window.rect.w, window.rect.h / 2, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
+            input_display(osu_controller.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
+            input_display(osu_controller.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
         }   
         
         {   

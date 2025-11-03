@@ -2,7 +2,7 @@ package notosu
 
 import "core:mem/virtual"
 import "core:fmt"
-import "core:os"
+import os "core:os/os2"
 import "core:path/filepath"
 import "core:sys/windows"
 

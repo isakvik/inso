@@ -12,6 +12,8 @@ import sdl "vendor:sdl3"
 profiler_w :: i32(600)
 profiler_h :: i32(200)
 
+fps_average_running_frame_count :: 1000
+
 profiler_pixels: [profiler_h]u32
 profiler_frame_pixel_count: i32
 
@@ -19,7 +21,9 @@ profiler: struct {
     trace_points: [Trace_Blocks]Trace_Block_Timer,
     start_tsc: u64,
 
-    prev_frame_blocks_elapsed: [Trace_Blocks]u64
+    prev_frame_blocks_elapsed: [Trace_Blocks]u64,
+    frame_times: [fps_average_running_frame_count]u64,
+    next_frame_time_at: i32
 }
 
 _profiler_current_open_block: Trace_Blocks
@@ -64,6 +68,18 @@ profiler_begin :: proc() {
     profiler.start_tsc = sdl.GetPerformanceCounter()
 }
 
+profiler_end :: proc() {
+    total_elapsed_tsc := sdl.GetPerformanceCounter() - profiler.start_tsc
+
+    profiler.frame_times[profiler.next_frame_time_at] = total_elapsed_tsc
+    profiler.next_frame_time_at = (profiler.next_frame_time_at + 1) % fps_average_running_frame_count
+
+    for profiler_block in Trace_Blocks {
+        profiler.prev_frame_blocks_elapsed[profiler_block] =
+            profiler.trace_points[profiler_block].elapsed_tsc
+    }
+}
+
 profiler_block_begin :: proc(block: Trace_Blocks) {
     assert(_profiler_current_open_block == .NONE)
     _profiler_current_open_block = block
@@ -77,15 +93,6 @@ profiler_block_end :: proc() {
     
     assert(_profiler_current_open_block != .NONE)
     _profiler_current_open_block = .NONE
-}
-
-profiler_end :: proc() {
-    total_elapsed_tsc := sdl.GetPerformanceCounter() - profiler.start_tsc
-
-    for profiler_block in Trace_Blocks {
-        profiler.prev_frame_blocks_elapsed[profiler_block] =
-            profiler.trace_points[profiler_block].elapsed_tsc
-    }
 }
 
 profiler_write_texture_column :: proc(frame_count: u64, texture: Texture) {
@@ -120,16 +127,26 @@ profiler_write_texture_column :: proc(frame_count: u64, texture: Texture) {
         profiler_pixels[:])
 }
 
-profiler_push_quads :: proc(renderer: ^Renderer, frame_count: u64) {
+profiler_push_quads :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), frame_count: u64) {
     pixel_shift := i32(frame_count % u64(profiler_w))
     pixel_shift_clipspace := f32(pixel_shift) / f32(profiler_w)
 
     profiler_rect: Window_Rect = { window.rect.w, window.rect.h, profiler_w, profiler_h }
     r := to_clipspace_rect(rect_translate_by_anchor(profiler_rect, .BOTTOM_RIGHT))
-    push_quad_with_uvs(renderer, {r.x,       r.y      }, {0 + pixel_shift_clipspace, 1},
-                                 {r.x,       r.y + r.h}, {0 + pixel_shift_clipspace, 0},
-                                 {r.x + r.w, r.y      }, {1 + pixel_shift_clipspace, 1},
-                                 {r.x + r.w, r.y + r.h}, {1 + pixel_shift_clipspace, 0}, 
+    push_quad_with_uvs(geometry, {r.x,       r.y      }, {0 + pixel_shift_clipspace, 0},
+                                 {r.x,       r.y + r.h}, {0 + pixel_shift_clipspace, 1},
+                                 {r.x + r.w, r.y      }, {1 + pixel_shift_clipspace, 0},
+                                 {r.x + r.w, r.y + r.h}, {1 + pixel_shift_clipspace, 1}, 
                                  color_white, u32(Reserved_Texture_Slots.PROFILER))
       
+}
+
+profiler_get_fps :: proc() -> f64 {
+    cum_frame_time_tsc: u64
+    for frame_time in profiler.frame_times {
+        cum_frame_time_tsc += frame_time
+    }
+
+    s_per_n_frames := tsc_to_s(cum_frame_time_tsc)
+    return fps_average_running_frame_count / s_per_n_frames
 }

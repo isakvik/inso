@@ -1,6 +1,6 @@
 package notosu
 
-import "core:os"
+import os "core:os/os2"
 import "core:strings"
 
 
@@ -21,6 +21,10 @@ Skin_Element_Path := #partial [Skin_Element]string {
 }
 
 supported_image_extensions :: []string{".png", ".jpg"}
+
+skin_texture_slot :: proc(tex_id: Skin_Element) -> u32 { 
+    return u32(tex_id) + len(Reserved_Texture_Slots) 
+}
 
 load_skin_textures :: proc(skin_path: string) {
 

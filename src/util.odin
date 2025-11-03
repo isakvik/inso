@@ -2,7 +2,7 @@ package notosu
 
 import "core:fmt"
 import "core:mem/virtual"
-import "core:os"
+import os "core:os/os2"
 import "core:strings"
 
 import sdl "vendor:sdl3"
@@ -61,9 +61,9 @@ color_to_pixel :: proc(v: vec4) -> u32 {
 
 read_entire_file :: proc(path: string, allocator := context.allocator) -> ([]u8, os.Error) {
     result: []u8
-    err: os.Error
-    for len(result) == 0 && err == 0 {
-        result, err = os.read_entire_file_or_err(path, allocator)
+    err: os.Error = os.General_Error.None
+    for len(result) == 0 && err == os.General_Error.None {
+        result, err = os.read_entire_file_from_path(path, allocator)
     }
     return result, err
 }
@@ -78,6 +78,12 @@ read_entire_file_to_string :: proc(path: string, allocator := context.allocator)
 // note(isak): memory api
 
 arena_default_alignment :: 16
+
+bytes     :: proc(v: int) -> int {return v * 1}
+kilobytes :: proc(v: int) -> int {return v * 1024}
+megabytes :: proc(v: int) -> int {return v * 1024 * 1024}
+gigabytes :: proc(v: int) -> int {return v * 1024 * 1024 * 1024}
+
 
 arena_push :: proc(arena: ^virtual.Arena, $T: typeid) -> (^T, virtual.Allocator_Error) {
     data, err := virtual.arena_alloc(arena, size_of(T), arena_default_alignment)

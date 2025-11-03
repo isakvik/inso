@@ -1,38 +1,38 @@
 package notosu
 
-import "core:c/libc"
+import "base:runtime"
+import "core:mem"
+import "core:math/linalg"
 import "core:fmt"
-import "core:os"
+import "core:math"
+import os "core:os/os2"
+import "core:slice"
 import "core:strings"
+import "core:container/queue"
 
 import gl "vendor:OpenGL"
-import sdl "vendor:sdl3"
-import sdli "vendor:sdl3/image"
 import sg "vendor:sokol/gfx"
 import slog "vendor:sokol/log"
-import stbi "vendor:stb/image"
 
 
 main_vs_path :: "shaders/main.vs.glsl"
 main_fs_path :: "shaders/main.fs.glsl"
 
+slider_vs_path :: "shaders/slider.vs.glsl"
+slider_fs_path :: "shaders/slider.fs.glsl"
+
 batch_max_vertices :: 64*1024
 max_texture_handles :: 1024
+max_slider_draw_commands :: 1024
+
 
 Reserved_Texture_Slots :: enum {
     WHITE,
-    PROFILER
+    PROFILER,
+    SLIDER_FRAMEBUFFER
 }
 
-
-Layer :: enum {
-    DEFAULT,
-    BACKGROUND,
-    FOREGROUND,
-    HIT_OBJECT,
-    OVERLAY,
-    DEBUG
-}
+reserved_texture :: proc(slot: Reserved_Texture_Slots) -> u32 { return u32(slot) }
 
 
 Shader_Error :: enum {
@@ -42,7 +42,7 @@ Shader_Error :: enum {
     COMPILE_ERROR,
 }
 
-Vertex :: struct {
+Quad_Vertex :: struct {
     pos:   vec2,
     uv:    vec2,
     color: vec4,
@@ -50,11 +50,40 @@ Vertex :: struct {
     __padding: [3]u32
 }
 
+Slider_Vertex :: struct {
+    pos: vec3,
+    __padding: u32,
+}
+
+Buffer :: struct(T: typeid) {
+    count: i32,
+    data: []T,
+    size: i32
+}
+
+buffer_push :: proc(buf: ^Buffer($T), t: T) {
+    assert(buf.count + 1 < buf.size)
+    buf.data[buf.count] = t
+    buf.count += 1
+}
+
+Geometry_Buffer :: struct(T: typeid) {
+    vertices: Buffer(T),
+    indices: Buffer(u32),
+}
+
 Renderer :: struct {
-    vertexCount:   u32,
-    indexCount:    u32,
-    vertex_buffer: []Vertex,
-    index_buffer:  []u32,
+    quad_geometry: Geometry_Buffer(Quad_Vertex),
+    slider_instances: Buffer(vec2),
+    slider_draw_commands: Buffer(Command_Draw),
+    
+    circle_geometry: Buffer(Slider_Vertex),
+    //fullscreen_geometry: Geometry_Buffer(Quad_Vertex),
+
+    command_queue: queue.Queue(u8),
+
+    current_draw: ^Command_Draw,
+    null_draw: Command_Draw,
 }
 
 
@@ -88,11 +117,14 @@ Texture :: struct {
 
 max_active_texture_resource_size :: 128 * 1024 * 1024
 
+unit_circle_vertex_count :: 32
+
 //////////////////////////////////////////////////////
 // note(isak): resource api
 
-init_renderer :: proc() {
-    gl.load_up_to(4, 6, sdl.gl_set_proc_address)
+renderer_init :: proc() {
+    renderer := &window.renderer
+    renderer.current_draw = &renderer.null_draw
 
     sg.setup(
         {
@@ -108,14 +140,23 @@ init_renderer :: proc() {
     )
 
     err: Shader_Error
-    window.main_shader, err = init_shader(main_vs_path, main_fs_path)
+    window.quad_shader, err = init_shader(main_vs_path, main_fs_path, main_uniform_desc())
     assert(err == .NONE)
+    window.quad_pipeline = sg.make_pipeline(main_pipeline(window.quad_shader))
 
-    window.pipeline = init_pipeline(window.main_shader)
-    window.vertex_buffer = pbo_init(Vertex, batch_max_vertices)
-    window.index_buffer = pbo_init(u32, batch_max_vertices * 2)
-    window.texture_buffer = pbo_init(u64, max_texture_handles)
+    window.slider_shader, err = init_shader(slider_vs_path, slider_fs_path, slider_uniform_desc())
+    assert(err == .NONE)
+    window.slider_pipeline = sg.make_pipeline(slider_pipeline(window.slider_shader))
     
+    window.quad_store.vertex_buffer = tbo_init(Quad_Vertex, batch_max_vertices)
+    window.quad_store.index_buffer = tbo_init(u32, batch_max_vertices * 2)
+    window.slider_instance_store = tbo_init(vec2, batch_max_vertices)
+    
+    window.fullscreen_store.vertex_buffer = sbo_init(Quad_Vertex, 4)
+    window.fullscreen_store.index_buffer = sbo_init(u32, 6)
+    window.texture_buffer = sbo_init(u64, max_texture_handles)
+    window.transform_buffer = sbo_init(Transform, 1)
+
     window.pass_action = { 
         colors = {
             0 = { load_action = .CLEAR, clear_value = { 0.15, 0.10, 0.23, 1 } }, 
@@ -127,7 +168,7 @@ init_renderer :: proc() {
         height = window.rect.h,
         sample_count = 4,
         color_format = .RGBA8,
-        depth_format = .DEPTH_STENCIL,
+        //depth_format = .DEPTH_STENCIL,
         gl = {0} // default framebuffer
     }
 
@@ -135,146 +176,218 @@ init_renderer :: proc() {
 
     profiler_pixels := new([profiler_w * profiler_h]u32)
     window.profiler_texture = texture_from_data(profiler_w, profiler_h, profiler_pixels[:])
+
+    circle_buffer_vertex_count := unit_circle_vertex_count + 2
+    window.circle_buffer = sbo_init(Slider_Vertex, circle_buffer_vertex_count)
+    renderer.circle_geometry = Buffer(Slider_Vertex) { 
+        data = window.circle_buffer.data,
+        size = i32(circle_buffer_vertex_count)
+    }
+    populate_slider_circle_vertices(&renderer.circle_geometry)
+
+    fullscreen_geometry := Geometry_Buffer(Quad_Vertex) {
+        vertices = { 
+            data = window.fullscreen_store.vertex_buffer.data,
+            size = batch_max_vertices
+        },
+        indices = { 
+            data = window.fullscreen_store.index_buffer.data,
+            size = batch_max_vertices
+        }
+    }
+    push_rect(&fullscreen_geometry, 
+        {-1,-1,2,2}, {1,1,1,0.5}, reserved_texture(.SLIDER_FRAMEBUFFER))
+    
+    renderer.slider_instances.size = batch_max_vertices
+    
+    renderer.slider_draw_commands.data = new([max_slider_draw_commands]Command_Draw)[:]
+    renderer.slider_draw_commands.size = max_slider_draw_commands
+
+    commit_transform({
+        bounds_rect = {-1,-1,2,2},
+        aspect_ratio = window.aspect_ratio
+    })
+
+    alloc_err: runtime.Allocator_Error
+    alloc_err = queue.init(&renderer.command_queue, megabytes(1), memory.command_buffer_allocator)
+    assert(alloc_err == .None)
+    if alloc_err != .None {
+        fmt.println("command queue init error:", alloc_err)
+    }
 }
 
-cleanup_renderer :: proc() {
-    pbo_cleanup(&window.vertex_buffer)
-    pbo_cleanup(&window.index_buffer)
-    pbo_cleanup(&window.texture_buffer)
+renderer_cleanup :: proc() {
+    tbo_cleanup(&window.quad_store.vertex_buffer)
+    tbo_cleanup(&window.quad_store.index_buffer)
+    tbo_cleanup(&window.slider_instance_store)
+    
+    sbo_cleanup(&window.fullscreen_store.vertex_buffer)
+    sbo_cleanup(&window.fullscreen_store.index_buffer)
+    sbo_cleanup(&window.circle_buffer)
+    sbo_cleanup(&window.texture_buffer)
+    sbo_cleanup(&window.transform_buffer)
 }
 
-init_shader :: proc(vs_path, fs_path: string) -> (sg.Shader, Shader_Error) {
+
+main_pipeline :: proc(shader: sg.Shader) -> sg.Pipeline_Desc {
+    return {
+        label = "main",
+        shader = shader,
+        //index_type = .UINT16,
+        cull_mode = .NONE,
+        blend_color = {1.0, 1.0, 1.0, 1.0},
+        colors = [4]sg.Color_Target_State {
+            0 = { blend = {
+                enabled = true,
+                op_alpha = .SUBTRACT,
+                src_factor_rgb = .SRC_ALPHA,
+                src_factor_alpha = .SRC_ALPHA,
+                dst_factor_rgb = .ONE_MINUS_SRC_ALPHA,
+                dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
+            }}
+        },
+        //depth = {compare = .LESS_EQUAL, write_enabled = true},
+    },
+}
+
+// note(isak): i didn't get these to work... might not be better than ssbos anyway
+main_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block {
+    return {}
+}
+
+slider_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block {
+    return {}
+}
+
+slider_pipeline :: proc(shader: sg.Shader) -> sg.Pipeline_Desc {
+    return {
+        label = "main.slider",
+        shader = shader,
+        //index_type = .UINT16,
+        cull_mode = .NONE,
+        blend_color = {1.0, 1.0, 1.0, 1.0},
+        colors = [4]sg.Color_Target_State {
+            0 = { blend = {
+                enabled = false,
+                op_alpha = .MAX,
+                src_factor_rgb = .ONE,
+                src_factor_alpha = .ONE,
+                dst_factor_rgb = .ONE,
+                dst_factor_alpha = .ONE,
+            }}
+        },
+        depth = {compare = .LESS_EQUAL, write_enabled = true},
+    }
+}
+
+
+init_shader :: proc(vs_path, fs_path: string, uniform_desc: [8]sg.Shader_Uniform_Block) -> (sg.Shader, Shader_Error) {
     vs_filedata, vs_err := read_entire_file(vs_path)
     if vs_err != os.ERROR_NONE {
         fmt.printfln("loading vert shader file '{}' failed: {}", vs_path, vs_err)
-        return window.main_shader, .READ_ERROR
+        return {}, .READ_ERROR
     }
     fs_filedata, fs_err := read_entire_file(fs_path)
     if fs_err != os.ERROR_NONE {
         fmt.printfln("loading frag shader file '{}' failed: {}", fs_path, fs_err)
-        return window.main_shader, .READ_ERROR
+        return {}, .READ_ERROR
     }
 
     if (vs_err != os.ERROR_NONE) || (fs_err != os.ERROR_NONE) {
-        return window.main_shader, .PATH_ERROR
+        return {}, .PATH_ERROR
     }
 
     temp_shader := sg.make_shader(
         sg.Shader_Desc {
             vertex_func = {source = strings.unsafe_string_to_cstring(string(vs_filedata))},
             fragment_func = {source = strings.unsafe_string_to_cstring(string(fs_filedata))},
-            /*uniform_blocks = [8]sg.Shader_Uniform_Block {
-                0 = {
-                    stage = .VERTEX,
-                    size = 64,
-                    glsl_uniforms = [16]sg.Glsl_Shader_Uniform {
-                        0 = {type = .FLOAT4, array_count = 4, glsl_name = "vs_params"},
-                    },
-                },
-            },*/
+            uniform_blocks = uniform_desc
         },
     )
 
     if sg.query_shader_state(temp_shader) == sg.Resource_State.VALID {
         return temp_shader, .NONE
     }
-    return window.main_shader, .COMPILE_ERROR
+    sg.destroy_shader(temp_shader)
+    return {}, .COMPILE_ERROR
 }
 
-init_pipeline :: proc(shader: sg.Shader) -> sg.Pipeline {
-    return sg.make_pipeline(
-        {
-            shader = shader,
-            //index_type = .UINT16,
-            cull_mode = .BACK,
-            blend_color = {1.0, 1.0, 1.0, 1.0},
-            colors = [4]sg.Color_Target_State {
-                0 = { blend = {
-                    enabled = true,
-                    op_alpha = .SUBTRACT,
-                    src_factor_rgb = .SRC_ALPHA,
-                    src_factor_alpha = .SRC_ALPHA,
-                    dst_factor_rgb = .ONE_MINUS_SRC_ALPHA,
-                    dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
-                }}
-            },
-            depth = {compare = .LESS_EQUAL, write_enabled = true},
-        },
-    )
+reinit_shader :: proc(shader: ^sg.Shader, vs_path, fs_path: string, uniform_desc: [8]sg.Shader_Uniform_Block) -> Shader_Error {
+    new_shader, err := init_shader(vs_path, fs_path, uniform_desc)
+    if err != .NONE {
+        assert(err == .COMPILE_ERROR)
+        fmt.println("Shader compile errors found. Paths:", vs_path, fs_path)
+        return err
+    }
+    sg.destroy_shader(shader^)
+    shader^ = new_shader
+    return err
 }
 
-remake_main_pipeline :: proc(shader: sg.Shader) {
-    sg.destroy_shader(window.main_shader)
-    sg.destroy_pipeline(window.pipeline)
-    window.main_shader = shader
-    window.pipeline = init_pipeline(window.main_shader)
+reinit_pipeline :: proc(pipeline: ^sg.Pipeline, pipeline_desc: sg.Pipeline_Desc) {
+    sg.destroy_pipeline(pipeline^)
+    pipeline^ = sg.make_pipeline(pipeline_desc)
+}
+
+//////////////////////////////////////////////////////
+// note(isak): command queue api
+
+Command_Type :: enum(u8) {
+    SET_BOUNDS,
+    DRAW,
+}
+
+Command_Header :: struct {
+    command_type: Command_Type
+}
+
+Command_Set_Bounds :: struct {
+    transform: Transform
+}
+
+Command_Draw :: struct {
+    index_offset: u32,
+    index_count: i32,
+    base_instance: u32,
+    instance_count: i32
+}
+
+_command_push_header :: proc(type: Command_Type) -> bool {
+    ok, err := queue.push_back(&window.renderer.command_queue, u8(type))
+    assert(err == .None)
+    return ok
+}
+
+_command_push :: proc(cmd: $T, type: Command_Type) -> bool {
+    cmd := cmd
+    ok := _command_push_header(type)
+    if ok {
+        err: runtime.Allocator_Error
+        cmd_data: []u8 = slice.from_ptr((^u8)(&cmd), size_of(T))
+        ok, err = queue.push_back_elems(&window.renderer.command_queue, ..cmd_data)
+        assert(err == .None)
+    }
+    assert(ok)
+    return ok
+}
+
+command_push_set_bounds :: proc(cmd: Command_Set_Bounds) -> bool {
+    return _command_push(cmd, .SET_BOUNDS)
+}
+
+command_push_draw :: proc(cmd: Command_Draw) -> bool { 
+    return _command_push(cmd, .DRAW)
 }
 
 //////////////////////////////////////////////////////
 // note(isak): texture api
 
-texture_create :: proc(x, y: i32, pixels: rawptr) -> (u32, Texture_Handle) {
-    texture: u32
-    gl.CreateTextures(gl.TEXTURE_2D, 1, &texture)
-    gl.TextureStorage2D(texture, 1, gl.RGBA8, x, y)
-    gl.TextureSubImage2D(texture, 0, 0, 0, x, y, gl.RGBA, gl.UNSIGNED_BYTE, pixels)
-    
-    gl.TextureParameteri(texture, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-    gl.TextureParameteri(texture, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-    gl.TextureParameteri(texture, gl.TEXTURE_WRAP_S, gl.REPEAT)
-    gl.TextureParameteri(texture, gl.TEXTURE_WRAP_T, gl.REPEAT)
-
-    // note(isak): this makes texture state immutable
-    tex_handle := gl.GetTextureHandleARB(texture)
-
-    return texture, tex_handle
-}
-
-texture_delete :: proc(textures: []u32) {
-    gl.DeleteTextures(i32(len(textures)), raw_data(textures))
-}
-
-texture_from_data :: proc(x, y: i32, data_rgba: []u32) -> Texture {
-    result: Texture = {
-        x = x,
-        y = y
-    }
-    result.tex_id, result.tex_handle = texture_create(x, y, raw_data(data_rgba))
-    return result
-}
-
-texture_from_file :: proc(path: string) -> (Texture, os.Error) {
-    result: Texture
-    result.path = path
-
-    data, err := read_entire_file(path)
-    if err != os.General_Error.None {
-        return result, err
-    }
-    
-    channels: i32
-    pixels := stbi.load_from_memory(raw_data(data[:]), i32(len(data)), &result.x, &result.y, &channels, 4)
-    if channels != 4 {
-        fmt.println("image with less than 4 channels unhandled:", path)
-        assert(channels == 4)
-    }
-    result.tex_id, result.tex_handle = texture_create(result.x, result.y, pixels)
-
-    return result, err
-}
-
-texture_write_to :: proc(texture: Texture, rect: Window_Rect, pixels: []u32) {
-    assert(int(rect.w * rect.h) <= len(pixels))
-    gl.TextureSubImage2D(texture.tex_id, 0, rect.x, rect.y, rect.w, rect.h, 
-        gl.RGBA, gl.UNSIGNED_BYTE, raw_data(pixels))
-}
-
 prepare_textures_for_rendering :: proc() {
-    pbo_bind(&window.texture_buffer, 2)
-    textures := pbo_get_current(&window.texture_buffer)
+    textures := &window.texture_buffer.data
 
     textures[Reserved_Texture_Slots.WHITE] = window.white_texture.tex_handle
     textures[Reserved_Texture_Slots.PROFILER] = window.profiler_texture.tex_handle
+    textures[Reserved_Texture_Slots.SLIDER_FRAMEBUFFER] = window.slider_framebuffer.color_texture_handles[0]
     num_elements := len(Reserved_Texture_Slots)
 
     for element in Skin_Element {
@@ -282,99 +395,236 @@ prepare_textures_for_rendering :: proc() {
         num_elements += 1
     }
 
-
     for i in 0..<num_elements {
         gl.MakeTextureHandleResidentARB(textures[i])
     }
 }
 
-
-//////////////////////////////////////////////////////
-// note(isak): draw api
-
-batch_begin :: proc(batch: ^Renderer) {
-    pbo_bind(&window.vertex_buffer, 0)
-    pbo_bind(&window.index_buffer, 1)
-    pbo_lock(&window.vertex_buffer)
-    pbo_lock(&window.index_buffer)
-
-    batch.vertexCount = 0
-    batch.indexCount = 0
-
-    batch.vertex_buffer = pbo_get_current(&window.vertex_buffer)
-    batch.index_buffer = pbo_get_current(&window.index_buffer)
-}
-
-batch_end :: proc(batch: ^Renderer) {
-    pbo_wait(&window.vertex_buffer)
-    pbo_wait(&window.index_buffer)
-
-    sg.draw(0, batch.indexCount, 1)
-
-    pbo_increment_index(&window.vertex_buffer)
-    pbo_increment_index(&window.index_buffer)
-}
-
-
-push_quad_with_uvs :: proc(renderer: ^Renderer, pos1, uv1, pos2, uv2, pos3, uv3, pos4, uv4: vec2, 
-                           color: vec4, tex_index: u32) {
-    if renderer.vertexCount + 4 > batch_max_vertices {
-        batch_end(renderer)
-        batch_begin(renderer)
-    }
+cleanup_textures_for_rendering :: proc() {
+    textures := &window.texture_buffer.data
     
-    #no_bounds_check {
-        vert_i := renderer.vertexCount
-        verts := renderer.vertex_buffer
-        verts[vert_i + 0].pos = pos1; verts[vert_i + 0].uv = uv1
-        verts[vert_i + 1].pos = pos2; verts[vert_i + 1].uv = uv2
-        verts[vert_i + 2].pos = pos3; verts[vert_i + 2].uv = uv3
-        verts[vert_i + 3].pos = pos4; verts[vert_i + 3].uv = uv4
-        for i in 0..<4 {
-            verts[vert_i + u32(i)].color = color
-            verts[vert_i + u32(i)].tex_index = tex_index
-        }
-
-        index_i := renderer.indexCount
-        indices := renderer.index_buffer
-        indices[index_i + 0] = vert_i + 0
-        indices[index_i + 1] = vert_i + 2
-        indices[index_i + 2] = vert_i + 1
-        indices[index_i + 3] = vert_i + 1
-        indices[index_i + 4] = vert_i + 2
-        indices[index_i + 5] = vert_i + 3
-
-        renderer.vertexCount += 4
-        renderer.indexCount += 6
+    num_elements := len(Reserved_Texture_Slots) + len(Skin_Element)
+    for i in 0..<num_elements {
+        gl.MakeTextureHandleNonResidentARB(textures[i])
     }
 }
 
-push_quad :: proc(renderer: ^Renderer, pos1, pos2, pos3, pos4: vec2, color: vec4, tex_index: u32) {
-    push_quad_with_uvs(renderer, 
+
+///////////////////////////////////////////////////////////////////////////
+// note(isak): draw api - PS: we use our nice global window.renderer here to make the api easier
+
+commit_transform :: proc(transform: Transform) {
+    window.transform_buffer.data[0] = transform
+}
+
+reset_transform :: proc() {
+    push_transform({
+        bounds_rect = {-1, -1, 2, 2}, 
+        aspect_ratio = window.aspect_ratio
+    })
+}
+
+push_transform :: proc(transform: Transform) -> bool {
+    return command_push_set_bounds({
+        transform = transform
+    })
+}
+
+begin_draw_with_transform :: proc(transform: Transform) -> bool {
+    renderer := window.renderer
+
+    command_push_set_bounds({
+        transform = transform
+    }) or_return
+
+    current_index_count := renderer.current_draw != nil ? renderer.current_draw.index_count : 0
+    current_index_offset := renderer.current_draw != nil ? renderer.current_draw.index_offset : 0
+
+    command_push_draw({ 
+        index_offset = current_index_offset + u32(current_index_count),
+        instance_count = 1
+    }) or_return
+
+    cmds := &renderer.command_queue
+    renderer.current_draw = transmute(^Command_Draw)&cmds.data[cmds.len - size_of(Command_Draw)]
+    return true
+}
+
+batch_begin :: proc(renderer: ^Renderer) {
+    tbo_reset(&window.quad_store.vertex_buffer)
+    tbo_reset(&window.quad_store.index_buffer)
+    tbo_reset(&window.slider_instance_store)
+
+    tbo_lock(&window.quad_store.vertex_buffer)
+    tbo_lock(&window.quad_store.index_buffer)
+    tbo_lock(&window.slider_instance_store)
+
+    renderer.quad_geometry.vertices.data = tbo_get_current(&window.quad_store.vertex_buffer)
+    renderer.quad_geometry.vertices.count = 0
+    renderer.quad_geometry.indices.data = tbo_get_current(&window.quad_store.index_buffer)
+    renderer.quad_geometry.indices.count = 0
+
+    renderer.slider_instances.data = tbo_get_current(&window.slider_instance_store)
+    renderer.slider_instances.count = 0
+
+    renderer.slider_draw_commands.count = 0
+
+    renderer.current_draw.index_count = 0
+    renderer.current_draw.index_offset = 0
+}
+
+batch_end :: proc(renderer: ^Renderer) {
+    tbo_wait(&window.quad_store.vertex_buffer)
+    tbo_wait(&window.quad_store.index_buffer)
+    tbo_wait(&window.slider_instance_store)
+    
+    tbo_bind(&window.quad_store.vertex_buffer, 0)
+    tbo_bind(&window.quad_store.index_buffer, 1)
+    sbo_bind(&window.texture_buffer, 2)
+    sbo_bind(&window.circle_buffer, 3)
+    tbo_bind(&window.slider_instance_store, 4)
+    sbo_bind(&window.transform_buffer, 5)
+
+    sg.apply_pipeline(window.quad_pipeline)
+    
+    sg.draw(0, renderer.quad_geometry.indices.count, 1)
+
+    sbo_bind(&window.fullscreen_store.vertex_buffer, 0)
+    sbo_bind(&window.fullscreen_store.index_buffer, 1)
+    
+    // todo(isak): gl.MultiDrawArraysIndirect() gave me an error and a headache from trying to debug it
+    // might have to figure it out someday but for now we're just drawing in a loop
+
+    for i in 0..<renderer.slider_draw_commands.count {
+        sg.apply_pipeline(window.slider_pipeline)
+        
+        fbo_bind_write(window.slider_framebuffer)
+        gl.ClearColor(0,0,0,0)
+        gl.ClearDepth(1.0)
+        gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+        cmd := renderer.slider_draw_commands.data[i]
+        gl.DrawArraysInstancedBaseInstance(gl.TRIANGLE_FAN, 0, renderer.circle_geometry.count,
+                                           cmd.instance_count, cmd.base_instance)
+        fbo_bind_read(window.slider_framebuffer)
+
+        sg.apply_pipeline(window.quad_pipeline)
+        sg.draw(0, 6, 1)
+    }
+
+    fbo_unbind(window.slider_framebuffer)
+}
+
+
+write_quad_indices :: proc(indices: []u32, index_at, vert: i32) {
+    indices[index_at + 0] = u32(vert) + 0
+    indices[index_at + 1] = u32(vert) + 2
+    indices[index_at + 2] = u32(vert) + 1
+    indices[index_at + 3] = u32(vert) + 1
+    indices[index_at + 4] = u32(vert) + 2
+    indices[index_at + 5] = u32(vert) + 3
+}
+
+push_quad_with_uvs :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), pos1, uv1, pos2, uv2, pos3, uv3, pos4, uv4: vec2, 
+                           color: vec4, tex_index: u32) {
+    if geometry.vertices.count + 4 > batch_max_vertices {
+        batch_end(&window.renderer)
+        batch_begin(&window.renderer)
+    }
+
+    #no_bounds_check {
+        vert_i := geometry.vertices.count
+        verts := geometry.vertices.data
+        verts[vert_i + 0] = {
+            pos = {pos1.x, pos1.y},
+            uv = uv1,
+            color = color,
+            tex_index = tex_index
+        }
+        verts[vert_i + 1] = {
+            pos = {pos2.x, pos2.y},
+            uv = uv2,
+            color = color,
+            tex_index = tex_index
+        }
+        verts[vert_i + 2] = {
+            pos = {pos3.x, pos3.y},
+            uv = uv3,
+            color = color,
+            tex_index = tex_index
+        }
+        verts[vert_i + 3] = {
+            pos = {pos4.x, pos4.y},
+            uv = uv4,
+            color = color,
+            tex_index = tex_index
+        }
+        
+        write_quad_indices(geometry.indices.data, geometry.indices.count, vert_i)
+        geometry.vertices.count += 4
+        geometry.indices.count += 6
+
+        window.renderer.current_draw.index_count += 6
+    }
+}
+
+push_quad :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), pos1, pos2, pos3, pos4: vec2, color: vec4, tex_index: u32) {
+    push_quad_with_uvs(geometry, 
                        pos1, {0, 0}, 
                        pos2, {0, 1}, 
                        pos3, {1, 0}, 
                        pos4, {1, 1}, color, tex_index)
 }
 
-push_rect :: proc(renderer: ^Renderer, rect: _Rect(f32), color: vec4, tex_index: u32 = 0) {
-    push_quad(renderer, {rect.x,          rect.y         },
-                        {rect.x,          rect.y + rect.h},
-                        {rect.x + rect.w, rect.y         },
-                        {rect.x + rect.w, rect.y + rect.h}, color, tex_index)
+push_xywh :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), x, y, w, h: f32, color: vec4, tex_index: u32) {
+    push_quad_with_uvs(geometry, 
+                       {x,     y    }, {0, 0}, 
+                       {x,     y + h}, {0, 1}, 
+                       {x + w, y    }, {1, 0}, 
+                       {x + w, y + h}, {1, 1}, color, tex_index)
 }
 
-push_screenspace_rect :: proc(renderer: ^Renderer, rect: Window_Rect, color: vec4, tex_index: u32 = 0) {
-    push_rect(renderer, to_clipspace_rect(rect), color, tex_index)
+push_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: _Rect(f32), color: vec4, tex_index: u32 = 0) {
+    push_quad_with_uvs(geometry, {rect.x,          rect.y         }, {0, 0},
+                                 {rect.x,          rect.y + rect.h}, {0, 1},
+                                 {rect.x + rect.w, rect.y         }, {1, 0},
+                                 {rect.x + rect.w, rect.y + rect.h}, {1, 1}, color, tex_index)
 }
 
-push_layout_rect :: proc(renderer: ^Renderer, rect: _Rect($T), anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
-    push_rect(renderer, rect_translate_by_anchor(rect, anchor), color, tex_index) 
-}
-push_screenspace_layout_rect :: proc(renderer: ^Renderer, rect: _Rect($T), anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
-    push_screenspace_rect(renderer, rect_translate_by_anchor(rect, anchor), color, tex_index) 
+push_screenspace_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Window_Rect, color: vec4, tex_index: u32 = 0) {
+    push_rect(geometry, to_clipspace_rect(rect), color, tex_index)
 }
 
+push_layout_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: _Rect($T), anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
+    push_rect(geometry, rect_translate_by_anchor(rect, anchor), color, tex_index) 
+}
+
+push_screenspace_layout_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: _Rect($T), anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
+    push_screenspace_rect(geometry, rect_translate_by_anchor(rect, anchor), color, tex_index) 
+}
+
+
+populate_slider_circle_vertices :: proc(geometry: ^Buffer(Slider_Vertex)) {
+    #no_bounds_check {
+        vert_i := geometry.count
+        verts := geometry.data
+
+        // note(isak): the middle of our circle is raised for depth testing
+        verts[vert_i + 0] = { pos = { 0, 0, 1 } }
+        verts[vert_i + 1 + unit_circle_vertex_count] = { pos = { 0, 1, 0 } }
+
+        th: f32
+        it_angle := math.TAU * (f32(1) / unit_circle_vertex_count)
+        for i in 0..<unit_circle_vertex_count {
+            verts[int(vert_i) + i + 1] = { 
+                pos = { math.sin_f32(th), math.cos_f32(th), 0 }
+            }
+            th += it_angle
+        }
+
+        geometry.count = 2 + unit_circle_vertex_count
+    }
+}
 
 //////////////////////////////////////////////////////
 // note(isak): layout api
@@ -450,11 +700,12 @@ rect_translate_to_inner :: proc {
 
 
 to_clipspace_rect :: proc(rect: Window_Rect) -> _Rect(f32) {
+    inv_ar := 1 / window.aspect_ratio
     return {
-        x = f32(rect.x) / f32(window.rect.w),
-        y = f32(rect.y) / f32(window.rect.h),
-        w = f32(rect.w) / f32(window.rect.w),
-        h = f32(rect.h) / f32(window.rect.h)
+        x = (f32(rect.x) / f32(window.rect.w) * 2 * inv_ar) - inv_ar,
+        y = (f32(rect.y) / f32(window.rect.h) * 2) - 1,
+        w = (f32(rect.w) / f32(window.rect.w) * 2 * inv_ar),
+        h = (f32(rect.h) / f32(window.rect.h) * 2),
     }
 }
 
@@ -466,25 +717,3 @@ to_screenspace_rect :: proc(rect: _Rect(f32)) -> Window_Rect {
         h = i32(rect.h * f32(window.rect.h))
     }
 }
-
-// not needed...?
-rect_translate_to_window :: proc(inner: _Rect(f32)) -> _Rect(f32) {
-    return {
-        x = inner.x / f32(window.rect.w),
-        y = inner.y / f32(window.rect.h),
-        w = inner.w / f32(window.rect.w),
-        h = inner.h / f32(window.rect.h)
-    }
-}
-
-/*
-layout_rect_translate_to_window :: proc(inner: Layout_Rect) -> Rect {
-    i := rect_translate_by_anchor(inner.rect, inner.anchor)
-    return {
-        x = i.x / f32(window.rect.w),
-        y = i.y / f32(window.rect.h),
-        w = i.w / f32(window.rect.w),
-        h = i.h / f32(window.rect.h)
-    }
-}
-*/

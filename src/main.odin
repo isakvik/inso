@@ -1,31 +1,29 @@
 package notosu
 
-import "core:math"
-import "core:sys/windows"
+import "core:container/queue"
+import "core:mem"
 import "base:runtime"
 import "core:fmt"
+import "core:math/linalg"
 import "core:math/rand"
-import "core:os"
-import "core:unicode/utf16"
+import "core:mem/virtual"
+import os "core:os/os2"
 import "core:path/filepath"
 import "core:strings"
-import "core:mem"
-import "core:mem/virtual"
 
 import lua "vendor:lua/5.4"
 
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
-import slog "vendor:sokol/log"
 import miniaudio "vendor:miniaudio"
 
-vec2 :: struct { x, y: f32 }
-vec3 :: struct { x, y, z: f32 }
-vec4 :: struct { x, y, z, w: f32 }
-vec4_from :: proc(v: vec3, a: f32) -> vec4 { return {v.x,v.y,v.z,a}}
+vec2 :: linalg.Vector2f32
+vec3 :: linalg.Vector3f32
+vec4 :: linalg.Vector4f32
 
-mat4 :: matrix[4,4]f32
+mat3 :: linalg.Matrix3x3f32
+mat4 :: linalg.Matrix4x4f32
 
 /*
 note(isak):
@@ -56,45 +54,73 @@ scrubbing support (jump to arbitrary time, display content)
 
 */
 
-// hey, i know you hate questions like this but i'm having a hard time getting started on getting started programming. is it better to get started with setting 
-// up your environment, or should i do all the work in my head so i can feel good about not having done anything at all? thanks, 200 word essay due tomorrow
-
 memory: struct {
     // note(isak): this is to be used for mapset runtime data, such as timing state, 
     // judgements, etc. (fill in)
     // cleared on mapset load
     mapset_allocator: runtime.Allocator,
+    frame_allocator: runtime.Allocator,
+    command_buffer_allocator: runtime.Allocator,
+
     mapset_arena: virtual.Arena,
+    frame_arena: virtual.Arena,
+    command_buffer_arena: virtual.Arena,
 }
 
-// note(isak): this should take care of error printing
-init_memory :: proc() -> runtime.Allocator_Error {
-    alloc_err := virtual.arena_init_growing(&memory.mapset_arena) // note(isak): default size 1 MB
+init_growing_arena :: proc(arena: ^virtual.Arena, alloc: ^runtime.Allocator, size_MB: uint = 1) -> runtime.Allocator_Error {
+    alloc_err := virtual.arena_init_growing(arena, size_MB)
     if alloc_err != .None {
         fmt.println("mapset arena init error:", alloc_err)
         return alloc_err
     }
-    memory.mapset_allocator = virtual.arena_allocator(&memory.mapset_arena)
-
+    alloc^ = virtual.arena_allocator(arena)
     return .None
+}
+
+// note(isak): this should take care of error printing
+init_memory :: proc() -> runtime.Allocator_Error {
+    init_growing_arena(&memory.mapset_arena, &memory.mapset_allocator)
+    init_growing_arena(&memory.frame_arena, &memory.frame_allocator)
+    init_growing_arena(&memory.command_buffer_arena, &memory.command_buffer_allocator)
+    return .None
+}
+
+Dynamic_Geometry_Store :: struct(T: typeid) {
+    vertex_buffer: GL_Triple_Buffer(T),
+    index_buffer: GL_Triple_Buffer(u32),
+}
+
+Static_Geometry_Store :: struct(T: typeid) {
+    vertex_buffer: GL_Buffer(T),
+    index_buffer: GL_Buffer(u32),
 }
 
 window: struct {
     rect: Window_Rect,
+    aspect_ratio: f32, // note(isak): height over width
     renderer: Renderer,
 
     handle: ^sdl.Window,
     gl_context: sdl.GLContext,
 
-    main_shader: sg.Shader,
-    pipeline: sg.Pipeline,
     bindings: sg.Bindings,
     pass_action: sg.Pass_Action,
     swapchain: sg.Swapchain,
 
-    vertex_buffer: Persistent_Buffer(Vertex),
-    index_buffer: Persistent_Buffer(u32),
-    texture_buffer: Persistent_Buffer(u64), // todo(isak): this doesn't need triple buffering
+    fullscreen_store: Static_Geometry_Store(Quad_Vertex), // note(isak): deferred rendering quad store
+
+    quad_shader: sg.Shader,
+    quad_pipeline: sg.Pipeline,
+    quad_store: Dynamic_Geometry_Store(Quad_Vertex),
+    
+    slider_shader: sg.Shader,
+    slider_pipeline: sg.Pipeline,
+    slider_framebuffer: GL_Framebuffer,
+    slider_instance_store: GL_Triple_Buffer(vec2),
+    
+    transform_buffer: GL_Buffer(Transform),
+    circle_buffer: GL_Buffer(Slider_Vertex),
+    texture_buffer: GL_Buffer(u64),
 
     white_texture: Texture,
     profiler_texture: Texture,
@@ -102,35 +128,62 @@ window: struct {
     skin_textures: [Skin_Element]Texture,
 }
 
+Transform :: struct {
+    bounds_rect: vec4,
+    aspect_ratio: f32,
+    cs_in_osupx: f32,
+}
+
+default_transform :: Transform{
+    bounds_rect = {-1, -1, 2, 2},
+    aspect_ratio = 1
+}
+
 lua_ctx: struct {
     state: ^lua.State
 }
 
-init_window :: proc(rect: Window_Rect) {
+window_init :: proc(rect: Window_Rect) {
     window.rect = rect
     window.handle = sdl.CreateWindow("notosu!", rect.w, rect.h, sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
-    
+    window.aspect_ratio = f32(rect.h) / f32(rect.w)
+
     sdl.GL_SetAttribute(sdl.GL_CONTEXT_MAJOR_VERSION, 4)
     sdl.GL_SetAttribute(sdl.GL_CONTEXT_MINOR_VERSION, 6)
     sdl.SetHint(sdl.HINT_RENDER_DRIVER, "opengl")
 
     sdl.GL_SetSwapInterval(0)
     sdl.SetWindowSurfaceVSync(window.handle, 0)
+
     window.gl_context = sdl.GL_CreateContext(window.handle)
+    gl.load_up_to(4, 6, sdl.gl_set_proc_address)
 
     sdl.GetWindowPosition(window.handle, &window.rect.x, &window.rect.y)
-    v := sdl.HideCursor()
+
+    _ignored := sdl.HideCursor()
 }
 
-cleanup_window :: proc() {
+window_resize :: proc(new_w, new_h: i32) {
+    window.rect.w = new_w
+    window.rect.h = new_h
+    window.swapchain.width = new_w
+    window.swapchain.height = new_h
+    window.aspect_ratio = f32(new_h) / f32(new_w)
+
+    if window.slider_framebuffer.id > 0 {
+        fbo_cleanup(&window.slider_framebuffer)
+    }
+    window.slider_framebuffer = fbo_init(1, 1, new_w, new_h, gl.RGBA8)
+}
+
+window_cleanup :: proc() {
     sdl.GL_DestroyContext(window.gl_context)
     sdl.DestroyWindow(window.handle)
 }
 
 
 Mouse_State :: struct {
-    x, y: i32,
-    xf, yf: f32
+    x, y: i32
 }
 
 Button_State :: struct {
@@ -201,9 +254,9 @@ main :: proc() {
         panic("memory init error")
     }
 
-    current_dir := os.get_current_directory()
+    current_dir, dir_error := os.get_working_directory(context.allocator)
     if strings.compare("build", filepath.base(current_dir)) == 0 {
-        os.set_current_directory(filepath.dir(current_dir))
+        os.set_working_directory(filepath.dir(current_dir))
     }
 
 
@@ -221,12 +274,14 @@ main :: proc() {
         return
     }
 
-    init_window({w = 1280, h = 720})
-    defer cleanup_window()
+    window_init({w = 1280, h = 720})
+    defer window_cleanup()
 
-    init_renderer()
+    renderer_init()
     renderer := &window.renderer
-    defer cleanup_renderer()
+    defer renderer_cleanup()
+
+    window_resize(window.rect.w, window.rect.h)
     
     // todo(isak): make a skin selector
     load_skin_textures("skins/gn/")
@@ -266,6 +321,9 @@ main :: proc() {
     
     active := true
     event: sdl.Event
+
+    make_test_slider(&test_slider, 0)
+    make_test_slider(&test_slider2, 1)
     
     for active {
         profiler_begin()
@@ -286,10 +344,9 @@ main :: proc() {
                 }
                 
                 if event.type == sdl.EventType.WINDOW_RESIZED {
-                    window.rect.w = event.window.data1
-                    window.rect.h = event.window.data2
-                    window.swapchain.width = event.window.data1
-                    window.swapchain.height = event.window.data2
+                    cleanup_textures_for_rendering()
+                    window_resize(event.window.data1, event.window.data2)
+                    prepare_textures_for_rendering()
                 }
 
                 if event.type == sdl.EventType.KEY_DOWN {
@@ -305,11 +362,12 @@ main :: proc() {
                 check_game_input(event)
             }
             
-            mouse_flags := sdl.GetGlobalMouseState(&mouse.xf, &mouse.yf)
+            xf, yf: f32
+            mouse_flags := sdl.GetGlobalMouseState(&xf, &yf)
             sdl.GetWindowPosition(window.handle, &mouse.x, &mouse.y)
 
-            mouse.x = i32(mouse.xf) - mouse.x
-            mouse.y = i32(mouse.yf) - mouse.y
+            mouse.x = i32(xf) - mouse.x
+            mouse.y = i32(yf) - mouse.y
         }
 
         {   
@@ -318,6 +376,7 @@ main :: proc() {
             time_last_frame = time_current_frame
             time_current_frame = current_time()
             dt = time_current_frame - time_last_frame
+
             // prepare drawing
             begin_frame(renderer)
         }   
@@ -333,63 +392,132 @@ main :: proc() {
             } else if is_released(osu_controller.k1) {
                 fmt.printfln("is released")
             }
-        }   
+        }
         
-        {   
-            profiler_block_begin(.GAME_DRAW); defer profiler_block_end() 
-            texture := u32((current_time() - time_first_frame)) % len(Skin_Element) + len(Reserved_Texture_Slots)
+        {
+            /*
+                we want to put bounds calculations on the gpu, so shader and draw command pipeline
+                has to support this. this means we need a queue for uniform upload and draw commands
+                
+                so the frame procedure becomes:
+                begin frame:
+                - lock, etc.
+                - write default bounds
 
+                write quads
+                write playfield quads
+                write playfield sliders
+
+                write procedure:
+                - write into quad buf
+                - write bounds change
+                    write batch command for quads up to this point
+                - write more quads
+                - write sliders
+
+                render procedure:
+                - tbo_wait
+                - for each command
+                    if bounds update
+                        upload (or select from set of bounds, but is there a good reason for that?)
+                    if draw
+                        issue draw call
+                - reset command buf
+
+                on batch full:
+                - render
+                    (settings are kept by driver state machine)
+                - tbo_lock
+
+                end frame:
+                - render
+            */
+            profiler_block_begin(.GAME_DRAW); defer profiler_block_end()
+
+            begin_draw_with_transform(default_transform)
+
+            // bounds testers
+            push_rect(&renderer.quad_geometry, {-1,-1,1,1}, color_red)
+            push_rect(&renderer.quad_geometry, {0,0,1,1}, color_red)
+            
             cursor_rect: Window_Rect = { mouse.x, mouse.y, 80, 80 }
-            push_screenspace_layout_rect(renderer, cursor_rect, .CENTER, {1,1,1,1}, texture)
-
-            push_particle({
-                rect = to_clipspace_rect(cursor_rect), 
-                vel = {rand.float32()*2-1, rand.float32()*2-1},
-                tex_index = texture
+            push_screenspace_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_red, skin_texture_slot(.CURSOR))
+            
+            // playfield
+            begin_draw_with_transform({
+                bounds_rect = {-1/512, -1/512, 2/512, 2/512},
+                aspect_ratio = 1,
+                cs_in_osupx = 48
             })
 
-            update_particles(dt)
-            for i in 0..<particle_count {
-                push_rect(renderer, particles[i].rect, {1,1,1,1}, particles[i].tex_index)
-            }
-            
-            if profiler_display_enabled {
-                profiler_push_quads(renderer, frame_count)
-            }
+            push_slider(renderer, &test_slider)
+            push_slider(renderer, &test_slider2)
 
+            if profiler_display_enabled {
+                begin_draw_with_transform(default_transform)
+                profiler_push_quads(&renderer.quad_geometry, frame_count)
+            }
             end_frame(renderer)
-        }   
+        }
 
         {   
             profiler_block_begin(.SWAP_FRAME); defer profiler_block_end() 
             swap_frame()
         }
         
-        {   
+        {
             profiler_block_begin(.BETWEEN_FRAMES); defer profiler_block_end() 
 
             process_main_shader_changes(&shaders_watch)
 
             if profiler_display_enabled {
                 profiler_write_texture_column(frame_count, window.profiler_texture)
+
+                if frame_count % 100 == 0 {
+                    fmt.println("fps:", profiler_get_fps())
+                }
             }
             frame_count += 1
-        }   
+
+            virtual.arena_free_all(&memory.frame_arena)
+        }
     }
 }
 
 begin_frame :: proc(renderer: ^Renderer) {
     sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
-    sg.apply_pipeline(window.pipeline)
-
+    
+    //gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE)
+    
     batch_begin(renderer)
+    reset_transform()
 }
 
-end_frame :: proc(batch: ^Renderer) {
-    batch_end(batch)
-    //sg.apply_bindings(window.bindings)
+end_frame :: proc(renderer: ^Renderer) {
+    batch_end(renderer)
+    
+    //
+    for renderer.command_queue.len > 0 {
+        cmd_type := queue.pop_front(&renderer.command_queue)
 
-    //sg.apply_uniforms(0, { ptr = &vs, size = size_of(vs) })
+        switch(Command_Type(cmd_type)) {
+            case .SET_BOUNDS: {
+                cmd := (^Command_Set_Bounds)(queue.front_ptr(&renderer.command_queue))
+                queue.consume_front(&renderer.command_queue, size_of(Command_Set_Bounds))
+
+                fmt.println("set bounds", cmd.transform.bounds_rect.x, cmd.transform.bounds_rect.y, cmd.transform.bounds_rect.z, cmd.transform.bounds_rect.w)
+            }
+            case .DRAW: {
+                cmd := (^Command_Draw)(queue.front_ptr(&renderer.command_queue))
+                queue.consume_front(&renderer.command_queue, size_of(Command_Draw))
+                
+                fmt.println("draw", cmd.index_count, cmd.index_offset)
+            }
+        }
+    }
+
+    queue.clear(&renderer.command_queue)
+
     sg.end_pass()
     sg.commit()
 }
@@ -402,12 +530,10 @@ process_main_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
     updated_systems := mapset_check_system_file_watch(watch)
 
     if updated_systems[.SHADERS] {
-        temp_shader, err := init_shader(main_vs_path, main_fs_path)
-        if err == .NONE {
-            fmt.println("reloaded shaders")
-            remake_main_pipeline(temp_shader)
-        } else {
-            fmt.println("shader error: {}", err)
-        }
+        reinit_shader(&window.quad_shader, main_vs_path, main_fs_path, main_uniform_desc())
+        reinit_pipeline(&window.quad_pipeline, main_pipeline(window.quad_shader))
+        
+        reinit_shader(&window.slider_shader, slider_vs_path, slider_fs_path, slider_uniform_desc())
+        reinit_pipeline(&window.slider_pipeline, slider_pipeline(window.slider_shader))
     }
 }

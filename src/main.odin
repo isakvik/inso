@@ -145,7 +145,7 @@ osu_controller: struct {
 
 rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
     if (event.type == sdl.EventType.KEY_DOWN) {
-        rebind := event.key.scancode //TODO(yokes): this doesn't work, osu_controller.k1_key = event.key.scancode works
+        rebind^ = event.key.scancode //TODO(yokes): this doesn't work, osu_controller.k1_key = event.key.scancode works
         fmt.printfln("key set to {}", event.key.scancode)
     }
 }

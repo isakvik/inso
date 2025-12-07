@@ -430,6 +430,10 @@ push_transform :: proc(transform: Transform) -> bool {
     })
 }
 
+/*
+    todo(isak): this takes care of draw command stats for the previously set current draw;
+                we don't need an end_draw() as far as i can tell (except to avoid branching)
+*/
 begin_draw_with_transform :: proc(transform: Transform) -> bool {
     renderer := window.renderer
 

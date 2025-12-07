@@ -259,7 +259,7 @@ main :: proc() {
         os.set_working_directory(filepath.dir(current_dir))
     }
 
-
+    /*
     lua_ctx.state = lua.L_newstate()
     defer lua.close(lua_ctx.state)
     
@@ -267,6 +267,7 @@ main :: proc() {
     
     script: cstring = "print('Hello from Lua!')"
     lua.L_dostring(lua_ctx.state, script)
+    */
 
 
     if (!sdl.Init(sdl.INIT_VIDEO)) {
@@ -274,7 +275,8 @@ main :: proc() {
         return
     }
 
-    window_init({w = 1280, h = 720})
+    //window_init({w = 1280, h = 720})
+    window_init({w = 720, h = 720})
     defer window_cleanup()
 
     renderer_init()
@@ -433,15 +435,18 @@ main :: proc() {
                 - render
             */
             profiler_block_begin(.GAME_DRAW); defer profiler_block_end()
-
-            begin_draw_with_transform(default_transform)
+            
+            begin_draw_with_transform({
+                bounds_rect = default_transform.bounds_rect,
+                aspect_ratio = window.aspect_ratio
+            })
 
             // bounds testers
             push_rect(&renderer.quad_geometry, {-1,-1,1,1}, color_red)
             push_rect(&renderer.quad_geometry, {0,0,1,1}, color_red)
             
             cursor_rect: Window_Rect = { mouse.x, mouse.y, 80, 80 }
-            push_screenspace_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_red, skin_texture_slot(.CURSOR))
+            push_screenspace_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture_slot(.CURSOR))
             
             // playfield
             begin_draw_with_transform({
@@ -460,7 +465,7 @@ main :: proc() {
             end_frame(renderer)
         }
 
-        {   
+        {
             profiler_block_begin(.SWAP_FRAME); defer profiler_block_end() 
             swap_frame()
         }
@@ -496,7 +501,6 @@ begin_frame :: proc(renderer: ^Renderer) {
 end_frame :: proc(renderer: ^Renderer) {
     batch_end(renderer)
     
-    //
     for renderer.command_queue.len > 0 {
         cmd_type := queue.pop_front(&renderer.command_queue)
 
@@ -505,13 +509,13 @@ end_frame :: proc(renderer: ^Renderer) {
                 cmd := (^Command_Set_Bounds)(queue.front_ptr(&renderer.command_queue))
                 queue.consume_front(&renderer.command_queue, size_of(Command_Set_Bounds))
 
-                fmt.println("set bounds", cmd.transform.bounds_rect.x, cmd.transform.bounds_rect.y, cmd.transform.bounds_rect.z, cmd.transform.bounds_rect.w)
+                //commit_transform(cmd.transform)
+                //fmt.println("set bounds", cmd.transform.bounds_rect.x, cmd.transform.bounds_rect.y, cmd.transform.bounds_rect.z, cmd.transform.bounds_rect.w)
             }
             case .DRAW: {
                 cmd := (^Command_Draw)(queue.front_ptr(&renderer.command_queue))
                 queue.consume_front(&renderer.command_queue, size_of(Command_Draw))
-                
-                fmt.println("draw", cmd.index_count, cmd.index_offset)
+                //fmt.println("draw", cmd.index_count, cmd.index_offset)
             }
         }
     }

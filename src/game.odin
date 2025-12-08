@@ -61,7 +61,7 @@ push_slider :: proc(renderer: ^Renderer, slider: ^Slider) {
         buffer_push(&renderer.slider_instances, slider.nodes[i].pos)
     }
 
-    buffer_push(&renderer.slider_draw_commands, Command_Draw{
+    command_push_draw_slider(Command_Draw_Slider{
         base_instance = u32(instance_at),
         instance_count = renderer.slider_instances.count - instance_at
     })

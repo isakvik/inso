@@ -1,9 +1,42 @@
 package notosu
 
 import "core:slice"
+import "core:fmt"
 
 import gl "vendor:OpenGL"
 
+
+//////////////////////////////////////////////////////
+// note(isak): uniform buffer object
+
+GL_Uniform_Buffer :: struct(T: typeid) {
+    id: u32,
+    count: int,
+    size: int
+}
+
+ubo_init :: proc($T: typeid, count: int) -> GL_Uniform_Buffer(T) {
+    result: GL_Uniform_Buffer(T)
+    gl.CreateBuffers(1, &result.id)
+    
+    result.count = count
+    result.size = count * size_of(T)
+    
+    gl.NamedBufferStorage(result.id, result.size, nil, gl.DYNAMIC_STORAGE_BIT)
+    return result
+}
+    
+ubo_bind :: proc(buf: ^GL_Uniform_Buffer($T), bindIndex: u32) {
+    gl.BindBufferBase(
+        gl.UNIFORM_BUFFER,
+        bindIndex,
+        buf.id)
+}
+
+ubo_cleanup :: proc(buf: ^GL_Uniform_Buffer($T)) {
+    gl.DeleteBuffers(1, &buf.id)
+    buf.id = 0
+}
 
 //////////////////////////////////////////////////////
 // note(isak): persistently mapped single buffer object
@@ -12,7 +45,10 @@ GL_Buffer :: struct(T: typeid) {
     id: u32,
     count: int,
     size: int,
-    data: []T
+    data: []T,
+    sync: gl.sync_t,
+
+    wait_count: u64 // note(isak): just unused debug info
 }
 
 sbo_init :: proc($T: typeid, count: int) -> GL_Buffer(T) {
@@ -41,6 +77,28 @@ sbo_bind :: proc(buf: ^GL_Buffer($T), bindIndex: u32) {
         buf.size)
 }
 
+sbo_wait :: proc(buf: ^GL_Buffer($T)) {
+    sync := buf.sync
+    if sync != nil {
+        for true {
+            waitReturn := gl.ClientWaitSync(sync, gl.SYNC_FLUSH_COMMANDS_BIT, 0)
+            if (waitReturn == gl.ALREADY_SIGNALED ||
+                waitReturn == gl.CONDITION_SATISFIED ||
+                waitReturn == gl.WAIT_FAILED) {
+                break
+            }
+        }
+    }
+}
+
+sbo_lock :: proc(buf: ^GL_Buffer($T)) {
+    if buf.sync > nil {
+        gl.DeleteSync(buf.sync)
+    }
+    buf.sync = gl.FenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)
+}
+
+
 sbo_cleanup :: proc(buf: ^GL_Buffer($T)) {
     gl.DeleteBuffers(1, &buf.id)
     buf.id = 0
@@ -64,7 +122,8 @@ Synced_Buffer :: struct(T: typeid) {
     data: []T,
     offset: int,
     sync: gl.sync_t,
-    wait_count: u64
+
+    wait_count: u64 // note(isak): just unused debug info
 }
 
 
@@ -200,6 +259,6 @@ fbo_bind_write :: proc(fb: GL_Framebuffer) {
     gl.BindFramebuffer(gl.DRAW_FRAMEBUFFER, fb.id)
 }
 
-fbo_unbind :: proc(fb: GL_Framebuffer) {
+fbo_bind_default :: proc() {
     gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 }

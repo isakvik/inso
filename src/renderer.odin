@@ -23,7 +23,7 @@ slider_fs_path :: "shaders/slider.fs.glsl"
 
 batch_max_vertices :: 64*1024
 max_texture_handles :: 1024
-max_slider_draw_commands :: 1024
+//max_slider_draw_commands :: 1024
 
 
 Reserved_Texture_Slots :: enum {
@@ -75,7 +75,7 @@ Geometry_Buffer :: struct(T: typeid) {
 Renderer :: struct {
     quad_geometry: Geometry_Buffer(Quad_Vertex),
     slider_instances: Buffer(vec2),
-    slider_draw_commands: Buffer(Command_Draw),
+    //slider_draw_commands: Buffer(Command_Draw),
     
     circle_geometry: Buffer(Slider_Vertex),
     //fullscreen_geometry: Geometry_Buffer(Quad_Vertex),
@@ -84,6 +84,8 @@ Renderer :: struct {
 
     current_draw: ^Command_Draw,
     null_draw: Command_Draw,
+
+    trace_frame: bool
 }
 
 
@@ -155,7 +157,8 @@ renderer_init :: proc() {
     window.fullscreen_store.vertex_buffer = sbo_init(Quad_Vertex, 4)
     window.fullscreen_store.index_buffer = sbo_init(u32, 6)
     window.texture_buffer = sbo_init(u64, max_texture_handles)
-    window.transform_buffer = sbo_init(Transform, 1)
+    
+    window.transform_buffer = ubo_init(Transform, 1)
 
     window.pass_action = { 
         colors = {
@@ -200,8 +203,8 @@ renderer_init :: proc() {
     
     renderer.slider_instances.size = batch_max_vertices
     
-    renderer.slider_draw_commands.data = new([max_slider_draw_commands]Command_Draw)[:]
-    renderer.slider_draw_commands.size = max_slider_draw_commands
+    //renderer.slider_draw_commands.data = new([max_slider_draw_commands]Command_Draw)[:]
+    //renderer.slider_draw_commands.size = max_slider_draw_commands
 
     commit_transform({
         bounds_rect = {-1,-1,2,2},
@@ -225,7 +228,7 @@ renderer_cleanup :: proc() {
     sbo_cleanup(&window.fullscreen_store.index_buffer)
     sbo_cleanup(&window.circle_buffer)
     sbo_cleanup(&window.texture_buffer)
-    sbo_cleanup(&window.transform_buffer)
+    ubo_cleanup(&window.transform_buffer)
 }
 
 
@@ -250,15 +253,6 @@ main_pipeline :: proc(shader: sg.Shader) -> sg.Pipeline_Desc {
     },
 }
 
-// note(isak): i didn't get these to work... might not be better than ssbos anyway
-main_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block {
-    return {}
-}
-
-slider_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block {
-    return {}
-}
-
 slider_pipeline :: proc(shader: sg.Shader) -> sg.Pipeline_Desc {
     return {
         label = "main.slider",
@@ -278,6 +272,15 @@ slider_pipeline :: proc(shader: sg.Shader) -> sg.Pipeline_Desc {
         },
         depth = {compare = .LESS_EQUAL, write_enabled = true},
     }
+}
+
+// note(isak): i didn't get these to work... might not be better than ssbos anyway
+main_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block {
+    return {}
+}
+
+slider_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block {
+    return {}
 }
 
 
@@ -334,7 +337,16 @@ reinit_pipeline :: proc(pipeline: ^sg.Pipeline, pipeline_desc: sg.Pipeline_Desc)
 
 Command_Type :: enum(u8) {
     SET_BOUNDS,
+    SET_MODE,
+    CLEAR,
     DRAW,
+    DRAW_SLIDER,
+}
+
+Command_Mode_Type :: enum(u8) {
+    QUAD_UV,
+    BEGIN_SLIDERS,
+    END_SLIDERS
 }
 
 Command_Header :: struct {
@@ -345,9 +357,18 @@ Command_Set_Bounds :: struct {
     transform: Transform
 }
 
+Command_Set_Mode :: struct {
+    mode: Command_Mode_Type
+}
+
 Command_Draw :: struct {
     index_offset: u32,
     index_count: i32,
+    base_instance: u32,
+    instance_count: i32
+}
+
+Command_Draw_Slider :: struct {
     base_instance: u32,
     instance_count: i32
 }
@@ -375,8 +396,20 @@ command_push_set_bounds :: proc(cmd: Command_Set_Bounds) -> bool {
     return _command_push(cmd, .SET_BOUNDS)
 }
 
+command_push_set_mode :: proc(cmd: Command_Set_Mode) -> bool {
+    return _command_push(cmd, .SET_MODE)
+}
+
+command_push_clear :: proc() -> bool {
+    return _command_push_header(.CLEAR)
+}
+
 command_push_draw :: proc(cmd: Command_Draw) -> bool { 
     return _command_push(cmd, .DRAW)
+}
+
+command_push_draw_slider :: proc(cmd: Command_Draw_Slider) -> bool { 
+    return _command_push(cmd, .DRAW_SLIDER)
 }
 
 //////////////////////////////////////////////////////
@@ -414,7 +447,9 @@ cleanup_textures_for_rendering :: proc() {
 // note(isak): draw api - PS: we use our nice global window.renderer here to make the api easier
 
 commit_transform :: proc(transform: Transform) {
-    window.transform_buffer.data[0] = transform
+    transform := transform
+    buf := &window.transform_buffer
+    gl.NamedBufferSubData(buf.id, 0, buf.size, &transform)
 }
 
 reset_transform :: proc() {
@@ -435,7 +470,7 @@ push_transform :: proc(transform: Transform) -> bool {
                 we don't need an end_draw() as far as i can tell (except to avoid branching)
 */
 begin_draw_with_transform :: proc(transform: Transform) -> bool {
-    renderer := window.renderer
+    renderer := &window.renderer
 
     command_push_set_bounds({
         transform = transform
@@ -471,7 +506,7 @@ batch_begin :: proc(renderer: ^Renderer) {
     renderer.slider_instances.data = tbo_get_current(&window.slider_instance_store)
     renderer.slider_instances.count = 0
 
-    renderer.slider_draw_commands.count = 0
+    //renderer.slider_draw_commands.count = 0
 
     renderer.current_draw.index_count = 0
     renderer.current_draw.index_offset = 0
@@ -487,12 +522,13 @@ batch_end :: proc(renderer: ^Renderer) {
     sbo_bind(&window.texture_buffer, 2)
     sbo_bind(&window.circle_buffer, 3)
     tbo_bind(&window.slider_instance_store, 4)
-    sbo_bind(&window.transform_buffer, 5)
+    ubo_bind(&window.transform_buffer, 5)
 
-    sg.apply_pipeline(window.quad_pipeline)
+    //sg.apply_pipeline(window.quad_pipeline)
     
-    sg.draw(0, renderer.quad_geometry.indices.count, 1)
+    //sg.draw(0, renderer.quad_geometry.indices.count, 1)
 
+    /*
     sbo_bind(&window.fullscreen_store.vertex_buffer, 0)
     sbo_bind(&window.fullscreen_store.index_buffer, 1)
     
@@ -517,6 +553,7 @@ batch_end :: proc(renderer: ^Renderer) {
     }
 
     fbo_unbind(window.slider_framebuffer)
+    */
 }
 
 
@@ -531,6 +568,8 @@ write_quad_indices :: proc(indices: []u32, index_at, vert: i32) {
 
 push_quad_with_uvs :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), pos1, uv1, pos2, uv2, pos3, uv3, pos4, uv4: vec2, 
                            color: vec4, tex_index: u32) {
+    assert(window.renderer.current_draw != nil)
+
     if geometry.vertices.count + 4 > batch_max_vertices {
         batch_end(&window.renderer)
         batch_begin(&window.renderer)

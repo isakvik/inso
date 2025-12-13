@@ -4,8 +4,6 @@ import "base:runtime"
 import "core:container/queue"
 import "core:fmt"
 import "core:math/linalg"
-import "core:math/rand"
-import "core:mem"
 import "core:mem/virtual"
 import os "core:os/os2"
 import "core:path/filepath"
@@ -24,19 +22,6 @@ vec4 :: linalg.Vector4f32
 
 mat3 :: linalg.Matrix3x3f32
 mat4 :: linalg.Matrix4x4f32
-
-
-Buffer :: struct(T: typeid) {
-    count: i32,
-    data: []T,
-    size: i32
-}
-
-buffer_push :: proc(buf: ^Buffer($T), t: T) {
-    assert(buf.count + 1 < buf.size)
-    buf.data[buf.count] = t
-    buf.count += 1
-}
 
 
 /*
@@ -150,7 +135,6 @@ debug_info: struct {
 Transform :: struct {
     bounds_rect: vec4,
     aspect_ratio: f32,
-    cs_in_osupx: f32,
 }
 
 default_transform :: Transform{
@@ -193,6 +177,13 @@ window_resize :: proc(new_w, new_h: i32) {
         fbo_cleanup(&window.slider_framebuffer)
     }
     window.slider_framebuffer = fbo_init(1, 1, new_w, new_h, gl.RGBA8)
+}
+
+window_get_screenspace_transform :: proc() -> Transform {
+    return {
+        bounds_rect = {-1, -1, f32(window.rect.w), f32(window.rect.h)},
+        aspect_ratio = 1
+    }
 }
 
 window_cleanup :: proc() {
@@ -485,8 +476,8 @@ main :: proc() {
             }
 
             if debug_info.display_profiler {
-                begin_draw_with_transform(default_transform)
-                profiler_push_quads(&renderer.quad_geometry, frame_count)
+                command_push_set_bounds({window_get_screenspace_transform()})
+                profiler_push_quad(&renderer.quad_geometry, frame_count)
             }
 
             
@@ -494,30 +485,28 @@ main :: proc() {
             
             // playfield
 
-            pf_size: f32 = 2
+            pf_size: f32 = 1
 
             begin_draw_with_transform({
                 bounds_rect = {-1/pf_size, -1/pf_size, 2/pf_size, 2/pf_size},
-                aspect_ratio = window.aspect_ratio,
-                cs_in_osupx = 48
+                aspect_ratio = window.aspect_ratio
             })
 
             push_slider(renderer, &test_slider)
-            push_slider(renderer, &test_slider2)
+            //push_slider(renderer, &test_slider2)
             
             command_push_set_mode({mode = .END_SLIDERS})
 
             command_push_set_mode({mode = .TEXT})
-            command_push_set_bounds({
-                transform = {
-                    bounds_rect = {0, 0, f32(window.rect.w), f32(window.rect.h)},
-                    aspect_ratio = 1
-                }
-            })
+            begin_draw_with_transform(window_get_screenspace_transform())
 
             push_text(renderer, "Hello, world!", {100, 100})
             push_text(renderer, "yuuma toutetsu :3", {200, 200}, 
                 size=16)
+                
+            if debug_info.display_profiler {
+                profiler_push_blocks_as_text(renderer, frame_count)
+            }
 
             text_end_frame(renderer)
 
@@ -585,7 +574,6 @@ end_frame :: proc(renderer: ^Renderer) {
                         sg.apply_pipeline(window.text_pipeline)
                         
                         tbo_bind(&window.text_store, 0)
-                        //tbo_bind(&window.text_store.index_buffer, 1)
                     }
                     case .BEGIN_SLIDERS: {
                         sg.apply_pipeline(window.slider_pipeline)
@@ -652,18 +640,6 @@ end_frame :: proc(renderer: ^Renderer) {
                 sg.draw(0, 6, 1)
 
                 if (trace) { fmt.println("drawslider", cmd.instance_count, cmd.base_instance) }
-            }
-            case .DRAW_TEXT: {
-                cmd := (^Command_Draw_Text)(queue.front_ptr(&renderer.command_queue))
-                queue.consume_front(&renderer.command_queue, size_of(Command_Draw_Text))
-                
-                gl.DrawArraysInstanced(
-                    gl.TRIANGLES,
-                    cmd.glyph_offset,
-                    cmd.glyph_count * 6,
-                    1)
-
-                if (trace) { fmt.println("drawtext", cmd.glyph_offset, cmd.glyph_count) }
             }
         }
     }

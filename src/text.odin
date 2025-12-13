@@ -16,6 +16,7 @@ MAX_GLYPHS              :: 1024
 
 
 Font :: enum {
+    FALLBACK,
     DEFAULT,
 }
 
@@ -42,21 +43,11 @@ Glyph_Quad :: struct {
 }
 
 
-@(rodata)
-fonts := [Font][]byte{
-    .DEFAULT = #load("C:/Windows/Fonts/GeorgiaPro-Regular.ttf"),
-}
-
 font_paths := [Font]string{
+    .FALLBACK = "C:/Windows/Fonts/ARIAL_UNICODE_MS.ttf",
     .DEFAULT = "C:/Windows/Fonts/GeorgiaPro-Regular.ttf",
+    //.DEFAULT = "C:/Windows/Fonts/COMIC.TTF",
 }
-
-
-@(rodata)
-fallback_font := #load("C:/Windows/Fonts/ARIAL_UNICODE_MS.ttf")
-
-fallback_font_path := "C:/Windows/Fonts/ARIAL_UNICODE_MS.ttf"
-
 
 text_engine: struct {
     ctx: fs.FontContext,
@@ -69,15 +60,15 @@ text_init :: proc() {
     text_engine.ctx.callbackResize = text_resize_callback
     text_engine.ctx.callbackUpdate = text_update_callback
     
-    text_engine.fallback_font_id = 
-        fs.AddFontMem(&text_engine.ctx, "Arial (fallback)", fallback_font, freeLoadedData=false)
-    
     for font in Font {
         fs.AddFontPath(
             &text_engine.ctx, 
             fmt.enum_value_to_string(font) or_else unreachable(),
             font_paths[font])
-        fs.AddFallbackFont(&text_engine.ctx, int(font), text_engine.fallback_font_id)
+
+        if font != .FALLBACK {
+            fs.AddFallbackFont(&text_engine.ctx, int(font), int(Font.FALLBACK))
+        }
     }
 
     window.font_atlas_texture = texture_from_size(
@@ -103,8 +94,9 @@ text_update_callback :: proc(pixels: rawptr, dirty_rect: [4]f32, texture_data: r
         i32(dirty_rect[2]) - i32(dirty_rect[0]),
         i32(dirty_rect[3]) - i32(dirty_rect[1]),
     }*/
-    // note(isak): can potentially push only the dirty rect, but it requires copying only the relevant
-    // parts of the fontstash texture data out, as the texture data here just points to the whole atlas
+    // note(isak): @speed
+    // can potentially push only the dirty rect by indexing the texture data pointer,
+    // as it just points to the whole atlas
     texture_write_to(window.font_atlas_texture, 
                      {0, 0, DEFAULT_FONT_ATLAS_SIZE, DEFAULT_FONT_ATLAS_SIZE}, 
                      texture_data, 
@@ -139,7 +131,7 @@ push_text :: proc(
         _, _, lh := fs.VerticalMetrics(&text_engine.ctx)
         y_inc^ += lh
     }
-    
+
     for iter := fs.TextIterInit(&text_engine.ctx, pos.x, pos.y, text); true; {
         quad: fs.Quad
         fs.TextIterNext(&text_engine.ctx, &iter, &quad) or_break
@@ -161,11 +153,14 @@ push_text :: proc(
 
 text_end_frame :: proc(renderer: ^Renderer) {
     // note(isak): bad api - the state management isn't needed, but this checks if texture updates
-    //             is necessary and calls the callback with the dirty rect
+    // is necessary and calls the callback with the dirty rect
     fs.EndState(&text_engine.ctx)
     
-    command_push_draw_text({
-        glyph_count = renderer.text_geometry.count
+    // note(isak): since we do vertex picking and our vertex data composes a whole glyph, 
+    // i've written the shader to draw a glyph quad by invoking a quad 6 times
+    command_push_draw({
+        index_count = renderer.text_geometry.count * 6,
+        instance_count = 1
     })
 }
 

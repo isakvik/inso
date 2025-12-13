@@ -39,13 +39,6 @@ Reserved_Texture_Slots :: enum u32 {
 reserved_texture :: proc(slot: Reserved_Texture_Slots) -> u32 { return u32(slot) }
 
 
-Shader_Error :: enum {
-    NONE,
-    READ_ERROR,
-    PATH_ERROR,
-    COMPILE_ERROR,
-}
-
 Quad_Vertex :: struct {
     pos:   vec2,
     uv:    vec2,
@@ -91,11 +84,6 @@ Renderer :: struct {
     trace_frame: bool
 }
 
-Shader :: struct {
-    shader: sg.Shader,
-    vs_path, fs_path: string,
-    uniform_desc: [8]sg.Shader_Uniform_Block
-}
 
 Texture_Handle :: u64
 
@@ -204,10 +192,9 @@ renderer_init :: proc() {
 
     circle_buffer_vertex_count := unit_circle_vertex_count + 2
     window.circle_geo_buffer = sbo_init(Slider_Vertex, circle_buffer_vertex_count)
-    renderer.circle_geometry = Buffer(Slider_Vertex) { 
-        data = window.circle_geo_buffer.data,
-        size = i32(circle_buffer_vertex_count)
-    }
+    renderer.circle_geometry = 
+        buffer_init(i32(circle_buffer_vertex_count), window.circle_geo_buffer.data)
+
     populate_slider_circle_vertices(&renderer.circle_geometry)
     
     renderer.slider_instances.size = batch_max_vertices
@@ -215,14 +202,8 @@ renderer_init :: proc() {
     //
 
     fullscreen_geometry := Geometry_Buffer(Quad_Vertex) {
-        vertices = { 
-            data = window.fullscreen_store.vertex_buffer.data,
-            size = batch_max_vertices
-        },
-        indices = { 
-            data = window.fullscreen_store.index_buffer.data,
-            size = batch_max_vertices
-        }
+        vertices = buffer_init(batch_max_vertices, window.fullscreen_store.vertex_buffer.data),
+        indices = buffer_init(batch_max_vertices * 2, window.fullscreen_store.index_buffer.data)
     }
     push_rect(&fullscreen_geometry, 
         {-1,-1,2,2}, {1,1,1,0.5}, reserved_texture(.SLIDER_FRAMEBUFFER))
@@ -259,9 +240,12 @@ renderer_cleanup :: proc() {
 }
 
 
+//////////////////////////////////////////////////////
+// note(isak): pipeline definitions
+
 quad_pipeline :: proc() -> sg.Pipeline_Desc {
     return {
-        label = "main",
+        label = "builtin.quad",
         shader = window.shaders[.QUAD].shader,
         //index_type = .UINT16,
         cull_mode = .NONE,
@@ -282,7 +266,7 @@ quad_pipeline :: proc() -> sg.Pipeline_Desc {
 
 slider_pipeline :: proc() -> sg.Pipeline_Desc {
     return {
-        label = "main.slider",
+        label = "builtin.slider",
         shader = window.shaders[.SLIDER].shader,
         //index_type = .UINT16,
         cull_mode = .NONE,
@@ -303,7 +287,7 @@ slider_pipeline :: proc() -> sg.Pipeline_Desc {
 
 text_pipeline :: proc() -> sg.Pipeline_Desc {
     return {
-        label = "main.text",
+        label = "builtin.text",
         shader = window.shaders[.TEXT].shader,
         index_type = .NONE,
         cull_mode = .NONE,
@@ -327,6 +311,22 @@ quad_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block { return {} }
 slider_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block { return {} }
 text_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block { return {} }
 
+
+//////////////////////////////////////////////////////
+// note(isak): shader api (program api)
+
+Shader_Error :: enum {
+    NONE,
+    READ_ERROR,
+    PATH_ERROR,
+    COMPILE_ERROR,
+}
+
+Shader :: struct {
+    shader: sg.Shader,
+    vs_path, fs_path: string,
+    uniform_desc: [8]sg.Shader_Uniform_Block
+}
 
 init_shader :: proc(vs_path, fs_path: string, uniform_desc: [8]sg.Shader_Uniform_Block) -> (Shader, Shader_Error) {
     vs_filedata, vs_err := read_entire_file(vs_path)
@@ -390,7 +390,6 @@ Command_Type :: enum(u8) {
     CLEAR,
     DRAW,
     DRAW_SLIDER,
-    DRAW_TEXT,
 }
 
 Command_Mode_Type :: enum(u8) {
@@ -468,10 +467,6 @@ command_push_draw_slider :: proc(cmd: Command_Draw_Slider) -> bool {
     return _command_push(cmd, .DRAW_SLIDER)
 }
 
-command_push_draw_text :: proc(cmd: Command_Draw_Text) -> bool { 
-    return _command_push(cmd, .DRAW_TEXT)
-}
-
 //////////////////////////////////////////////////////
 // note(isak): texture api
 
@@ -514,10 +509,7 @@ commit_transform :: proc(transform: Transform) {
 }
 
 reset_transform :: proc() {
-    push_transform({
-        bounds_rect = {-1, -1, 2, 2}, 
-        aspect_ratio = window.aspect_ratio
-    })
+    push_transform(default_transform)
 }
 
 push_transform :: proc(transform: Transform) -> bool {
@@ -798,7 +790,7 @@ rect_translate_to_inner :: proc {
 
 
 to_clipspace_rect :: proc(rect: Window_Rect) -> _Rect(f32) {
-    inv_ar := 1 / window.aspect_ratio
+    inv_ar := f32(window.rect.w) / f32(window.rect.h)
     return {
         x = (f32(rect.x) / f32(window.rect.w) * 2 * inv_ar) - inv_ar,
         y = (f32(rect.y) / f32(window.rect.h) * 2) - 1,

@@ -7,6 +7,30 @@ import gl "vendor:OpenGL"
 
 
 //////////////////////////////////////////////////////
+// note(isak): buffer object, useful for proxies to GPU buffers
+
+Buffer :: struct(T: typeid) {
+    count: i32,
+    data: []T,
+    size: i32
+}
+
+buffer_init :: proc(N: i32, data: []$T) -> Buffer(T) {
+    result: Buffer(T) = {
+        count = 0,
+        data = data,
+        size = N
+    }
+    return result
+}
+
+buffer_push :: proc(buf: ^Buffer($T), t: T) {
+    assert(buf.count + 1 < buf.size)
+    buf.data[buf.count] = t
+    buf.count += 1
+}
+
+//////////////////////////////////////////////////////
 // note(isak): uniform buffer object
 
 GL_Uniform_Buffer :: struct(T: typeid) {

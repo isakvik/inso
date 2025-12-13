@@ -25,6 +25,14 @@ layout (binding = 5, std140) uniform transform {
     float aspectRatio; // note(isak): height over width
 };
 
+mat3 getTransform() {
+    return mat3(
+        vec3(2/boundSize.x, 0, 0),
+        vec3(0, 2/boundSize.y, 0),
+        vec3(boundPos.x, -boundPos.y, 1)
+    );
+}
+
 out vec4 color;
 out vec2 uv;
 flat out uint texIndex;
@@ -49,12 +57,5 @@ void main() {
     color = unpackUnorm4x8(q.color);
     texIndex = 2;
 
-    mat3 transform = mat3(1.0);
-    transform[0][0] = 2/boundSize.x;
-    transform[1][1] = 2/boundSize.y;
-    transform[2][0] = -1;
-    transform[2][1] = 1;
-    transform[2][2] = 1;
-
-    gl_Position = vec4(transform * vec3(v.pos, 1.0), 1.0);
+    gl_Position = vec4(getTransform() * vec3(v.pos, 1.0), 1.0);
 }

@@ -34,25 +34,26 @@ Layer :: enum {
     DEBUG
 }
 
+osu_slider_curve_points_separation: f32 = 2.5
 
 test_nodes: [128]Slider_Node
-test_node_count: i32
+test_node_count: int
 test_slider: Slider
 test_slider2: Slider
 
 
 make_test_slider :: proc(slider: ^Slider, x_shift: f32) {
     node_i := test_node_count
-    test_nodes[node_i + 0] = {{0.0 + x_shift, 0.0}, .LINEAR}
-    //test_nodes[node_i + 1] = {{0.2 + x_shift, 0.2}, .LINEAR}
-    //test_nodes[node_i + 2] = {{0.3 + x_shift, 0.0}, .LINEAR}
-    //test_nodes[node_i + 3] = {{0.4 + x_shift, 0.2}, .LINEAR}
+
+    for i in 0..<20 {
+        test_nodes[node_i + i] = {{0.056*f32(i) + x_shift, 0}, .LINEAR}
+    }
 
     slider^ = {
         pos = {0 + x_shift, 0},
-        nodes = test_nodes[node_i + 0 : node_i + 1]
+        nodes = test_nodes[node_i + 0:node_i + 20]
     }
-    test_node_count += 1
+    test_node_count += 20
 }
 
 push_slider :: proc(renderer: ^Renderer, slider: ^Slider) {

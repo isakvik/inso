@@ -11,6 +11,14 @@ import sg "vendor:sokol/gfx"
 import sdl "vendor:sdl3"
 
 
+/* todo(isak): 
+    further text stuff
+    - test glyph atlas resizing, unicode support
+    - string caching by way of a pool system that can allocate/free within the buffer
+        @speed
+*/
+
+
 DEFAULT_FONT_ATLAS_SIZE :: 512
 MAX_GLYPHS              :: 1024
 
@@ -98,7 +106,7 @@ text_update_callback :: proc(pixels: rawptr, dirty_rect: [4]f32, texture_data: r
     // can potentially push only the dirty rect by indexing the texture data pointer,
     // as it just points to the whole atlas
     texture_write_to(window.font_atlas_texture, 
-                     {0, 0, DEFAULT_FONT_ATLAS_SIZE, DEFAULT_FONT_ATLAS_SIZE}, 
+                     {0, 0, window.font_atlas_texture.x, window.font_atlas_texture.y}, 
                      texture_data, 
                      len(text_engine.ctx.textureData))
 }

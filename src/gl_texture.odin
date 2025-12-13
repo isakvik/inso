@@ -48,8 +48,14 @@ texture_delete :: proc(textures: []u32) {
 
 texture_reinit :: proc(texture: ^Texture, x, y: i32, pixels: rawptr) {
     gl.MakeTextureHandleNonResidentARB(texture.tex_handle)
+
     texture_delete({texture.tex_id})
-    texture^ = texture_from_data(x, y, pixels, texture.internal_format, texture.format)
+    texture.tex_id, texture.tex_handle = 
+        texture_init(x, y, texture.internal_format)
+
+    texture.x = x
+    texture.y = y
+
     gl.MakeTextureHandleResidentARB(texture.tex_handle)
 }
 

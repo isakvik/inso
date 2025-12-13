@@ -335,6 +335,8 @@ main :: proc() {
     active := true
     event: sdl.Event
 
+    font_size := 16
+
     make_test_slider(&test_slider, 0)
     make_test_slider(&test_slider2, 1)
     
@@ -366,6 +368,8 @@ main :: proc() {
                     #partial switch (event.key.scancode) {
                         case sdl.Scancode.F1:
                             renderer.trace_frame = !renderer.trace_frame
+                        case sdl.Scancode.F:
+                            font_size += 4
                         case sdl.Scancode.F10:
                             debug_info.display_fontatlas = !debug_info.display_fontatlas
                         case sdl.Scancode.F11:
@@ -502,7 +506,7 @@ main :: proc() {
 
             push_text(renderer, "Hello, world!", {100, 100})
             push_text(renderer, "yuuma toutetsu :3", {200, 200}, 
-                size=16)
+                size=f32(font_size))
                 
             if debug_info.display_profiler {
                 profiler_push_blocks_as_text(renderer, frame_count)

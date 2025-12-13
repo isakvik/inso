@@ -12,7 +12,7 @@ layout(binding = 3, std430) buffer sliderVertexData {
 layout(binding = 4, std430) buffer sliderInstanceData {
     vec2 points[];
 };
-layout (binding = 5, std140) buffer transform {
+layout (binding = 5, std140) uniform transform {
     vec2 boundPos;
     vec2 boundSize;
     float aspectRatio; // note(isak): height over width

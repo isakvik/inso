@@ -15,20 +15,24 @@ import sg "vendor:sokol/gfx"
 import slog "vendor:sokol/log"
 
 
-main_vs_path :: "shaders/main.vs.glsl"
-main_fs_path :: "shaders/main.fs.glsl"
+quad_vs_path :: "shaders/main.vs.glsl"
+quad_fs_path :: "shaders/main.fs.glsl"
 
 slider_vs_path :: "shaders/slider.vs.glsl"
 slider_fs_path :: "shaders/slider.fs.glsl"
+
+text_vs_path :: "shaders/text.vs.glsl"
+text_fs_path :: "shaders/text.fs.glsl"
 
 batch_max_vertices :: 64*1024
 max_texture_handles :: 1024
 //max_slider_draw_commands :: 1024
 
 
-Reserved_Texture_Slots :: enum {
+Reserved_Texture_Slots :: enum u32 {
     WHITE,
     PROFILER,
+    FONT_ATLAS,
     SLIDER_FRAMEBUFFER
 }
 
@@ -55,30 +59,29 @@ Slider_Vertex :: struct {
     __padding: u32,
 }
 
-Buffer :: struct(T: typeid) {
-    count: i32,
-    data: []T,
-    size: i32
-}
-
-buffer_push :: proc(buf: ^Buffer($T), t: T) {
-    assert(buf.count + 1 < buf.size)
-    buf.data[buf.count] = t
-    buf.count += 1
-}
 
 Geometry_Buffer :: struct(T: typeid) {
     vertices: Buffer(T),
     indices: Buffer(u32),
 }
 
+Dynamic_Geometry_Store :: struct(T: typeid) {
+    vertex_buffer: GL_Triple_Buffer(T),
+    index_buffer: GL_Triple_Buffer(u32),
+}
+
+Static_Geometry_Store :: struct(T: typeid) {
+    vertex_buffer: GL_Buffer(T),
+    index_buffer: GL_Buffer(u32),
+}
+
 Renderer :: struct {
     quad_geometry: Geometry_Buffer(Quad_Vertex),
     slider_instances: Buffer(vec2),
-    //slider_draw_commands: Buffer(Command_Draw),
+    
+    text_geometry: Buffer(Glyph_Quad),
     
     circle_geometry: Buffer(Slider_Vertex),
-    //fullscreen_geometry: Geometry_Buffer(Quad_Vertex),
 
     command_queue: queue.Queue(u8),
 
@@ -88,6 +91,21 @@ Renderer :: struct {
     trace_frame: bool
 }
 
+Shader :: struct {
+    shader: sg.Shader,
+    vs_path, fs_path: string,
+    uniform_desc: [8]sg.Shader_Uniform_Block
+}
+
+Texture_Handle :: u64
+
+Texture :: struct {
+    path: string,
+    x, y: i32,
+    format, internal_format: u32,
+    tex_id: u32, // note(isak): gl assigned texture id
+    tex_handle: Texture_Handle, // note(isak): bindless handle
+}
 
 Layout_Anchor :: enum {
     TOP_LEFT,
@@ -108,15 +126,6 @@ _Rect :: struct($T: typeid) {
 Rect :: _Rect(f32)
 Window_Rect :: _Rect(i32) // note(isak): window space rect measured in pixels
 
-Texture_Handle :: u64
-
-Texture :: struct {
-    path: string,
-    x, y: i32,
-    tex_id: u32, // note(isak): gl assigned texture id
-    tex_handle: Texture_Handle, // note(isak): bindless handle
-}
-
 max_active_texture_resource_size :: 128 * 1024 * 1024
 
 unit_circle_vertex_count :: 32
@@ -128,37 +137,45 @@ renderer_init :: proc() {
     renderer := &window.renderer
     renderer.current_draw = &renderer.null_draw
 
-    sg.setup(
-        {
-            environment = {
-                defaults = {
-                    sample_count = 4,
-                    color_format = sg.Pixel_Format.RGBA8,
-                    depth_format = sg.Pixel_Format.DEPTH_STENCIL,
-                },
+    sg.setup({
+        environment = {
+            defaults = {
+                sample_count = 4,
+                color_format = sg.Pixel_Format.RGBA8,
+                depth_format = sg.Pixel_Format.DEPTH_STENCIL,
             },
-            logger = {func = slog.func},
         },
-    )
+        logger = {func = slog.func},
+    })
 
     err: Shader_Error
-    window.quad_shader, err = init_shader(main_vs_path, main_fs_path, main_uniform_desc())
+    window.shaders[.QUAD], err = init_shader(quad_vs_path, quad_fs_path, quad_uniform_desc())
     assert(err == .NONE)
-    window.quad_pipeline = sg.make_pipeline(main_pipeline(window.quad_shader))
+    window.quad_pipeline = sg.make_pipeline(quad_pipeline())
 
-    window.slider_shader, err = init_shader(slider_vs_path, slider_fs_path, slider_uniform_desc())
+    window.shaders[.SLIDER], err = init_shader(slider_vs_path, slider_fs_path, slider_uniform_desc())
     assert(err == .NONE)
-    window.slider_pipeline = sg.make_pipeline(slider_pipeline(window.slider_shader))
+    window.slider_pipeline = sg.make_pipeline(slider_pipeline())
     
+    window.shaders[.TEXT], err = init_shader(text_vs_path, text_fs_path, text_uniform_desc())
+    assert(err == .NONE)
+    window.text_pipeline = sg.make_pipeline(text_pipeline())
+    
+
     window.quad_store.vertex_buffer = tbo_init(Quad_Vertex, batch_max_vertices)
     window.quad_store.index_buffer = tbo_init(u32, batch_max_vertices * 2)
+
     window.slider_instance_store = tbo_init(vec2, batch_max_vertices)
+
+    window.text_store = tbo_init(Glyph_Quad, batch_max_vertices)
     
     window.fullscreen_store.vertex_buffer = sbo_init(Quad_Vertex, 4)
     window.fullscreen_store.index_buffer = sbo_init(u32, 6)
+
     window.texture_buffer = sbo_init(u64, max_texture_handles)
     
     window.transform_buffer = ubo_init(Transform, 1)
+
 
     window.pass_action = { 
         colors = {
@@ -175,18 +192,27 @@ renderer_init :: proc() {
         gl = {0} // default framebuffer
     }
 
-    window.white_texture = texture_from_data(1, 1, {0xFFFFFFFF})
+    // generated textures
+
+    white_pixel: []u32 = {0xFFFFFFFF}
+    window.white_texture = texture_from_data(1, 1, raw_data(white_pixel))
 
     profiler_pixels := new([profiler_w * profiler_h]u32)
-    window.profiler_texture = texture_from_data(profiler_w, profiler_h, profiler_pixels[:])
+    window.profiler_texture = texture_from_data(profiler_w, profiler_h, raw_data(profiler_pixels))
+
+    //
 
     circle_buffer_vertex_count := unit_circle_vertex_count + 2
-    window.circle_buffer = sbo_init(Slider_Vertex, circle_buffer_vertex_count)
+    window.circle_geo_buffer = sbo_init(Slider_Vertex, circle_buffer_vertex_count)
     renderer.circle_geometry = Buffer(Slider_Vertex) { 
-        data = window.circle_buffer.data,
+        data = window.circle_geo_buffer.data,
         size = i32(circle_buffer_vertex_count)
     }
     populate_slider_circle_vertices(&renderer.circle_geometry)
+    
+    renderer.slider_instances.size = batch_max_vertices
+
+    //
 
     fullscreen_geometry := Geometry_Buffer(Quad_Vertex) {
         vertices = { 
@@ -201,10 +227,10 @@ renderer_init :: proc() {
     push_rect(&fullscreen_geometry, 
         {-1,-1,2,2}, {1,1,1,0.5}, reserved_texture(.SLIDER_FRAMEBUFFER))
     
-    renderer.slider_instances.size = batch_max_vertices
+    //
     
-    //renderer.slider_draw_commands.data = new([max_slider_draw_commands]Command_Draw)[:]
-    //renderer.slider_draw_commands.size = max_slider_draw_commands
+    renderer.text_geometry.size = batch_max_vertices
+    
 
     commit_transform({
         bounds_rect = {-1,-1,2,2},
@@ -223,19 +249,20 @@ renderer_cleanup :: proc() {
     tbo_cleanup(&window.quad_store.vertex_buffer)
     tbo_cleanup(&window.quad_store.index_buffer)
     tbo_cleanup(&window.slider_instance_store)
+    tbo_cleanup(&window.text_store)
     
     sbo_cleanup(&window.fullscreen_store.vertex_buffer)
     sbo_cleanup(&window.fullscreen_store.index_buffer)
-    sbo_cleanup(&window.circle_buffer)
+    sbo_cleanup(&window.circle_geo_buffer)
     sbo_cleanup(&window.texture_buffer)
     ubo_cleanup(&window.transform_buffer)
 }
 
 
-main_pipeline :: proc(shader: sg.Shader) -> sg.Pipeline_Desc {
+quad_pipeline :: proc() -> sg.Pipeline_Desc {
     return {
         label = "main",
-        shader = shader,
+        shader = window.shaders[.QUAD].shader,
         //index_type = .UINT16,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
@@ -249,14 +276,14 @@ main_pipeline :: proc(shader: sg.Shader) -> sg.Pipeline_Desc {
                 dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
             }}
         },
-        //depth = {compare = .LESS_EQUAL, write_enabled = true},
+        depth = {compare = .LESS_EQUAL, write_enabled = true},
     },
 }
 
-slider_pipeline :: proc(shader: sg.Shader) -> sg.Pipeline_Desc {
+slider_pipeline :: proc() -> sg.Pipeline_Desc {
     return {
         label = "main.slider",
-        shader = shader,
+        shader = window.shaders[.SLIDER].shader,
         //index_type = .UINT16,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
@@ -274,17 +301,34 @@ slider_pipeline :: proc(shader: sg.Shader) -> sg.Pipeline_Desc {
     }
 }
 
+text_pipeline :: proc() -> sg.Pipeline_Desc {
+    return {
+        label = "main.text",
+        shader = window.shaders[.TEXT].shader,
+        index_type = .NONE,
+        cull_mode = .NONE,
+        blend_color = {1.0, 1.0, 1.0, 1.0},
+        colors = [4]sg.Color_Target_State {
+            0 = { blend = {
+                enabled = true,
+                op_alpha = .ADD,
+                src_factor_rgb = .SRC_ALPHA,
+                dst_factor_rgb = .ONE_MINUS_SRC_ALPHA,
+                src_factor_alpha = .SRC_ALPHA,
+                dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
+            }}
+        },
+        //depth = {compare = .LESS_EQUAL, write_enabled = true},
+    },
+}
+
 // note(isak): i didn't get these to work... might not be better than ssbos anyway
-main_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block {
-    return {}
-}
-
-slider_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block {
-    return {}
-}
+quad_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block { return {} }
+slider_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block { return {} }
+text_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block { return {} }
 
 
-init_shader :: proc(vs_path, fs_path: string, uniform_desc: [8]sg.Shader_Uniform_Block) -> (sg.Shader, Shader_Error) {
+init_shader :: proc(vs_path, fs_path: string, uniform_desc: [8]sg.Shader_Uniform_Block) -> (Shader, Shader_Error) {
     vs_filedata, vs_err := read_entire_file(vs_path)
     if vs_err != os.ERROR_NONE {
         fmt.printfln("loading vert shader file '{}' failed: {}", vs_path, vs_err)
@@ -309,20 +353,25 @@ init_shader :: proc(vs_path, fs_path: string, uniform_desc: [8]sg.Shader_Uniform
     )
 
     if sg.query_shader_state(temp_shader) == sg.Resource_State.VALID {
-        return temp_shader, .NONE
+        return {
+            shader = temp_shader,
+            vs_path = vs_path,
+            fs_path = fs_path,
+            uniform_desc = uniform_desc
+        }, .NONE
     }
     sg.destroy_shader(temp_shader)
     return {}, .COMPILE_ERROR
 }
 
-reinit_shader :: proc(shader: ^sg.Shader, vs_path, fs_path: string, uniform_desc: [8]sg.Shader_Uniform_Block) -> Shader_Error {
-    new_shader, err := init_shader(vs_path, fs_path, uniform_desc)
+reinit_shader :: proc(shader: ^Shader) -> Shader_Error {
+    new_shader, err := init_shader(shader.vs_path, shader.fs_path, shader.uniform_desc)
     if err != .NONE {
         assert(err == .COMPILE_ERROR)
-        fmt.println("Shader compile errors found. Paths:", vs_path, fs_path)
+        fmt.println("Shader compile errors found. Paths:", shader.vs_path, shader.fs_path)
         return err
     }
-    sg.destroy_shader(shader^)
+    sg.destroy_shader(shader.shader)
     shader^ = new_shader
     return err
 }
@@ -341,10 +390,12 @@ Command_Type :: enum(u8) {
     CLEAR,
     DRAW,
     DRAW_SLIDER,
+    DRAW_TEXT,
 }
 
 Command_Mode_Type :: enum(u8) {
     QUAD_UV,
+    TEXT,
     BEGIN_SLIDERS,
     END_SLIDERS
 }
@@ -371,6 +422,11 @@ Command_Draw :: struct {
 Command_Draw_Slider :: struct {
     base_instance: u32,
     instance_count: i32
+}
+
+Command_Draw_Text :: struct {
+    glyph_offset: i32,
+    glyph_count: i32,
 }
 
 _command_push_header :: proc(type: Command_Type) -> bool {
@@ -412,6 +468,10 @@ command_push_draw_slider :: proc(cmd: Command_Draw_Slider) -> bool {
     return _command_push(cmd, .DRAW_SLIDER)
 }
 
+command_push_draw_text :: proc(cmd: Command_Draw_Text) -> bool { 
+    return _command_push(cmd, .DRAW_TEXT)
+}
+
 //////////////////////////////////////////////////////
 // note(isak): texture api
 
@@ -420,6 +480,7 @@ prepare_textures_for_rendering :: proc() {
 
     textures[Reserved_Texture_Slots.WHITE] = window.white_texture.tex_handle
     textures[Reserved_Texture_Slots.PROFILER] = window.profiler_texture.tex_handle
+    textures[Reserved_Texture_Slots.FONT_ATLAS] = window.font_atlas_texture.tex_handle
     textures[Reserved_Texture_Slots.SLIDER_FRAMEBUFFER] = window.slider_framebuffer.color_texture_handles[0]
     num_elements := len(Reserved_Texture_Slots)
 
@@ -490,23 +551,16 @@ begin_draw_with_transform :: proc(transform: Transform) -> bool {
 }
 
 batch_begin :: proc(renderer: ^Renderer) {
-    tbo_reset(&window.quad_store.vertex_buffer)
-    tbo_reset(&window.quad_store.index_buffer)
-    tbo_reset(&window.slider_instance_store)
-
-    tbo_lock(&window.quad_store.vertex_buffer)
-    tbo_lock(&window.quad_store.index_buffer)
-    tbo_lock(&window.slider_instance_store)
-
-    renderer.quad_geometry.vertices.data = tbo_get_current(&window.quad_store.vertex_buffer)
+    renderer.quad_geometry.vertices.data = tbo_advance_and_get(&window.quad_store.vertex_buffer)
     renderer.quad_geometry.vertices.count = 0
-    renderer.quad_geometry.indices.data = tbo_get_current(&window.quad_store.index_buffer)
+    renderer.quad_geometry.indices.data = tbo_advance_and_get(&window.quad_store.index_buffer)
     renderer.quad_geometry.indices.count = 0
 
-    renderer.slider_instances.data = tbo_get_current(&window.slider_instance_store)
+    renderer.slider_instances.data = tbo_advance_and_get(&window.slider_instance_store)
     renderer.slider_instances.count = 0
-
-    //renderer.slider_draw_commands.count = 0
+    
+    renderer.text_geometry.data = tbo_advance_and_get(&window.text_store)
+    renderer.text_geometry.count = 0
 
     renderer.current_draw.index_count = 0
     renderer.current_draw.index_offset = 0
@@ -516,11 +570,12 @@ batch_end :: proc(renderer: ^Renderer) {
     tbo_wait(&window.quad_store.vertex_buffer)
     tbo_wait(&window.quad_store.index_buffer)
     tbo_wait(&window.slider_instance_store)
+    tbo_wait(&window.text_store)
     
     tbo_bind(&window.quad_store.vertex_buffer, 0)
     tbo_bind(&window.quad_store.index_buffer, 1)
     sbo_bind(&window.texture_buffer, 2)
-    sbo_bind(&window.circle_buffer, 3)
+    sbo_bind(&window.circle_geo_buffer, 3)
     tbo_bind(&window.slider_instance_store, 4)
     ubo_bind(&window.transform_buffer, 5)
 

@@ -61,8 +61,6 @@ Trace_Block_Timer :: struct {
 //////////////////////////////////////////////////////
 // note(isak): api
 
-profiler_display_enabled: bool = false
-
 profiler_begin :: proc() {
     profiler.trace_points = {}
     profiler.start_tsc = sdl.GetPerformanceCounter()
@@ -122,7 +120,7 @@ profiler_write_texture_column :: proc(frame_count: u64, texture: Texture) {
         mem.zero_slice(profiler_pixels[profiler_frame_pixel_count:profiler_h])
     }
 
-    texture_write_to(window.profiler_texture, 
+    texture_write_u32_to(window.profiler_texture, 
         {i32(frame_count) % profiler_w, 0, 1, profiler_h},
         profiler_pixels[:])
 }

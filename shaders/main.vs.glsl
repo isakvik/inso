@@ -20,7 +20,7 @@ layout(binding = 0, std430) buffer vertexData {
 layout(binding = 1, std430) buffer indexData {
     uint indices[];
 };
-layout (binding = 5, std140) buffer transform {
+layout (binding = 5, std140) uniform transform {
     vec2 boundPos;
     vec2 boundSize;
     float aspectRatio; // note(isak): height over width

@@ -187,6 +187,12 @@ tbo_reset :: proc(buf: ^GL_Triple_Buffer($T)) {
     buf.count = 0
 }
 
+tbo_advance_and_get :: proc(buf: ^GL_Triple_Buffer($T)) -> []T {
+    tbo_reset(buf)
+    tbo_lock(buf)
+    return tbo_get_current(buf)
+}
+
 tbo_cleanup :: proc(buf: ^GL_Triple_Buffer($T)) {
     gl.UnmapNamedBuffer(buf.id)
     gl.DeleteBuffers(1, &buf.id)
@@ -199,10 +205,10 @@ tbo_cleanup :: proc(buf: ^GL_Triple_Buffer($T)) {
 GL_Framebuffer :: struct {
     id: u32,
     color_textures: [4]u32,
-    color_texture_handles: [4]u64,
+    color_texture_handles: [4]Texture_Handle,
     color_texture_count: u32,
     depth_texture: u32,
-    depth_texture_handle: u64,
+    depth_texture_handle: Texture_Handle,
     depth_texture_count: u32,
     w, h: i32,
 }
@@ -218,7 +224,7 @@ fbo_init :: proc(color_texture_count, depth_texture_count: u32, w, h: i32, color
     
     assert(color_texture_count <= 4)
     for i in 0..<color_texture_count {
-        t := texture_init()
+        t := texture_create()
         result.color_textures[i] = t
         gl.TextureStorage2D(t, 1, color_format, w, h)
         gl.NamedFramebufferTexture(result.id, gl.COLOR_ATTACHMENT0 + i, t, 0)
@@ -227,7 +233,7 @@ fbo_init :: proc(color_texture_count, depth_texture_count: u32, w, h: i32, color
     
     assert(depth_texture_count <= 1)
     if depth_texture_count > 0 {
-        t := texture_init()
+        t := texture_create()
         result.depth_texture = t
         gl.TextureStorage2D(t, 1, gl.DEPTH32F_STENCIL8, w, h)
         gl.NamedFramebufferTexture(result.id, gl.DEPTH_ATTACHMENT, t, 0)

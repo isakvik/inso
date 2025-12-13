@@ -10,7 +10,7 @@ import stbi "vendor:stb/image"
 //////////////////////////////////////////////////////
 // note(isak): textures
 
-texture_init :: proc() -> u32 {
+texture_create :: proc() -> u32 {
     texture: u32
     gl.CreateTextures(gl.TEXTURE_2D, 1, &texture)
     gl.TextureParameteri(texture, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
@@ -20,14 +20,24 @@ texture_init :: proc() -> u32 {
     return texture
 }
 
-texture_create :: proc(x, y: i32, pixels: rawptr) -> (u32, Texture_Handle) {
-    texture := texture_init()
-    gl.TextureStorage2D(texture, 1, gl.RGBA8, x, y)
-    gl.TextureSubImage2D(texture, 0, 0, 0, x, y, gl.RGBA, gl.UNSIGNED_BYTE, pixels)
+texture_init :: proc(x, y: i32, internal_format: u32 = gl.RGBA8) -> (u32, Texture_Handle) {
+    texture := texture_create()
+    gl.TextureStorage2D(texture, 1, internal_format, x, y)
 
-    // note(isak): this makes texture state immutable
+    // note(isak): this makes texture state (not data) immutable
     tex_handle := gl.GetTextureHandleARB(texture)
 
+    return texture, tex_handle
+}
+
+texture_init_with_data :: proc(
+    x, y: i32,
+    pixels: rawptr, 
+    internal_format: u32 = gl.RGBA8,
+    format: u32 = gl.RGBA
+) -> (u32, Texture_Handle) {
+    texture, tex_handle := texture_init(x, y, internal_format)
+    gl.TextureSubImage2D(texture, 0, 0, 0, x, y, format, gl.UNSIGNED_BYTE, pixels)
     return texture, tex_handle
 }
 
@@ -35,12 +45,42 @@ texture_delete :: proc(textures: []u32) {
     gl.DeleteTextures(i32(len(textures)), raw_data(textures))
 }
 
-texture_from_data :: proc(x, y: i32, data_rgba: []u32) -> Texture {
+
+texture_reinit :: proc(texture: ^Texture, x, y: i32, pixels: rawptr) {
+    gl.MakeTextureHandleNonResidentARB(texture.tex_handle)
+    texture_delete({texture.tex_id})
+    texture^ = texture_from_data(x, y, pixels, texture.internal_format, texture.format)
+    gl.MakeTextureHandleResidentARB(texture.tex_handle)
+}
+
+
+texture_from_size :: proc(
+    x, y: i32,
+    internal_format: u32 = gl.RGBA8,
+    format: u32 = gl.RGBA
+) -> Texture {
     result: Texture = {
         x = x,
-        y = y
+        y = y,
+        format = format,
+        internal_format = internal_format,
     }
-    result.tex_id, result.tex_handle = texture_create(x, y, raw_data(data_rgba))
+    result.tex_id, result.tex_handle = texture_init(x, y, internal_format)
+    return result
+}
+
+texture_from_data :: proc(x, y: i32,
+    pixels: rawptr,
+    internal_format: u32 = gl.RGBA8,
+    format: u32 = gl.RGBA
+) -> Texture {
+    result: Texture = {
+        x = x,
+        y = y,
+        format = format,
+        internal_format = internal_format,
+    }
+    result.tex_id, result.tex_handle = texture_init_with_data(x, y, pixels, internal_format, format)
     return result
 }
 
@@ -59,13 +99,23 @@ texture_from_file :: proc(path: string) -> (Texture, os.Error) {
         fmt.println("image with less than 4 channels unhandled:", path)
         assert(channels == 4)
     }
-    result.tex_id, result.tex_handle = texture_create(result.x, result.y, pixels)
+    result.tex_id, result.tex_handle = texture_init_with_data(result.x, result.y, pixels)
 
     return result, err
 }
 
-texture_write_to :: proc(texture: Texture, rect: Window_Rect, pixels: []u32) {
-    assert(int(rect.w * rect.h) <= len(pixels))
+
+texture_write_ptr_to :: proc(texture: Texture, rect: Window_Rect, pixels: rawptr, pixel_count: int) {
+    assert(int(rect.w * rect.h) <= pixel_count)
     gl.TextureSubImage2D(texture.tex_id, 0, rect.x, rect.y, rect.w, rect.h, 
-        gl.RGBA, gl.UNSIGNED_BYTE, raw_data(pixels))
+        texture.format, gl.UNSIGNED_BYTE, pixels)
+}
+
+texture_write_u32_to :: proc(texture: Texture, rect: Window_Rect, pixels: []u32) {
+    texture_write_ptr_to(texture, rect, raw_data(pixels), len(pixels))
+}
+
+texture_write_to :: proc {
+    texture_write_ptr_to,
+    texture_write_u32_to
 }

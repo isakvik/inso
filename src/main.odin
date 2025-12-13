@@ -1,22 +1,22 @@
 package notosu
 
-import "core:container/queue"
-import "core:mem"
 import "base:runtime"
+import "core:container/queue"
 import "core:fmt"
 import "core:math/linalg"
 import "core:math/rand"
+import "core:mem"
 import "core:mem/virtual"
 import os "core:os/os2"
 import "core:path/filepath"
 import "core:strings"
 
 import lua "vendor:lua/5.4"
-
+import miniaudio "vendor:miniaudio"
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
-import miniaudio "vendor:miniaudio"
+
 
 vec2 :: linalg.Vector2f32
 vec3 :: linalg.Vector3f32
@@ -24,6 +24,20 @@ vec4 :: linalg.Vector4f32
 
 mat3 :: linalg.Matrix3x3f32
 mat4 :: linalg.Matrix4x4f32
+
+
+Buffer :: struct(T: typeid) {
+    count: i32,
+    data: []T,
+    size: i32
+}
+
+buffer_push :: proc(buf: ^Buffer($T), t: T) {
+    assert(buf.count + 1 < buf.size)
+    buf.data[buf.count] = t
+    buf.count += 1
+}
+
 
 /*
 note(isak):
@@ -64,7 +78,7 @@ memory: struct {
 
     mapset_arena: virtual.Arena,
     frame_arena: virtual.Arena,
-    command_buffer_arena: virtual.Arena,
+    command_buffer_arena: virtual.Arena, // todo(isak): shouldn't command buffer be part of frame arena?
 }
 
 init_growing_arena :: proc(arena: ^virtual.Arena, alloc: ^runtime.Allocator, size_MB: uint = 1) -> runtime.Allocator_Error {
@@ -85,14 +99,10 @@ init_memory :: proc() -> runtime.Allocator_Error {
     return .None
 }
 
-Dynamic_Geometry_Store :: struct(T: typeid) {
-    vertex_buffer: GL_Triple_Buffer(T),
-    index_buffer: GL_Triple_Buffer(u32),
-}
-
-Static_Geometry_Store :: struct(T: typeid) {
-    vertex_buffer: GL_Buffer(T),
-    index_buffer: GL_Buffer(u32),
+Shader_ID :: enum {
+    QUAD,
+    SLIDER,
+    TEXT
 }
 
 window: struct {
@@ -107,25 +117,34 @@ window: struct {
     pass_action: sg.Pass_Action,
     swapchain: sg.Swapchain,
 
+    shaders: [Shader_ID]Shader,
+    
     fullscreen_store: Static_Geometry_Store(Quad_Vertex), // note(isak): deferred rendering quad store
 
-    quad_shader: sg.Shader,
     quad_pipeline: sg.Pipeline,
     quad_store: Dynamic_Geometry_Store(Quad_Vertex),
     
-    slider_shader: sg.Shader,
     slider_pipeline: sg.Pipeline,
     slider_framebuffer: GL_Framebuffer,
     slider_instance_store: GL_Triple_Buffer(vec2),
     
+    text_pipeline: sg.Pipeline,
+    text_store: GL_Triple_Buffer(Glyph_Quad),
+    
     transform_buffer: GL_Uniform_Buffer(Transform),
-    circle_buffer: GL_Buffer(Slider_Vertex),
+    circle_geo_buffer: GL_Buffer(Slider_Vertex),
     texture_buffer: GL_Buffer(u64),
 
     white_texture: Texture,
     profiler_texture: Texture,
+    font_atlas_texture: Texture,
 
     skin_textures: [Skin_Element]Texture,
+}
+
+debug_info: struct {
+    display_profiler: bool,
+    display_fontatlas: bool
 }
 
 Transform :: struct {
@@ -182,7 +201,7 @@ window_cleanup :: proc() {
 }
 
 
-Mouse_State :: struct {
+mouse: struct {
     x, y: i32
 }
 
@@ -284,7 +303,8 @@ main :: proc() {
 
     window_resize(window.rect.w, window.rect.h)
     
-    // todo(isak): make a skin selector
+    text_init()
+    
     load_skin_textures("skins/gn/")
     prepare_textures_for_rendering()
 
@@ -297,8 +317,6 @@ main :: proc() {
             fmt.println("tried to open mapset, but failed:", mapset_path)
         }
     }
-
-    mouse: Mouse_State
 
     /*
         todo(isak): some research on timestep (consistent deltatime) would be prudent
@@ -315,9 +333,12 @@ main :: proc() {
     
     - sg_desc (sg.begin) pipeline_pool_size... grow pipeline pool size to num layers in mapset?
     - create ui tree for menus?
-    - font rendering (sdl? stb_truetype?)
-    - slider rendering (dynamic texture surface)
-    
+    - font rendering
+    - slider rendering
+        + dynamic texture surface
+        + slider geometry
+        - slider path gen
+        - slider quad clipping (scissor test?)
     */
     
     active := true
@@ -352,10 +373,12 @@ main :: proc() {
 
                 if event.type == sdl.EventType.KEY_DOWN {
                     #partial switch (event.key.scancode) {
-                        case sdl.Scancode.F11:
-                            profiler_display_enabled = !profiler_display_enabled
                         case sdl.Scancode.F1:
                             renderer.trace_frame = !renderer.trace_frame
+                        case sdl.Scancode.F10:
+                            debug_info.display_fontatlas = !debug_info.display_fontatlas
+                        case sdl.Scancode.F11:
+                            debug_info.display_profiler = !debug_info.display_profiler
                     }
                 }
                 
@@ -382,7 +405,7 @@ main :: proc() {
 
             // prepare drawing
             begin_frame(renderer)
-        }   
+        }
         
         {   
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end() 
@@ -399,6 +422,9 @@ main :: proc() {
         
         {
             /*
+                todo(isak): i wrote this a while ago, not sure what happens on batch overflow
+                but we have a command queue now
+
                 we want to put bounds calculations on the gpu, so shader and draw command pipeline
                 has to support this. this means we need a queue for uniform upload and draw commands
                 
@@ -451,7 +477,14 @@ main :: proc() {
             cursor_rect: Window_Rect = { mouse.x, mouse.y, 80, 80 }
             push_screenspace_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture_slot(.CURSOR))
             
-            if profiler_display_enabled {
+            if debug_info.display_fontatlas {
+                push_screenspace_rect(&renderer.quad_geometry, 
+                    {0, 0, i32(text_engine.ctx.width), i32(text_engine.ctx.height)}, 
+                    color_white, 
+                    u32(Reserved_Texture_Slots.FONT_ATLAS))
+            }
+
+            if debug_info.display_profiler {
                 begin_draw_with_transform(default_transform)
                 profiler_push_quads(&renderer.quad_geometry, frame_count)
             }
@@ -474,6 +507,20 @@ main :: proc() {
             
             command_push_set_mode({mode = .END_SLIDERS})
 
+            command_push_set_mode({mode = .TEXT})
+            command_push_set_bounds({
+                transform = {
+                    bounds_rect = {0, 0, f32(window.rect.w), f32(window.rect.h)},
+                    aspect_ratio = 1
+                }
+            })
+
+            push_text(renderer, "Hello, world!", {100, 100})
+            push_text(renderer, "yuuma toutetsu :3", {200, 200}, 
+                size=16)
+
+            text_end_frame(renderer)
+
             end_frame(renderer)
         }
 
@@ -487,7 +534,7 @@ main :: proc() {
 
             process_main_shader_changes(&shaders_watch)
 
-            if profiler_display_enabled {
+            if debug_info.display_profiler {
                 profiler_write_texture_column(frame_count, window.profiler_texture)
 
                 if frame_count % 100 == 0 {
@@ -533,6 +580,12 @@ end_frame :: proc(renderer: ^Renderer) {
                         sg.apply_pipeline(window.quad_pipeline)
                         
                         if (trace) { fmt.println("quads") }
+                    }
+                    case .TEXT: {
+                        sg.apply_pipeline(window.text_pipeline)
+                        
+                        tbo_bind(&window.text_store, 0)
+                        //tbo_bind(&window.text_store.index_buffer, 1)
                     }
                     case .BEGIN_SLIDERS: {
                         sg.apply_pipeline(window.slider_pipeline)
@@ -600,6 +653,18 @@ end_frame :: proc(renderer: ^Renderer) {
 
                 if (trace) { fmt.println("drawslider", cmd.instance_count, cmd.base_instance) }
             }
+            case .DRAW_TEXT: {
+                cmd := (^Command_Draw_Text)(queue.front_ptr(&renderer.command_queue))
+                queue.consume_front(&renderer.command_queue, size_of(Command_Draw_Text))
+                
+                gl.DrawArraysInstanced(
+                    gl.TRIANGLES,
+                    cmd.glyph_offset,
+                    cmd.glyph_count * 6,
+                    1)
+
+                if (trace) { fmt.println("drawtext", cmd.glyph_offset, cmd.glyph_count) }
+            }
         }
     }
 
@@ -619,10 +684,13 @@ process_main_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
     updated_systems := mapset_check_system_file_watch(watch)
 
     if updated_systems[.SHADERS] {
-        reinit_shader(&window.quad_shader, main_vs_path, main_fs_path, main_uniform_desc())
-        reinit_pipeline(&window.quad_pipeline, main_pipeline(window.quad_shader))
-        
-        reinit_shader(&window.slider_shader, slider_vs_path, slider_fs_path, slider_uniform_desc())
-        reinit_pipeline(&window.slider_pipeline, slider_pipeline(window.slider_shader))
+        for &shader in window.shaders {
+            reinit_shader(&shader)
+        }
+        fmt.println("reloaded shaders")
+
+        reinit_pipeline(&window.quad_pipeline, quad_pipeline())
+        reinit_pipeline(&window.slider_pipeline, slider_pipeline())
+        reinit_pipeline(&window.text_pipeline, text_pipeline())
     }
 }

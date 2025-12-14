@@ -91,24 +91,25 @@ text_init :: proc() {
                      len(text_engine.ctx.textureData))
 }
 
-text_resize_callback :: proc(pixels: rawptr, w, h: int) {
-    texture_reinit(&window.font_atlas_texture, i32(w), i32(h), pixels)
+text_resize_callback :: proc(ctx: rawptr, w, h: int) {
+    texture_reinit(&window.font_atlas_texture, i32(w), i32(h), ctx)
+    fs.__dirtyRectReset(transmute(^fs.FontContext)ctx)
 }
 
-text_update_callback :: proc(pixels: rawptr, dirty_rect: [4]f32, texture_data: rawptr) {
-    /*dirty_rect := Window_Rect{
+text_update_callback :: proc(ctx: rawptr, dirty_rect: [4]f32, texture_data: rawptr) {
+    dirty_rect := Window_Rect{
         i32(dirty_rect[0]),
         i32(dirty_rect[1]),
         i32(dirty_rect[2]) - i32(dirty_rect[0]),
         i32(dirty_rect[3]) - i32(dirty_rect[1]),
-    }*/
-    // note(isak): @speed
-    // can potentially push only the dirty rect by indexing the texture data pointer,
-    // as it just points to the whole atlas
-    texture_write_to(window.font_atlas_texture, 
-                     {0, 0, window.font_atlas_texture.x, window.font_atlas_texture.y}, 
-                     texture_data, 
-                     len(text_engine.ctx.textureData))
+    }
+
+    for i in 0..<dirty_rect.h {
+        texture_write_to(window.font_atlas_texture,
+                         {dirty_rect.x, dirty_rect.y + i, dirty_rect.w, 1},
+                         rawptr(uintptr(texture_data) + uintptr(dirty_rect.x + window.font_atlas_texture.w * (dirty_rect.y + i))),
+                         int(dirty_rect.w))
+    }
 }
 
 push_text :: proc(

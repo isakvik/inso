@@ -53,8 +53,8 @@ texture_reinit :: proc(texture: ^Texture, x, y: i32, pixels: rawptr) {
     texture.tex_id, texture.tex_handle = 
         texture_init(x, y, texture.internal_format)
 
-    texture.x = x
-    texture.y = y
+    texture.w = x
+    texture.h = y
 
     gl.MakeTextureHandleResidentARB(texture.tex_handle)
 }
@@ -66,8 +66,8 @@ texture_from_size :: proc(
     format: u32 = gl.RGBA
 ) -> Texture {
     result: Texture = {
-        x = x,
-        y = y,
+        w = x,
+        h = y,
         format = format,
         internal_format = internal_format,
     }
@@ -81,8 +81,8 @@ texture_from_data :: proc(x, y: i32,
     format: u32 = gl.RGBA
 ) -> Texture {
     result: Texture = {
-        x = x,
-        y = y,
+        w = x,
+        h = y,
         format = format,
         internal_format = internal_format,
     }
@@ -100,12 +100,12 @@ texture_from_file :: proc(path: string) -> (Texture, os.Error) {
     }
     
     channels: i32
-    pixels := stbi.load_from_memory(raw_data(data[:]), i32(len(data)), &result.x, &result.y, &channels, 4)
+    pixels := stbi.load_from_memory(raw_data(data[:]), i32(len(data)), &result.w, &result.h, &channels, 4)
     if channels != 4 {
         fmt.println("image with less than 4 channels unhandled:", path)
         assert(channels == 4)
     }
-    result.tex_id, result.tex_handle = texture_init_with_data(result.x, result.y, pixels)
+    result.tex_id, result.tex_handle = texture_init_with_data(result.w, result.h, pixels)
 
     return result, err
 }

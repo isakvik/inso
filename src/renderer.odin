@@ -89,7 +89,7 @@ Texture_Handle :: u64
 
 Texture :: struct {
     path: string,
-    x, y: i32,
+    w, h: i32,
     format, internal_format: u32,
     tex_id: u32, // note(isak): gl assigned texture id
     tex_handle: Texture_Handle, // note(isak): bindless handle

@@ -67,7 +67,3 @@ push_slider :: proc(renderer: ^Renderer, slider: ^Slider) {
         instance_count = renderer.slider_instances.count - instance_at
     })
 }
-
-line_normal :: proc(from_to: vec2) -> vec2 {
-    return linalg.normalize(linalg.vector2_orthogonal(from_to))
-}

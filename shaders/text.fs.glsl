@@ -12,7 +12,6 @@ flat in uint texIndex;
 out vec4 frag_color;
 
 void main() {
-    // todo(isak): u32->vec4
     frag_color = color;
     frag_color.a *= texture(textures[texIndex], uv).r;
     //frag_color = vec4(uv, 0, 1) * color;

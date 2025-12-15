@@ -13,9 +13,9 @@ import sdl "vendor:sdl3"
 
 /* todo(isak): 
     further text stuff
-    - test glyph atlas resizing, unicode support
+    - test unicode support
     - string caching by way of a pool system that can allocate/free within the buffer
-        @speed
+        @speed, but it's probably not necessary at all
 */
 
 
@@ -54,7 +54,6 @@ Glyph_Quad :: struct {
 font_paths := [Font]string{
     .FALLBACK = "C:/Windows/Fonts/ARIAL_UNICODE_MS.ttf",
     .DEFAULT = "C:/Windows/Fonts/GeorgiaPro-Regular.ttf",
-    //.DEFAULT = "C:/Windows/Fonts/COMIC.TTF",
 }
 
 text_engine: struct {

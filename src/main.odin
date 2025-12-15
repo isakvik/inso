@@ -66,28 +66,12 @@ memory: struct {
     command_buffer_arena: virtual.Arena, // todo(isak): shouldn't command buffer be part of frame arena?
 }
 
-init_growing_arena :: proc(arena: ^virtual.Arena, alloc: ^runtime.Allocator, size_MB: uint = 1) -> runtime.Allocator_Error {
-    alloc_err := virtual.arena_init_growing(arena, size_MB)
-    if alloc_err != .None {
-        fmt.println("mapset arena init error:", alloc_err)
-        return alloc_err
-    }
-    alloc^ = virtual.arena_allocator(arena)
-    return .None
-}
-
 // note(isak): this should take care of error printing
 init_memory :: proc() -> runtime.Allocator_Error {
     init_growing_arena(&memory.mapset_arena, &memory.mapset_allocator)
     init_growing_arena(&memory.frame_arena, &memory.frame_allocator)
     init_growing_arena(&memory.command_buffer_arena, &memory.command_buffer_allocator)
     return .None
-}
-
-Shader_ID :: enum {
-    QUAD,
-    SLIDER,
-    TEXT
 }
 
 window: struct {
@@ -130,16 +114,6 @@ window: struct {
 debug_info: struct {
     display_profiler: bool,
     display_fontatlas: bool
-}
-
-Transform :: struct {
-    bounds_rect: vec4,
-    aspect_ratio: f32,
-}
-
-default_transform :: Transform{
-    bounds_rect = {-1, -1, 2, 2},
-    aspect_ratio = 1
 }
 
 lua_ctx: struct {
@@ -324,7 +298,7 @@ main :: proc() {
     
     - sg_desc (sg.begin) pipeline_pool_size... grow pipeline pool size to num layers in mapset?
     - create ui tree for menus?
-    - font rendering
+        - imgui
     - slider rendering
         + dynamic texture surface
         + slider geometry
@@ -334,8 +308,6 @@ main :: proc() {
     
     active := true
     event: sdl.Event
-
-    font_size := 16
 
     make_test_slider(&test_slider, 0)
     make_test_slider(&test_slider2, 1)
@@ -368,8 +340,6 @@ main :: proc() {
                     #partial switch (event.key.scancode) {
                         case sdl.Scancode.F1:
                             renderer.trace_frame = !renderer.trace_frame
-                        case sdl.Scancode.F:
-                            font_size += 4
                         case sdl.Scancode.F10:
                             debug_info.display_fontatlas = !debug_info.display_fontatlas
                         case sdl.Scancode.F11:
@@ -500,14 +470,13 @@ main :: proc() {
             //push_slider(renderer, &test_slider2)
             
             command_push_set_mode({mode = .END_SLIDERS})
-
+            
             command_push_set_mode({mode = .TEXT})
             begin_draw_with_transform(window_get_screenspace_transform())
 
             push_text(renderer, "Hello, world!", {100, 100})
-            push_text(renderer, "yuuma toutetsu :3", {200, 200}, 
-                size=f32(font_size))
-                
+            push_text(renderer, "yuuma toutetsu :3", {200, 200}, size=16)
+
             if debug_info.display_profiler {
                 profiler_push_blocks_as_text(renderer, frame_count)
             }

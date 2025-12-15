@@ -173,10 +173,9 @@ tbo_init :: proc($T: typeid, count: int) -> GL_Triple_Buffer(T) {
 }
 
 tbo_wait :: proc(buf: ^GL_Triple_Buffer($T)) {
-    sync := buf.buffers[buf.current_index].sync
-    if sync != nil {
+    if buf.buffers[buf.current_index].sync != nil {
         for true {
-            waitReturn := gl.ClientWaitSync(sync, gl.SYNC_FLUSH_COMMANDS_BIT, 0)
+            waitReturn := gl.ClientWaitSync(buf.buffers[buf.current_index].sync, gl.SYNC_FLUSH_COMMANDS_BIT, 0)
             if (waitReturn == gl.ALREADY_SIGNALED ||
                 waitReturn == gl.CONDITION_SATISFIED ||
                 waitReturn == gl.WAIT_FAILED) {
@@ -206,14 +205,14 @@ tbo_bind :: proc(buf: ^GL_Triple_Buffer($T), bindIndex: u32) {
         buf.size)
 }
 
-tbo_reset :: proc(buf: ^GL_Triple_Buffer($T)) {
+tbo_advance :: proc(buf: ^GL_Triple_Buffer($T)) {
     buf.current_index = (buf.current_index + 1) % _pbo_multiple_count
     buf.count = 0
 }
 
 tbo_advance_and_get :: proc(buf: ^GL_Triple_Buffer($T)) -> []T {
-    tbo_reset(buf)
-    tbo_lock(buf)
+    tbo_advance(buf)
+    tbo_wait(buf)
     return tbo_get_current(buf)
 }
 

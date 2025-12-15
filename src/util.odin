@@ -1,6 +1,8 @@
 package notosu
 
+import "base:runtime"
 import "core:fmt"
+import "core:math/linalg"
 import "core:mem/virtual"
 import os "core:os/os2"
 import "core:strings"
@@ -89,4 +91,22 @@ arena_push :: proc(arena: ^virtual.Arena, $T: typeid) -> (^T, virtual.Allocator_
     data, err := virtual.arena_alloc(arena, size_of(T), arena_default_alignment)
     assert(err == .None, "memory allocation error")
     return (^T)(raw_data(data)), err
+}
+
+init_growing_arena :: proc(arena: ^virtual.Arena, alloc: ^runtime.Allocator, size_MB: uint = 1) -> runtime.Allocator_Error {
+    alloc_err := virtual.arena_init_growing(arena, size_MB)
+    if alloc_err != .None {
+        fmt.println("mapset arena init error:", alloc_err)
+        return alloc_err
+    }
+    alloc^ = virtual.arena_allocator(arena)
+    return .None
+}
+
+
+//////////////////////////////////////////////////////
+// note(isak): math api
+
+line_normal :: proc(from_to: vec2) -> vec2 {
+    return linalg.normalize(linalg.vector2_orthogonal(from_to))
 }

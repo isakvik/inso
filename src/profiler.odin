@@ -14,7 +14,7 @@ import sdl "vendor:sdl3"
 profiler_w :: i32(600)
 profiler_h :: i32(200)
 
-fps_average_running_frame_count :: 1000
+fps_average_running_frame_count :: 100
 
 profiler_pixels: [profiler_h]u32
 profiler_frame_pixel_count: i32
@@ -103,6 +103,8 @@ profiler_push_blocks_as_text :: proc(renderer: ^Renderer, frame_count: u64) {
     x_inc: f32
     x_inc_max: f32 = min(f32)
     for trace_block in Trace_Blocks {
+        if trace_block == .NONE { continue }
+        
         push_text(renderer, 
                   fmt.enum_value_to_string(trace_block) or_else unreachable(), 
                   pos_top_left + {0, y_inc * f32(trace_block)},
@@ -114,6 +116,8 @@ profiler_push_blocks_as_text :: proc(renderer: ^Renderer, frame_count: u64) {
     
     buf: [32]byte
     for trace_block in Trace_Blocks {
+        if trace_block == .NONE { continue }
+
         trace_block_ms := tsc_to_ms(profiler.prev_frame_blocks_elapsed[trace_block])
 
         trace_block_str := fmt.bprintf(buf[:], "%.4f", trace_block_ms)
@@ -128,9 +132,7 @@ profiler_push_blocks_as_text :: proc(renderer: ^Renderer, frame_count: u64) {
 profiler_write_texture_column :: proc(frame_count: u64, texture: Texture) {
     profiler_frame_pixel_count = 0
     blocks: for trace_block in Trace_Blocks {
-        if trace_block == .NONE {
-            continue
-        }
+        if trace_block == .NONE { continue }
 
         // note(isak): one ms = ten pixels
         elapsed_pixels := i32(profiler.prev_frame_blocks_elapsed[trace_block] / (_rdtsc_frequency / 10_000))

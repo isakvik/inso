@@ -45,6 +45,7 @@ load_skin_textures :: proc(skin_path: string) {
         }
 
         // todo(isak): we handle as much as we handle here, but can supply a default skin like osu here
+        // instead of asserting
         assert(tex_err == os.General_Error.None)
     }
 }

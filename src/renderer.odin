@@ -24,6 +24,13 @@ slider_fs_path :: "shaders/slider.fs.glsl"
 text_vs_path :: "shaders/text.vs.glsl"
 text_fs_path :: "shaders/text.fs.glsl"
 
+Shader_ID :: enum {
+    QUAD,
+    SLIDER,
+    TEXT
+}
+
+
 batch_max_vertices :: 64*1024
 max_texture_handles :: 1024
 //max_slider_draw_commands :: 1024
@@ -50,6 +57,18 @@ Quad_Vertex :: struct {
 Slider_Vertex :: struct {
     pos: vec3,
     __padding: u32,
+}
+
+
+
+Transform :: struct {
+    bounds_rect: vec4,
+    aspect_ratio: f32,
+}
+
+default_transform :: Transform{
+    bounds_rect = {-1, -1, 2, 2},
+    aspect_ratio = 1
 }
 
 
@@ -519,7 +538,7 @@ push_transform :: proc(transform: Transform) -> bool {
 }
 
 /*
-    todo(isak): this takes care of draw command stats for the previously set current draw;
+    note(isak): this takes care of draw command stats for the previously set current draw;
                 we don't need an end_draw() as far as i can tell (except to avoid branching)
 */
 begin_draw_with_transform :: proc(transform: Transform) -> bool {
@@ -559,10 +578,10 @@ batch_begin :: proc(renderer: ^Renderer) {
 }
 
 batch_end :: proc(renderer: ^Renderer) {
-    tbo_wait(&window.quad_store.vertex_buffer)
-    tbo_wait(&window.quad_store.index_buffer)
-    tbo_wait(&window.slider_instance_store)
-    tbo_wait(&window.text_store)
+    tbo_lock(&window.quad_store.vertex_buffer)
+    tbo_lock(&window.quad_store.index_buffer)
+    tbo_lock(&window.slider_instance_store)
+    tbo_lock(&window.text_store)
     
     tbo_bind(&window.quad_store.vertex_buffer, 0)
     tbo_bind(&window.quad_store.index_buffer, 1)

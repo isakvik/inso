@@ -293,49 +293,52 @@ main :: proc() {
     return
     }
 
-    desiredSpec := sdl.AudioSpec{
-        freq = 48000,
-        format = .F32,
-        channels = 2
-    }
-
-    deviceID = sdl.OpenAudioDevice(sdl.AUDIO_DEVICE_DEFAULT_PLAYBACK, &desiredSpec)
-    if deviceID == 0 {
-        fmt.printfln("SDL init error: {}", sdl.GetError())
-        return
-    }
-
-    stream := sdl.CreateAudioStream(&desiredSpec, &desiredSpec); // Input and output specs can match initially
-
-    result: miniaudio.result
-
-    sdl.GetAudioDeviceFormat(deviceID, &obtainedSpec, &sample_frames)
-
-    engineConfig := miniaudio.engine_config_init()
-    engineConfig.channels = u32(obtainedSpec.channels)
-    engineConfig.sampleRate = u32(obtainedSpec.freq)
-    engineConfig.noDevice = true
-
-    result = miniaudio.engine_init(&engineConfig, &g_engine)
-    if (result != .SUCCESS) {
-        fmt.printf("Failed to initialize audio engine.")
-        return
-    }
-
-    result = miniaudio.sound_init_from_file(&g_engine, "songs/test/test.mp3", {.STREAM}, nil, nil, &g_sound)
-    if (result != .SUCCESS) {
-        fmt.printf("Failed to initialize sound.")
-        return
-    }
-
-    // Register the callback, passing a pointer to the sound object as user data
-    sdl.SetAudioStreamGetCallback(stream, data_callback, &g_sound);
-
-    // Bind the stream to a logical audio device
-    sdl.BindAudioStreams(deviceID, &stream, 1);
+    sound_enabled := false
+    if sound_enabled {
+        desiredSpec := sdl.AudioSpec{
+            freq = 48000,
+            format = .F32,
+            channels = 2
+        }
     
-    sdl.ResumeAudioDevice(deviceID)
-    miniaudio.sound_start(&g_sound)
+        deviceID = sdl.OpenAudioDevice(sdl.AUDIO_DEVICE_DEFAULT_PLAYBACK, &desiredSpec)
+        if deviceID == 0 {
+            fmt.printfln("SDL init error: {}", sdl.GetError())
+            return
+        }
+    
+        stream := sdl.CreateAudioStream(&desiredSpec, &desiredSpec); // Input and output specs can match initially
+    
+        result: miniaudio.result
+    
+        sdl.GetAudioDeviceFormat(deviceID, &obtainedSpec, &sample_frames)
+    
+        engineConfig := miniaudio.engine_config_init()
+        engineConfig.channels = u32(obtainedSpec.channels)
+        engineConfig.sampleRate = u32(obtainedSpec.freq)
+        engineConfig.noDevice = true
+    
+        result = miniaudio.engine_init(&engineConfig, &g_engine)
+        if (result != .SUCCESS) {
+            fmt.printf("Failed to initialize audio engine.")
+            return
+        }
+    
+        result = miniaudio.sound_init_from_file(&g_engine, "songs/test/test.mp3", {.STREAM}, nil, nil, &g_sound)
+        if (result != .SUCCESS) {
+            fmt.printf("Failed to initialize sound.")
+            return
+        }
+    
+        // Register the callback, passing a pointer to the sound object as user data
+        sdl.SetAudioStreamGetCallback(stream, data_callback, &g_sound);
+    
+        // Bind the stream to a logical audio device
+        sdl.BindAudioStreams(deviceID, &stream, 1);
+        
+        sdl.ResumeAudioDevice(deviceID)
+        miniaudio.sound_start(&g_sound)
+    }
 
     window_init({w = 1024, h = 512})
     defer window_cleanup()

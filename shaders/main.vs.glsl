@@ -5,7 +5,6 @@
 #define max_layers 100
 
 // todo(isak) put in buffer
-uniform vec4 vs_params[4];
 uniform float layer;
 
 struct Vertex {
@@ -15,11 +14,14 @@ struct Vertex {
     uint texIndex;
 };
 
-layout(binding = 0, std430) buffer vertexData {
+layout(binding = 0, std430) readonly buffer vertexData {
     Vertex vertices[];
 };
-layout(binding = 1, std430) buffer indexData {
+layout(binding = 1, std430) readonly buffer indexData {
     uint indices[];
+};
+layout (binding = 5, std140) uniform transform {
+    mat3 t;
 };
 
 out vec4 color;
@@ -33,6 +35,6 @@ void main() {
     color = v.color;
     texIndex = v.texIndex;
 
-    vec2 mappedPos = v.pos * 2 - 1.0;
-    gl_Position = vec4(mappedPos.x, mappedPos.y * -1, layer / max_layers, 1.0);
+    vec3 pos = t * vec3(v.pos.x, v.pos.y, 1.0); 
+    gl_Position = vec4(pos.xy, layer / max_layers, 1.0);
 }

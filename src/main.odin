@@ -1,31 +1,22 @@
 package notosu
 
-import "core:math"
-import "core:sys/windows"
 import "base:runtime"
+import "core:container/queue"
+import sa "core:container/small_array"
 import "core:fmt"
-import "core:math/rand"
-import "core:os"
-import "core:unicode/utf16"
+import "core:math"
+import "core:math/linalg"
+import "core:mem/virtual"
+import os "core:os/os2"
 import "core:path/filepath"
 import "core:strings"
-import "core:mem"
-import "core:mem/virtual"
 
 import lua "vendor:lua/5.4"
-
+import miniaudio "vendor:miniaudio"
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
-import slog "vendor:sokol/log"
-import miniaudio "vendor:miniaudio"
 
-vec2 :: struct { x, y: f32 }
-vec3 :: struct { x, y, z: f32 }
-vec4 :: struct { x, y, z, w: f32 }
-vec4_from :: proc(v: vec3, a: f32) -> vec4 { return {v.x,v.y,v.z,a}}
-
-mat4 :: matrix[4,4]f32
 
 /*
 note(isak):
@@ -56,81 +47,123 @@ scrubbing support (jump to arbitrary time, display content)
 
 */
 
-// hey, i know you hate questions like this but i'm having a hard time getting started on getting started programming. is it better to get started with setting 
-// up your environment, or should i do all the work in my head so i can feel good about not having done anything at all? thanks, 200 word essay due tomorrow
-
 memory: struct {
     // note(isak): this is to be used for mapset runtime data, such as timing state, 
     // judgements, etc. (fill in)
     // cleared on mapset load
     mapset_allocator: runtime.Allocator,
+    frame_allocator: runtime.Allocator,
+    command_buffer_allocator: runtime.Allocator,
+
     mapset_arena: virtual.Arena,
+    frame_arena: virtual.Arena,
+    command_buffer_arena: virtual.Arena,
 }
 
 // note(isak): this should take care of error printing
 init_memory :: proc() -> runtime.Allocator_Error {
-    alloc_err := virtual.arena_init_growing(&memory.mapset_arena) // note(isak): default size 1 MB
-    if alloc_err != .None {
-        fmt.println("mapset arena init error:", alloc_err)
-        return alloc_err
-    }
-    memory.mapset_allocator = virtual.arena_allocator(&memory.mapset_arena)
-
+    memory.mapset_allocator, _ = init_growing_arena(&memory.mapset_arena)
+    memory.frame_allocator, _ = init_growing_arena(&memory.frame_arena)
+    memory.command_buffer_allocator, _ = init_growing_arena(&memory.command_buffer_arena)
     return .None
 }
 
 window: struct {
-    rect: Window_Rect,
+    rect: Rect,
+    aspect_ratio: f32, // note(isak): height over width
     renderer: Renderer,
 
     handle: ^sdl.Window,
     gl_context: sdl.GLContext,
 
-    main_shader: sg.Shader,
-    pipeline: sg.Pipeline,
     bindings: sg.Bindings,
     pass_action: sg.Pass_Action,
     swapchain: sg.Swapchain,
 
-    vertex_buffer: Persistent_Buffer(Vertex),
-    index_buffer: Persistent_Buffer(u32),
-    texture_buffer: Persistent_Buffer(u64), // todo(isak): this doesn't need triple buffering
+    shaders: [Pipeline_ID]Shader,
+    pipelines: [Pipeline_ID]sg.Pipeline,
+    framebuffers: [Framebuffer_ID]GL_Framebuffer,
+    
+    fullscreen_store: Static_Geometry_Store(Quad_Vertex), // note(isak): deferred rendering quad store
+
+    quad_store: Dynamic_Geometry_Store(Quad_Vertex),
+    
+    slider_instance_store: GL_Triple_Buffer(vec2),
+    
+    text_store: GL_Triple_Buffer(Glyph_Quad),
+    
+    current_transform: Transform,
+    transform_buffer: GL_Uniform_Buffer(Transform),
+    circle_geo_buffer: GL_Buffer(Slider_Vertex),
+    texture_buffer: GL_Buffer(u64),
 
     white_texture: Texture,
     profiler_texture: Texture,
+    font_atlas_texture: Texture,
 
     skin_textures: [Skin_Element]Texture,
+}
+
+debug_info: struct {
+    display_profiler: bool,
+    display_fontatlas: bool
 }
 
 lua_ctx: struct {
     state: ^lua.State
 }
 
-init_window :: proc(rect: Window_Rect) {
+window_init :: proc(rect: Rect) {
     window.rect = rect
-    window.handle = sdl.CreateWindow("notosu!", rect.w, rect.h, sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
-    
+    window.handle = sdl.CreateWindow("notosu!", i32(rect.w), i32(rect.h), sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
+    window.aspect_ratio = f32(rect.h) / f32(rect.w)
+
     sdl.GL_SetAttribute(sdl.GL_CONTEXT_MAJOR_VERSION, 4)
     sdl.GL_SetAttribute(sdl.GL_CONTEXT_MINOR_VERSION, 6)
     sdl.SetHint(sdl.HINT_RENDER_DRIVER, "opengl")
 
     sdl.GL_SetSwapInterval(0)
     sdl.SetWindowSurfaceVSync(window.handle, 0)
-    window.gl_context = sdl.GL_CreateContext(window.handle)
 
-    sdl.GetWindowPosition(window.handle, &window.rect.x, &window.rect.y)
-    v := sdl.HideCursor()
+    window.gl_context = sdl.GL_CreateContext(window.handle)
+    gl.load_up_to(4, 6, sdl.gl_set_proc_address)
+    gl.ClipControl(gl.UPPER_LEFT, gl.ZERO_TO_ONE)
+
+    win_x, win_y: i32
+    sdl.GetWindowPosition(window.handle, &win_x, &win_y)
+    window.rect.x = f32(win_x)
+    window.rect.y = f32(win_y)
+
+    _ignored := sdl.HideCursor()
 }
 
-cleanup_window :: proc() {
+window_resize :: proc(new_w, new_h: i32) {
+    window.rect.w = f32(new_w)
+    window.rect.h = f32(new_h)
+    window.swapchain.width = new_w
+    window.swapchain.height = new_h
+    window.aspect_ratio = window.rect.h / window.rect.w
+
+    fbo_reinit(&window.framebuffers[.SLIDERS], new_w, new_h)
+    window.renderer.default_transform = transform_from_bounds({0, 0, 1, 1}, window.aspect_ratio)
+}
+
+window_get_screenspace_transform :: proc() -> Transform {
+    return transform_from_bounds({0, 0, window.rect.w, window.rect.h}, 1)
+}
+
+window_get_fullscreen_transform :: proc() -> Transform {
+    return transform_from_bounds({0, 0, 1, 1}, 1)
+}
+
+window_cleanup :: proc() {
     sdl.GL_DestroyContext(window.gl_context)
     sdl.DestroyWindow(window.handle)
 }
 
 
-Mouse_State :: struct {
-    x, y: i32,
-    xf, yf: f32
+mouse: struct {
+    pos: vec2
 }
 
 Button_State :: struct {
@@ -201,15 +234,15 @@ is_released :: proc(button: Button_State) -> bool {
     return !button.is_down && button.was_down
 }
 
-input_display :: proc(key: Button_State, rect: Window_Rect, anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
+input_display :: proc(key: Button_State, rect: Rect, anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
     if is_pressed(key) {
-        push_screenspace_layout_rect(&window.renderer, rect, anchor, color, tex_index)
+        push_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
     } else if is_held(key) {
-        push_screenspace_layout_rect(&window.renderer, rect, anchor, color, tex_index)
+        push_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
     } else if is_released(key) {
-        push_screenspace_layout_rect(&window.renderer, rect, anchor, {0.2,0.2,0.2,1}, tex_index)
+        push_layout_rect(&window.renderer.quad_geometry, rect, anchor, {0.2,0.2,0.2,1}, tex_index)
     } else {
-        push_screenspace_layout_rect(&window.renderer, rect, anchor, {0.2,0.2,0.2,1}, tex_index)
+        push_layout_rect(&window.renderer.quad_geometry, rect, anchor, {0.2,0.2,0.2,1}, tex_index)
         //push_layout_rect(&window.renderer, key_input_rect, .BOTTOM_RIGHT, {0.5,0.5,0.5,1})
     }
 }
@@ -235,12 +268,12 @@ main :: proc() {
         panic("memory init error")
     }
 
-    current_dir := os.get_current_directory()
+    current_dir, dir_error := os.get_working_directory(context.allocator)
     if strings.compare("build", filepath.base(current_dir)) == 0 {
-        os.set_current_directory(filepath.dir(current_dir))
+        os.set_working_directory(filepath.dir(current_dir))
     }
 
-
+    /*
     lua_ctx.state = lua.L_newstate()
     defer lua.close(lua_ctx.state)
     
@@ -248,6 +281,7 @@ main :: proc() {
     
     script: cstring = "print('Hello from Lua!')"
     lua.L_dostring(lua_ctx.state, script)
+    */
 
     deviceID: sdl.AudioDeviceID
     //desiredSpec: sdl.AudioSpec
@@ -303,28 +337,31 @@ main :: proc() {
     sdl.ResumeAudioDevice(deviceID)
     miniaudio.sound_start(&g_sound)
 
-    init_window({w = 1280, h = 720})
-    defer cleanup_window()
+    window_init({w = 1024, h = 512})
+    defer window_cleanup()
 
-    init_renderer()
+    renderer_init()
     renderer := &window.renderer
-    defer cleanup_renderer()
+    defer renderer_cleanup()
+
+    window_resize(i32(window.rect.w), i32(window.rect.h))
     
-    // todo(isak): make a skin selector
+    text_init()
+    
     load_skin_textures("skins/gn/")
     prepare_textures_for_rendering()
 
     shaders_watch := win32_init_directory_watch("shaders/")
 
+    mapset: ^Mapset
     {
+        ok: bool
         mapset_path := "songs/test/"
-        mapset, ok := mapset_open_for_editing(mapset_path)
+        mapset, ok = mapset_open_for_editing(mapset_path)
         if !ok {
             fmt.println("tried to open mapset, but failed:", mapset_path)
         }
     }
-
-    mouse: Mouse_State
 
     /*
         todo(isak): some research on timestep (consistent deltatime) would be prudent
@@ -341,14 +378,36 @@ main :: proc() {
     
     - sg_desc (sg.begin) pipeline_pool_size... grow pipeline pool size to num layers in mapset?
     - create ui tree for menus?
-    - font rendering (sdl? stb_truetype?)
-    - slider rendering (dynamic texture surface)
-    
+        - imgui?
+    - slider rendering
+        + dynamic texture surface
+        + slider geometry
+        - slider path gen
     */
+
+    make_test_slider(&test_slider, 0)
+    make_test_slider(&test_slider2, 1)
+
+    preempt: f64 = convert_approach_rate_to_preempt(mapset.osu_map.diff_approach_rate)
+    
+    final_hobj_time_ms: f64
+    for hobj in mapset.osu_map.hit_objects {
+        make_test_obj(hobj.end_time_ms, preempt, hobj.pos)
+
+        final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
+    }
+
+    game.active_map.length_ms = final_hobj_time_ms + 500
+    game.active_map.audio_lead_in = preempt + 1000
+    game.play_timer_ms = -game.active_map.audio_lead_in
+
+    selection_active: bool
+    selection_start_mouse_pos: vec2
+    
     
     active := true
     event: sdl.Event
-    
+
     for active {
         profiler_begin()
         defer profiler_end()
@@ -363,21 +422,33 @@ main :: proc() {
             osu_controller.m2.was_down = osu_controller.m2.is_down
 
             for sdl.PollEvent(&event) {
-                if event.type == sdl.EventType.QUIT {
+                #partial switch event.type {
+                case sdl.EventType.QUIT:
                     active = false
-                }
-                
-                if event.type == sdl.EventType.WINDOW_RESIZED {
-                    window.rect.w = event.window.data1
-                    window.rect.h = event.window.data2
-                    window.swapchain.width = event.window.data1
-                    window.swapchain.height = event.window.data2
-                }
 
-                if event.type == sdl.EventType.KEY_DOWN {
+                case sdl.EventType.WINDOW_FOCUS_LOST:
+                    selection_active = false
+
+                case sdl.EventType.WINDOW_RESIZED:
+                    cleanup_textures_for_rendering()
+                    window_resize(max(event.window.data1, 1), max(event.window.data2, 1))
+                    prepare_textures_for_rendering()
+                        
+                case sdl.EventType.MOUSE_BUTTON_DOWN:
+                    selection_start_mouse_pos = {event.button.x, event.button.y}
+                    selection_active = true
+
+                case sdl.EventType.MOUSE_BUTTON_UP:
+                    selection_active = false
+
+                case sdl.EventType.KEY_DOWN:
                     #partial switch (event.key.scancode) {
-                        case sdl.Scancode.F11:
-                            profiler_display_enabled = !profiler_display_enabled
+                        case sdl.Scancode.F1:
+                            renderer.trace_frame = !renderer.trace_frame
+                        case sdl.Scancode.F10:
+                            debug_info.display_fontatlas = !debug_info.display_fontatlas
+                        case sdl.Scancode.F9:
+                            debug_info.display_profiler = !debug_info.display_profiler
                     }
                 }
                 
@@ -395,11 +466,12 @@ main :: proc() {
                 }
             }
             
-            mouse_flags := sdl.GetGlobalMouseState(&mouse.xf, &mouse.yf)
-            sdl.GetWindowPosition(window.handle, &mouse.x, &mouse.y)
+            xi, yi: i32
+            mouse_flags := sdl.GetGlobalMouseState(&mouse.pos.x, &mouse.pos.y)
+            sdl.GetWindowPosition(window.handle, &xi, &yi)
 
-            mouse.x = i32(mouse.xf) - mouse.x
-            mouse.y = i32(mouse.yf) - mouse.y
+            mouse.pos.x = mouse.pos.x - f32(xi)
+            mouse.pos.y = mouse.pos.y - f32(yi)
         }
 
         {   
@@ -408,79 +480,257 @@ main :: proc() {
             time_last_frame = time_current_frame
             time_current_frame = current_time()
             dt = time_current_frame - time_last_frame
+
             // prepare drawing
             begin_frame(renderer)
-        }   
+        }
         
         {   
-            profiler_block_begin(.GAME_UPDATE); defer profiler_block_end() 
+            profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
+            
+            osu_on_update(dt)
+            
+            begin_draw_with_transform(renderer.default_transform)
+
+            // bounds testers
+
+            begin_draw_with_transform(window_get_screenspace_transform())
             
             // game update
             input_display(osu_controller.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
             input_display(osu_controller.k2, { window.rect.w, window.rect.h / 2, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
             input_display(osu_controller.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
             input_display(osu_controller.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
-        }   
-        
-        {   
-            profiler_block_begin(.GAME_DRAW); defer profiler_block_end() 
-            texture := u32((current_time() - time_first_frame)) % len(Skin_Element) + len(Reserved_Texture_Slots)
-
-            cursor_rect: Window_Rect = { mouse.x, mouse.y, 80, 80 }
-            push_screenspace_layout_rect(renderer, cursor_rect, .CENTER, {1,1,1,1}, texture)
-
-            push_particle({
-                rect = to_clipspace_rect(cursor_rect), 
-                vel = {rand.float32()*2-1, rand.float32()*2-1},
-                tex_index = texture
-            })
-
-            update_particles(dt)
-            for i in 0..<particle_count {
-                push_rect(renderer, particles[i].rect, {1,1,1,1}, particles[i].tex_index)
-            }
             
-            if profiler_display_enabled {
-                profiler_push_quads(renderer, frame_count)
+            cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 80, 80 }
+            push_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture_slot(.CURSOR))
+            
+            if selection_active {
+                push_rect_outline_fill(&window.renderer.quad_geometry, rect_from_points(mouse.pos, selection_start_mouse_pos), 
+                    color_white, with_alpha(color_sky_blue, 0.3), 1)
             }
 
-            end_frame(renderer)
-        }   
+            playfield_rect := Rect{ 0, 0, osu_playfield_size_osupx, osu_playfield_size_osupx }
+            begin_draw_with_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
+            push_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
 
-        {   
+            // todo(isak): create some kinda iterator for this; keep track of earliest active object and 
+            // stop once first nonstarted obj is done
+            for &hit_object in sa.slice(&osu_map_hit_objects) {
+                render_hit_object(renderer, &hit_object)
+            }
+
+            if is_pressed(osu_controller.k1) {
+                fmt.printfln("is pressed")
+            } else if is_held(osu_controller.k1) {
+                fmt.printfln("is held")
+            } else if is_released(osu_controller.k1) {
+                fmt.printfln("is released")
+            }
+        }
+        
+        {
+            /*
+                todo(isak): state of the renderer:
+                usage:
+                - batch overrun has not been tested but won't work; it should run end_frame().. probably
+                - the rect pushing in the draw section is artificial; only text_end_frame() and 
+                    end_frame() need to happen here
+                - transforms should be a dynamic stack that we just write as we process the frame; can save a bunch
+                    of draw calls
+
+                optimization:
+                - opengl has pretty bad overhead per frame even if it's not doing much work, so i think
+                    directx is a better choice cuz we don't do anything fancy
+                - the vertex generation pipeline for main isn't particularly efficient, should be
+                    rewritten to be more like text where quads are just written directly to the gpu
+            */
+            profiler_block_begin(.GAME_DRAW); defer profiler_block_end()
+
+            if debug_info.display_fontatlas {
+                begin_draw_with_transform(window_get_screenspace_transform())
+                push_rect(&renderer.quad_geometry,
+                    {0, 0, f32(text_engine.ctx.width), f32(text_engine.ctx.height)},
+                    color_white,
+                    reserved_texture(.FONT_ATLAS))
+            }
+
+            if debug_info.display_profiler {
+                begin_draw_with_transform(window_get_screenspace_transform())
+                profiler_push_quad(&renderer.quad_geometry, frame_count)
+            }
+
+            render_slider(renderer, &test_slider)
+            command_push_bind_framebuffer({})
+            
+            command_push_set_mode({mode = .TEXT})
+            begin_draw_with_transform(window_get_screenspace_transform())
+
+            push_text(renderer, "Hello, world!", {100, 100})
+            push_text(renderer, "yuuma toutetsu :3", {200, 200}, size=16)
+            
+            buf: [32]byte
+            game_timer_str := fmt.bprintf(buf[:], "%.3f", game.play_timer_ms)
+            push_text(renderer, game_timer_str, {20, 20}, size = 22)
+
+            if debug_info.display_profiler {
+                profiler_push_blocks_as_text(renderer, frame_count)
+            }
+
+            text_end_frame(renderer)
+            end_frame(renderer)
+        }
+
+        {
             profiler_block_begin(.SWAP_FRAME); defer profiler_block_end() 
             swap_frame()
         }
         
-        {   
+        {
             profiler_block_begin(.BETWEEN_FRAMES); defer profiler_block_end() 
 
             process_main_shader_changes(&shaders_watch)
 
-            if profiler_display_enabled {
+            if debug_info.display_profiler {
                 profiler_write_texture_column(frame_count, window.profiler_texture)
+
+                if frame_count % 100 == 0 {
+                    fmt.println("fps:", profiler_get_fps())
+                }
             }
             frame_count += 1
-        }   
+
+            virtual.arena_free_all(&memory.frame_arena)
+        }
     }
 }
 
 begin_frame :: proc(renderer: ^Renderer) {
     sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
-    sg.apply_pipeline(window.pipeline)
-
+    
     batch_begin(renderer)
+    command_push_set_mode({mode = .QUAD_UV})
+
+    renderer.transform_queue.len = 0
+    begin_draw_with_transform(renderer.default_transform)
 }
 
-end_frame :: proc(batch: ^Renderer) {
-    batch_end(batch)
-    //sg.apply_bindings(window.bindings)
+end_frame :: proc(renderer: ^Renderer) {
+    batch_end(renderer)
 
-    //sg.apply_uniforms(0, { ptr = &vs, size = size_of(vs) })
+    trace := renderer.trace_frame
+    
+    for renderer.command_queue.len > 0 {
+        cmd_type := queue.pop_front(&renderer.command_queue)
+
+        switch Command_Type(cmd_type) {
+            case .SET_MODE: {
+                cmd := (^Command_Set_Mode)(queue.front_ptr(&renderer.command_queue))
+                queue.consume_front(&renderer.command_queue, size_of(Command_Set_Mode))
+
+                switch(cmd.mode) {
+                    case .QUAD_UV: {
+                        fbo_bind_default()
+
+                        tbo_bind(&window.quad_store.vertex_buffer, 0)
+                        tbo_bind(&window.quad_store.index_buffer, 1)
+                        
+                        sg.apply_pipeline(window.pipelines[.QUAD])
+                        
+                        if (trace) { fmt.println("quads") }
+                    }
+                    case .TEXT: {
+                        sg.apply_pipeline(window.pipelines[.TEXT])
+                        
+                        tbo_bind(&window.text_store, 0)
+                    }
+                }
+            }
+            case .PUSH_TRANSFORM: {
+                cmd := (^Command_Push_Transform)(queue.front_ptr(&renderer.command_queue))
+                queue.consume_front(&renderer.command_queue, size_of(Command_Push_Transform))
+
+                commit_transform(cmd.transform)
+                
+                if (trace) { 
+                    fmt.println("push xform", cmd.transform) 
+                }
+            }
+            case .POP_TRANSFORM: {
+                transform := Transform{}
+                commit_transform(transform)
+                
+                if (trace) { 
+                    fmt.println("push xform", transform) 
+                }
+            }
+            case .CLEAR: {
+                gl.ClearColor(0,0,0,0)
+                gl.ClearDepth(1.0)
+                gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+                if (trace) { fmt.println("clear") }
+            }
+            case .DRAW: {
+                cmd := (^Command_Draw)(queue.front_ptr(&renderer.command_queue))
+                queue.consume_front(&renderer.command_queue, size_of(Command_Draw))
+                
+                sg.draw(cmd.index_offset, cmd.index_count, cmd.instance_count)
+
+                if (trace) { fmt.println("draw", cmd.index_count, cmd.index_offset, cmd.instance_count) }
+            }
+            case .DRAW_SLIDER: {
+                cmd := (^Command_Draw_Slider)(queue.front_ptr(&renderer.command_queue))
+                queue.consume_front(&renderer.command_queue, size_of(Command_Draw_Slider))
+                                
+                gl.DrawArraysInstancedBaseInstance(
+                    gl.TRIANGLE_FAN, 
+                    0, 
+                    renderer.circle_geometry.count,
+                    cmd.instance_count, cmd.base_instance)
+
+                if (trace) { fmt.println("drawslider", cmd.instance_count, cmd.base_instance) }
+            }
+            case .BIND_PIPELINE: {
+                cmd := (^Command_Bind_Pipeline)(queue.front_ptr(&renderer.command_queue))
+                queue.consume_front(&renderer.command_queue, size_of(Command_Bind_Pipeline))
+
+                sg.apply_pipeline(window.pipelines[cmd.pipeline])
+                
+                if (trace) { fmt.println("pipeline", cmd.pipeline) }
+            }
+            case .BIND_FRAMEBUFFER: {
+                cmd := (^Command_Bind_Framebuffer)(queue.front_ptr(&renderer.command_queue))
+                queue.consume_front(&renderer.command_queue, size_of(Command_Bind_Framebuffer))
+
+                fbo_bind(window.framebuffers[cmd.read].id, window.framebuffers[cmd.write].id)
+                
+                if (trace) { fmt.println("framebuffer", cmd.read, cmd.write) }
+            }
+            case .BIND_SSBO: {
+                cmd := (^Command_Bind_SSBO)(queue.front_ptr(&renderer.command_queue))
+                queue.consume_front(&renderer.command_queue, size_of(Command_Bind_SSBO))
+                
+                gl.BindBufferRange(
+                    gl.SHADER_STORAGE_BUFFER,
+                    cmd.slot,
+                    cmd.id,
+                    cmd.offset,
+                    cmd.size)
+                
+                if (trace) { fmt.println("ssbo", cmd.id, cmd.slot, cmd.size, cmd.offset) }
+            }
+        }
+    }
+
+    queue.clear(&renderer.command_queue)
+    renderer.trace_frame = false
+
     sg.end_pass()
     sg.commit()
 }
 
+// note(isak): stolen wisdom; this is its own profiler section
 swap_frame :: proc() {
     sdl.GL_SwapWindow(window.handle)
 }
@@ -489,12 +739,13 @@ process_main_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
     updated_systems := mapset_check_system_file_watch(watch)
 
     if updated_systems[.SHADERS] {
-        temp_shader, err := init_shader(main_vs_path, main_fs_path)
-        if err == .NONE {
-            fmt.println("reloaded shaders")
-            remake_main_pipeline(temp_shader)
-        } else {
-            fmt.println("shader error: {}", err)
+        for &shader in window.shaders {
+            reinit_shader(&shader)
         }
+        fmt.println("reloaded shaders")
+
+        reinit_pipeline(&window.pipelines[.QUAD], quad_pipeline())
+        reinit_pipeline(&window.pipelines[.SLIDER], slider_pipeline())
+        reinit_pipeline(&window.pipelines[.TEXT], text_pipeline())
     }
 }

@@ -1,11 +1,21 @@
 package notosu
 
+import "base:runtime"
 import "core:fmt"
+import "core:math/linalg"
 import "core:mem/virtual"
-import "core:os"
+import os "core:os/os2"
 import "core:strings"
 
 import sdl "vendor:sdl3"
+
+
+vec2 :: linalg.Vector2f32
+vec3 :: linalg.Vector3f32
+vec4 :: linalg.Vector4f32
+
+mat3 :: linalg.Matrix3x3f32
+mat4 :: linalg.Matrix4x4f32
 
 //////////////////////////////////////////////////////
 // note(isak): time api
@@ -43,12 +53,13 @@ color_blue       :: vec4{0,0,1,1}
 color_orange     :: vec4{1, 0.5, 0, 1}
 color_lime_green :: vec4{0.5, 1, 0, 1}
 color_yellow     :: vec4{1, 1, 0, 1}
+color_sky_blue   :: vec4{0.3, 0.35, 1.0, 1}
 color_dark_blue  :: vec4{0, 0, 0.8, 1}
 color_purple     :: vec4{0.5, 0, 1, 1}
 
-with_alpha :: proc(v: vec4, alpha: f32) -> vec4 { return {v.x, v.y, v.z, alpha} }
+with_alpha :: proc "contextless" (v: vec4, alpha: f32) -> vec4 { return {v.x, v.y, v.z, alpha} }
 
-color_to_pixel :: proc(v: vec4) -> u32 {
+color_to_pixel :: proc "contextless" (v: vec4) -> u32 {
     result := u32(v.x * 0xFF)
     result |= u32(v.y * 0xFF) << 8
     result |= u32(v.z * 0xFF) << 16
@@ -61,9 +72,9 @@ color_to_pixel :: proc(v: vec4) -> u32 {
 
 read_entire_file :: proc(path: string, allocator := context.allocator) -> ([]u8, os.Error) {
     result: []u8
-    err: os.Error
-    for len(result) == 0 && err == 0 {
-        result, err = os.read_entire_file_or_err(path, allocator)
+    err: os.Error = os.General_Error.None
+    for len(result) == 0 && err == os.General_Error.None {
+        result, err = os.read_entire_file_from_path(path, allocator)
     }
     return result, err
 }
@@ -79,8 +90,66 @@ read_entire_file_to_string :: proc(path: string, allocator := context.allocator)
 
 arena_default_alignment :: 16
 
+bytes     :: proc "contextless" (v: int) -> int {return v * 1}
+kilobytes :: proc "contextless" (v: int) -> int {return v * 1024}
+megabytes :: proc "contextless" (v: int) -> int {return v * 1024 * 1024}
+gigabytes :: proc "contextless" (v: int) -> int {return v * 1024 * 1024 * 1024}
+
+
 arena_push :: proc(arena: ^virtual.Arena, $T: typeid) -> (^T, virtual.Allocator_Error) {
     data, err := virtual.arena_alloc(arena, size_of(T), arena_default_alignment)
     assert(err == .None, "memory allocation error")
     return (^T)(raw_data(data)), err
+}
+
+init_growing_arena :: proc(arena: ^virtual.Arena, size_MB: uint = 1) -> (runtime.Allocator, runtime.Allocator_Error) {
+    alloc_err := virtual.arena_init_growing(arena, size_MB)
+    assert(alloc_err == .None)
+    alloc := virtual.arena_allocator(arena)
+    if alloc_err != .None {
+        fmt.println("mapset arena init error:", alloc_err)
+    }
+    return alloc, .None
+}
+
+
+//////////////////////////////////////////////////////
+// note(isak): math api
+
+line_normal :: proc "contextless" (from_to: vec2) -> vec2 {
+    return linalg.normalize(linalg.vector2_orthogonal(from_to))
+}
+
+rect_from_points :: proc "contextless" (from, to: vec2) -> Rect {
+    return {
+        min(from.x, to.x),
+        min(from.y, to.y),
+        abs(from.x - to.x),
+        abs(from.y - to.y)
+    }
+}
+
+
+transform_from_bounds_ :: proc "contextless" (r: vec4, aspect_ratio: f32) -> Transform {
+    center: vec2 = { r.x + r.z * 0.5, r.y + r.w * 0.5 }
+    sx: f32 = 2.0 * aspect_ratio / r.z
+    sy: f32 = 2.0 / r.w
+    return {
+        1.0, 2.0, 3.0, 0.0,
+        4.0, 5.0, 6.0, 0.0,
+        7.0, 8.0, 9.0, 0.0,
+        0.0, 0.0, 0.0, 0.0
+    }
+}
+
+transform_from_bounds :: proc "contextless" (r: vec4, aspect_ratio: f32) -> Transform {
+    center: vec2 = { r.x + r.z * 0.5, r.y + r.w * 0.5 }
+    sx: f32 = 2.0 * aspect_ratio / r.z
+    sy: f32 = 2.0 / r.w
+    return {
+        sx, 0.0, -sx * center.x, 0.0,
+        0.0, sy, -sy * center.y, 0.0,
+        0.0, 0.0, 1.0, 0.0, 
+        0.0, 0.0, 0.0, 0.0
+    }
 }

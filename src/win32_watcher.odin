@@ -57,7 +57,7 @@ win32_init_directory_watch :: proc(path: string) -> Win32_Directory_Watch {
 }
 
 win32_get_directory_changes :: proc(watch_dir: ^Win32_Directory_Watch) {
-    assert(watch_dir.initialized, "watch dir hasn't been initialized")
+    assert(watch_dir.initialized)
 
     using windows
     completion_key: ULONG_PTR
@@ -84,7 +84,7 @@ win32_get_directory_changes :: proc(watch_dir: ^Win32_Directory_Watch) {
 }
 
 win32_start_directory_change_io :: proc(watch: ^Win32_Directory_Watch) {
-    assert(watch.initialized, "watch dir hasn't been initialized")
+    assert(watch.initialized)
 
     using windows
     ReadDirectoryChangesW(

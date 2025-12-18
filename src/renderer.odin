@@ -133,6 +133,10 @@ _Rect :: struct($T: typeid) {
 Rect :: _Rect(f32)
 Window_Rect :: _Rect(i32) // note(isak): window space rect measured in pixels
 
+rect_to_array :: proc(r: Rect) -> [4]f32 {
+    return {r.x, r.y, r.w, r.h}
+}
+
 max_active_texture_resource_size :: 128 * 1024 * 1024
 
 unit_circle_vertex_count :: 32
@@ -521,10 +525,19 @@ cleanup_textures_for_rendering :: proc() {
 ///////////////////////////////////////////////////////////////////////////
 // note(isak): draw api - PS: we use our nice global window.renderer here to make the api easier
 
+/*
+    note(isak): 2D transforms are tricky - we use them to define the coordinate system that spans the
+    window without distortion. we do these calculations on the GPU using the bounds rect and the 
+    aspect ratio of the window, which are uploaded using commit_transform.
+
+    a rect of [0,0,1,1] means the points (0,0) and (1,1) would touch opposite corners of a square area
+    placed in the middle of the window (note: only when the aspect ratio <= 1). a rect of 
+    [0, 0, window_width, window_height ] is used with an aspect_ratio of 1 to create a pixel-perfect
+    screen transform, such that w=1, h=1 corresponds to one pixel.
+*/
 commit_transform :: proc(transform: Transform) {
     transform := transform
-    buf := &window.transform_buffer
-    gl.NamedBufferSubData(buf.id, 0, buf.size, &transform)
+    gl.NamedBufferSubData(window.transform_buffer.id, 0, window.transform_buffer.size, &transform)
 }
 
 reset_transform :: proc() {

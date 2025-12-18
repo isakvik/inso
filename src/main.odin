@@ -2,7 +2,9 @@ package notosu
 
 import "base:runtime"
 import "core:container/queue"
+import sa "core:container/small_array"
 import "core:fmt"
+import "core:math"
 import "core:math/linalg"
 import "core:mem/virtual"
 import os "core:os/os2"
@@ -63,14 +65,14 @@ memory: struct {
 
     mapset_arena: virtual.Arena,
     frame_arena: virtual.Arena,
-    command_buffer_arena: virtual.Arena, // todo(isak): shouldn't command buffer be part of frame arena?
+    command_buffer_arena: virtual.Arena,
 }
 
 // note(isak): this should take care of error printing
 init_memory :: proc() -> runtime.Allocator_Error {
-    init_growing_arena(&memory.mapset_arena, &memory.mapset_allocator)
-    init_growing_arena(&memory.frame_arena, &memory.frame_allocator)
-    init_growing_arena(&memory.command_buffer_arena, &memory.command_buffer_allocator)
+    memory.mapset_allocator, _ = init_growing_arena(&memory.mapset_arena)
+    memory.frame_allocator, _ = init_growing_arena(&memory.frame_arena)
+    memory.command_buffer_allocator, _ = init_growing_arena(&memory.command_buffer_arena)
     return .None
 }
 
@@ -155,7 +157,7 @@ window_resize :: proc(new_w, new_h: i32) {
 
 window_get_screenspace_transform :: proc() -> Transform {
     return {
-        bounds_rect = {-1, -1, f32(window.rect.w), f32(window.rect.h)},
+        bounds_rect = {0, 0, f32(window.rect.w), f32(window.rect.h)},
         aspect_ratio = 1
     }
 }
@@ -311,6 +313,17 @@ main :: proc() {
 
     make_test_slider(&test_slider, 0)
     make_test_slider(&test_slider2, 1)
+
+    preempt: f64 = 600
+    make_test_obj(100, preempt, {0, 0})
+    make_test_obj(300, preempt, {20, 20})
+    make_test_obj(600, preempt, {512, 0})
+    make_test_obj(1100, preempt, {0, 384})
+    make_test_obj(1600, preempt, {512, 384})
+    make_test_obj(2000, preempt, {512/2, 384/2})
+
+    game.active_map.length_ms = 2000
+    game.active_map.audio_lead_in = 1500
     
     for active {
         profiler_begin()
@@ -373,9 +386,27 @@ main :: proc() {
         }
         
         {   
-            profiler_block_begin(.GAME_UPDATE); defer profiler_block_end() 
-            
-            // game update
+            profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
+
+            game.play_timer_ms += dt * 1000
+            if game.play_timer_ms > game.active_map.length_ms {
+                game.play_timer_ms = -game.active_map.audio_lead_in
+            }
+
+            playfield_rect := Rect{ 0, 0, osu_playfield_size_osupx, osu_playfield_size_osupx }
+
+            begin_draw_with_transform({
+                bounds_rect = rect_to_array(playfield_rect),
+                aspect_ratio = window.aspect_ratio
+            })
+
+            for hit_object in sa.slice(&osu_map_hit_objects) {
+                if hit_object.start_time_ms < game.play_timer_ms && game.play_timer_ms < hit_object.end_time_ms {
+                    ho_pos := rect_translate_by_anchor(Rect{hit_object.pos.x, hit_object.pos.y, 40, 40}, .CENTER)
+                    push_rect(&renderer.quad_geometry, ho_pos, 1.0, skin_texture_slot(.HITCIRCLE))
+                }
+            }
+
             if is_pressed(osu_controller.k1) {
                 fmt.printfln("is pressed")
             } else if is_held(osu_controller.k1) {
@@ -427,8 +458,6 @@ main :: proc() {
                 - render
             */
             profiler_block_begin(.GAME_DRAW); defer profiler_block_end()
-
-            command_push_set_mode({mode = .QUAD_UV})
             
             begin_draw_with_transform({
                 bounds_rect = default_transform.bounds_rect,
@@ -436,17 +465,17 @@ main :: proc() {
             })
 
             // bounds testers
-            push_rect(&renderer.quad_geometry, {-1,-1,1,1}, color_red)
-            push_rect(&renderer.quad_geometry, {0,0,1,1}, color_red)
+            push_rect(&renderer.quad_geometry, {-1,-1,1,1}, with_alpha(color_red, 0.1))
+            push_rect(&renderer.quad_geometry, {0,0,1,1}, with_alpha(color_red, 0.1))
             
             cursor_rect: Window_Rect = { mouse.x, mouse.y, 80, 80 }
             push_screenspace_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture_slot(.CURSOR))
             
             if debug_info.display_fontatlas {
-                push_screenspace_rect(&renderer.quad_geometry, 
-                    {0, 0, i32(text_engine.ctx.width), i32(text_engine.ctx.height)}, 
-                    color_white, 
-                    u32(Reserved_Texture_Slots.FONT_ATLAS))
+                push_screenspace_rect(&renderer.quad_geometry,
+                    {0, 0, i32(text_engine.ctx.width), i32(text_engine.ctx.height)},
+                    color_white,
+                    reserved_texture(.FONT_ATLAS))
             }
 
             if debug_info.display_profiler {
@@ -476,6 +505,10 @@ main :: proc() {
 
             push_text(renderer, "Hello, world!", {100, 100})
             push_text(renderer, "yuuma toutetsu :3", {200, 200}, size=16)
+            
+            buf: [32]byte
+            game_timer_str := fmt.bprintf(buf[:], "%.3f", game.play_timer_ms)
+            push_text(renderer, game_timer_str, {20, 20}, size = 22)
 
             if debug_info.display_profiler {
                 profiler_push_blocks_as_text(renderer, frame_count)
@@ -513,10 +546,8 @@ main :: proc() {
 begin_frame :: proc(renderer: ^Renderer) {
     sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
     
-    //gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE)
-    
     batch_begin(renderer)
-    //reset_transform()
+    command_push_set_mode({mode = .QUAD_UV})
 }
 
 end_frame :: proc(renderer: ^Renderer) {

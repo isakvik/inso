@@ -15,21 +15,24 @@ struct Vertex {
     vec2 uv;
 };
 
-layout(binding = 0, std140) buffer vertexData {
+layout(binding = 0, std140) readonly buffer vertexData {
     GlyphQuad vertices[];
 };
 
 layout (binding = 5, std140) uniform transform {
-    vec2 boundPos;
-    vec2 boundSize;
+    vec2 boundsPos;
+    vec2 boundsSize;
     float aspectRatio; // note(isak): height over width
 };
 
 mat3 getTransform() {
+    vec2 center = boundsPos + boundsSize * 0.5;
+    float sx = 2.0 * aspectRatio / boundsSize.x;
+    float sy = 2.0 / boundsSize.y;
     return mat3(
-        vec3(2/boundSize.x, 0, 0),
-        vec3(0, 2/boundSize.y, 0),
-        vec3(boundPos.x, -boundPos.y, 1)
+        vec3(sx, 0.0, 0.0),
+        vec3(0.0, sy, 0.0),
+        vec3(-sx * center.x, sy * center.y, 1.0)
     );
 }
 

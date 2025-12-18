@@ -93,14 +93,14 @@ arena_push :: proc(arena: ^virtual.Arena, $T: typeid) -> (^T, virtual.Allocator_
     return (^T)(raw_data(data)), err
 }
 
-init_growing_arena :: proc(arena: ^virtual.Arena, alloc: ^runtime.Allocator, size_MB: uint = 1) -> runtime.Allocator_Error {
+init_growing_arena :: proc(arena: ^virtual.Arena, size_MB: uint = 1) -> (runtime.Allocator, runtime.Allocator_Error) {
     alloc_err := virtual.arena_init_growing(arena, size_MB)
+    assert(alloc_err == .None)
+    alloc := virtual.arena_allocator(arena)
     if alloc_err != .None {
         fmt.println("mapset arena init error:", alloc_err)
-        return alloc_err
     }
-    alloc^ = virtual.arena_allocator(arena)
-    return .None
+    return alloc, .None
 }
 
 

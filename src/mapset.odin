@@ -1,5 +1,6 @@
 package notosu
 
+import "core:mem"
 import "core:mem/virtual"
 import "core:fmt"
 import os "core:os/os2"
@@ -15,7 +16,8 @@ mapset definition:
 
 todo(isak): missing functionality:
     - global mapset index; should enable quick lookup for song select stuff
-    - initial file discovery and load
+    - osu parsing
+    - notosu definition and script running
     - 
 
 */
@@ -40,9 +42,10 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
     
     files: []os.File_Info
     dir_handle, io_err := os.open(path)
-    files, io_err = os.read_dir(dir_handle, 128, context.temp_allocator)
-    
 
+    // note(isak): file contents cannot exit this function, don't leave strings
+    files, io_err = os.read_dir(dir_handle, 128, context.temp_allocator)
+    defer mem.free_all(context.temp_allocator)
     
     for file in files {
         extension := filepath.ext(file.name)
@@ -50,6 +53,10 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
             case ".notosu": {
                 filedata, file_err := read_entire_file_to_string(file.fullpath, context.temp_allocator)
                 _mapset_parse_notosu(mapset, filedata)
+            }
+            case ".osu": {
+                filedata, file_err := read_entire_file_to_string(file.fullpath, context.temp_allocator)
+                _mapset_parse_osu(filedata)
             }
         }
     }

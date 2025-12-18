@@ -6,10 +6,10 @@ struct Vertex {
     vec3 pos;
 };
 
-layout(binding = 3, std430) buffer sliderVertexData {
+layout(binding = 3, std430) readonly buffer sliderVertexData {
     Vertex vertices[];
 };
-layout(binding = 4, std430) buffer sliderInstanceData {
+layout(binding = 4, std430) readonly buffer sliderInstanceData {
     vec2 points[];
 };
 layout (binding = 5, std140) uniform transform {

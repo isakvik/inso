@@ -235,11 +235,11 @@ renderer_init :: proc() {
     
     renderer.text_geometry.size = batch_max_vertices
     
-
-    commit_transform({
+    window.current_transform = {
         bounds_rect = {-1,-1,2,2},
         aspect_ratio = window.aspect_ratio
-    })
+    }
+    commit_transform(window.current_transform)
 
     alloc_err: runtime.Allocator_Error
     alloc_err = queue.init(&renderer.command_queue, megabytes(1), memory.command_buffer_allocator)
@@ -560,6 +560,7 @@ begin_draw_with_transform :: proc(transform: Transform) -> bool {
     command_push_set_bounds({
         transform = transform
     }) or_return
+    window.current_transform = transform
 
     current_index_count := renderer.current_draw != nil ? renderer.current_draw.index_count : 0
     current_index_offset := renderer.current_draw != nil ? renderer.current_draw.index_offset : 0
@@ -723,6 +724,42 @@ push_layout_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: _Rect($T
 
 push_screenspace_layout_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: _Rect($T), anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
     push_screenspace_rect(geometry, rect_translate_by_anchor(rect, anchor), color, tex_index) 
+}
+
+
+push_rect_outline :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: _Rect(f32), color: vec4, thickness_px: f32) {
+    xform := window.current_transform
+    x_unit := xform.bounds_rect[3] / f32(window.rect.h)
+    y_unit := xform.bounds_rect[2] / f32(window.rect.w)
+
+    thickness_y: f32 = x_unit * thickness_px
+    thickness_x: f32 = y_unit * thickness_px / xform.aspect_ratio
+    
+    // top
+    push_rect(geometry, Rect{ rect.x - thickness_y/2,
+                              rect.y - thickness_y/2, 
+                              rect.w + thickness_y, 
+                              thickness_y }, color)
+    // bottom
+    push_rect(geometry, Rect{ rect.x - thickness_y/2, 
+                              rect.y + rect.h - thickness_y/2, 
+                              rect.w + thickness_y, 
+                              thickness_y }, color)
+    // left
+    push_rect(geometry, Rect{ rect.x - thickness_x/2, 
+                              rect.y + thickness_y/2, 
+                              thickness_x, 
+                              rect.h - thickness_y/2 }, color)
+    // right
+    push_rect(geometry, Rect{ rect.x - thickness_x/2 + rect.w, 
+                              rect.y + thickness_y/2, 
+                              thickness_x, 
+                              rect.h - thickness_y/2 }, color)
+}
+
+push_rect_outline_fill :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: _Rect(f32), color_outline, color_fill: vec4, thickness_px: f32) {
+    push_rect(geometry, rect, color_fill)
+    push_rect_outline(geometry, rect, color_outline, thickness_px)
 }
 
 

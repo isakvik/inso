@@ -45,6 +45,7 @@ color_blue       :: vec4{0,0,1,1}
 color_orange     :: vec4{1, 0.5, 0, 1}
 color_lime_green :: vec4{0.5, 1, 0, 1}
 color_yellow     :: vec4{1, 1, 0, 1}
+color_sky_blue   :: vec4{0.3, 0.35, 1.0, 1}
 color_dark_blue  :: vec4{0, 0, 0.8, 1}
 color_purple     :: vec4{0.5, 0, 1, 1}
 
@@ -109,4 +110,13 @@ init_growing_arena :: proc(arena: ^virtual.Arena, size_MB: uint = 1) -> (runtime
 
 line_normal :: proc(from_to: vec2) -> vec2 {
     return linalg.normalize(linalg.vector2_orthogonal(from_to))
+}
+
+rect_from_points :: proc(from, to: vec2) -> Rect {
+    return {
+        min(from.x, to.x),
+        min(from.y, to.y),
+        abs(from.x - to.x),
+        abs(from.y - to.y)
+    }
 }

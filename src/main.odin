@@ -102,6 +102,7 @@ window: struct {
     text_pipeline: sg.Pipeline,
     text_store: GL_Triple_Buffer(Glyph_Quad),
     
+    current_transform: Transform,
     transform_buffer: GL_Uniform_Buffer(Transform),
     circle_geo_buffer: GL_Buffer(Slider_Vertex),
     texture_buffer: GL_Buffer(u64),
@@ -169,7 +170,7 @@ window_cleanup :: proc() {
 
 
 mouse: struct {
-    x, y: i32
+    pos: vec2
 }
 
 Button_State :: struct {
@@ -277,9 +278,11 @@ main :: proc() {
 
     shaders_watch := win32_init_directory_watch("shaders/")
 
+    mapset: ^Mapset
     {
+        ok: bool
         mapset_path := "songs/test/"
-        mapset, ok := mapset_open_for_editing(mapset_path)
+        mapset, ok = mapset_open_for_editing(mapset_path)
         if !ok {
             fmt.println("tried to open mapset, but failed:", mapset_path)
         }
@@ -300,30 +303,36 @@ main :: proc() {
     
     - sg_desc (sg.begin) pipeline_pool_size... grow pipeline pool size to num layers in mapset?
     - create ui tree for menus?
-        - imgui
+        - imgui?
     - slider rendering
         + dynamic texture surface
         + slider geometry
         - slider path gen
         - slider quad clipping (scissor test?)
     */
-    
-    active := true
-    event: sdl.Event
 
     make_test_slider(&test_slider, 0)
     make_test_slider(&test_slider2, 1)
 
-    preempt: f64 = 600
-    make_test_obj(100, preempt, {0, 0})
-    make_test_obj(300, preempt, {20, 20})
-    make_test_obj(600, preempt, {512, 0})
-    make_test_obj(1100, preempt, {0, 384})
-    make_test_obj(1600, preempt, {512, 384})
-    make_test_obj(2000, preempt, {512/2, 384/2})
+    preempt: f64 = convert_approach_rate_to_preempt(mapset.osu_map.diff_approach_rate)
+    
+    final_hobj_time_ms: f64
+    for hobj in mapset.osu_map.hit_objects {
+        make_test_obj(hobj.end_time_ms, preempt, hobj.pos)
 
-    game.active_map.length_ms = 2000
-    game.active_map.audio_lead_in = 1500
+        final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
+    }
+
+    game.active_map.length_ms = final_hobj_time_ms + 500
+    game.active_map.audio_lead_in = preempt + 1000
+    game.play_timer_ms = -game.active_map.audio_lead_in
+
+    selection_active: bool
+    selection_start_mouse_pos: vec2
+    
+    
+    active := true
+    event: sdl.Event
     
     for active {
         profiler_begin()
@@ -339,17 +348,26 @@ main :: proc() {
             osu_controller.m2.was_down = osu_controller.m2.is_down
 
             for sdl.PollEvent(&event) {
-                if event.type == sdl.EventType.QUIT {
+                #partial switch event.type {
+                case sdl.EventType.QUIT:
                     active = false
-                }
-                
-                if event.type == sdl.EventType.WINDOW_RESIZED {
+
+                case sdl.EventType.WINDOW_FOCUS_LOST:
+                    selection_active = false
+
+                case sdl.EventType.WINDOW_RESIZED:
                     cleanup_textures_for_rendering()
                     window_resize(max(event.window.data1, 1), max(event.window.data2, 1))
                     prepare_textures_for_rendering()
-                }
+                        
+                case sdl.EventType.MOUSE_BUTTON_DOWN:
+                    selection_start_mouse_pos = {event.button.x, event.button.y}
+                    selection_active = true
 
-                if event.type == sdl.EventType.KEY_DOWN {
+                case sdl.EventType.MOUSE_BUTTON_UP:
+                    selection_active = false
+
+                case sdl.EventType.KEY_DOWN:
                     #partial switch (event.key.scancode) {
                         case sdl.Scancode.F1:
                             renderer.trace_frame = !renderer.trace_frame
@@ -363,15 +381,14 @@ main :: proc() {
                 if (osu_controller.in_gameplay) {
                     check_game_input(event)
                 }
-                check_game_input(event)
             }
             
-            xf, yf: f32
-            mouse_flags := sdl.GetGlobalMouseState(&xf, &yf)
-            sdl.GetWindowPosition(window.handle, &mouse.x, &mouse.y)
+            xi, yi: i32
+            mouse_flags := sdl.GetGlobalMouseState(&mouse.pos.x, &mouse.pos.y)
+            sdl.GetWindowPosition(window.handle, &xi, &yi)
 
-            mouse.x = i32(xf) - mouse.x
-            mouse.y = i32(yf) - mouse.y
+            mouse.pos.x = mouse.pos.x - f32(xi)
+            mouse.pos.y = mouse.pos.y - f32(yi)
         }
 
         {   
@@ -395,6 +412,13 @@ main :: proc() {
 
             playfield_rect := Rect{ 0, 0, osu_playfield_size_osupx, osu_playfield_size_osupx }
 
+            begin_draw_with_transform(window_get_screenspace_transform())
+            
+            if selection_active {
+                push_rect_outline_fill(&window.renderer.quad_geometry, rect_from_points(mouse.pos, selection_start_mouse_pos), 
+                    color_sky_blue, with_alpha(color_sky_blue, 0.3), 2)
+            }
+
             begin_draw_with_transform({
                 bounds_rect = rect_to_array(playfield_rect),
                 aspect_ratio = window.aspect_ratio
@@ -403,7 +427,7 @@ main :: proc() {
             for hit_object in sa.slice(&osu_map_hit_objects) {
                 if hit_object.start_time_ms < game.play_timer_ms && game.play_timer_ms < hit_object.end_time_ms {
                     ho_pos := rect_translate_by_anchor(Rect{hit_object.pos.x, hit_object.pos.y, 40, 40}, .CENTER)
-                    push_rect(&renderer.quad_geometry, ho_pos, 1.0, skin_texture_slot(.HITCIRCLE))
+                    push_rect(&renderer.quad_geometry, ho_pos, vec4(0.5), skin_texture_slot(.HITCIRCLE))
                 }
             }
 
@@ -418,44 +442,21 @@ main :: proc() {
         
         {
             /*
-                todo(isak): i wrote this a while ago, not sure what happens on batch overflow
-                but we have a command queue now
+                todo(isak): state of the renderer:
+                usage:
+                - batch overrun has not been tested but won't work; it should run end_frame().. probably
+                - the different clipspace/screenspace/layout quad pushing isn't really necessary with
+                    the transformation matrix stuff, so the API can be simplified
+                - the rect pushing in the draw section is artificial; only text_end_frame() and 
+                    end_frame() need to happen here
+                - transforms should be a dynamic stack because single state is annoying
 
-                we want to put bounds calculations on the gpu, so shader and draw command pipeline
-                has to support this. this means we need a queue for uniform upload and draw commands
-                
-                so the frame procedure becomes:
-                begin frame:
-                - lock, etc.
-                - write default bounds
-
-                write quads
-                write playfield quads
-                write playfield sliders
-
-                write procedure:
-                - write into quad buf
-                - write bounds change
-                    write batch command for quads up to this point
-                - write more quads
-                - write sliders
-
-                render procedure:
-                - tbo_wait
-                - for each command
-                    if bounds update
-                        upload (or select from set of bounds, but is there a good reason for that?)
-                    if draw
-                        issue draw call
-                - reset command buf
-
-                on batch full:
-                - render
-                    (settings are kept by driver state machine)
-                - tbo_lock
-
-                end frame:
-                - render
+                optimization:
+                - opengl has pretty bad overhead per frame even if it's not doing much work, so i think
+                    directx is a better choice
+                - the vertex generation pipeline for main isn't particularly efficient, should be
+                    rewritten to be more like text where quads are just written directly to the gpu
+                - the transformation matrix should be set up on cpu side and uploaded to UBO
             */
             profiler_block_begin(.GAME_DRAW); defer profiler_block_end()
             
@@ -468,7 +469,7 @@ main :: proc() {
             push_rect(&renderer.quad_geometry, {-1,-1,1,1}, with_alpha(color_red, 0.1))
             push_rect(&renderer.quad_geometry, {0,0,1,1}, with_alpha(color_red, 0.1))
             
-            cursor_rect: Window_Rect = { mouse.x, mouse.y, 80, 80 }
+            cursor_rect: Window_Rect = { i32(mouse.pos.x), i32(mouse.pos.y), 80, 80 }
             push_screenspace_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture_slot(.CURSOR))
             
             if debug_info.display_fontatlas {

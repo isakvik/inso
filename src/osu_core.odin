@@ -12,6 +12,7 @@ Hit_Object_Type :: enum {
     NONE,
     CIRCLE,
     SLIDER,
+    SPINNER,
     // CUSTOM // note(isak) big plans?
 }
 
@@ -19,6 +20,9 @@ Hit_Object :: struct {
     start_time_ms, end_time_ms: f64,
     pos: vec2,
     type: Hit_Object_Type,
+    
+    type_flags: int,
+    hitsound_flags: byte,
 }
 
 
@@ -38,7 +42,23 @@ Osu_Map :: struct {
     audio_filename: string,
     audio_lead_in: f64,
     length_ms: f64,
-    sample_set: Osu_Sample_Set
+    sample_set: Osu_Sample_Set,
+
+    title: string,
+    title_unicode: string,
+    artist: string,
+    artist_unicode: string,
+    creator: string,
+    difficulty_name: string,
+
+    diff_hp_drain: f64,
+    diff_circle_size: f64,
+    diff_overall_difficulty: f64,
+    diff_approach_rate: f64,
+    diff_slider_velocity: f64,
+    diff_slider_tickrate: int,
+
+    hit_objects: []Hit_Object
 }
 
 game: struct {
@@ -121,4 +141,9 @@ push_slider :: proc(renderer: ^Renderer, slider: ^Slider) {
         base_instance = u32(instance_at),
         instance_count = renderer.slider_instances.count - instance_at
     })
+}
+
+
+convert_approach_rate_to_preempt :: proc(ar: f64) -> f64 {
+    return 1800 - min(ar, 5) * 120 - (max(ar, 5) - 5) * 150
 }

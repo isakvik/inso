@@ -52,8 +52,8 @@ Glyph_Quad :: struct {
 
 
 font_paths := [Font]string{
-    .FALLBACK = "C:/Windows/Fonts/ARIAL_UNICODE_MS.ttf",
-    .DEFAULT = "C:/Windows/Fonts/GeorgiaPro-Regular.ttf",
+    .FALLBACK = "data/segoeui.ttf",
+    .DEFAULT = "data/segoeui.ttf",
 }
 
 text_engine: struct {

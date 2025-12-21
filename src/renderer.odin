@@ -273,7 +273,7 @@ quad_pipeline :: proc() -> sg.Pipeline_Desc {
         //index_type = .UINT16,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
-        colors = [4]sg.Color_Target_State {
+        colors = {
             0 = { blend = {
                 enabled = true,
                 op_alpha = .SUBTRACT,
@@ -294,7 +294,7 @@ slider_pipeline :: proc() -> sg.Pipeline_Desc {
         //index_type = .UINT16,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
-        colors = [4]sg.Color_Target_State {
+        colors = {
             0 = { blend = {
                 enabled = false,
                 op_alpha = .MAX,
@@ -315,7 +315,7 @@ text_pipeline :: proc() -> sg.Pipeline_Desc {
         index_type = .NONE,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
-        colors = [4]sg.Color_Target_State {
+        colors = {
             0 = { blend = {
                 enabled = true,
                 op_alpha = .ADD,

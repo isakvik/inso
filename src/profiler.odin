@@ -105,11 +105,13 @@ profiler_push_blocks_as_text :: proc(renderer: ^Renderer, frame_count: u64) {
     for trace_block in Trace_Blocks {
         if trace_block == .NONE { continue }
         
+        /*
         push_text(renderer, 
                   fmt.enum_value_to_string(trace_block) or_else unreachable(), 
                   pos_top_left + {0, y_inc * f32(trace_block)},
                   size = y_inc,
                   x_inc = &x_inc)
+        */
         x_inc_max = max(x_inc, x_inc_max)
         x_inc = 0
     }
@@ -122,10 +124,12 @@ profiler_push_blocks_as_text :: proc(renderer: ^Renderer, frame_count: u64) {
 
         trace_block_str := fmt.bprintf(buf[:], "%.4f", trace_block_ms)
 
+        /*
         push_text(renderer, 
                   trace_block_str,
                   pos_top_left + {16 + x_inc_max, y_inc * f32(trace_block)},
                   size = y_inc)
+        */
     }
 }
 
@@ -154,9 +158,11 @@ profiler_write_texture_column :: proc(frame_count: u64, texture: Texture) {
         mem.zero_slice(profiler_pixels[profiler_frame_pixel_count:profiler_h])
     }
 
+    /* dx11
     texture_write_u32_to(window.profiler_texture, 
         {i32(frame_count) % profiler_w, 0, 1, profiler_h},
         profiler_pixels[:])
+    */
 }
 
 profiler_push_quad :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), frame_count: u64) {
@@ -167,12 +173,13 @@ profiler_push_quad :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), frame_count:
     r := to_clipspace_rect(rect_translate_by_anchor(profiler_rect, .BOTTOM_RIGHT))
     
 
+    /* dx11
     push_quad_with_uvs(geometry, {r.x,       r.y      }, {0 + pixel_shift_clipspace, 0},
                                  {r.x,       r.y + r.h}, {0 + pixel_shift_clipspace, 1},
                                  {r.x + r.w, r.y      }, {1 + pixel_shift_clipspace, 0},
                                  {r.x + r.w, r.y + r.h}, {1 + pixel_shift_clipspace, 1}, 
                                  color_white, u32(Reserved_Texture_Slots.PROFILER))
-      
+    */
 }
 
 profiler_get_fps :: proc() -> f64 {

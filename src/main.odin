@@ -10,10 +10,10 @@ import "core:mem/virtual"
 import os "core:os/os2"
 import "core:path/filepath"
 import "core:strings"
+import win32 "core:sys/windows"
 
 import lua "vendor:lua/5.4"
 import miniaudio "vendor:miniaudio"
-import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
 
@@ -82,36 +82,39 @@ window: struct {
     renderer: Renderer,
 
     handle: ^sdl.Window,
-    gl_context: sdl.GLContext,
 
     bindings: sg.Bindings,
     pass_action: sg.Pass_Action,
     swapchain: sg.Swapchain,
 
     shaders: [Shader_ID]Shader,
-    
-    fullscreen_store: Static_Geometry_Store(Quad_Vertex), // note(isak): deferred rendering quad store
 
     quad_pipeline: sg.Pipeline,
-    quad_store: Dynamic_Geometry_Store(Quad_Vertex),
-    
     slider_pipeline: sg.Pipeline,
-    slider_framebuffer: GL_Framebuffer,
-    slider_instance_store: GL_Triple_Buffer(vec2),
-    
     text_pipeline: sg.Pipeline,
-    text_store: GL_Triple_Buffer(Glyph_Quad),
-    
+
     current_transform: Transform,
-    transform_buffer: GL_Uniform_Buffer(Transform),
-    circle_geo_buffer: GL_Buffer(Slider_Vertex),
-    texture_buffer: GL_Buffer(u64),
 
     white_texture: Texture,
     profiler_texture: Texture,
     font_atlas_texture: Texture,
 
     skin_textures: [Skin_Element]Texture,
+
+    /*
+    fullscreen_store: Static_Geometry_Store(Quad_Vertex), // note(isak): deferred rendering quad store
+
+    quad_store: Dynamic_Geometry_Store(Quad_Vertex),
+    
+    slider_framebuffer: GL_Framebuffer,
+    slider_instance_store: GL_Triple_Buffer(vec2),
+    
+    text_store: GL_Triple_Buffer(Glyph_Quad),
+    
+    transform_buffer: GL_Uniform_Buffer(Transform),
+    circle_geo_buffer: GL_Buffer(Slider_Vertex),
+    texture_buffer: GL_Buffer(u64),
+    */
 }
 
 debug_info: struct {
@@ -124,20 +127,17 @@ lua_ctx: struct {
 }
 
 window_init :: proc(rect: Window_Rect) {
+    win32.SetProcessDPIAware()
+
+	sdl.SetHintWithPriority(sdl.HINT_RENDER_DRIVER, "direct3d11", .OVERRIDE)
+
     window.rect = rect
-    window.handle = sdl.CreateWindow("notosu!", rect.w, rect.h, sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
+    window.handle = sdl.CreateWindow("notosu!", rect.w, rect.h, { .RESIZABLE })
     window.aspect_ratio = f32(rect.h) / f32(rect.w)
 
-    sdl.GL_SetAttribute(sdl.GL_CONTEXT_MAJOR_VERSION, 4)
-    sdl.GL_SetAttribute(sdl.GL_CONTEXT_MINOR_VERSION, 6)
-    sdl.SetHint(sdl.HINT_RENDER_DRIVER, "opengl")
+    d3d_init()
 
-    sdl.GL_SetSwapInterval(0)
     sdl.SetWindowSurfaceVSync(window.handle, 0)
-
-    window.gl_context = sdl.GL_CreateContext(window.handle)
-    gl.load_up_to(4, 6, sdl.gl_set_proc_address)
-
     sdl.GetWindowPosition(window.handle, &window.rect.x, &window.rect.y)
 
     _ignored := sdl.HideCursor()
@@ -150,10 +150,12 @@ window_resize :: proc(new_w, new_h: i32) {
     window.swapchain.height = new_h
     window.aspect_ratio = f32(new_h) / f32(new_w)
 
+    /*
     if window.slider_framebuffer.id > 0 {
         fbo_cleanup(&window.slider_framebuffer)
     }
     window.slider_framebuffer = fbo_init(1, 1, new_w, new_h, gl.RGBA8)
+    */
 }
 
 window_get_screenspace_transform :: proc() -> Transform {
@@ -164,10 +166,9 @@ window_get_screenspace_transform :: proc() -> Transform {
 }
 
 window_cleanup :: proc() {
-    sdl.GL_DestroyContext(window.gl_context)
+    d3d_cleanup()
     sdl.DestroyWindow(window.handle)
 }
-
 
 mouse: struct {
     pos: vec2
@@ -271,7 +272,7 @@ main :: proc() {
 
     window_resize(window.rect.w, window.rect.h)
     
-    text_init()
+    //text_init()
     
     load_skin_textures("skins/gn/")
     prepare_textures_for_rendering()
@@ -415,8 +416,8 @@ main :: proc() {
             begin_draw_with_transform(window_get_screenspace_transform())
             
             if selection_active {
-                push_rect_outline_fill(&window.renderer.quad_geometry, rect_from_points(mouse.pos, selection_start_mouse_pos), 
-                    color_sky_blue, with_alpha(color_sky_blue, 0.3), 2)
+                //push_rect_outline_fill(&window.renderer.quad_geometry, rect_from_points(mouse.pos, selection_start_mouse_pos), 
+                //    color_sky_blue, with_alpha(color_sky_blue, 0.3), 2)
             }
 
             begin_draw_with_transform({
@@ -470,13 +471,15 @@ main :: proc() {
             push_rect(&renderer.quad_geometry, {0,0,1,1}, with_alpha(color_red, 0.1))
             
             cursor_rect: Window_Rect = { i32(mouse.pos.x), i32(mouse.pos.y), 80, 80 }
-            push_screenspace_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture_slot(.CURSOR))
+            //push_screenspace_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture_slot(.CURSOR))
             
             if debug_info.display_fontatlas {
+                /*
                 push_screenspace_rect(&renderer.quad_geometry,
                     {0, 0, i32(text_engine.ctx.width), i32(text_engine.ctx.height)},
                     color_white,
                     reserved_texture(.FONT_ATLAS))
+                */
             }
 
             if debug_info.display_profiler {
@@ -504,18 +507,18 @@ main :: proc() {
             command_push_set_mode({mode = .TEXT})
             begin_draw_with_transform(window_get_screenspace_transform())
 
-            push_text(renderer, "Hello, world!", {100, 100})
-            push_text(renderer, "yuuma toutetsu :3", {200, 200}, size=16)
+            //push_text(renderer, "Hello, world!", {100, 100})
+            //push_text(renderer, "yuuma toutetsu :3", {200, 200}, size=16)
             
             buf: [32]byte
             game_timer_str := fmt.bprintf(buf[:], "%.3f", game.play_timer_ms)
-            push_text(renderer, game_timer_str, {20, 20}, size = 22)
+            //push_text(renderer, game_timer_str, {20, 20}, size = 22)
 
             if debug_info.display_profiler {
                 profiler_push_blocks_as_text(renderer, frame_count)
             }
 
-            text_end_frame(renderer)
+            //text_end_frame(renderer)
 
             end_frame(renderer)
         }
@@ -545,7 +548,7 @@ main :: proc() {
 }
 
 begin_frame :: proc(renderer: ^Renderer) {
-    sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
+    //sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
     
     batch_begin(renderer)
     command_push_set_mode({mode = .QUAD_UV})
@@ -553,112 +556,14 @@ begin_frame :: proc(renderer: ^Renderer) {
 
 end_frame :: proc(renderer: ^Renderer) {
     batch_end(renderer)
-
-    trace := renderer.trace_frame
     
-    for renderer.command_queue.len > 0 {
-        cmd_type := queue.pop_front(&renderer.command_queue)
-
-        switch(Command_Type(cmd_type)) {
-            case .SET_MODE: {
-                cmd := (^Command_Set_Mode)(queue.front_ptr(&renderer.command_queue))
-                queue.consume_front(&renderer.command_queue, size_of(Command_Set_Mode))
-
-                switch(cmd.mode) {
-                    case .QUAD_UV: {
-                        fbo_bind_default()
-
-                        tbo_bind(&window.quad_store.vertex_buffer, 0)
-                        tbo_bind(&window.quad_store.index_buffer, 1)
-                        
-                        sg.apply_pipeline(window.quad_pipeline)
-                        
-                        if (trace) { fmt.println("quads") }
-                    }
-                    case .TEXT: {
-                        sg.apply_pipeline(window.text_pipeline)
-                        
-                        tbo_bind(&window.text_store, 0)
-                    }
-                    case .BEGIN_SLIDERS: {
-                        sg.apply_pipeline(window.slider_pipeline)
-
-                        sbo_bind(&window.fullscreen_store.vertex_buffer, 0)
-                        sbo_bind(&window.fullscreen_store.index_buffer, 1)
-                        
-                        if (trace) { fmt.println("slider") }
-                    }
-                    case .END_SLIDERS: {
-                        fbo_bind_default()
-                        
-                        if (trace) { fmt.println("slider") }
-                    }
-                }
-            }
-            case .SET_BOUNDS: {
-                cmd := (^Command_Set_Bounds)(queue.front_ptr(&renderer.command_queue))
-                queue.consume_front(&renderer.command_queue, size_of(Command_Set_Bounds))
-
-                commit_transform(cmd.transform)
-                
-                if (trace) { 
-                    fmt.println("set bounds", cmd.transform.bounds_rect.x, cmd.transform.bounds_rect.y, cmd.transform.bounds_rect.z, cmd.transform.bounds_rect.w) 
-                    fmt.println("ar", cmd.transform.aspect_ratio) 
-                }
-            }
-            case .CLEAR: {
-                gl.ClearColor(0,0,0,0)
-                gl.ClearDepth(1.0)
-                gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-
-                if (trace) { fmt.println("clear") }
-            }
-            case .DRAW: {
-                cmd := (^Command_Draw)(queue.front_ptr(&renderer.command_queue))
-                queue.consume_front(&renderer.command_queue, size_of(Command_Draw))
-                
-                sg.draw(cmd.index_offset, cmd.index_count, cmd.instance_count)
-
-                if (trace) { fmt.println("draw", cmd.index_count, cmd.index_offset, cmd.instance_count) }
-            }
-            case .DRAW_SLIDER: {
-                cmd := (^Command_Draw_Slider)(queue.front_ptr(&renderer.command_queue))
-                queue.consume_front(&renderer.command_queue, size_of(Command_Draw_Slider))
-                
-                sg.apply_pipeline(window.slider_pipeline)
-                
-                fbo_bind_write(window.slider_framebuffer)
-
-                gl.ClearColor(0,0,0,0)
-                gl.ClearDepth(1.0)
-                gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-                
-                gl.DrawArraysInstancedBaseInstance(
-                    gl.TRIANGLE_FAN, 
-                    0, 
-                    renderer.circle_geometry.count,
-                    cmd.instance_count, cmd.base_instance)
-                    
-                fbo_bind_read(window.slider_framebuffer)
-
-                sg.apply_pipeline(window.quad_pipeline)
-                sg.draw(0, 6, 1)
-
-                if (trace) { fmt.println("drawslider", cmd.instance_count, cmd.base_instance) }
-            }
-        }
-    }
-
-    queue.clear(&renderer.command_queue)
-    renderer.trace_frame = false
-
-    sg.end_pass()
-    sg.commit()
+    //sg.end_pass()
+    //sg.commit()
 }
 
 // note(isak): stolen wisdom; this is its own profiler section
 swap_frame :: proc() {
-    sdl.GL_SwapWindow(window.handle)
+    //sdl.GL_SwapWindow(window.handle)
 }
 
 process_main_shader_changes :: proc(watch: ^Win32_Directory_Watch) {

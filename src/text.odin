@@ -96,18 +96,18 @@ text_resize_callback :: proc(ctx: rawptr, w, h: int) {
 }
 
 text_update_callback :: proc(ctx: rawptr, dirty_rect: [4]f32, texture_data: rawptr) {
-    dirty_rect := Window_Rect{
+    dirty_rect := [4]i32{
         i32(dirty_rect[0]),
         i32(dirty_rect[1]),
         i32(dirty_rect[2]) - i32(dirty_rect[0]),
         i32(dirty_rect[3]) - i32(dirty_rect[1]),
     }
 
-    for i in 0..<dirty_rect.h {
+    for i in 0..<dirty_rect[3] {
         texture_write_to(window.font_atlas_texture,
-                         {dirty_rect.x, dirty_rect.y + i, dirty_rect.w, 1},
-                         rawptr(uintptr(texture_data) + uintptr(dirty_rect.x + window.font_atlas_texture.w * (dirty_rect.y + i))),
-                         int(dirty_rect.w))
+                         {f32(dirty_rect[0]), f32(dirty_rect[1] + i), f32(dirty_rect[2]), 1},
+                         rawptr(uintptr(texture_data) + uintptr(dirty_rect[0] + window.font_atlas_texture.w * (dirty_rect[1] + i))),
+                         int(dirty_rect[2]))
     }
 }
 

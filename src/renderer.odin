@@ -60,17 +60,7 @@ Slider_Vertex :: struct {
 }
 
 
-
-Transform :: struct {
-    bounds_rect: vec4,
-    aspect_ratio: f32,
-}
-
-default_transform :: Transform{
-    bounds_rect = {-1, -1, 2, 2},
-    aspect_ratio = 1
-}
-
+Transform :: mat4
 
 Geometry_Buffer :: struct(T: typeid) {
     vertices: Buffer(T),
@@ -94,6 +84,9 @@ Renderer :: struct {
     text_geometry: Buffer(Glyph_Quad),
     
     circle_geometry: Buffer(Slider_Vertex),
+
+    transform_queue: queue.Queue(Transform),
+    default_transform: Transform,
 
     command_queue: queue.Queue(u8),
 
@@ -126,12 +119,10 @@ Layout_Anchor :: enum {
     BOTTOM_RIGHT,
 }
 
-_Rect :: struct($T: typeid) {
-    x, y, w, h: T,
+Rect :: struct {
+    x, y, w, h: f32,
 }
 
-Rect :: _Rect(f32)
-Window_Rect :: _Rect(i32) // note(isak): window space rect measured in pixels
 
 rect_to_array :: proc(r: Rect) -> [4]f32 {
     return {r.x, r.y, r.w, r.h}
@@ -147,6 +138,7 @@ unit_circle_vertex_count :: 32
 renderer_init :: proc() {
     renderer := &window.renderer
     renderer.current_draw = &renderer.null_draw
+    renderer.default_transform = transform_from_bounds({0, 0, 1, 1}, window.aspect_ratio)
 
     sg.setup({
         environment = {
@@ -195,8 +187,8 @@ renderer_init :: proc() {
     }
 
     window.swapchain = sg.Swapchain{
-        width = window.rect.w,
-        height = window.rect.h,
+        width =  i32(window.rect.w),
+        height = i32(window.rect.h),
         sample_count = 4,
         color_format = .RGBA8,
         //depth_format = .DEPTH_STENCIL,
@@ -229,17 +221,14 @@ renderer_init :: proc() {
         indices = buffer_init(batch_max_vertices * 2, window.fullscreen_store.index_buffer.data)
     }
     push_rect(&fullscreen_geometry, 
-        {-1,-1,2,2}, {1,1,1,0.5}, reserved_texture(.SLIDER_FRAMEBUFFER))
+        {0,0,1,1}, {1,1,1,0.5}, reserved_texture(.SLIDER_FRAMEBUFFER))
     
     //
     
     renderer.text_geometry.size = batch_max_vertices
     
-    window.current_transform = {
-        bounds_rect = {-1,-1,2,2},
-        aspect_ratio = window.aspect_ratio
-    }
-    commit_transform(window.current_transform)
+    window.current_transform = renderer.default_transform
+    commit_transform(renderer.default_transform)
 
     alloc_err: runtime.Allocator_Error
     alloc_err = queue.init(&renderer.command_queue, megabytes(1), memory.command_buffer_allocator)
@@ -408,7 +397,8 @@ reinit_pipeline :: proc(pipeline: ^sg.Pipeline, pipeline_desc: sg.Pipeline_Desc)
 // note(isak): command queue api
 
 Command_Type :: enum(u8) {
-    SET_BOUNDS,
+    PUSH_TRANSFORM,
+    POP_TRANSFORM,
     SET_MODE,
     CLEAR,
     DRAW,
@@ -426,7 +416,7 @@ Command_Header :: struct {
     command_type: Command_Type
 }
 
-Command_Set_Bounds :: struct {
+Command_Push_Transform :: struct {
     transform: Transform
 }
 
@@ -470,8 +460,12 @@ _command_push :: proc(cmd: $T, type: Command_Type) -> bool {
     return ok
 }
 
-command_push_set_bounds :: proc(cmd: Command_Set_Bounds) -> bool {
-    return _command_push(cmd, .SET_BOUNDS)
+command_push_push_transform :: proc(cmd: Command_Push_Transform) -> bool {
+    return _command_push(cmd, .PUSH_TRANSFORM)
+}
+
+command_push_pop_transform :: proc() -> bool {
+    return _command_push_header(.POP_TRANSFORM)
 }
 
 command_push_set_mode :: proc(cmd: Command_Set_Mode) -> bool {
@@ -541,13 +535,17 @@ commit_transform :: proc(transform: Transform) {
 }
 
 reset_transform :: proc() {
-    push_transform(default_transform)
+    push_transform(window.renderer.default_transform)
 }
 
 push_transform :: proc(transform: Transform) -> bool {
-    return command_push_set_bounds({
+    return command_push_push_transform({
         transform = transform
     })
+}
+
+pop_transform :: proc() -> bool {
+    return command_push_pop_transform()
 }
 
 /*
@@ -557,7 +555,7 @@ push_transform :: proc(transform: Transform) -> bool {
 begin_draw_with_transform :: proc(transform: Transform) -> bool {
     renderer := &window.renderer
 
-    command_push_set_bounds({
+    command_push_push_transform({
         transform = transform
     }) or_return
     window.current_transform = transform
@@ -574,6 +572,8 @@ begin_draw_with_transform :: proc(transform: Transform) -> bool {
     renderer.current_draw = transmute(^Command_Draw)&cmds.data[cmds.len - size_of(Command_Draw)]
     return true
 }
+
+
 
 batch_begin :: proc(renderer: ^Renderer) {
     renderer.quad_geometry.vertices.data = tbo_advance_and_get(&window.quad_store.vertex_buffer)
@@ -707,33 +707,25 @@ push_xywh :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), x, y, w, h: f32, colo
                        {x + w, y + h}, {1, 1}, color, tex_index)
 }
 
-push_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: _Rect(f32), color: vec4, tex_index: u32 = 0) {
+push_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, color: vec4, tex_index: u32 = 0) {
     push_quad_with_uvs(geometry, {rect.x,          rect.y         }, {0, 0},
                                  {rect.x,          rect.y + rect.h}, {0, 1},
                                  {rect.x + rect.w, rect.y         }, {1, 0},
                                  {rect.x + rect.w, rect.y + rect.h}, {1, 1}, color, tex_index)
 }
 
-push_screenspace_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Window_Rect, color: vec4, tex_index: u32 = 0) {
-    push_rect(geometry, to_clipspace_rect(rect), color, tex_index)
-}
-
-push_layout_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: _Rect($T), anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
+push_layout_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
     push_rect(geometry, rect_translate_by_anchor(rect, anchor), color, tex_index) 
 }
 
-push_screenspace_layout_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: _Rect($T), anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
-    push_screenspace_rect(geometry, rect_translate_by_anchor(rect, anchor), color, tex_index) 
-}
 
-
-push_rect_outline :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: _Rect(f32), color: vec4, thickness_px: f32) {
+push_rect_outline :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, color: vec4, thickness_px: f32) {
     xform := window.current_transform
-    x_unit := xform.bounds_rect[3] / f32(window.rect.h)
-    y_unit := xform.bounds_rect[2] / f32(window.rect.w)
+    x_unit, y_unit := units_from_transform(xform)
 
+    aspect_ratio := y_unit / x_unit
     thickness_y: f32 = x_unit * thickness_px
-    thickness_x: f32 = y_unit * thickness_px / xform.aspect_ratio
+    thickness_x: f32 = y_unit * thickness_px / aspect_ratio
     
     // top
     push_rect(geometry, Rect{ rect.x - thickness_y/2,
@@ -757,7 +749,7 @@ push_rect_outline :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: _Rect(f
                               rect.h - thickness_y/2 }, color)
 }
 
-push_rect_outline_fill :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: _Rect(f32), color_outline, color_fill: vec4, thickness_px: f32) {
+push_rect_outline_fill :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, color_outline, color_fill: vec4, thickness_px: f32) {
     push_rect(geometry, rect, color_fill)
     push_rect_outline(geometry, rect, color_outline, thickness_px)
 }
@@ -788,8 +780,8 @@ populate_slider_circle_vertices :: proc(geometry: ^Buffer(Slider_Vertex)) {
 //////////////////////////////////////////////////////
 // note(isak): layout api
 
-rect_translate_by_anchor :: proc(rect: _Rect($T), anchor: Layout_Anchor) -> _Rect(T) {
-    result := _Rect(T) {
+rect_translate_by_anchor :: proc(rect: Rect, anchor: Layout_Anchor) -> Rect {
+    result := Rect {
         w = rect.w,
         h = rect.h,
     }
@@ -811,7 +803,7 @@ rect_translate_by_anchor :: proc(rect: _Rect($T), anchor: Layout_Anchor) -> _Rec
     return result
 }
 
-rect_f32_translate_to_inner_f32 :: proc(inner, outer: _Rect(f32)) -> _Rect(f32) {
+rect_translate_to_inner :: proc(inner, outer: Rect) -> Rect {
     if outer.w <= 0 || outer.h <= 0 {
         return {
             x = outer.x,
@@ -827,52 +819,3 @@ rect_f32_translate_to_inner_f32 :: proc(inner, outer: _Rect(f32)) -> _Rect(f32) 
     }
 }
 
-rect_u32_translate_to_inner_u32 :: proc(inner, outer: Window_Rect) -> Window_Rect {
-    return {
-        x = outer.x + inner.x,
-        y = outer.y + inner.y,
-        w = inner.w,
-        h = inner.h
-    }
-}
-
-rect_f32_translate_to_inner_u32 :: proc(inner: _Rect(f32), outer: Window_Rect) -> Window_Rect {
-    if outer.w <= 0 || outer.h <= 0 {
-        return {
-            x = outer.x,
-            y = outer.y
-        }
-    }
-    return {
-        x = outer.x + i32(inner.x * f32(outer.w)),
-        y = outer.y + i32(inner.y * f32(outer.h)),
-        w = i32(inner.w * f32(outer.w)),
-        h = i32(inner.h * f32(outer.h))
-    }
-}
-
-rect_translate_to_inner :: proc {
-    rect_f32_translate_to_inner_f32,
-    rect_u32_translate_to_inner_u32,
-    rect_f32_translate_to_inner_u32,
-}
-
-
-to_clipspace_rect :: proc(rect: Window_Rect) -> _Rect(f32) {
-    inv_ar := f32(window.rect.w) / f32(window.rect.h)
-    return {
-        x = (f32(rect.x) / f32(window.rect.w) * 2 * inv_ar) - inv_ar,
-        y = (f32(rect.y) / f32(window.rect.h) * 2) - 1,
-        w = (f32(rect.w) / f32(window.rect.w) * 2 * inv_ar),
-        h = (f32(rect.h) / f32(window.rect.h) * 2),
-    }
-}
-
-to_screenspace_rect :: proc(rect: _Rect(f32)) -> Window_Rect {
-    return {
-        x = i32(rect.x * f32(window.rect.w)),
-        y = i32(rect.y * f32(window.rect.h)),
-        w = i32(rect.w * f32(window.rect.w)),
-        h = i32(rect.h * f32(window.rect.h))
-    }
-}

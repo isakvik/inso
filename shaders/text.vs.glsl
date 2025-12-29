@@ -20,21 +20,8 @@ layout(binding = 0, std140) readonly buffer vertexData {
 };
 
 layout (binding = 5, std140) uniform transform {
-    vec2 boundsPos;
-    vec2 boundsSize;
-    float aspectRatio; // note(isak): height over width
+    mat3 t;
 };
-
-mat3 getTransform() {
-    vec2 center = boundsPos + boundsSize * 0.5;
-    float sx = 2.0 * aspectRatio / boundsSize.x;
-    float sy = 2.0 / boundsSize.y;
-    return mat3(
-        vec3(sx, 0.0, 0.0),
-        vec3(0.0, sy, 0.0),
-        vec3(-sx * center.x, sy * center.y, 1.0)
-    );
-}
 
 out vec4 color;
 out vec2 uv;
@@ -52,7 +39,7 @@ void main() {
     vec2 pos[2] = {q.pos_min, q.pos_max};
     vec2 uvs[2] = {q.uv_min, q.uv_max};
     Vertex v = {
-        vec2(pos[right].x * aspectRatio, -pos[bottom].y),
+        vec2(pos[right].x, pos[bottom].y),
         vec2(uvs[right].x, uvs[bottom].y)
     };
     
@@ -60,5 +47,5 @@ void main() {
     color = unpackUnorm4x8(q.color);
     texIndex = 2;
 
-    gl_Position = vec4(getTransform() * vec3(v.pos, 1.0), 1.0);
+    gl_Position = vec4(t * vec3(v.pos, 1.0), 1.0);
 }

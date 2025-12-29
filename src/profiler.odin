@@ -155,7 +155,7 @@ profiler_write_texture_column :: proc(frame_count: u64, texture: Texture) {
     }
 
     texture_write_u32_to(window.profiler_texture, 
-        {i32(frame_count) % profiler_w, 0, 1, profiler_h},
+        {f32(i32(frame_count) % profiler_w), 0, 1, f32(profiler_h)},
         profiler_pixels[:])
 }
 
@@ -163,8 +163,8 @@ profiler_push_quad :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), frame_count:
     pixel_shift := i32(frame_count % u64(profiler_w))
     pixel_shift_clipspace := f32(pixel_shift) / f32(profiler_w)
 
-    profiler_rect: Window_Rect = { window.rect.w, window.rect.h, profiler_w, profiler_h }
-    r := to_clipspace_rect(rect_translate_by_anchor(profiler_rect, .BOTTOM_RIGHT))
+    profiler_rect: Rect = { f32(window.rect.w), f32(window.rect.h), f32(profiler_w), f32(profiler_h) }
+    r := rect_translate_by_anchor(profiler_rect, .BOTTOM_RIGHT)
     
 
     push_quad_with_uvs(geometry, {r.x,       r.y      }, {0 + pixel_shift_clipspace, 0},

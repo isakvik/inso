@@ -77,7 +77,7 @@ init_memory :: proc() -> runtime.Allocator_Error {
 }
 
 window: struct {
-    rect: Window_Rect,
+    rect: Rect,
     aspect_ratio: f32, // note(isak): height over width
     renderer: Renderer,
 
@@ -123,9 +123,9 @@ lua_ctx: struct {
     state: ^lua.State
 }
 
-window_init :: proc(rect: Window_Rect) {
+window_init :: proc(rect: Rect) {
     window.rect = rect
-    window.handle = sdl.CreateWindow("notosu!", rect.w, rect.h, sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
+    window.handle = sdl.CreateWindow("notosu!", i32(rect.w), i32(rect.h), sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
     window.aspect_ratio = f32(rect.h) / f32(rect.w)
 
     sdl.GL_SetAttribute(sdl.GL_CONTEXT_MAJOR_VERSION, 4)
@@ -137,18 +137,22 @@ window_init :: proc(rect: Window_Rect) {
 
     window.gl_context = sdl.GL_CreateContext(window.handle)
     gl.load_up_to(4, 6, sdl.gl_set_proc_address)
+    gl.ClipControl(gl.UPPER_LEFT, gl.ZERO_TO_ONE)
 
-    sdl.GetWindowPosition(window.handle, &window.rect.x, &window.rect.y)
+    win_x, win_y: i32
+    sdl.GetWindowPosition(window.handle, &win_x, &win_y)
+    window.rect.x = f32(win_x)
+    window.rect.y = f32(win_y)
 
     _ignored := sdl.HideCursor()
 }
 
 window_resize :: proc(new_w, new_h: i32) {
-    window.rect.w = new_w
-    window.rect.h = new_h
+    window.rect.w = f32(new_w)
+    window.rect.h = f32(new_h)
     window.swapchain.width = new_w
     window.swapchain.height = new_h
-    window.aspect_ratio = f32(new_h) / f32(new_w)
+    window.aspect_ratio = window.rect.h / window.rect.w
 
     if window.slider_framebuffer.id > 0 {
         fbo_cleanup(&window.slider_framebuffer)
@@ -157,10 +161,7 @@ window_resize :: proc(new_w, new_h: i32) {
 }
 
 window_get_screenspace_transform :: proc() -> Transform {
-    return {
-        bounds_rect = {0, 0, f32(window.rect.w), f32(window.rect.h)},
-        aspect_ratio = 1
-    }
+    return transform_from_bounds({0, 0, window.rect.w, window.rect.h}, 1)
 }
 
 window_cleanup :: proc() {
@@ -269,7 +270,7 @@ main :: proc() {
     renderer := &window.renderer
     defer renderer_cleanup()
 
-    window_resize(window.rect.w, window.rect.h)
+    window_resize(i32(window.rect.w), i32(window.rect.h))
     
     text_init()
     
@@ -373,7 +374,7 @@ main :: proc() {
                             renderer.trace_frame = !renderer.trace_frame
                         case sdl.Scancode.F10:
                             debug_info.display_fontatlas = !debug_info.display_fontatlas
-                        case sdl.Scancode.F11:
+                        case sdl.Scancode.F9:
                             debug_info.display_profiler = !debug_info.display_profiler
                     }
                 }
@@ -404,6 +405,11 @@ main :: proc() {
         
         {   
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
+            
+            // bounds testers
+            push_rect(&renderer.quad_geometry, {0,0,0.5,0.5}, with_alpha(color_red, 0.1))
+            push_rect(&renderer.quad_geometry, {0.5,0.5,0.5,0.5}, with_alpha(color_blue, 0.1))
+            
 
             game.play_timer_ms += dt * 1000
             if game.play_timer_ms > game.active_map.length_ms {
@@ -414,15 +420,15 @@ main :: proc() {
 
             begin_draw_with_transform(window_get_screenspace_transform())
             
+            cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 80, 80 }
+            push_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture_slot(.CURSOR))
+            
             if selection_active {
                 push_rect_outline_fill(&window.renderer.quad_geometry, rect_from_points(mouse.pos, selection_start_mouse_pos), 
                     color_sky_blue, with_alpha(color_sky_blue, 0.3), 2)
             }
 
-            begin_draw_with_transform({
-                bounds_rect = rect_to_array(playfield_rect),
-                aspect_ratio = window.aspect_ratio
-            })
+            begin_draw_with_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
 
             for hit_object in sa.slice(&osu_map_hit_objects) {
                 if hit_object.start_time_ms < game.play_timer_ms && game.play_timer_ms < hit_object.end_time_ms {
@@ -456,31 +462,19 @@ main :: proc() {
                     directx is a better choice
                 - the vertex generation pipeline for main isn't particularly efficient, should be
                     rewritten to be more like text where quads are just written directly to the gpu
-                - the transformation matrix should be set up on cpu side and uploaded to UBO
             */
             profiler_block_begin(.GAME_DRAW); defer profiler_block_end()
-            
-            begin_draw_with_transform({
-                bounds_rect = default_transform.bounds_rect,
-                aspect_ratio = window.aspect_ratio
-            })
 
-            // bounds testers
-            push_rect(&renderer.quad_geometry, {-1,-1,1,1}, with_alpha(color_red, 0.1))
-            push_rect(&renderer.quad_geometry, {0,0,1,1}, with_alpha(color_red, 0.1))
-            
-            cursor_rect: Window_Rect = { i32(mouse.pos.x), i32(mouse.pos.y), 80, 80 }
-            push_screenspace_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture_slot(.CURSOR))
-            
             if debug_info.display_fontatlas {
-                push_screenspace_rect(&renderer.quad_geometry,
-                    {0, 0, i32(text_engine.ctx.width), i32(text_engine.ctx.height)},
+                begin_draw_with_transform(window_get_screenspace_transform())
+                push_rect(&renderer.quad_geometry,
+                    {0, 0, f32(text_engine.ctx.width), f32(text_engine.ctx.height)},
                     color_white,
                     reserved_texture(.FONT_ATLAS))
             }
 
             if debug_info.display_profiler {
-                command_push_set_bounds({window_get_screenspace_transform()})
+                begin_draw_with_transform(window_get_screenspace_transform())
                 profiler_push_quad(&renderer.quad_geometry, frame_count)
             }
 
@@ -491,10 +485,7 @@ main :: proc() {
 
             pf_size: f32 = 1
 
-            begin_draw_with_transform({
-                bounds_rect = {-1/pf_size, -1/pf_size, 2/pf_size, 2/pf_size},
-                aspect_ratio = window.aspect_ratio
-            })
+            begin_draw_with_transform(renderer.default_transform)
 
             push_slider(renderer, &test_slider)
             //push_slider(renderer, &test_slider2)
@@ -516,7 +507,6 @@ main :: proc() {
             }
 
             text_end_frame(renderer)
-
             end_frame(renderer)
         }
 
@@ -549,6 +539,9 @@ begin_frame :: proc(renderer: ^Renderer) {
     
     batch_begin(renderer)
     command_push_set_mode({mode = .QUAD_UV})
+
+    renderer.transform_queue.len = 0
+    begin_draw_with_transform(renderer.default_transform)
 }
 
 end_frame :: proc(renderer: ^Renderer) {
@@ -595,15 +588,22 @@ end_frame :: proc(renderer: ^Renderer) {
                     }
                 }
             }
-            case .SET_BOUNDS: {
-                cmd := (^Command_Set_Bounds)(queue.front_ptr(&renderer.command_queue))
-                queue.consume_front(&renderer.command_queue, size_of(Command_Set_Bounds))
+            case .PUSH_TRANSFORM: {
+                cmd := (^Command_Push_Transform)(queue.front_ptr(&renderer.command_queue))
+                queue.consume_front(&renderer.command_queue, size_of(Command_Push_Transform))
 
                 commit_transform(cmd.transform)
                 
                 if (trace) { 
-                    fmt.println("set bounds", cmd.transform.bounds_rect.x, cmd.transform.bounds_rect.y, cmd.transform.bounds_rect.z, cmd.transform.bounds_rect.w) 
-                    fmt.println("ar", cmd.transform.aspect_ratio) 
+                    fmt.println("push xform", cmd.transform) 
+                }
+            }
+            case .POP_TRANSFORM: {
+                transform := Transform{}
+                commit_transform(transform)
+                
+                if (trace) { 
+                    fmt.println("push xform", transform) 
                 }
             }
             case .CLEAR: {

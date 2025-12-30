@@ -99,7 +99,6 @@ Slider_Path :: struct {
     curves: []Slider_Curve, // note(isak): slice into mapset arena
     
     instances: []vec2, // note(isak): slice into the gpu mapped instance buffer
-    instances_loaded: bool,
     first_instance_at: int,
 }
 
@@ -141,6 +140,8 @@ write_instances_from_curve :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Cu
     return curve_distance
 }
 
+// todo(isak): caller needs to populate path with num instances written, plus instance offset.
+// maybe not the best api?
 write_instances_from_path :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, alloc: runtime.Allocator) {
     path.curves = split_path_into_curves(path, alloc)
 
@@ -155,9 +156,15 @@ write_instances_from_path :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Pat
             distance_to_cover -= distance_covered_by_curve
         }
     }
+
+    // todo(yokes): if we still have distance left over but zero curves, a linear path needs to cover
+    // the remaining distance. maybe mcosu has something neat for this?
+    if distance_to_cover > 0 {
+
+    }
 }
 
-
+// todo(isak): temp to be calculated from osu map cs
 circle_radius_osupx: f32 = 40
 
 make_test_slider :: proc(slider: ^Slider_Path, x_shift: f32) {
@@ -170,10 +177,18 @@ make_test_slider :: proc(slider: ^Slider_Path, x_shift: f32) {
 
     slider^ = {
         pos = {0 + x_shift, 0},
-        nodes = test_nodes.data[node_i + 0:node_i + 4]
-    }
+        nodes = test_nodes.data[node_i + 0:node_i + 4],
+        distance_osupx = 999,
 
-    test_curve = slider.nodes
+        first_instance_at = int(window.renderer.slider_instances.count)
+    }
+    
+    instance_buf := &window.renderer.slider_instances
+    write_instances_from_path(instance_buf, slider, memory.mapset_allocator)
+    
+    num_instances_written := int(window.renderer.slider_instances.count)
+    slider.instances = 
+        window.renderer.slider_instances.data[slider.first_instance_at:num_instances_written]
 }
 
 make_test_instances :: proc(slider: ^Slider_Path) {
@@ -196,6 +211,8 @@ osu_on_init :: proc() {
     make_test_slider(&test_slider2, 1)
 
     make_test_instances(&test_slider)
+
+    write_instances_from_curve(&window.renderer.slider_instances, test_curve, .LINEAR, 150)
 
     preempt: f64 = convert_approach_rate_to_preempt(osu_map.diff_approach_rate)
     

@@ -88,7 +88,7 @@ window: struct {
 
     quad_store: Dynamic_Geometry_Store(Quad_Vertex),
     
-    slider_instance_store: GL_Triple_Buffer(vec2),
+    slider_instance_store: GL_Buffer(vec2),
     
     text_store: GL_Triple_Buffer(Glyph_Quad),
     
@@ -356,11 +356,10 @@ main :: proc() {
 
     shaders_watch := win32_init_directory_watch("shaders/")
 
-    mapset: ^Mapset
     {
         ok: bool
         mapset_path := "songs/test/"
-        mapset, ok = mapset_open_for_editing(mapset_path)
+        game.active_mapset, ok = mapset_open_for_editing(mapset_path)
         if !ok {
             fmt.println("tried to open mapset, but failed:", mapset_path)
         }
@@ -383,26 +382,10 @@ main :: proc() {
     - create ui tree for menus?
         - imgui?
     - slider rendering
-        + dynamic texture surface
-        + slider geometry
         - slider path gen
     */
 
-    make_test_slider(&test_slider, 0)
-    make_test_slider(&test_slider2, 1)
-
-    preempt: f64 = convert_approach_rate_to_preempt(mapset.osu_map.diff_approach_rate)
-    
-    final_hobj_time_ms: f64
-    for hobj in mapset.osu_map.hit_objects {
-        make_test_obj(hobj.end_time_ms, preempt, hobj.pos)
-
-        final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
-    }
-
-    game.active_map.length_ms = final_hobj_time_ms + 500
-    game.active_map.audio_lead_in = preempt + 1000
-    game.play_timer_ms = -game.active_map.audio_lead_in
+    osu_on_init()
 
     selection_active: bool
     selection_start_mouse_pos: vec2
@@ -612,7 +595,7 @@ begin_frame :: proc(renderer: ^Renderer) {
     sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
     
     batch_begin(renderer)
-    command_push_set_mode({mode = .QUAD_UV})
+    sg.apply_pipeline(window.pipelines[.QUAD])
 
     renderer.transform_queue.len = 0
     begin_draw_with_transform(renderer.default_transform)
@@ -637,7 +620,7 @@ end_frame :: proc(renderer: ^Renderer) {
 
                         tbo_bind(&window.quad_store.vertex_buffer, 0)
                         tbo_bind(&window.quad_store.index_buffer, 1)
-                        
+
                         sg.apply_pipeline(window.pipelines[.QUAD])
                         
                         if (trace) { fmt.println("quads") }
@@ -662,6 +645,8 @@ end_frame :: proc(renderer: ^Renderer) {
             case .POP_TRANSFORM: {
                 transform := Transform{}
                 commit_transform(transform)
+
+                // todo(isak) implement
                 
                 if (trace) { 
                     fmt.println("push xform", transform) 
@@ -740,6 +725,12 @@ swap_frame :: proc() {
 
 process_main_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
     updated_systems := mapset_check_system_file_watch(watch)
+
+    if updated_systems[.OSU_FILE] {
+        // todo(isak): reload osu file specifically on update so that we can tell slider path gen works
+        //mapset_open_for_editing()
+        //write_instances_from_curve(&buf, test_curves[0], .BEZIER)
+    }
 
     if updated_systems[.SHADERS] {
         for &shader in window.shaders {

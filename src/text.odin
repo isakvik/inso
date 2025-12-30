@@ -12,8 +12,6 @@ import sdl "vendor:sdl3"
 
 
 /* todo(isak): 
-    further text stuff
-    - test unicode support
     - string caching by way of a pool system that can allocate/free within the buffer
         @speed, but it's probably not necessary at all
 */
@@ -52,6 +50,7 @@ Glyph_Quad :: struct {
 
 
 font_paths := [Font]string{
+    //.FALLBACK = "c:/Windows/Fonts/ARIAL_UNICODE_MS.ttf",
     .FALLBACK = "data/segoeui.ttf",
     .DEFAULT = "data/segoeui.ttf",
 }

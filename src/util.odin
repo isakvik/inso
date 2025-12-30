@@ -129,19 +129,6 @@ rect_from_points :: proc "contextless" (from, to: vec2) -> Rect {
     }
 }
 
-
-transform_from_bounds_ :: proc "contextless" (r: vec4, aspect_ratio: f32) -> Transform {
-    center: vec2 = { r.x + r.z * 0.5, r.y + r.w * 0.5 }
-    sx: f32 = 2.0 * aspect_ratio / r.z
-    sy: f32 = 2.0 / r.w
-    return {
-        1.0, 2.0, 3.0, 0.0,
-        4.0, 5.0, 6.0, 0.0,
-        7.0, 8.0, 9.0, 0.0,
-        0.0, 0.0, 0.0, 0.0
-    }
-}
-
 transform_from_bounds :: proc "contextless" (r: vec4, aspect_ratio: f32) -> Transform {
     center: vec2 = { r.x + r.z * 0.5, r.y + r.w * 0.5 }
     sx: f32 = 2.0 * aspect_ratio / r.z

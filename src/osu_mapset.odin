@@ -31,8 +31,6 @@ Mapset :: struct {
     folder_path: string,
     osu_map: Osu_Map,
 
-    num_layers: u32,
-
     watch: Win32_Directory_Watch
 }
 
@@ -252,11 +250,19 @@ _mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
                                 is_spinner :=   type_flags & (1 << 3)
                                 colorhax_inc := type_flags & (0b111 << 4)
 
-                                if is_circle > 0 { hobj.type = .CIRCLE }
-                                else if is_slider > 0 { hobj.type = .SLIDER }
-                                else if is_spinner > 0 { hobj.type = .SPINNER }
+                                if is_circle > 0 { 
+                                    hobj.type = .CIRCLE 
+                                }
+                                else if is_slider > 0 { 
+                                    hobj.type = .SLIDER 
+                                }
+                                else if is_spinner > 0 { 
+                                    hobj.type = .SPINNER 
+                                }
                             case 4:
                                 if hobj.type == .SLIDER {
+                                    //result.hit_objects = make(Slider_Path, alloc)
+                                    
                                     assert(false)
                                 }
                                 // else handle hitsound flags
@@ -268,6 +274,12 @@ _mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
                     
                     if hobj.type == .CIRCLE {
                         hobj.end_time_ms = hobj.start_time_ms
+                    }
+                    
+                    if hobj.type == .SLIDER {
+                        slider := &map_sliders[slider_offset]
+                        write_instances_from_path(&window.renderer.slider_instances, slider, alloc)
+                        slider_offset += 1
                     }
                 }
         }

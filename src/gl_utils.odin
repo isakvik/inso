@@ -30,6 +30,14 @@ buffer_push :: proc(buf: ^Buffer($T), t: T) {
     buf.count += 1
 }
 
+buffer_push_slice :: proc(buf: ^Buffer($T), t_slice: []T) {
+    assert(buf.count + 1 < buf.size)
+    for i in 0..<len(t_slice) {
+        buf.data[buf.count + i] = t[i]
+    }
+    buf.count += len(t_slice)
+}
+
 //////////////////////////////////////////////////////
 // note(isak): uniform buffer object
 

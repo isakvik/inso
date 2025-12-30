@@ -1,5 +1,6 @@
 package notosu
 
+import "base:runtime"
 import "core:math/linalg"
 import sa "core:container/small_array"
 
@@ -58,14 +59,15 @@ Osu_Map :: struct {
     diff_slider_velocity: f64,
     diff_slider_tickrate: int,
 
-    hit_objects: []Hit_Object
+    hit_objects: []Hit_Object,
+    slider_paths: []Slider_Path,
 }
 
 game: struct {
     mode: Game_Mode,
 
     play_timer_ms: f64,
-    active_map: Osu_Map
+    active_mapset: ^Mapset
 }
 
 make_test_obj :: proc(time, preempt: f64, pos: vec2, type: Hit_Object_Type = .CIRCLE) -> ^Hit_Object {
@@ -80,20 +82,25 @@ make_test_obj :: proc(time, preempt: f64, pos: vec2, type: Hit_Object_Type = .CI
 
 
 
-Slider_Node_Type :: enum {
+Slider_Path_Type :: enum {
     LINEAR,
-    BEZIER_NODE,
+    BEZIER,
     ARC,
 }
 
-Slider_Node :: struct {
-    pos: vec2,
-    type: Slider_Node_Type
-}
+Slider_Node :: vec2
 
-Slider :: struct {
+Slider_Path :: struct {
     pos: vec2,
+    type: Slider_Path_Type,
+    distance_osupx: f64,
+
     nodes: []Slider_Node, // note(isak): slice into our array of all nodes
+    curves: []Slider_Curve, // note(isak): slice into mapset arena
+    
+    instances: []vec2, // note(isak): slice into the gpu mapped instance buffer
+    instances_loaded: bool,
+    first_instance_at: int,
 }
 
 
@@ -103,34 +110,117 @@ Difficulty_Setting :: struct {
 
 
 Layer :: enum {
-    DEFAULT,
+    NONE,
     BACKGROUND,
     FOREGROUND,
     HIT_OBJECT,
     OVERLAY,
+    UI,
     DEBUG
 }
 
 osu_slider_curve_points_separation: f32 = 2.5
 
+Slider_Curve :: []Slider_Node
+
 test_nodes: sa.Small_Array(128, Slider_Node)
-test_slider: Slider
-test_slider2: Slider
+test_slider: Slider_Path
+test_slider2: Slider_Path
+
+test_curve: Slider_Curve
+
+// todo(isak): move this to arena and to osu_map as slider_count (offset in parsing function)
+map_sliders: [128]Slider_Path
+slider_offset: int
+
+split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> []Slider_Curve {
+    return nil
+}
+
+write_instances_from_curve :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, type: Slider_Path_Type, curve_distance: f64) -> f64 {
+    return curve_distance
+}
+
+write_instances_from_path :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, alloc: runtime.Allocator) {
+    path.curves = split_path_into_curves(path, alloc)
+
+    distance_to_cover := path.distance_osupx
+    for curve in path.curves {
+        if distance_to_cover > 0 {
+            distance_covered_by_curve := 
+                write_instances_from_curve(instance_buf, 
+                                           curve, 
+                                           path.type,
+                                           distance_to_cover)
+            distance_to_cover -= distance_covered_by_curve
+        }
+    }
+}
+
 
 circle_radius_osupx: f32 = 40
 
-make_test_slider :: proc(slider: ^Slider, x_shift: f32) {
+make_test_slider :: proc(slider: ^Slider_Path, x_shift: f32) {
     node_i := test_nodes.len
 
-    for i in 0..<4 {
-        sa.append(&test_nodes, Slider_Node{{100*f32(i)/circle_radius_osupx, 100*f32(i)/circle_radius_osupx}, .LINEAR})
-    }
+    sa.append(&test_nodes, Slider_Node{0/circle_radius_osupx, 0/circle_radius_osupx})
+    sa.append(&test_nodes, Slider_Node{100/circle_radius_osupx, 0/circle_radius_osupx})
+    sa.append(&test_nodes, Slider_Node{100/circle_radius_osupx, 100/circle_radius_osupx})
+    sa.append(&test_nodes, Slider_Node{200/circle_radius_osupx, 100/circle_radius_osupx})
 
     slider^ = {
         pos = {0 + x_shift, 0},
-        nodes = test_nodes.data[node_i + 0:node_i + 20]
+        nodes = test_nodes.data[node_i + 0:node_i + 4]
+    }
+
+    test_curve = slider.nodes
+}
+
+make_test_instances :: proc(slider: ^Slider_Path) {
+    instance_buf := &window.renderer.slider_instances
+
+    ct := int(instance_buf.count)
+    slider.first_instance_at = ct
+    slider.instances = instance_buf.data[ct:ct + len(slider.nodes)]
+    for i in 0..<len(slider.nodes) {
+        buffer_push(instance_buf, slider.nodes[i])
     }
 }
+
+
+osu_on_init :: proc() {
+    mapset := game.active_mapset
+    osu_map := &game.active_mapset.osu_map
+
+    make_test_slider(&test_slider, 0)
+    make_test_slider(&test_slider2, 1)
+
+    make_test_instances(&test_slider)
+
+    preempt: f64 = convert_approach_rate_to_preempt(osu_map.diff_approach_rate)
+    
+    final_hobj_time_ms: f64
+    for hobj in osu_map.hit_objects {
+        make_test_obj(hobj.end_time_ms, preempt, hobj.pos)
+
+        final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
+    }
+
+    osu_map.length_ms = final_hobj_time_ms + 500
+    osu_map.audio_lead_in = preempt + 1000
+    game.play_timer_ms = -osu_map.audio_lead_in
+}
+
+
+osu_on_update :: proc(dt: f64) {
+    osu_map := &game.active_mapset.osu_map
+    
+    game.play_timer_ms += dt * 1000
+    if game.play_timer_ms > osu_map.length_ms {
+        game.play_timer_ms = -osu_map.audio_lead_in
+    }
+}
+
 
 render_hit_object :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
     
@@ -152,14 +242,9 @@ render_hit_object :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
 
 }
 
-render_slider :: proc(renderer: ^Renderer, slider: ^Slider) {
+render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     // todo(isak): we don't need to do the instance writing immediate mode, just do a pass on instances on mapset load
     // and generate the draws and the bounding quads like the smart cookie you are
-
-    instance_at := renderer.slider_instances.count
-    for i in 0..<len(slider.nodes) {
-        buffer_push(&renderer.slider_instances, slider.nodes[i].pos)
-    }
 
     command_push_bind_pipeline({.SLIDER})
     command_push_bind_framebuffer({ write = .SLIDERS })
@@ -170,8 +255,8 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider) {
     command_push_push_transform({transform_from_bounds({0,0,pf_size,pf_size}, window.aspect_ratio)})
 
     command_push_draw_slider(Command_Draw_Slider{
-        base_instance = u32(instance_at),
-        instance_count = renderer.slider_instances.count - instance_at
+        base_instance = u32(slider.first_instance_at),
+        instance_count = i32(len(slider.instances))
     })
     
     command_push_bind_framebuffer({ read = .SLIDERS })
@@ -186,13 +271,3 @@ convert_approach_rate_to_preempt :: proc(ar: f64) -> f64 {
     return 1800 - min(ar, 5) * 120 - (max(ar, 5) - 5) * 150
 }
 
-
-osu_on_update :: proc(dt: f64) {
-    
-    game.play_timer_ms += dt * 1000
-    if game.play_timer_ms > game.active_map.length_ms {
-        game.play_timer_ms = -game.active_map.audio_lead_in
-    }
-
-
-}

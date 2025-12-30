@@ -14,10 +14,12 @@ import sg "vendor:sokol/gfx"
 import slog "vendor:sokol/log"
 
 
-batch_max_vertices :: 64*1024
-max_texture_handles :: 1024
+MAX_BATCH_VERTICES :: 64*1024
+MAX_SLIDER_INSTANCES :: 64*1024
+MAX_TEXTURE_HANDLES :: 1024
 //max_slider_draw_commands :: 1024
 
+UNIT_CIRCLE_VERTEX_COUNT :: 30
 
 
 Quad_Vertex :: struct {
@@ -102,10 +104,6 @@ rect_to_array :: proc(r: Rect) -> [4]f32 {
     return {r.x, r.y, r.w, r.h}
 }
 
-max_active_texture_resource_size :: 128 * 1024 * 1024
-
-unit_circle_vertex_count :: 30
-
 //////////////////////////////////////////////////////
 // note(isak): resource api
 
@@ -141,17 +139,17 @@ renderer_init :: proc() {
     window.framebuffers[.SLIDERS] = fbo_init(1, 1, i32(window.rect.w), i32(window.rect.h), gl.RGBA8)
     
 
-    window.quad_store.vertex_buffer = tbo_init(Quad_Vertex, batch_max_vertices)
-    window.quad_store.index_buffer = tbo_init(u32, batch_max_vertices * 2)
+    window.quad_store.vertex_buffer = tbo_init(Quad_Vertex, MAX_BATCH_VERTICES)
+    window.quad_store.index_buffer = tbo_init(u32, MAX_BATCH_VERTICES * 2)
 
-    window.slider_instance_store = tbo_init(vec2, batch_max_vertices)
-
-    window.text_store = tbo_init(Glyph_Quad, batch_max_vertices)
+    window.text_store = tbo_init(Glyph_Quad, MAX_BATCH_VERTICES)
     
+    window.slider_instance_store = sbo_init(vec2, MAX_BATCH_VERTICES)
+
     window.fullscreen_store.vertex_buffer = sbo_init(Quad_Vertex, 4)
     window.fullscreen_store.index_buffer = sbo_init(u32, 6)
 
-    window.texture_buffer = sbo_init(u64, max_texture_handles)
+    window.texture_buffer = sbo_init(u64, MAX_TEXTURE_HANDLES)
     
     window.transform_buffer = ubo_init(Transform, 1)
 
@@ -181,30 +179,33 @@ renderer_init :: proc() {
 
     //
 
-    circle_buffer_vertex_count := unit_circle_vertex_count + 2
+    circle_buffer_vertex_count := UNIT_CIRCLE_VERTEX_COUNT + 2
     window.circle_geo_buffer = sbo_init(Slider_Vertex, circle_buffer_vertex_count)
     renderer.circle_geometry = 
         buffer_init(i32(circle_buffer_vertex_count), window.circle_geo_buffer.data)
 
     populate_slider_circle_vertices(&renderer.circle_geometry)
     
-    renderer.slider_instances.size = batch_max_vertices
+    renderer.slider_instances.size = MAX_BATCH_VERTICES
 
     //
 
     fullscreen_geometry := Geometry_Buffer(Quad_Vertex) {
-        vertices = buffer_init(batch_max_vertices, window.fullscreen_store.vertex_buffer.data),
-        indices = buffer_init(batch_max_vertices * 2, window.fullscreen_store.index_buffer.data)
+        vertices = buffer_init(MAX_BATCH_VERTICES, window.fullscreen_store.vertex_buffer.data),
+        indices = buffer_init(MAX_BATCH_VERTICES * 2, window.fullscreen_store.index_buffer.data)
     }
     push_rect(&fullscreen_geometry, 
         {0,0,1,1}, {1,1,1,0.5}, reserved_texture(.SLIDER_FRAMEBUFFER))
     
     //
     
-    renderer.text_geometry.size = batch_max_vertices
+    renderer.text_geometry.size = MAX_BATCH_VERTICES
     
     window.current_transform = renderer.default_transform
     commit_transform(renderer.default_transform)
+
+    renderer.slider_instances = 
+        buffer_init(MAX_SLIDER_INSTANCES, window.slider_instance_store.data)
 
     alloc_err: runtime.Allocator_Error
     alloc_err = queue.init(&renderer.command_queue, megabytes(1), memory.command_buffer_allocator)
@@ -217,13 +218,14 @@ renderer_init :: proc() {
 renderer_cleanup :: proc() {
     tbo_cleanup(&window.quad_store.vertex_buffer)
     tbo_cleanup(&window.quad_store.index_buffer)
-    tbo_cleanup(&window.slider_instance_store)
     tbo_cleanup(&window.text_store)
     
     sbo_cleanup(&window.fullscreen_store.vertex_buffer)
     sbo_cleanup(&window.fullscreen_store.index_buffer)
     sbo_cleanup(&window.circle_geo_buffer)
     sbo_cleanup(&window.texture_buffer)
+    sbo_cleanup(&window.slider_instance_store)
+
     ubo_cleanup(&window.transform_buffer)
 }
 
@@ -502,9 +504,6 @@ batch_begin :: proc(renderer: ^Renderer) {
     renderer.quad_geometry.indices.data = tbo_advance_and_get(&window.quad_store.index_buffer)
     renderer.quad_geometry.indices.count = 0
 
-    renderer.slider_instances.data = tbo_advance_and_get(&window.slider_instance_store)
-    renderer.slider_instances.count = 0
-    
     renderer.text_geometry.data = tbo_advance_and_get(&window.text_store)
     renderer.text_geometry.count = 0
 
@@ -515,46 +514,14 @@ batch_begin :: proc(renderer: ^Renderer) {
 batch_end :: proc(renderer: ^Renderer) {
     tbo_lock(&window.quad_store.vertex_buffer)
     tbo_lock(&window.quad_store.index_buffer)
-    tbo_lock(&window.slider_instance_store)
     tbo_lock(&window.text_store)
     
     tbo_bind(&window.quad_store.vertex_buffer, 0)
     tbo_bind(&window.quad_store.index_buffer, 1)
     sbo_bind(&window.texture_buffer, 2)
     sbo_bind(&window.circle_geo_buffer, 3)
-    tbo_bind(&window.slider_instance_store, 4)
+    sbo_bind(&window.slider_instance_store, 4)
     ubo_bind(&window.transform_buffer, 5)
-
-    //sg.apply_pipeline(window.quad_pipeline)
-    
-    //sg.draw(0, renderer.quad_geometry.indices.count, 1)
-
-    /*
-    sbo_bind(&window.fullscreen_store.vertex_buffer, 0)
-    sbo_bind(&window.fullscreen_store.index_buffer, 1)
-    
-    // todo(isak): gl.MultiDrawArraysIndirect() gave me an error and a headache from trying to debug it
-    // might have to figure it out someday but for now we're just drawing in a loop
-
-    for i in 0..<renderer.slider_draw_commands.count {
-        sg.apply_pipeline(window.slider_pipeline)
-        
-        fbo_bind_write(window.slider_framebuffer)
-        gl.ClearColor(0,0,0,0)
-        gl.ClearDepth(1.0)
-        gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-
-        cmd := renderer.slider_draw_commands.data[i]
-        gl.DrawArraysInstancedBaseInstance(gl.TRIANGLE_FAN, 0, renderer.circle_geometry.count,
-                                           cmd.instance_count, cmd.base_instance)
-        fbo_bind_read(window.slider_framebuffer)
-
-        sg.apply_pipeline(window.quad_pipeline)
-        sg.draw(0, 6, 1)
-    }
-
-    fbo_unbind(window.slider_framebuffer)
-    */
 }
 
 
@@ -571,7 +538,7 @@ push_quad_with_uvs :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), pos1, uv1, p
                            color: vec4, tex_index: u32) {
     assert(window.renderer.current_draw != nil)
 
-    if geometry.vertices.count + 4 > batch_max_vertices {
+    if geometry.vertices.count + 4 > MAX_BATCH_VERTICES {
         batch_end(&window.renderer)
         batch_begin(&window.renderer)
     }

@@ -149,17 +149,17 @@ populate_slider_circle_vertices :: proc(geometry: ^Buffer(Slider_Vertex)) {
 
         // note(isak): the middle of our circle is raised for depth testing
         verts[vert_i + 0] = { pos = { 0, 0, 1 } }
-        verts[vert_i + 1 + unit_circle_vertex_count] = { pos = { 0, 1, 0 } }
+        verts[vert_i + 1 + UNIT_CIRCLE_VERTEX_COUNT] = { pos = { 0, 1, 0 } }
 
         th: f32
-        it_angle := math.TAU * (f32(1) / unit_circle_vertex_count)
-        for i in 0..<unit_circle_vertex_count {
+        it_angle := math.TAU * (f32(1) / UNIT_CIRCLE_VERTEX_COUNT)
+        for i in 0..<UNIT_CIRCLE_VERTEX_COUNT {
             verts[int(vert_i) + i + 1] = { 
                 pos = { math.sin_f32(th), math.cos_f32(th), 0 }
             }
             th += it_angle
         }
 
-        geometry.count = 2 + unit_circle_vertex_count
+        geometry.count = 2 + UNIT_CIRCLE_VERTEX_COUNT
     }
 }

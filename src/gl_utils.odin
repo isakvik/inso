@@ -227,12 +227,15 @@ tbo_cleanup :: proc(buf: ^GL_Triple_Buffer($T)) {
 
 GL_Framebuffer :: struct {
     id: u32,
+    color_format: u32,
     color_textures: [4]u32,
     color_texture_handles: [4]Texture_Handle,
     color_texture_count: u32,
+
     depth_texture: u32,
     depth_texture_handle: Texture_Handle,
     depth_texture_count: u32,
+
     w, h: i32,
 }
 
@@ -242,6 +245,7 @@ fbo_init :: proc(color_texture_count, depth_texture_count: u32, w, h: i32, color
         depth_texture_count = depth_texture_count,
         w = w,
         h = h,
+        color_format = color_format
     }
     gl.CreateFramebuffers(1, &result.id)
     
@@ -268,7 +272,15 @@ fbo_init :: proc(color_texture_count, depth_texture_count: u32, w, h: i32, color
 
     success := gl.CheckNamedFramebufferStatus(result.id, gl.FRAMEBUFFER)
     assert(success == gl.FRAMEBUFFER_COMPLETE)
+    assert(result.id != 0)
     return result
+}
+
+fbo_reinit :: proc(fb: ^GL_Framebuffer, new_w, new_h: i32) {
+    if fb.id > 0 {
+        fbo_cleanup(fb)
+    }
+    fb^ = fbo_init(fb.color_texture_count, fb.depth_texture_count, new_w, new_h, fb.color_format)
 }
 
 fbo_cleanup :: proc(fb: ^GL_Framebuffer) {
@@ -278,13 +290,16 @@ fbo_cleanup :: proc(fb: ^GL_Framebuffer) {
     fb.id = 0
 }
 
-fbo_bind_read :: proc(fb: GL_Framebuffer) {
-    gl.BindFramebuffer(gl.READ_FRAMEBUFFER, fb.id)
-    gl.BindFramebuffer(gl.DRAW_FRAMEBUFFER, 0)
+fbo_bind :: proc(read, write: u32) {
+    gl.BindFramebuffer(gl.READ_FRAMEBUFFER, read)
+    gl.BindFramebuffer(gl.DRAW_FRAMEBUFFER, write)
 }
 
-fbo_bind_write :: proc(fb: GL_Framebuffer) {
-    gl.BindFramebuffer(gl.READ_FRAMEBUFFER, 0)
+fbo_bind_read :: proc(fb: ^GL_Framebuffer) {
+    gl.BindFramebuffer(gl.READ_FRAMEBUFFER, fb.id)
+}
+
+fbo_bind_write :: proc(fb: ^GL_Framebuffer) {
     gl.BindFramebuffer(gl.DRAW_FRAMEBUFFER, fb.id)
 }
 

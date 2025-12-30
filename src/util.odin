@@ -9,6 +9,14 @@ import "core:strings"
 
 import sdl "vendor:sdl3"
 
+
+vec2 :: linalg.Vector2f32
+vec3 :: linalg.Vector3f32
+vec4 :: linalg.Vector4f32
+
+mat3 :: linalg.Matrix3x3f32
+mat4 :: linalg.Matrix4x4f32
+
 //////////////////////////////////////////////////////
 // note(isak): time api
 

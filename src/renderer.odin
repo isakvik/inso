@@ -1,10 +1,9 @@
 package notosu
 
 import "base:runtime"
-import "core:mem"
+import "core:math"
 import "core:math/linalg"
 import "core:fmt"
-import "core:math"
 import os "core:os/os2"
 import "core:slice"
 import "core:strings"
@@ -15,35 +14,10 @@ import sg "vendor:sokol/gfx"
 import slog "vendor:sokol/log"
 
 
-quad_vs_path :: "shaders/main.vs.glsl"
-quad_fs_path :: "shaders/main.fs.glsl"
-
-slider_vs_path :: "shaders/slider.vs.glsl"
-slider_fs_path :: "shaders/slider.fs.glsl"
-
-text_vs_path :: "shaders/text.vs.glsl"
-text_fs_path :: "shaders/text.fs.glsl"
-
-Shader_ID :: enum {
-    QUAD,
-    SLIDER,
-    TEXT
-}
-
-
 batch_max_vertices :: 64*1024
 max_texture_handles :: 1024
 //max_slider_draw_commands :: 1024
 
-
-Reserved_Texture_Slots :: enum u32 {
-    WHITE,
-    PROFILER,
-    FONT_ATLAS,
-    SLIDER_FRAMEBUFFER
-}
-
-reserved_texture :: proc(slot: Reserved_Texture_Slots) -> u32 { return u32(slot) }
 
 
 Quad_Vertex :: struct {
@@ -154,15 +128,17 @@ renderer_init :: proc() {
     err: Shader_Error
     window.shaders[.QUAD], err = init_shader(quad_vs_path, quad_fs_path, quad_uniform_desc())
     assert(err == .NONE)
-    window.quad_pipeline = sg.make_pipeline(quad_pipeline())
+    window.pipelines[.QUAD] = sg.make_pipeline(quad_pipeline())
 
     window.shaders[.SLIDER], err = init_shader(slider_vs_path, slider_fs_path, slider_uniform_desc())
     assert(err == .NONE)
-    window.slider_pipeline = sg.make_pipeline(slider_pipeline())
+    window.pipelines[.SLIDER] = sg.make_pipeline(slider_pipeline())
     
     window.shaders[.TEXT], err = init_shader(text_vs_path, text_fs_path, text_uniform_desc())
     assert(err == .NONE)
-    window.text_pipeline = sg.make_pipeline(text_pipeline())
+    window.pipelines[.TEXT] = sg.make_pipeline(text_pipeline())
+
+    window.framebuffers[.SLIDERS] = fbo_init(1, 1, i32(window.rect.w), i32(window.rect.h), gl.RGBA8)
     
 
     window.quad_store.vertex_buffer = tbo_init(Quad_Vertex, batch_max_vertices)
@@ -253,78 +229,6 @@ renderer_cleanup :: proc() {
 
 
 //////////////////////////////////////////////////////
-// note(isak): pipeline definitions
-
-quad_pipeline :: proc() -> sg.Pipeline_Desc {
-    return {
-        label = "builtin.quad",
-        shader = window.shaders[.QUAD].shader,
-        //index_type = .UINT16,
-        cull_mode = .NONE,
-        blend_color = {1.0, 1.0, 1.0, 1.0},
-        colors = {
-            0 = { blend = {
-                enabled = true,
-                op_alpha = .SUBTRACT,
-                src_factor_rgb = .SRC_ALPHA,
-                src_factor_alpha = .SRC_ALPHA,
-                dst_factor_rgb = .ONE_MINUS_SRC_ALPHA,
-                dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
-            }}
-        },
-        depth = {compare = .LESS_EQUAL, write_enabled = true},
-    },
-}
-
-slider_pipeline :: proc() -> sg.Pipeline_Desc {
-    return {
-        label = "builtin.slider",
-        shader = window.shaders[.SLIDER].shader,
-        //index_type = .UINT16,
-        cull_mode = .NONE,
-        blend_color = {1.0, 1.0, 1.0, 1.0},
-        colors = {
-            0 = { blend = {
-                enabled = false,
-                op_alpha = .MAX,
-                src_factor_rgb = .ONE,
-                src_factor_alpha = .ONE,
-                dst_factor_rgb = .ONE,
-                dst_factor_alpha = .ONE,
-            }}
-        },
-        depth = {compare = .LESS_EQUAL, write_enabled = true},
-    }
-}
-
-text_pipeline :: proc() -> sg.Pipeline_Desc {
-    return {
-        label = "builtin.text",
-        shader = window.shaders[.TEXT].shader,
-        index_type = .NONE,
-        cull_mode = .NONE,
-        blend_color = {1.0, 1.0, 1.0, 1.0},
-        colors = {
-            0 = { blend = {
-                enabled = true,
-                op_alpha = .ADD,
-                src_factor_rgb = .SRC_ALPHA,
-                dst_factor_rgb = .ONE_MINUS_SRC_ALPHA,
-                src_factor_alpha = .SRC_ALPHA,
-                dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
-            }}
-        },
-        //depth = {compare = .LESS_EQUAL, write_enabled = true},
-    },
-}
-
-// note(isak): i didn't get these to work... might not be better than ssbos anyway
-quad_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block { return {} }
-slider_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block { return {} }
-text_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block { return {} }
-
-
-//////////////////////////////////////////////////////
 // note(isak): shader api (program api)
 
 Shader_Error :: enum {
@@ -403,6 +307,8 @@ Command_Type :: enum(u8) {
     CLEAR,
     DRAW,
     DRAW_SLIDER,
+    BIND_PIPELINE,
+    BIND_FRAMEBUFFER,
 }
 
 Command_Mode_Type :: enum(u8) {
@@ -436,10 +342,23 @@ Command_Draw_Slider :: struct {
     instance_count: i32
 }
 
-Command_Draw_Text :: struct {
-    glyph_offset: i32,
-    glyph_count: i32,
+Command_Bind_Pipeline :: struct {
+    pipeline: Pipeline_ID
 }
+
+Command_Bind_Framebuffer :: struct {
+    read, write: Framebuffer_ID
+}
+
+command_push_clear             :: proc() -> bool { return _command_push_header(.CLEAR) }
+command_push_push_transform    :: proc(cmd: Command_Push_Transform) -> bool { return _command_push(cmd, .PUSH_TRANSFORM) }
+command_push_pop_transform     :: proc() -> bool { return _command_push_header(.POP_TRANSFORM) }
+command_push_set_mode          :: proc(cmd: Command_Set_Mode) -> bool { return _command_push(cmd, .SET_MODE) }
+command_push_draw              :: proc(cmd: Command_Draw) -> bool { return _command_push(cmd, .DRAW) }
+command_push_draw_slider       :: proc(cmd: Command_Draw_Slider) -> bool { return _command_push(cmd, .DRAW_SLIDER) }
+command_push_bind_pipeline     :: proc(cmd: Command_Bind_Pipeline) -> bool { return _command_push(cmd, .BIND_PIPELINE) }
+command_push_bind_framebuffer  :: proc(cmd: Command_Bind_Framebuffer) -> bool { return _command_push(cmd, .BIND_FRAMEBUFFER) }
+
 
 _command_push_header :: proc(type: Command_Type) -> bool {
     ok, err := queue.push_back(&window.renderer.command_queue, u8(type))
@@ -458,61 +377,6 @@ _command_push :: proc(cmd: $T, type: Command_Type) -> bool {
     }
     assert(ok)
     return ok
-}
-
-command_push_push_transform :: proc(cmd: Command_Push_Transform) -> bool {
-    return _command_push(cmd, .PUSH_TRANSFORM)
-}
-
-command_push_pop_transform :: proc() -> bool {
-    return _command_push_header(.POP_TRANSFORM)
-}
-
-command_push_set_mode :: proc(cmd: Command_Set_Mode) -> bool {
-    return _command_push(cmd, .SET_MODE)
-}
-
-command_push_clear :: proc() -> bool {
-    return _command_push_header(.CLEAR)
-}
-
-command_push_draw :: proc(cmd: Command_Draw) -> bool { 
-    return _command_push(cmd, .DRAW)
-}
-
-command_push_draw_slider :: proc(cmd: Command_Draw_Slider) -> bool { 
-    return _command_push(cmd, .DRAW_SLIDER)
-}
-
-//////////////////////////////////////////////////////
-// note(isak): texture api
-
-prepare_textures_for_rendering :: proc() {
-    textures := &window.texture_buffer.data
-
-    textures[Reserved_Texture_Slots.WHITE] = window.white_texture.tex_handle
-    textures[Reserved_Texture_Slots.PROFILER] = window.profiler_texture.tex_handle
-    textures[Reserved_Texture_Slots.FONT_ATLAS] = window.font_atlas_texture.tex_handle
-    textures[Reserved_Texture_Slots.SLIDER_FRAMEBUFFER] = window.slider_framebuffer.color_texture_handles[0]
-    num_elements := len(Reserved_Texture_Slots)
-
-    for element in Skin_Element {
-        textures[num_elements] = window.skin_textures[element].tex_handle
-        num_elements += 1
-    }
-
-    for i in 0..<num_elements {
-        gl.MakeTextureHandleResidentARB(textures[i])
-    }
-}
-
-cleanup_textures_for_rendering :: proc() {
-    textures := &window.texture_buffer.data
-    
-    num_elements := len(Reserved_Texture_Slots) + len(Skin_Element)
-    for i in 0..<num_elements {
-        gl.MakeTextureHandleNonResidentARB(textures[i])
-    }
 }
 
 
@@ -721,30 +585,29 @@ push_layout_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, an
 
 push_rect_outline :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, color: vec4, thickness_px: f32) {
     xform := window.current_transform
-    x_unit, y_unit := units_from_transform(xform)
 
-    aspect_ratio := y_unit / x_unit
-    thickness_y: f32 = x_unit * thickness_px
-    thickness_x: f32 = y_unit * thickness_px / aspect_ratio
+    offset: f32 = math.mod(thickness_px, 2)
+    thickness_y: f32 = thickness_px
+    thickness_x: f32 = thickness_px
     
     // top
-    push_rect(geometry, Rect{ rect.x - thickness_y/2,
-                              rect.y - thickness_y/2, 
+    push_rect(geometry, Rect{ rect.x - (thickness_y + offset)/2,
+                              rect.y - (thickness_y + offset)/2, 
                               rect.w + thickness_y, 
                               thickness_y }, color)
     // bottom
-    push_rect(geometry, Rect{ rect.x - thickness_y/2, 
-                              rect.y + rect.h - thickness_y/2, 
+    push_rect(geometry, Rect{ rect.x - (thickness_y + offset)/2, 
+                              rect.y + rect.h - (thickness_y + offset)/2, 
                               rect.w + thickness_y, 
                               thickness_y }, color)
     // left
-    push_rect(geometry, Rect{ rect.x - thickness_x/2, 
-                              rect.y + thickness_y/2, 
+    push_rect(geometry, Rect{ rect.x - (thickness_y + offset)/2, 
+                              rect.y - (offset)/2, 
                               thickness_x, 
                               rect.h - thickness_y/2 }, color)
     // right
-    push_rect(geometry, Rect{ rect.x - thickness_x/2 + rect.w, 
-                              rect.y + thickness_y/2, 
+    push_rect(geometry, Rect{ rect.x - (thickness_y + offset)/2 + rect.w, 
+                              rect.y - (offset)/2, 
                               thickness_x, 
                               rect.h - thickness_y/2 }, color)
 }
@@ -754,28 +617,6 @@ push_rect_outline_fill :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Re
     push_rect_outline(geometry, rect, color_outline, thickness_px)
 }
 
-
-populate_slider_circle_vertices :: proc(geometry: ^Buffer(Slider_Vertex)) {
-    #no_bounds_check {
-        vert_i := geometry.count
-        verts := geometry.data
-
-        // note(isak): the middle of our circle is raised for depth testing
-        verts[vert_i + 0] = { pos = { 0, 0, 1 } }
-        verts[vert_i + 1 + unit_circle_vertex_count] = { pos = { 0, 1, 0 } }
-
-        th: f32
-        it_angle := math.TAU * (f32(1) / unit_circle_vertex_count)
-        for i in 0..<unit_circle_vertex_count {
-            verts[int(vert_i) + i + 1] = { 
-                pos = { math.sin_f32(th), math.cos_f32(th), 0 }
-            }
-            th += it_angle
-        }
-
-        geometry.count = 2 + unit_circle_vertex_count
-    }
-}
 
 //////////////////////////////////////////////////////
 // note(isak): layout api

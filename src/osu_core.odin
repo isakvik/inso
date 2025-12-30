@@ -131,16 +131,34 @@ make_test_slider :: proc(slider: ^Slider, x_shift: f32) {
     }
 }
 
-push_slider :: proc(renderer: ^Renderer, slider: ^Slider) {
+render_slider :: proc(renderer: ^Renderer, slider: ^Slider) {
+
+    // todo(isak): we don't need to do the instance writing immediate mode, just do a pass on instances on mapset load
+    // and generate the draws and the quads like the smart cookie you are
+
     instance_at := renderer.slider_instances.count
     for i in 0..<len(slider.nodes) {
         buffer_push(&renderer.slider_instances, slider.nodes[i].pos)
     }
 
+    command_push_bind_pipeline({.SLIDER})
+    command_push_bind_framebuffer({ write = .SLIDERS })
+    command_push_clear()
+
+    pf_size: f32 = 8
+
+    command_push_push_transform({transform_from_bounds({-pf_size,-pf_size,2*pf_size,2*pf_size}, 1)})
+
     command_push_draw_slider(Command_Draw_Slider{
         base_instance = u32(instance_at),
         instance_count = renderer.slider_instances.count - instance_at
     })
+    
+    command_push_bind_framebuffer({ read = .SLIDERS })
+    command_push_bind_pipeline({.QUAD})
+    
+    command_push_push_transform({transform_from_bounds({0, 0, 1, 1}, window.aspect_ratio)})
+    command_push_draw({ index_count = 6, instance_count = 1 })
 }
 
 

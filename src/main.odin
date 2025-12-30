@@ -18,14 +18,6 @@ import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
 
 
-vec2 :: linalg.Vector2f32
-vec3 :: linalg.Vector3f32
-vec4 :: linalg.Vector4f32
-
-mat3 :: linalg.Matrix3x3f32
-mat4 :: linalg.Matrix4x4f32
-
-
 /*
 note(isak):
 
@@ -88,18 +80,16 @@ window: struct {
     pass_action: sg.Pass_Action,
     swapchain: sg.Swapchain,
 
-    shaders: [Shader_ID]Shader,
+    shaders: [Pipeline_ID]Shader,
+    pipelines: [Pipeline_ID]sg.Pipeline,
+    framebuffers: [Framebuffer_ID]GL_Framebuffer,
     
     fullscreen_store: Static_Geometry_Store(Quad_Vertex), // note(isak): deferred rendering quad store
 
-    quad_pipeline: sg.Pipeline,
     quad_store: Dynamic_Geometry_Store(Quad_Vertex),
     
-    slider_pipeline: sg.Pipeline,
-    slider_framebuffer: GL_Framebuffer,
     slider_instance_store: GL_Triple_Buffer(vec2),
     
-    text_pipeline: sg.Pipeline,
     text_store: GL_Triple_Buffer(Glyph_Quad),
     
     current_transform: Transform,
@@ -154,14 +144,15 @@ window_resize :: proc(new_w, new_h: i32) {
     window.swapchain.height = new_h
     window.aspect_ratio = window.rect.h / window.rect.w
 
-    if window.slider_framebuffer.id > 0 {
-        fbo_cleanup(&window.slider_framebuffer)
-    }
-    window.slider_framebuffer = fbo_init(1, 1, new_w, new_h, gl.RGBA8)
+    fbo_reinit(&window.framebuffers[.SLIDERS], new_w, new_h)
 }
 
 window_get_screenspace_transform :: proc() -> Transform {
     return transform_from_bounds({0, 0, window.rect.w, window.rect.h}, 1)
+}
+
+window_get_fullscreen_transform :: proc() -> Transform {
+    return transform_from_bounds({0, 0, 1, 1}, 1)
 }
 
 window_cleanup :: proc() {
@@ -309,7 +300,6 @@ main :: proc() {
         + dynamic texture surface
         + slider geometry
         - slider path gen
-        - slider quad clipping (scissor test?)
     */
 
     make_test_slider(&test_slider, 0)
@@ -334,7 +324,7 @@ main :: proc() {
     
     active := true
     event: sdl.Event
-    
+
     for active {
         profiler_begin()
         defer profiler_end()
@@ -425,7 +415,7 @@ main :: proc() {
             
             if selection_active {
                 push_rect_outline_fill(&window.renderer.quad_geometry, rect_from_points(mouse.pos, selection_start_mouse_pos), 
-                    color_sky_blue, with_alpha(color_sky_blue, 0.3), 2)
+                    color_white, with_alpha(color_sky_blue, 0.3), 1)
             }
 
             begin_draw_with_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
@@ -481,13 +471,7 @@ main :: proc() {
             
             command_push_set_mode({mode = .BEGIN_SLIDERS})
             
-            // playfield
-
-            pf_size: f32 = 1
-
-            begin_draw_with_transform(renderer.default_transform)
-
-            push_slider(renderer, &test_slider)
+            render_slider(renderer, &test_slider)
             //push_slider(renderer, &test_slider2)
             
             command_push_set_mode({mode = .END_SLIDERS})
@@ -564,17 +548,17 @@ end_frame :: proc(renderer: ^Renderer) {
                         tbo_bind(&window.quad_store.vertex_buffer, 0)
                         tbo_bind(&window.quad_store.index_buffer, 1)
                         
-                        sg.apply_pipeline(window.quad_pipeline)
+                        sg.apply_pipeline(window.pipelines[.QUAD])
                         
                         if (trace) { fmt.println("quads") }
                     }
                     case .TEXT: {
-                        sg.apply_pipeline(window.text_pipeline)
+                        sg.apply_pipeline(window.pipelines[.TEXT])
                         
                         tbo_bind(&window.text_store, 0)
                     }
                     case .BEGIN_SLIDERS: {
-                        sg.apply_pipeline(window.slider_pipeline)
+                        sg.apply_pipeline(window.pipelines[.SLIDER])
 
                         sbo_bind(&window.fullscreen_store.vertex_buffer, 0)
                         sbo_bind(&window.fullscreen_store.index_buffer, 1)
@@ -624,27 +608,30 @@ end_frame :: proc(renderer: ^Renderer) {
             case .DRAW_SLIDER: {
                 cmd := (^Command_Draw_Slider)(queue.front_ptr(&renderer.command_queue))
                 queue.consume_front(&renderer.command_queue, size_of(Command_Draw_Slider))
-                
-                sg.apply_pipeline(window.slider_pipeline)
-                
-                fbo_bind_write(window.slider_framebuffer)
-
-                gl.ClearColor(0,0,0,0)
-                gl.ClearDepth(1.0)
-                gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-                
+                                
                 gl.DrawArraysInstancedBaseInstance(
                     gl.TRIANGLE_FAN, 
                     0, 
                     renderer.circle_geometry.count,
                     cmd.instance_count, cmd.base_instance)
-                    
-                fbo_bind_read(window.slider_framebuffer)
-
-                sg.apply_pipeline(window.quad_pipeline)
-                sg.draw(0, 6, 1)
 
                 if (trace) { fmt.println("drawslider", cmd.instance_count, cmd.base_instance) }
+            }
+            case .BIND_PIPELINE: {
+                cmd := (^Command_Bind_Pipeline)(queue.front_ptr(&renderer.command_queue))
+                queue.consume_front(&renderer.command_queue, size_of(Command_Bind_Pipeline))
+
+                sg.apply_pipeline(window.pipelines[cmd.pipeline])
+                
+                if (trace) { fmt.println("pipeline", cmd.pipeline) }
+            }
+            case .BIND_FRAMEBUFFER: {
+                cmd := (^Command_Bind_Framebuffer)(queue.front_ptr(&renderer.command_queue))
+                queue.consume_front(&renderer.command_queue, size_of(Command_Bind_Framebuffer))
+
+                fbo_bind(window.framebuffers[cmd.read].id, window.framebuffers[cmd.write].id)
+                
+                if (trace) { fmt.println("framebuffer", cmd.read, cmd.write) }
             }
         }
     }
@@ -670,8 +657,8 @@ process_main_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
         }
         fmt.println("reloaded shaders")
 
-        reinit_pipeline(&window.quad_pipeline, quad_pipeline())
-        reinit_pipeline(&window.slider_pipeline, slider_pipeline())
-        reinit_pipeline(&window.text_pipeline, text_pipeline())
+        reinit_pipeline(&window.pipelines[.QUAD], quad_pipeline())
+        reinit_pipeline(&window.pipelines[.SLIDER], slider_pipeline())
+        reinit_pipeline(&window.pipelines[.TEXT], text_pipeline())
     }
 }

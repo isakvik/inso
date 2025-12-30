@@ -145,6 +145,7 @@ window_resize :: proc(new_w, new_h: i32) {
     window.aspect_ratio = window.rect.h / window.rect.w
 
     fbo_reinit(&window.framebuffers[.SLIDERS], new_w, new_h)
+    window.renderer.default_transform = transform_from_bounds({0, 0, 1, 1}, window.aspect_ratio)
 }
 
 window_get_screenspace_transform :: proc() -> Transform {
@@ -254,7 +255,7 @@ main :: proc() {
         return
     }
 
-    window_init({w = 1280, h = 720})
+    window_init({w = 1024, h = 512})
     defer window_cleanup()
 
     renderer_init()
@@ -396,17 +397,11 @@ main :: proc() {
         {   
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
             
-            // bounds testers
-            push_rect(&renderer.quad_geometry, {0,0,0.5,0.5}, with_alpha(color_red, 0.1))
-            push_rect(&renderer.quad_geometry, {0.5,0.5,0.5,0.5}, with_alpha(color_blue, 0.1))
+            osu_on_update(dt)
             
+            begin_draw_with_transform(renderer.default_transform)
 
-            game.play_timer_ms += dt * 1000
-            if game.play_timer_ms > game.active_map.length_ms {
-                game.play_timer_ms = -game.active_map.audio_lead_in
-            }
-
-            playfield_rect := Rect{ 0, 0, osu_playfield_size_osupx, osu_playfield_size_osupx }
+            // bounds testers
 
             begin_draw_with_transform(window_get_screenspace_transform())
             
@@ -418,13 +413,14 @@ main :: proc() {
                     color_white, with_alpha(color_sky_blue, 0.3), 1)
             }
 
+            playfield_rect := Rect{ 0, 0, osu_playfield_size_osupx, osu_playfield_size_osupx }
             begin_draw_with_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
+            push_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
 
-            for hit_object in sa.slice(&osu_map_hit_objects) {
-                if hit_object.start_time_ms < game.play_timer_ms && game.play_timer_ms < hit_object.end_time_ms {
-                    ho_pos := rect_translate_by_anchor(Rect{hit_object.pos.x, hit_object.pos.y, 40, 40}, .CENTER)
-                    push_rect(&renderer.quad_geometry, ho_pos, vec4(0.5), skin_texture_slot(.HITCIRCLE))
-                }
+            // todo(isak): create some kinda iterator for this; keep track of earliest active object and 
+            // stop once first nonstarted obj is done
+            for &hit_object in sa.slice(&osu_map_hit_objects) {
+                render_hit_object(renderer, &hit_object)
             }
 
             if is_pressed(osu_controller.k1) {
@@ -441,15 +437,14 @@ main :: proc() {
                 todo(isak): state of the renderer:
                 usage:
                 - batch overrun has not been tested but won't work; it should run end_frame().. probably
-                - the different clipspace/screenspace/layout quad pushing isn't really necessary with
-                    the transformation matrix stuff, so the API can be simplified
                 - the rect pushing in the draw section is artificial; only text_end_frame() and 
                     end_frame() need to happen here
-                - transforms should be a dynamic stack because single state is annoying
+                - transforms should be a dynamic stack that we just write as we process the frame; can save a bunch
+                    of draw calls
 
                 optimization:
                 - opengl has pretty bad overhead per frame even if it's not doing much work, so i think
-                    directx is a better choice
+                    directx is a better choice cuz we don't do anything fancy
                 - the vertex generation pipeline for main isn't particularly efficient, should be
                     rewritten to be more like text where quads are just written directly to the gpu
             */
@@ -468,13 +463,8 @@ main :: proc() {
                 profiler_push_quad(&renderer.quad_geometry, frame_count)
             }
 
-            
-            command_push_set_mode({mode = .BEGIN_SLIDERS})
-            
             render_slider(renderer, &test_slider)
-            //push_slider(renderer, &test_slider2)
-            
-            command_push_set_mode({mode = .END_SLIDERS})
+            command_push_bind_framebuffer({})
             
             command_push_set_mode({mode = .TEXT})
             begin_draw_with_transform(window_get_screenspace_transform())
@@ -536,7 +526,7 @@ end_frame :: proc(renderer: ^Renderer) {
     for renderer.command_queue.len > 0 {
         cmd_type := queue.pop_front(&renderer.command_queue)
 
-        switch(Command_Type(cmd_type)) {
+        switch Command_Type(cmd_type) {
             case .SET_MODE: {
                 cmd := (^Command_Set_Mode)(queue.front_ptr(&renderer.command_queue))
                 queue.consume_front(&renderer.command_queue, size_of(Command_Set_Mode))
@@ -556,19 +546,6 @@ end_frame :: proc(renderer: ^Renderer) {
                         sg.apply_pipeline(window.pipelines[.TEXT])
                         
                         tbo_bind(&window.text_store, 0)
-                    }
-                    case .BEGIN_SLIDERS: {
-                        sg.apply_pipeline(window.pipelines[.SLIDER])
-
-                        sbo_bind(&window.fullscreen_store.vertex_buffer, 0)
-                        sbo_bind(&window.fullscreen_store.index_buffer, 1)
-                        
-                        if (trace) { fmt.println("slider") }
-                    }
-                    case .END_SLIDERS: {
-                        fbo_bind_default()
-                        
-                        if (trace) { fmt.println("slider") }
                     }
                 }
             }
@@ -632,6 +609,19 @@ end_frame :: proc(renderer: ^Renderer) {
                 fbo_bind(window.framebuffers[cmd.read].id, window.framebuffers[cmd.write].id)
                 
                 if (trace) { fmt.println("framebuffer", cmd.read, cmd.write) }
+            }
+            case .BIND_SSBO: {
+                cmd := (^Command_Bind_SSBO)(queue.front_ptr(&renderer.command_queue))
+                queue.consume_front(&renderer.command_queue, size_of(Command_Bind_SSBO))
+                
+                gl.BindBufferRange(
+                    gl.SHADER_STORAGE_BUFFER,
+                    cmd.slot,
+                    cmd.id,
+                    cmd.offset,
+                    cmd.size)
+                
+                if (trace) { fmt.println("ssbo", cmd.id, cmd.slot, cmd.size, cmd.offset) }
             }
         }
     }

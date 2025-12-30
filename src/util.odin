@@ -153,7 +153,3 @@ transform_from_bounds :: proc "contextless" (r: vec4, aspect_ratio: f32) -> Tran
         0.0, 0.0, 0.0, 0.0
     }
 }
-
-units_from_transform :: proc "contextless" (trans: Transform) -> (f32, f32) {
-    return trans[0][0], trans[1][1]
-}

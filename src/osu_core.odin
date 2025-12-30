@@ -117,12 +117,13 @@ test_nodes: sa.Small_Array(128, Slider_Node)
 test_slider: Slider
 test_slider2: Slider
 
+circle_radius_osupx: f32 = 40
 
 make_test_slider :: proc(slider: ^Slider, x_shift: f32) {
     node_i := test_nodes.len
 
-    for i in 0..<20 {
-        sa.append(&test_nodes, Slider_Node{{0.056*f32(i) + x_shift, 0}, .LINEAR})
+    for i in 0..<4 {
+        sa.append(&test_nodes, Slider_Node{{100*f32(i)/circle_radius_osupx, 100*f32(i)/circle_radius_osupx}, .LINEAR})
     }
 
     slider^ = {
@@ -131,10 +132,29 @@ make_test_slider :: proc(slider: ^Slider, x_shift: f32) {
     }
 }
 
-render_slider :: proc(renderer: ^Renderer, slider: ^Slider) {
+render_hit_object :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
+    
+    if game.play_timer_ms < hobj.start_time_ms {
+        return
+    }
 
+    #partial switch hobj.type {
+        case .CIRCLE: {
+            if hobj.start_time_ms < game.play_timer_ms && game.play_timer_ms < hobj.end_time_ms {
+                ho_pos := rect_translate_by_anchor(Rect{hobj.pos.x, hobj.pos.y, 40, 40}, .CENTER)
+                push_rect(&renderer.quad_geometry, ho_pos, vec4(0.5), skin_texture_slot(.HITCIRCLE))
+            }
+        }
+        case .SLIDER: {
+            render_slider(renderer, &test_slider)
+        }
+    }
+
+}
+
+render_slider :: proc(renderer: ^Renderer, slider: ^Slider) {
     // todo(isak): we don't need to do the instance writing immediate mode, just do a pass on instances on mapset load
-    // and generate the draws and the quads like the smart cookie you are
+    // and generate the draws and the bounding quads like the smart cookie you are
 
     instance_at := renderer.slider_instances.count
     for i in 0..<len(slider.nodes) {
@@ -145,9 +165,9 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider) {
     command_push_bind_framebuffer({ write = .SLIDERS })
     command_push_clear()
 
-    pf_size: f32 = 8
+    pf_size: f32 = 512/circle_radius_osupx
 
-    command_push_push_transform({transform_from_bounds({-pf_size,-pf_size,2*pf_size,2*pf_size}, 1)})
+    command_push_push_transform({transform_from_bounds({0,0,pf_size,pf_size}, window.aspect_ratio)})
 
     command_push_draw_slider(Command_Draw_Slider{
         base_instance = u32(instance_at),
@@ -157,11 +177,22 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider) {
     command_push_bind_framebuffer({ read = .SLIDERS })
     command_push_bind_pipeline({.QUAD})
     
-    command_push_push_transform({transform_from_bounds({0, 0, 1, 1}, window.aspect_ratio)})
-    command_push_draw({ index_count = 6, instance_count = 1 })
+    begin_draw_with_transform(transform_from_bounds({0, 0, 1, 1}, 1))
+    push_rect(&renderer.quad_geometry, {0, 0, 1, 1}, {1, 1, 1, 0.5}, reserved_texture(.SLIDER_FRAMEBUFFER))
 }
 
 
 convert_approach_rate_to_preempt :: proc(ar: f64) -> f64 {
     return 1800 - min(ar, 5) * 120 - (max(ar, 5) - 5) * 150
+}
+
+
+osu_on_update :: proc(dt: f64) {
+    
+    game.play_timer_ms += dt * 1000
+    if game.play_timer_ms > game.active_map.length_ms {
+        game.play_timer_ms = -game.active_map.audio_lead_in
+    }
+
+
 }

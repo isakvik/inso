@@ -192,7 +192,7 @@ tbo_lock :: proc(buf: ^GL_Triple_Buffer($T)) {
     buf.buffers[buf.current_index].sync = gl.FenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)
 }
 
-tbo_get_current :: proc(buf: ^GL_Triple_Buffer($T)) -> []T {
+tbo_get_current_data :: proc(buf: ^GL_Triple_Buffer($T)) -> []T {
     return buf.buffers[buf.current_index].data
 }
 
@@ -213,7 +213,7 @@ tbo_advance :: proc(buf: ^GL_Triple_Buffer($T)) {
 tbo_advance_and_get :: proc(buf: ^GL_Triple_Buffer($T)) -> []T {
     tbo_advance(buf)
     tbo_wait(buf)
-    return tbo_get_current(buf)
+    return tbo_get_current_data(buf)
 }
 
 tbo_cleanup :: proc(buf: ^GL_Triple_Buffer($T)) {

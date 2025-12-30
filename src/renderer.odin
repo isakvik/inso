@@ -104,7 +104,7 @@ rect_to_array :: proc(r: Rect) -> [4]f32 {
 
 max_active_texture_resource_size :: 128 * 1024 * 1024
 
-unit_circle_vertex_count :: 32
+unit_circle_vertex_count :: 30
 
 //////////////////////////////////////////////////////
 // note(isak): resource api
@@ -309,13 +309,12 @@ Command_Type :: enum(u8) {
     DRAW_SLIDER,
     BIND_PIPELINE,
     BIND_FRAMEBUFFER,
+    BIND_SSBO,
 }
 
 Command_Mode_Type :: enum(u8) {
     QUAD_UV,
     TEXT,
-    BEGIN_SLIDERS,
-    END_SLIDERS
 }
 
 Command_Header :: struct {
@@ -350,6 +349,11 @@ Command_Bind_Framebuffer :: struct {
     read, write: Framebuffer_ID
 }
 
+Command_Bind_SSBO :: struct {
+    id, slot: u32,
+    size, offset: int
+}
+
 command_push_clear             :: proc() -> bool { return _command_push_header(.CLEAR) }
 command_push_push_transform    :: proc(cmd: Command_Push_Transform) -> bool { return _command_push(cmd, .PUSH_TRANSFORM) }
 command_push_pop_transform     :: proc() -> bool { return _command_push_header(.POP_TRANSFORM) }
@@ -358,6 +362,26 @@ command_push_draw              :: proc(cmd: Command_Draw) -> bool { return _comm
 command_push_draw_slider       :: proc(cmd: Command_Draw_Slider) -> bool { return _command_push(cmd, .DRAW_SLIDER) }
 command_push_bind_pipeline     :: proc(cmd: Command_Bind_Pipeline) -> bool { return _command_push(cmd, .BIND_PIPELINE) }
 command_push_bind_framebuffer  :: proc(cmd: Command_Bind_Framebuffer) -> bool { return _command_push(cmd, .BIND_FRAMEBUFFER) }
+
+
+command_push_bind_sbo :: proc(sbo: ^GL_Buffer($T), bind_index: u32) -> bool {
+    cmd := Command_Bind_SSBO{
+        id = sbo.id,
+        slot = bind_index,
+        size = sbo.size
+    }
+    return _command_push(cmd, .BIND_SSBO) 
+}
+
+command_push_bind_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_index: u32) -> bool {
+    cmd := Command_Bind_SSBO{
+        id = tbo.id,
+        slot = bind_index,
+        size = tbo.size,
+        offset = tbo.size * tbo.current_index
+    }
+    return _command_push(cmd, .BIND_SSBO) 
+}
 
 
 _command_push_header :: proc(type: Command_Type) -> bool {
@@ -377,6 +401,39 @@ _command_push :: proc(cmd: $T, type: Command_Type) -> bool {
     }
     assert(ok)
     return ok
+}
+
+
+command_pop_clear             :: proc() {
+
+}
+
+command_pop_push_transform    :: proc() {
+
+}
+
+command_pop_pop_transform     :: proc() {
+
+}
+
+command_pop_set_mode          :: proc() {
+
+}
+
+command_pop_draw              :: proc() {
+
+}
+
+command_pop_draw_slider       :: proc() {
+
+}
+
+command_pop_bind_pipeline     :: proc() {
+
+}
+
+command_pop_bind_framebuffer  :: proc() {
+
 }
 
 
@@ -578,7 +635,7 @@ push_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, color: ve
                                  {rect.x + rect.w, rect.y + rect.h}, {1, 1}, color, tex_index)
 }
 
-push_layout_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
+push_layout_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, anchor: Layout_Anchor, color: vec4 = color_white, tex_index: u32 = 0) {
     push_rect(geometry, rect_translate_by_anchor(rect, anchor), color, tex_index) 
 }
 

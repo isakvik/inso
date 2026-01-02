@@ -6,6 +6,7 @@ import sa "core:container/small_array"
 
 
 osu_playfield_size_osupx :: 512
+playfield_rect :: Rect{ 0, 0, osu_playfield_size_osupx, osu_playfield_size_osupx }
 
 osu_map_hit_objects: sa.Small_Array(128, Hit_Object)
 

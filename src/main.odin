@@ -47,24 +47,37 @@ scrubbing support (jump to arbitrary time, display content)
 
 */
 
+memory_arena_names := [4]string {
+    "Global",
+    "Mapset",
+    "Frame",
+    "Command buffer"
+}
+
 memory: struct {
+    global_allocator: runtime.Allocator, // cleared on mapset load
     // note(isak): this is to be used for mapset runtime data, such as timing state, 
     // judgements, etc. (fill in)
-    // cleared on mapset load
-    mapset_allocator: runtime.Allocator,
+    mapset_allocator: runtime.Allocator, // cleared on mapset load
+    // cleared on frame end
     frame_allocator: runtime.Allocator,
     command_buffer_allocator: runtime.Allocator,
 
+    global_arena: virtual.Arena,
     mapset_arena: virtual.Arena,
     frame_arena: virtual.Arena,
     command_buffer_arena: virtual.Arena,
 }
 
 // note(isak): this should take care of error printing
-init_memory :: proc() -> runtime.Allocator_Error {
+memory_init :: proc() -> runtime.Allocator_Error {
+    memory.global_allocator, _ = init_growing_arena(&memory.global_arena)
     memory.mapset_allocator, _ = init_growing_arena(&memory.mapset_arena)
     memory.frame_allocator, _ = init_growing_arena(&memory.frame_arena)
-    memory.command_buffer_allocator, _ = init_growing_arena(&memory.command_buffer_arena)
+    memory.command_buffer_allocator, _ = init_static_arena(&memory.command_buffer_arena)
+
+    context.allocator = memory.global_allocator
+    context.temp_allocator = memory.frame_allocator
     return .None
 }
 
@@ -84,7 +97,12 @@ window: struct {
     pipelines: [Pipeline_ID]sg.Pipeline,
     framebuffers: [Framebuffer_ID]GL_Framebuffer,
     
-    fullscreen_store: Static_Geometry_Store(Quad_Vertex), // note(isak): deferred rendering quad store
+    // note(isak): we make a distinction between static and dynamic geometry; dynamic can be streamed
+    // data into efficiently by using a triple buffer setup, while static is single-buffered and is fit
+    // for bigger data that isn't updated as often (such as in a loading screen)
+
+    // note(isak): single quad buffer for deferred rendering quad store, unused
+    fullscreen_store: Static_Geometry_Store(Quad_Vertex),
 
     quad_store: Dynamic_Geometry_Store(Quad_Vertex),
     
@@ -264,7 +282,7 @@ data_callback :: proc "c" (pUserData: rawptr, pStream: ^sdl.AudioStream, additio
 main :: proc() {
     _program_start_time = current_time()
 
-    if init_memory() != .None {
+    if memory_init() != .None {
         panic("memory init error")
     }
 
@@ -433,7 +451,7 @@ main :: proc() {
                             renderer.trace_frame = !renderer.trace_frame
                         case sdl.Scancode.F10:
                             debug_info.display_fontatlas = !debug_info.display_fontatlas
-                        case sdl.Scancode.F9:
+                        case sdl.Scancode.F11:
                             debug_info.display_profiler = !debug_info.display_profiler
                     }
                 }
@@ -476,15 +494,11 @@ main :: proc() {
             
             osu_on_update(dt)
             
-            begin_draw_with_transform(renderer.default_transform)
-
-            // bounds testers
-
             begin_draw_with_transform(window_get_screenspace_transform())
             
             // game update
             input_display(osu_controller.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
-            input_display(osu_controller.k2, { window.rect.w, window.rect.h / 2, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
+            input_display(osu_controller.k2, { window.rect.w, window.rect.h / 2,      30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
             input_display(osu_controller.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
             input_display(osu_controller.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
             
@@ -493,10 +507,9 @@ main :: proc() {
             
             if selection_active {
                 push_rect_outline_fill(&window.renderer.quad_geometry, rect_from_points(mouse.pos, selection_start_mouse_pos), 
-                    color_white, with_alpha(color_sky_blue, 0.3), 1)
+                                       color_sky_blue, with_alpha(color_sky_blue, 0.3), 1)
             }
 
-            playfield_rect := Rect{ 0, 0, osu_playfield_size_osupx, osu_playfield_size_osupx }
             begin_draw_with_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
             push_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
 
@@ -504,14 +517,6 @@ main :: proc() {
             // stop once first nonstarted obj is done
             for &hit_object in sa.slice(&osu_map_hit_objects) {
                 render_hit_object(renderer, &hit_object)
-            }
-
-            if is_pressed(osu_controller.k1) {
-                fmt.printfln("is pressed")
-            } else if is_held(osu_controller.k1) {
-                fmt.printfln("is held")
-            } else if is_released(osu_controller.k1) {
-                fmt.printfln("is released")
             }
         }
         
@@ -553,14 +558,14 @@ main :: proc() {
             begin_draw_with_transform(window_get_screenspace_transform())
 
             push_text(renderer, "Hello, world!", {100, 100})
-            push_text(renderer, "yuuma toutetsu :3", {200, 200}, size=16)
+            push_text(renderer, "饕餮尤魔 :3", {200, 200}, size=24)
             
-            buf: [32]byte
-            game_timer_str := fmt.bprintf(buf[:], "%.3f", game.play_timer_ms)
+            game_timer_str := fmt.tprintf("%.3f", game.play_timer_ms)
             push_text(renderer, game_timer_str, {20, 20}, size = 22)
 
             if debug_info.display_profiler {
                 profiler_push_blocks_as_text(renderer, frame_count)
+                profiler_push_memory_diag_text(renderer)
             }
 
             text_end_frame(renderer)
@@ -575,7 +580,7 @@ main :: proc() {
         {
             profiler_block_begin(.BETWEEN_FRAMES); defer profiler_block_end() 
 
-            process_main_shader_changes(&shaders_watch)
+            process_watch_changes(&shaders_watch)
 
             if debug_info.display_profiler {
                 profiler_write_texture_column(frame_count, window.profiler_texture)
@@ -584,8 +589,8 @@ main :: proc() {
                     fmt.println("fps:", profiler_get_fps())
                 }
             }
+            
             frame_count += 1
-
             virtual.arena_free_all(&memory.frame_arena)
         }
     }
@@ -723,7 +728,7 @@ swap_frame :: proc() {
     sdl.GL_SwapWindow(window.handle)
 }
 
-process_main_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
+process_watch_changes :: proc(watch: ^Win32_Directory_Watch) {
     updated_systems := mapset_check_system_file_watch(watch)
 
     if updated_systems[.OSU_FILE] {

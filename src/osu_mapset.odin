@@ -62,8 +62,10 @@ osu_section_headers := []string{
 mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
     virtual.arena_free_all(&memory.mapset_arena)
 
-    mapset, alloc_err := arena_push(&memory.mapset_arena, Mapset)
-    if alloc_err != .None || !os.exists(path) {
+    mapset, alloc_err := new(Mapset, memory.mapset_allocator)
+    assert(alloc_err == .None)
+
+    if !os.exists(path) {
         return mapset, false
     }
 

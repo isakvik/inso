@@ -3,6 +3,7 @@ package notosu
 import "base:runtime"
 import "core:fmt"
 import "core:math/linalg"
+import "core:mem"
 import "core:mem/virtual"
 import os "core:os/os2"
 import "core:strings"
@@ -88,30 +89,29 @@ read_entire_file_to_string :: proc(path: string, allocator := context.allocator)
 //////////////////////////////////////////////////////
 // note(isak): memory api
 
-arena_default_alignment :: 16
-
 bytes     :: proc "contextless" (v: int) -> int {return v * 1}
 kilobytes :: proc "contextless" (v: int) -> int {return v * 1024}
 megabytes :: proc "contextless" (v: int) -> int {return v * 1024 * 1024}
 gigabytes :: proc "contextless" (v: int) -> int {return v * 1024 * 1024 * 1024}
 
-
-arena_push :: proc(arena: ^virtual.Arena, $T: typeid) -> (^T, virtual.Allocator_Error) {
-    data, err := virtual.arena_alloc(arena, size_of(T), arena_default_alignment)
-    assert(err == .None, "memory allocation error")
-    return (^T)(raw_data(data)), err
+units_str := [4]string {
+    "B",
+    "KiB",
+    "MiB",
+    "GiB"
 }
 
-init_growing_arena :: proc(arena: ^virtual.Arena, size_MB: uint = 1) -> (runtime.Allocator, runtime.Allocator_Error) {
-    alloc_err := virtual.arena_init_growing(arena, size_MB)
+init_growing_arena :: proc(arena: ^virtual.Arena, size_mb: uint = 1) -> (runtime.Allocator, runtime.Allocator_Error) {
+    alloc_err := virtual.arena_init_growing(arena, reserved = 1)
     assert(alloc_err == .None)
-    alloc := virtual.arena_allocator(arena)
-    if alloc_err != .None {
-        fmt.println("mapset arena init error:", alloc_err)
-    }
-    return alloc, .None
+    return virtual.arena_allocator(arena), alloc_err
 }
 
+init_static_arena :: proc(arena: ^virtual.Arena, size: uint = runtime.Megabyte) -> (runtime.Allocator, runtime.Allocator_Error) {
+    alloc_err := virtual.arena_init_static(arena, reserved = size)
+    assert(alloc_err == .None)
+    return virtual.arena_allocator(arena), alloc_err
+}
 
 //////////////////////////////////////////////////////
 // note(isak): math api

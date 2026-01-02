@@ -607,6 +607,7 @@ push_layout_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, an
 }
 
 
+// todo(isak): thickness doesn't really work anymore... should prolly fetch scale from current transform
 push_rect_outline :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, color: vec4, thickness_px: f32) {
     xform := window.current_transform
 

@@ -1,13 +1,10 @@
 package notosu
 
 import "core:fmt"
-import "core:mem"
-import "core:sys/windows"
-import sa "core:container/small_array"
+import os "core:os/os2"
 
 import fs "vendor:fontstash"
 import gl "vendor:OpenGL"
-import sg "vendor:sokol/gfx"
 import sdl "vendor:sdl3"
 
 
@@ -49,10 +46,11 @@ Glyph_Quad :: struct {
     __padding: [3]u32
 }
 
-
+// note(isak) @release: arial unicode ships with some microsoft products and contains pretty much everything, but
+// we can't really depend on it being there. so if it doesn't exist, we use the bundled font, but we should
+// probably just slap arial unicode into our executable at release time
 font_paths := [Font]string{
     .FALLBACK = "c:/Windows/Fonts/ARIAL_UNICODE_MS.ttf",
-    //.FALLBACK = "data/segoeui.ttf",
     .DEFAULT = "data/segoeui.ttf",
 }
 
@@ -66,6 +64,10 @@ text_init :: proc() {
     fs.Init(&text_engine.ctx, DEFAULT_FONT_ATLAS_SIZE, DEFAULT_FONT_ATLAS_SIZE, .TOPLEFT)
     text_engine.ctx.callbackResize = text_resize_callback
     text_engine.ctx.callbackUpdate = text_update_callback
+
+    if !os.exists(font_paths[.FALLBACK]) {
+        font_paths[.FALLBACK] = font_paths[.DEFAULT]
+    }
     
     for font in Font {
         fs.AddFontPath(

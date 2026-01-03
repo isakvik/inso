@@ -236,6 +236,12 @@ osu_on_update :: proc(dt: f64) {
     if game.play_timer_ms > osu_map.length_ms {
         game.play_timer_ms = -osu_map.audio_lead_in
     }
+    
+    // todo(isak): create some kinda iterator for this; keep track of earliest active object and 
+    // stop once first nonstarted obj is done
+    for &hit_object in sa.slice(&osu_map_hit_objects) {
+        render_hit_object(&window.renderer, &hit_object)
+    }
 }
 
 
@@ -260,8 +266,7 @@ render_hit_object :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
 }
 
 render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
-    // todo(isak): we don't need to do the instance writing immediate mode, just do a pass on instances on mapset load
-    // and generate the draws and the bounding quads like the smart cookie you are
+    // todo(isak):  generate partial instance draws (snaking) and the bounding quads like the smart cookie you are
 
     r_bind_pipeline({.SLIDER})
     r_bind_framebuffer({ write = .SLIDERS })

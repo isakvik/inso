@@ -111,9 +111,9 @@ window: struct {
     // for bigger data that isn't updated as often (such as in a loading screen)
 
     // note(isak): single quad buffer for deferred rendering quad store, unused
-    fullscreen_store: Static_Geometry_Store(Quad_Vertex),
+    fullscreen_store: GL_Buffer(Quad),
 
-    quad_store: Dynamic_Geometry_Store(Quad_Vertex),
+    quad_store: GL_Triple_Buffer(Quad),
     
     slider_instance_store: GL_Buffer(vec2),
     
@@ -505,6 +505,7 @@ main :: proc() {
             
             osu_on_update(dt)
             
+            r_bind_layer(.UI)
             r_push_transform(window_get_screenspace_transform())
             
             // game update
@@ -523,12 +524,8 @@ main :: proc() {
 
             r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
             push_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
-
-            // todo(isak): create some kinda iterator for this; keep track of earliest active object and 
-            // stop once first nonstarted obj is done
-            for &hit_object in sa.slice(&osu_map_hit_objects) {
-                render_hit_object(renderer, &hit_object)
-            }
+            
+            r_bind_layer(.BACKGROUND)
         }
         
         {
@@ -560,7 +557,7 @@ main :: proc() {
                 profiler_push_quad(&renderer.quad_geometry, frame_count)
             }
 
-            for i in 0..<10 {
+            for i in 0..<1 {
                 render_slider(renderer, &test_slider)
             }
             r_bind_framebuffer({})
@@ -600,7 +597,7 @@ main :: proc() {
                 profiler_write_texture_column(frame_count, window.profiler_texture)
 
                 if frame_count % 100 == 0 {
-                    fmt.println("fps:", profiler_get_fps())
+                    fmt.println("ms:", profiler_get_frametime())
                 }
             }
             
@@ -621,6 +618,11 @@ begin_frame :: proc(renderer: ^Renderer) {
     
     r_bind_pipeline({.QUAD})
     r_push_transform(renderer.default_transform)
+
+    command_push_bind_framebuffer(window.renderer.current_framebuffer)
+    command_push_bind_pipeline(window.renderer.current_pipeline)
+    command_push_bind_tbo(&window.quad_store, 0)
+    command_push_push_transform({window.renderer.current_transform})
     
     renderer.transform_queue.len = 0
 }

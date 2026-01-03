@@ -254,20 +254,16 @@ profiler_write_texture_column :: proc(frame_count: u64, texture: Texture) {
         profiler.pixels[:])
 }
 
-profiler_push_quad :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), frame_count: u64) {
+profiler_push_quad :: proc(geometry: ^Buffer(Quad), frame_count: u64) {
     pixel_shift := i32(frame_count % u64(profiler_w))
     pixel_shift_clipspace := f32(pixel_shift) / f32(profiler_w)
 
     profiler_rect: Rect = { f32(window.rect.w), f32(window.rect.h), f32(profiler_w), f32(profiler_h) }
     r := rect_translate_by_anchor(profiler_rect, .BOTTOM_RIGHT)
     
-
-    push_quad_with_uvs(geometry, {r.x,       r.y      }, {0 + pixel_shift_clipspace, 0},
-                                 {r.x,       r.y + r.h}, {0 + pixel_shift_clipspace, 1},
-                                 {r.x + r.w, r.y      }, {1 + pixel_shift_clipspace, 0},
-                                 {r.x + r.w, r.y + r.h}, {1 + pixel_shift_clipspace, 1}, 
+    push_quad_with_uvs(geometry, {r.x,       r.y      }, {r.x + r.w, r.y + r.h},
+                                 {0 + pixel_shift_clipspace, 0}, {1 + pixel_shift_clipspace, 1}, 
                                  color_white, u32(Reserved_Texture_Slots.PROFILER))
-      
 }
 
 profiler_get_fps :: proc() -> f64 {
@@ -277,5 +273,15 @@ profiler_get_fps :: proc() -> f64 {
     }
 
     s_per_n_frames := tsc_to_s(cum_frame_time_tsc)
-    return fps_average_running_frame_count / s_per_n_frames
+    return s_per_n_frames == 0 ? 0 : fps_average_running_frame_count / s_per_n_frames
+}
+
+profiler_get_frametime :: proc() -> f64 {
+    cum_frame_time_tsc: u64
+    for frame_time in profiler.frame_times {
+        cum_frame_time_tsc += frame_time
+    }
+
+    s_per_n_frames := tsc_to_ms(cum_frame_time_tsc)
+    return s_per_n_frames / fps_average_running_frame_count
 }

@@ -31,6 +31,15 @@ Quad_Vertex :: struct {
     __padding: [3]u32
 }
 
+Quad :: struct {
+    pos_min:   vec2,
+    pos_max:   vec2,
+    uv_min:    vec2,
+    uv_max:    vec2,
+    color: u32,
+    tex_index: u32
+}
+
 Slider_Vertex :: struct {
     pos: vec3,
     __padding: u32,
@@ -44,17 +53,6 @@ Geometry_Buffer :: struct(T: typeid) {
     indices: Buffer(u32),
 }
 
-Dynamic_Geometry_Store :: struct(T: typeid) {
-    vertex_buffer: GL_Triple_Buffer(T),
-    index_buffer: GL_Triple_Buffer(u32),
-}
-
-Static_Geometry_Store :: struct(T: typeid) {
-    vertex_buffer: GL_Buffer(T),
-    index_buffer: GL_Buffer(u32),
-}
-
-
 Draw_Call :: struct {
     index_offset: u32,
     index_count: i32,
@@ -63,10 +61,10 @@ Draw_Call :: struct {
 }
 
 Renderer :: struct {
-    quad_geometry: Geometry_Buffer(Quad_Vertex),
+    quad_geometry: Buffer(Quad),
     slider_instances: Buffer(vec2),
     
-    text_geometry: Geometry_Buffer(Glyph_Quad),
+    text_geometry: Buffer(Glyph_Quad),
     
     circle_geometry: Buffer(Slider_Vertex),
 
@@ -157,16 +155,11 @@ renderer_init :: proc() {
     window.framebuffers[.SLIDERS] = fbo_init(1, 1, i32(window.rect.w), i32(window.rect.h), gl.RGBA8)
     
 
-    window.quad_store.vertex_buffer = tbo_init(Quad_Vertex, MAX_BATCH_VERTICES)
-    window.quad_store.index_buffer = tbo_init(u32, MAX_BATCH_VERTICES * 2)
-
+    window.quad_store = tbo_init(Quad, MAX_BATCH_VERTICES)
     window.text_store = tbo_init(Glyph_Quad, MAX_BATCH_VERTICES)
-    
+
     window.slider_instance_store = sbo_init(vec2, MAX_BATCH_VERTICES)
-
-    window.fullscreen_store.vertex_buffer = sbo_init(Quad_Vertex, 4)
-    window.fullscreen_store.index_buffer = sbo_init(u32, 6)
-
+    window.fullscreen_store = sbo_init(Quad, 4)
     window.texture_buffer = sbo_init(u64, MAX_TEXTURE_HANDLES)
     
     window.transform_buffer = ubo_init(Transform, 1)
@@ -208,17 +201,12 @@ renderer_init :: proc() {
 
     //
 
-    fullscreen_geometry := Geometry_Buffer(Quad_Vertex) {
-        vertices = buffer_init(MAX_BATCH_VERTICES, window.fullscreen_store.vertex_buffer.data),
-        indices = buffer_init(MAX_BATCH_VERTICES * 2, window.fullscreen_store.index_buffer.data)
-    }
-    push_rect(&fullscreen_geometry, 
-        {0,0,1,1}, {1,1,1,0.5}, reserved_texture(.SLIDER_FRAMEBUFFER))
+    fullscreen_geometry := buffer_init(MAX_BATCH_VERTICES, window.fullscreen_store.data)
+    push_rect(&fullscreen_geometry, {0,0,1,1}, {1,1,1,0.5}, reserved_texture(.SLIDER_FRAMEBUFFER))
     
     //
     
-    renderer.text_geometry.vertices.size = MAX_BATCH_VERTICES
-    renderer.text_geometry.indices.size = 6
+    renderer.text_geometry.size = MAX_BATCH_VERTICES
     
     renderer.current_transform = renderer.default_transform
     commit_transform(renderer.default_transform)
@@ -233,12 +221,10 @@ renderer_init :: proc() {
 }
 
 renderer_cleanup :: proc() {
-    tbo_cleanup(&window.quad_store.vertex_buffer)
-    tbo_cleanup(&window.quad_store.index_buffer)
+    tbo_cleanup(&window.quad_store)
     tbo_cleanup(&window.text_store)
     
-    sbo_cleanup(&window.fullscreen_store.vertex_buffer)
-    sbo_cleanup(&window.fullscreen_store.index_buffer)
+    sbo_cleanup(&window.fullscreen_store)
     sbo_cleanup(&window.circle_geo_buffer)
     sbo_cleanup(&window.texture_buffer)
     sbo_cleanup(&window.slider_instance_store)
@@ -395,8 +381,9 @@ command_push_bind_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_index: u32) -> bo
         id = tbo.id,
         slot = bind_index,
         size = tbo.size,
-        offset = tbo.size * tbo.current_index
+        offset = tbo.size * int(tbo.current_index)
     }
+    window.renderer.current_vertex_buffer = cmd
     return _command_push(cmd, .BIND_SSBO) 
 }
 
@@ -448,11 +435,13 @@ r_draw :: proc(index_offset: u32, index_count: i32, instance_count: i32 = 1, bas
 
 r_bind_framebuffer :: proc(cmd: Command_Bind_Framebuffer) {
     window.renderer.new_draw_on_next_push = true
+    window.renderer.current_framebuffer = cmd
     command_push_bind_framebuffer(cmd)
 }
 
 r_bind_pipeline :: proc(cmd: Command_Bind_Pipeline) {
     window.renderer.new_draw_on_next_push = true
+    window.renderer.current_pipeline = cmd
     command_push_bind_pipeline(cmd)
 }
 
@@ -463,6 +452,7 @@ r_bind_vertex_buffer_sbo :: proc(sbo: ^GL_Buffer($T), bind_index: u32) {
         size = sbo.size
     }
     window.renderer.new_draw_on_next_push = true
+    window.renderer.current_vertex_buffer = cmd
     _command_push(cmd, .BIND_SSBO)
 }
 
@@ -473,6 +463,7 @@ r_bind_vertex_buffer_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_index: u32) {
         size = tbo.size
     }
     window.renderer.new_draw_on_next_push = true
+    window.renderer.current_vertex_buffer = cmd
     _command_push(cmd, .BIND_SSBO)
 }
 
@@ -488,6 +479,7 @@ r_bind_index_buffer_sbo :: proc(sbo: ^GL_Buffer($T), bind_index: u32) {
         size = sbo.size
     }
     window.renderer.new_draw_on_next_push = true
+    window.renderer.current_index_buffer = cmd
     _command_push(cmd, .BIND_SSBO)
 }
 
@@ -498,6 +490,7 @@ r_bind_index_buffer_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_index: u32) {
         size = tbo.size
     }
     window.renderer.new_draw_on_next_push = true
+    window.renderer.current_index_buffer = cmd
     _command_push(cmd, .BIND_SSBO)
 }
 
@@ -508,6 +501,7 @@ r_bind_index_buffer :: proc {
 
 r_push_transform :: proc(transform: Transform) {
     window.renderer.new_draw_on_next_push = true
+    window.renderer.current_transform = transform
     command_push_push_transform({transform})
 }
 
@@ -515,6 +509,13 @@ r_pop_transform :: proc() {
     // todo(isak) implement
 }
 
+r_bind_layer :: proc(layer: Layer) {
+    window.renderer.current_layer = layer
+    command_push_bind_framebuffer(window.renderer.current_framebuffer)
+    command_push_bind_pipeline(window.renderer.current_pipeline)
+    _command_push(window.renderer.current_vertex_buffer, .BIND_SSBO)
+    command_push_push_transform({window.renderer.current_transform})
+}
 
 ///////////////////////////////////////////////////////////////////////////
 // note(isak): draw api - PS: we use our nice global window.renderer here to make the api easier
@@ -540,25 +541,20 @@ reset_transform :: proc() {
 
 
 batch_begin :: proc(renderer: ^Renderer) {
-    renderer.quad_geometry.vertices.data = tbo_advance_and_get(&window.quad_store.vertex_buffer)
-    renderer.quad_geometry.vertices.count = 0
-    renderer.quad_geometry.indices.data = tbo_advance_and_get(&window.quad_store.index_buffer)
-    renderer.quad_geometry.indices.count = 0
+    renderer.quad_geometry.data = tbo_advance_and_get(&window.quad_store)
+    renderer.quad_geometry.count = 0
 
-    renderer.text_geometry.vertices.data = tbo_advance_and_get(&window.text_store)
-    renderer.text_geometry.vertices.count = 0
+    renderer.text_geometry.data = tbo_advance_and_get(&window.text_store)
+    renderer.text_geometry.count = 0
 
     renderer.current_draw.index_count = 0
     renderer.current_draw.index_offset = 0
 }
 
 batch_end :: proc(renderer: ^Renderer) {
-    tbo_lock(&window.quad_store.vertex_buffer)
-    tbo_lock(&window.quad_store.index_buffer)
+    tbo_lock(&window.quad_store)
     tbo_lock(&window.text_store)
     
-    tbo_bind(&window.quad_store.vertex_buffer, 0)
-    tbo_bind(&window.quad_store.index_buffer, 1)
     sbo_bind(&window.texture_buffer, 2)
     sbo_bind(&window.circle_geo_buffer, 3)
     sbo_bind(&window.slider_instance_store, 4)
@@ -571,95 +567,71 @@ batch_flush :: proc(renderer: ^Renderer) {
 }
 
 
-write_quad_indices :: proc(indices: []u32, index_at, vert: i32) {
-    indices[index_at + 0] = u32(vert) + 0
-    indices[index_at + 1] = u32(vert) + 2
-    indices[index_at + 2] = u32(vert) + 1
-    indices[index_at + 3] = u32(vert) + 1
-    indices[index_at + 4] = u32(vert) + 2
-    indices[index_at + 5] = u32(vert) + 3
-}
-
-push_quad_with_uvs :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), pos1, uv1, pos2, uv2, pos3, uv3, pos4, uv4: vec2, 
+push_quad_with_uvs :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2, 
                            color: vec4, tex_index: u32) {
     assert(window.renderer.current_draw != nil)
 
-    if geometry.vertices.count + 4 > MAX_BATCH_VERTICES {
+    if geometry.count + 4 > MAX_BATCH_VERTICES {
         batch_flush(&window.renderer)
     }
     if window.renderer.new_draw_on_next_push {
         r_draw(
-            index_offset = u32(geometry.indices.count), 
+            index_offset = u32(geometry.count) * 6, 
             index_count = 0
         )
     }
 
     #no_bounds_check {
-        vert_i := geometry.vertices.count
-        verts := geometry.vertices.data
-        verts[vert_i + 0] = {
-            pos = {pos1.x, pos1.y},
-            uv = uv1,
-            color = color,
-            tex_index = tex_index
-        }
-        verts[vert_i + 1] = {
-            pos = {pos2.x, pos2.y},
-            uv = uv2,
-            color = color,
-            tex_index = tex_index
-        }
-        verts[vert_i + 2] = {
-            pos = {pos3.x, pos3.y},
-            uv = uv3,
-            color = color,
-            tex_index = tex_index
-        }
-        verts[vert_i + 3] = {
-            pos = {pos4.x, pos4.y},
-            uv = uv4,
-            color = color,
-            tex_index = tex_index
-        }
-        
-        write_quad_indices(geometry.indices.data, geometry.indices.count, vert_i)
-        geometry.vertices.count += 4
-        geometry.indices.count += 6
+        vert_i := geometry.count
+        verts := geometry.data
 
+        q_color: [4]u8 = { 
+            u8(f32(0xFF) * color.r),
+            u8(f32(0xFF) * color.g),
+            u8(f32(0xFF) * color.b),
+            u8(f32(0xFF) * color.a),
+        }
+
+        verts[vert_i] = {
+            pos_min = pos_min,
+            pos_max = pos_max,
+            uv_min = uv_min,
+            uv_max = uv_max,
+            color = transmute(u32)q_color,
+            tex_index = tex_index
+        }
+
+        geometry.count += 1
         window.renderer.current_draw.index_count += 6
     }
 }
 
-push_quad :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), pos1, pos2, pos3, pos4: vec2, color: vec4, tex_index: u32) {
+push_quad :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2, color: vec4, tex_index: u32) {
     push_quad_with_uvs(geometry, 
-                       pos1, {0, 0}, 
-                       pos2, {0, 1}, 
-                       pos3, {1, 0}, 
-                       pos4, {1, 1}, color, tex_index)
+                       pos_min, uv_max, 
+                       {0, 0}, {1, 1}, 
+                       color, tex_index)
 }
 
-push_xywh :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), x, y, w, h: f32, color: vec4, tex_index: u32) {
+push_xywh :: proc(geometry: ^Buffer(Quad), x, y, w, h: f32, color: vec4, tex_index: u32) {
     push_quad_with_uvs(geometry, 
-                       {x,     y    }, {0, 0}, 
-                       {x,     y + h}, {0, 1}, 
-                       {x + w, y    }, {1, 0}, 
-                       {x + w, y + h}, {1, 1}, color, tex_index)
+                       {x, y}, {x + w, y + h}, 
+                       {0, 0}, {1, 1}, 
+                       color, tex_index)
 }
 
-push_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, color: vec4, tex_index: u32 = 0) {
-    push_quad_with_uvs(geometry, {rect.x,          rect.y         }, {0, 0},
-                                 {rect.x,          rect.y + rect.h}, {0, 1},
-                                 {rect.x + rect.w, rect.y         }, {1, 0},
-                                 {rect.x + rect.w, rect.y + rect.h}, {1, 1}, color, tex_index)
+push_rect :: proc(geometry: ^Buffer(Quad), r: Rect, color: vec4, tex_index: u32 = 0) {
+    push_quad_with_uvs(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h}, 
+                                 {0, 0}, {1, 1}, color, tex_index)
 }
 
-push_layout_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, anchor: Layout_Anchor, color: vec4 = color_white, tex_index: u32 = 0) {
+push_layout_rect :: proc(geometry: ^Buffer(Quad), rect: Rect, anchor: Layout_Anchor, color: vec4 = color_white, tex_index: u32 = 0) {
     push_rect(geometry, rect_translate_by_anchor(rect, anchor), color, tex_index) 
 }
 
 
 // todo(isak): thickness doesn't really work anymore... should prolly fetch scale from current transform
-push_rect_outline :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, color: vec4, thickness_px: f32) {
+push_rect_outline :: proc(geometry: ^Buffer(Quad), rect: Rect, color: vec4, thickness_px: f32) {
     xform := window.renderer.current_transform
 
     offset: f32 = math.mod(thickness_px, 2)
@@ -688,7 +660,7 @@ push_rect_outline :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, c
                               rect.h - thickness_y/2 }, color)
 }
 
-push_rect_outline_fill :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, color_outline, color_fill: vec4, thickness_px: f32) {
+push_rect_outline_fill :: proc(geometry: ^Buffer(Quad), rect: Rect, color_outline, color_fill: vec4, thickness_px: f32) {
     push_rect(geometry, rect, color_fill)
     push_rect_outline(geometry, rect, color_outline, thickness_px)
 }

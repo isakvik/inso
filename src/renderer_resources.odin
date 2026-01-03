@@ -87,7 +87,6 @@ text_pipeline :: proc() -> sg.Pipeline_Desc {
     return {
         label = "builtin.text",
         shader = window.shaders[.TEXT].shader,
-        index_type = .NONE,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
         colors = {

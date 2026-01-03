@@ -146,7 +146,7 @@ push_text :: proc(
         y_inc^ += lh
     }
 
-    text_vertex_buffer := &renderer.text_geometry.vertices
+    text_vertex_buffer := &renderer.text_geometry
 
     for iter := fs.TextIterInit(&text_engine.ctx, pos.x, pos.y, text); true; {
         quad: fs.Quad
@@ -178,7 +178,7 @@ text_submit_geometry :: proc(renderer: ^Renderer) {
     r_bind_vertex_buffer(&window.text_store, 0)
     r_draw(
         index_offset = 0,
-        index_count = renderer.text_geometry.vertices.count * 6,
+        index_count = renderer.text_geometry.count * 6,
         instance_count = 1
     )
 }

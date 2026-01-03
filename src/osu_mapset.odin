@@ -34,6 +34,13 @@ Mapset :: struct {
     watch: Win32_Directory_Watch
 }
 
+Notosu_Map_System :: enum {
+    OSU_FILE,
+    NOTOSU_FILES, // note(isak): this also includes scripts
+    SHADERS,
+    Count
+}
+
 Osu_Section_Header_Types :: enum {
     HEADER,
     GENERAL,
@@ -59,9 +66,19 @@ osu_section_headers := []string{
 }
 
 
-mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
-    virtual.arena_free_all(&memory.mapset_arena)
+mapset_clear_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
+    win32_close_directory_watch(&mapset.watch)
+    mapset_path := strings.clone(mapset.folder_path, context.temp_allocator)
 
+    virtual.arena_free_all(&memory.mapset_arena)
+    reloaded_mapset, ok := mapset_open_for_editing(mapset_path)
+    assert(ok)
+    write_instances_from_path(&window.renderer.slider_instances, &test_slider, memory.mapset_allocator)
+    return reloaded_mapset
+}
+
+mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
+    mapset_path := strings.clone(path, memory.mapset_allocator)
     mapset, alloc_err := new(Mapset, memory.mapset_allocator)
     assert(alloc_err == .None)
 
@@ -69,7 +86,7 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
         return mapset, false
     }
 
-    mapset.folder_path = path
+    mapset.folder_path = mapset_path
     
     files: []os.File_Info
     dir_handle, io_err := os.open(path)
@@ -83,24 +100,17 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
         switch extension {
             case ".notosu": {
                 filedata, file_err := read_entire_file_to_string(file.fullpath, context.temp_allocator)
-                _mapset_parse_notosu(mapset, filedata)
+                mapset_parse_notosu(mapset, filedata)
             }
             case ".osu": {
                 filedata, file_err := read_entire_file_to_string(file.fullpath, context.temp_allocator)
-                mapset.osu_map = _mapset_parse_osu(filedata, memory.mapset_allocator)
+                mapset.osu_map = mapset_parse_osu(filedata, memory.mapset_allocator)
             }
         }
     }
 
     mapset.watch = win32_init_directory_watch(path)
     return mapset, true
-}
-
-Notosu_Map_System :: enum {
-    OSU_FILE,
-    NOTOSU_FILES, // note(isak): this also includes scripts
-    SHADERS,
-    Count
 }
 
 mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu_Map_System]bool {
@@ -143,12 +153,12 @@ mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu
 }
 
 
-_mapset_parse_notosu :: proc(mapset: ^Mapset, data: string) {
+mapset_parse_notosu :: proc(mapset: ^Mapset, data: string) {
     fmt.println(data)
 }
 
 
-_mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
+mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
     result: Osu_Map
     
     c: Consumer = {
@@ -273,7 +283,7 @@ _mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
                         from_i += s_len + 1
                         arg_i += 1
                     }
-                    
+
                     if hobj.type == .CIRCLE {
                         hobj.end_time_ms = hobj.start_time_ms
                     }

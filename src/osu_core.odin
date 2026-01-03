@@ -2,13 +2,12 @@ package notosu
 
 import "base:runtime"
 import "core:math/linalg"
+import queue "core:container/queue"
 import sa "core:container/small_array"
 
 
 osu_playfield_size_osupx :: 512
 playfield_rect :: Rect{ 0, 0, osu_playfield_size_osupx, osu_playfield_size_osupx }
-
-osu_map_hit_objects: sa.Small_Array(128, Hit_Object)
 
 Hit_Object_Type :: enum {
     NONE,
@@ -41,44 +40,43 @@ Osu_Sample_Set :: enum {
 }
 
 Osu_Map :: struct {
-    audio_filename: string,
-    audio_lead_in: f64,
-    length_ms: f64,
-    sample_set: Osu_Sample_Set,
+    using Osu_File_Data: struct {
+        audio_filename: string,
+        audio_lead_in: f64,
+        sample_set: Osu_Sample_Set,
+    
+        title: string,
+        title_unicode: string,
+        artist: string,
+        artist_unicode: string,
+        creator: string,
+        difficulty_name: string,
+    
+        diff_hp_drain: f64,
+        diff_circle_size: f64,
+        diff_overall_difficulty: f64,
+        diff_approach_rate: f64,
+        diff_slider_velocity: f64,
+        diff_slider_tickrate: int,
+    },
 
-    title: string,
-    title_unicode: string,
-    artist: string,
-    artist_unicode: string,
-    creator: string,
-    difficulty_name: string,
-
-    diff_hp_drain: f64,
-    diff_circle_size: f64,
-    diff_overall_difficulty: f64,
-    diff_approach_rate: f64,
-    diff_slider_velocity: f64,
-    diff_slider_tickrate: int,
+    // map 
 
     hit_objects: []Hit_Object,
     slider_paths: []Slider_Path,
+    length_ms: f64,
+    lead_in: f64,
+
+    play_timer_ms: f64,
 }
 
 game: struct {
     mode: Game_Mode,
 
-    play_timer_ms: f64,
-    active_mapset: ^Mapset
-}
-
-make_test_obj :: proc(time, preempt: f64, pos: vec2, type: Hit_Object_Type = .CIRCLE) -> ^Hit_Object {
-    sa.append(&osu_map_hit_objects, Hit_Object{
-        start_time_ms = time - preempt,
-        end_time_ms = time,
-        pos = pos,
-        type = type
-    })
-    return &osu_map_hit_objects.data[osu_map_hit_objects.len]
+    active_mapset: ^Mapset,
+    active_map: ^Osu_Map,
+    
+    test_nodes: sa.Small_Array(128, Slider_Node),
 }
 
 
@@ -122,7 +120,6 @@ osu_slider_curve_points_separation: f32 = 2.5
 
 Slider_Curve :: []Slider_Node
 
-test_nodes: sa.Small_Array(128, Slider_Node)
 test_slider: Slider_Path
 test_slider2: Slider_Path
 
@@ -131,6 +128,56 @@ test_curve: Slider_Curve
 // todo(isak): move this to arena and to osu_map as slider_count (offset in parsing function)
 map_sliders: [128]Slider_Path
 slider_offset: int
+
+
+osu_on_init :: proc() {
+    osu_on_map_init()
+}
+
+osu_on_map_init :: proc() {
+    make_test_slider(&test_slider, 0)
+    make_test_slider(&test_slider2, 1)
+
+    make_test_instances(&test_slider)
+    write_instances_from_path(&window.renderer.slider_instances, &test_slider, memory.mapset_allocator)
+    
+    using game
+
+    preempt: f64 = convert_approach_rate_to_preempt(active_map.diff_approach_rate)
+
+    final_hobj_time_ms: f64
+    for &hobj in active_map.hit_objects {
+        hobj.start_time_ms -= preempt
+        final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
+    }
+
+    active_map.lead_in = preempt + 500 + active_map.audio_lead_in
+    active_map.length_ms = final_hobj_time_ms + 500
+    active_map.play_timer_ms = -active_map.lead_in
+}
+
+osu_on_update :: proc(dt: f64) {
+    updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
+    if updated_systems[.OSU_FILE] {
+        game.active_mapset = mapset_clear_and_reload(game.active_mapset)
+        game.active_map = &game.active_mapset.osu_map
+        osu_on_map_init()
+    }
+    
+    using game
+    
+    active_map.play_timer_ms += dt * 1000
+    if active_map.play_timer_ms > active_map.length_ms {
+        active_map.play_timer_ms = -active_map.lead_in
+    }
+    
+    // todo(isak): create some kinda iterator for this; keep track of earliest active object and 
+    // stop once first nonstarted obj is done
+    r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
+    for &hit_object in game.active_map.hit_objects {
+        render_hit_object(&window.renderer, &hit_object)
+    }
+}
 
 split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> []Slider_Curve {
     return nil
@@ -168,16 +215,16 @@ write_instances_from_path :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Pat
 circle_radius_osupx: f32 = 40
 
 make_test_slider :: proc(slider: ^Slider_Path, x_shift: f32) {
-    node_i := test_nodes.len
+    node_i := game.test_nodes.len
 
-    sa.append(&test_nodes, Slider_Node{0/circle_radius_osupx, 0/circle_radius_osupx})
-    sa.append(&test_nodes, Slider_Node{100/circle_radius_osupx, 0/circle_radius_osupx})
-    sa.append(&test_nodes, Slider_Node{100/circle_radius_osupx, 100/circle_radius_osupx})
-    sa.append(&test_nodes, Slider_Node{200/circle_radius_osupx, 100/circle_radius_osupx})
+    sa.append(&game.test_nodes, Slider_Node{0/circle_radius_osupx, 0/circle_radius_osupx})
+    sa.append(&game.test_nodes, Slider_Node{100/circle_radius_osupx, 0/circle_radius_osupx})
+    sa.append(&game.test_nodes, Slider_Node{100/circle_radius_osupx, 100/circle_radius_osupx})
+    sa.append(&game.test_nodes, Slider_Node{200/circle_radius_osupx, 100/circle_radius_osupx})
 
     slider^ = {
         pos = {0 + x_shift, 0},
-        nodes = test_nodes.data[node_i + 0:node_i + 4],
+        nodes = game.test_nodes.data[node_i + 0:node_i + 4],
         distance_osupx = 999,
 
         first_instance_at = int(window.renderer.slider_instances.count)
@@ -203,57 +250,16 @@ make_test_instances :: proc(slider: ^Slider_Path) {
 }
 
 
-osu_on_init :: proc() {
-    mapset := game.active_mapset
-    osu_map := &game.active_mapset.osu_map
-
-    make_test_slider(&test_slider, 0)
-    make_test_slider(&test_slider2, 1)
-
-    make_test_instances(&test_slider)
-
-    write_instances_from_curve(&window.renderer.slider_instances, test_curve, .LINEAR, 150)
-
-    preempt: f64 = convert_approach_rate_to_preempt(osu_map.diff_approach_rate)
-    
-    final_hobj_time_ms: f64
-    for hobj in osu_map.hit_objects {
-        make_test_obj(hobj.end_time_ms, preempt, hobj.pos)
-
-        final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
-    }
-
-    osu_map.length_ms = final_hobj_time_ms + 500
-    osu_map.audio_lead_in = preempt + 1000
-    game.play_timer_ms = -osu_map.audio_lead_in
-}
-
-
-osu_on_update :: proc(dt: f64) {
-    osu_map := &game.active_mapset.osu_map
-    
-    game.play_timer_ms += dt * 1000
-    if game.play_timer_ms > osu_map.length_ms {
-        game.play_timer_ms = -osu_map.audio_lead_in
-    }
-    
-    // todo(isak): create some kinda iterator for this; keep track of earliest active object and 
-    // stop once first nonstarted obj is done
-    for &hit_object in sa.slice(&osu_map_hit_objects) {
-        render_hit_object(&window.renderer, &hit_object)
-    }
-}
-
-
 render_hit_object :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
-    
-    if game.play_timer_ms < hobj.start_time_ms {
+    using game
+
+    if active_map.play_timer_ms < hobj.start_time_ms {
         return
     }
 
     #partial switch hobj.type {
         case .CIRCLE: {
-            if hobj.start_time_ms < game.play_timer_ms && game.play_timer_ms < hobj.end_time_ms {
+            if hobj.start_time_ms < active_map.play_timer_ms && active_map.play_timer_ms < hobj.end_time_ms {
                 ho_pos := rect_translate_by_anchor(Rect{hobj.pos.x, hobj.pos.y, 40, 40}, .CENTER)
                 push_rect(&renderer.quad_geometry, ho_pos, vec4(0.5), skin_texture_slot(.HITCIRCLE))
             }

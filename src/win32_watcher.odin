@@ -56,6 +56,11 @@ win32_init_directory_watch :: proc(path: string) -> Win32_Directory_Watch {
     return result
 }
 
+win32_close_directory_watch :: proc(watch_dir: ^Win32_Directory_Watch) {
+    windows.CloseHandle(watch_dir.dir_handle)
+    windows.CloseHandle(watch_dir.iocp_handle)
+}
+
 win32_get_directory_changes :: proc(watch_dir: ^Win32_Directory_Watch) {
     assert(watch_dir.initialized)
 

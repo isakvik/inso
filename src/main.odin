@@ -316,8 +316,8 @@ main :: proc() {
     sample_frames: i32
 
     if (!sdl.Init({.AUDIO, .VIDEO})) {
-    fmt.printfln("SDL init error: {}", sdl.GetError())
-    return
+        fmt.printfln("SDL init error: {}", sdl.GetError())
+        return
     }
 
     sound_enabled := false
@@ -381,14 +381,15 @@ main :: proc() {
     load_skin_textures("skins/gn/")
     prepare_textures_for_rendering()
 
-    shaders_watch := win32_init_directory_watch("shaders/")
+    builtin_shaders_watch := win32_init_directory_watch("shaders/")
 
     {
         ok: bool
-        mapset_path := "songs/test/"
-        game.active_mapset, ok = mapset_open_for_editing(mapset_path)
+        test_mapset_path := "songs/test/"
+        game.active_mapset, ok = mapset_open_for_editing(test_mapset_path)
+        game.active_map = &game.active_mapset.osu_map
         if !ok {
-            fmt.println("tried to open mapset, but failed:", mapset_path)
+            fmt.println("tried to open mapset, but failed:", test_mapset_path)
         }
     }
 
@@ -567,7 +568,7 @@ main :: proc() {
             push_text(renderer, "Hello, world!", {100, 100})
             push_text(renderer, "饕餮尤魔 :3", {200, 200}, size=24)
             
-            game_timer_str := fmt.tprintf("%.3f", game.play_timer_ms)
+            game_timer_str := fmt.tprintf("%.3f", game.active_map.play_timer_ms)
             push_text(renderer, game_timer_str, {20, 20}, size = 22)
             
             if debug_info.display_frame_profiler {
@@ -591,7 +592,7 @@ main :: proc() {
         {
             profiler_block_begin(.BETWEEN_FRAMES); defer profiler_block_end() 
 
-            process_watch_changes(&shaders_watch)
+            process_builtin_shader_changes(&builtin_shaders_watch)
 
             if debug_info.display_frame_profiler {
                 profiler_write_texture_column(frame_count, window.profiler_texture)
@@ -721,20 +722,13 @@ swap_frame :: proc() {
     sdl.GL_SwapWindow(window.handle)
 }
 
-process_watch_changes :: proc(watch: ^Win32_Directory_Watch) {
+process_builtin_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
     updated_systems := mapset_check_system_file_watch(watch)
-
-    if updated_systems[.OSU_FILE] {
-        // todo(isak): reload osu file specifically on update so that we can tell slider path gen works
-        //mapset_open_for_editing()
-        //write_instances_from_curve(&buf, test_curves[0], .BEZIER)
-    }
-
     if updated_systems[.SHADERS] {
         for &shader in window.shaders {
             reinit_shader(&shader)
         }
-        fmt.println("reloaded shaders")
+        fmt.println("reloaded builtin shaders")
 
         reinit_pipeline(&window.pipelines[.QUAD], quad_pipeline())
         reinit_pipeline(&window.pipelines[.SLIDER], slider_pipeline())

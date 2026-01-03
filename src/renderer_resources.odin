@@ -6,8 +6,8 @@ import gl "vendor:OpenGL"
 import sg "vendor:sokol/gfx"
 
 
-quad_vs_path :: "shaders/main.vs.glsl"
-quad_fs_path :: "shaders/main.fs.glsl"
+quad_vs_path :: "shaders/quad.vs.glsl"
+quad_fs_path :: "shaders/quad.fs.glsl"
 
 slider_vs_path :: "shaders/slider.vs.glsl"
 slider_fs_path :: "shaders/slider.fs.glsl"

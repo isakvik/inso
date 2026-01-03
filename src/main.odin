@@ -179,8 +179,9 @@ window_get_screenspace_transform :: proc() -> Transform {
     return transform_from_bounds({0, 0, window.rect.w, window.rect.h}, 1)
 }
 
-window_get_fullscreen_transform :: proc() -> Transform {
-    return transform_from_bounds({0, 0, 1, 1}, 1)
+clipspace_transform := transform_from_bounds({0, 0, 1, 1}, 1)
+window_get_clipspace_transform :: proc() -> Transform {
+    return clipspace_transform
 }
 
 window_cleanup :: proc() {
@@ -538,10 +539,6 @@ main :: proc() {
                     end_frame() need to happen here
                 - transforms should be a dynamic stack that we just write as we process the frame; can save a bunch
                     of draw calls
-
-                optimization:
-                - the vertex generation pipeline for main isn't particularly efficient, should be
-                    rewritten to be more like text where quads are just written directly to the gpu
             */
             profiler_block_begin(.GAME_DRAW); defer profiler_block_end()
 
@@ -578,9 +575,6 @@ main :: proc() {
                 profiler_push_memory_diag_text(renderer)
             }
 
-            text_submit_geometry(renderer)
-
-            profiler_collect_command_buffer_memory_data()
             end_frame(renderer)
         }
 
@@ -629,92 +623,10 @@ begin_frame :: proc(renderer: ^Renderer) {
 }
 
 end_frame :: proc(renderer: ^Renderer) {
+    text_submit_geometry(renderer)
+
+    profiler_collect_command_buffer_memory_data()
     batch_end(renderer)
-
-    trace := renderer.trace_frame
-    
-    for &command_queue in renderer.layer_command_queues {
-
-        for command_queue.len > 0 {
-            cmd_type := queue.pop_front(&command_queue)
-
-            switch Command_Type(cmd_type) {
-                case .CLEAR: {
-                    gl.ClearColor(0,0,0,0)
-                    gl.ClearDepth(1.0)
-                    gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-
-                    if (trace) { fmt.println("clear") }
-                }
-                case .PUSH_TRANSFORM: {
-                    cmd := _command_consume(&command_queue, Command_Push_Transform)
-                    commit_transform(cmd.transform)
-                    
-                    if (trace) { 
-                        fmt.println("push xform", cmd.transform) 
-                    }
-                }
-                case .POP_TRANSFORM: {
-                    assert(false)
-
-                    // todo(isak) implement
-                    
-                    if (trace) { 
-                        fmt.println("pop xform") 
-                    }
-                }
-                case .DRAW: {
-                    cmd := _command_consume(&command_queue, Command_Draw)
-                    assert(cmd.base_instance == 0, "base_instance is unhandled")
-                    
-                    sg.draw(cmd.index_offset, cmd.index_count, cmd.instance_count)
-
-                    if (trace) { fmt.println("draw", cmd.index_offset, cmd.index_count, cmd.instance_count, cmd.base_instance ) }
-                }
-                case .DRAW_SLIDER: {
-                    cmd := _command_consume(&command_queue, Command_Draw_Slider)
-                                    
-                    gl.DrawArraysInstancedBaseInstance(
-                        gl.TRIANGLE_FAN, 
-                        0, 
-                        renderer.circle_geometry.count,
-                        cmd.instance_count, cmd.base_instance)
-
-                    if (trace) { fmt.println("drawslider", cmd.instance_count, cmd.base_instance) }
-                }
-                case .BIND_PIPELINE: {
-                    cmd := _command_consume(&command_queue, Command_Bind_Pipeline)
-
-                    sg.apply_pipeline(window.pipelines[cmd.pipeline])
-                    
-                    if (trace) { fmt.println("pipeline", cmd.pipeline) }
-                }
-                case .BIND_FRAMEBUFFER: {
-                    cmd := _command_consume(&command_queue, Command_Bind_Framebuffer)
-
-                    fbo_bind(window.framebuffers[cmd.read].id, window.framebuffers[cmd.write].id)
-                    
-                    if (trace) { fmt.println("framebuffer", cmd.read, cmd.write) }
-                }
-                case .BIND_SSBO: {
-                    cmd := _command_consume(&command_queue, Command_Bind_SSBO)
-                    
-                    gl.BindBufferRange(
-                        gl.SHADER_STORAGE_BUFFER,
-                        cmd.slot,
-                        cmd.id,
-                        cmd.offset,
-                        cmd.size)
-                    
-                    if (trace) { fmt.println("ssbo", cmd.id, cmd.slot, cmd.size, cmd.offset) }
-                }
-            }
-        }
-    }
-    renderer.trace_frame = false
-
-    sg.end_pass()
-    sg.commit()
 }
 
 // note(isak): stolen wisdom; this is its own profiler section

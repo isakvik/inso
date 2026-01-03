@@ -141,18 +141,18 @@ osu_on_map_init :: proc() {
     make_test_instances(&test_slider)
     write_instances_from_path(&window.renderer.slider_instances, &test_slider, memory.mapset_allocator)
     
-    using game
-
-    preempt: f64 = convert_approach_rate_to_preempt(active_map.diff_approach_rate)
+    preempt: f64 = convert_approach_rate_to_preempt(game.active_map.diff_approach_rate)
+    
+    active_map := game.active_map
 
     final_hobj_time_ms: f64
-    for &hobj in active_map.hit_objects {
+    for &hobj in game.active_map.hit_objects {
         hobj.start_time_ms -= preempt
         final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
     }
 
-    active_map.lead_in = preempt + 500 + active_map.audio_lead_in
-    active_map.length_ms = final_hobj_time_ms + 500
+    active_map.lead_in = preempt + 3000 + active_map.audio_lead_in
+    active_map.length_ms = final_hobj_time_ms + 1000
     active_map.play_timer_ms = -active_map.lead_in
 }
 
@@ -164,13 +164,15 @@ osu_on_update :: proc(dt: f64) {
         osu_on_map_init()
     }
     
-    using game
+    active_map := game.active_map
     
     active_map.play_timer_ms += dt * 1000
     if active_map.play_timer_ms > active_map.length_ms {
         active_map.play_timer_ms = -active_map.lead_in
     }
-    
+
+    render_timeline()
+
     // todo(isak): create some kinda iterator for this; keep track of earliest active object and 
     // stop once first nonstarted obj is done
     r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
@@ -294,6 +296,26 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     push_rect(&renderer.quad_geometry, {0, 0, 1, 1}, {1, 1, 1, 0.5}, reserved_texture(.SLIDER_FRAMEBUFFER))
 }
 
+render_timeline :: proc() {
+    active_map := game.active_map
+    preempt := convert_approach_rate_to_preempt(active_map.diff_overall_difficulty)
+    map_len_with_preempt := active_map.length_ms + preempt
+
+    active_map_leadin_fract := f32(max(0, -active_map.play_timer_ms - preempt) / (active_map.lead_in - preempt))
+    active_map_finish_fract := f32((active_map.play_timer_ms + preempt) / map_len_with_preempt)
+    
+    r_push_transform(window_get_clipspace_transform())
+    
+    timeline_h_px := 6 / window.rect.h
+    push_layout_rect(&window.renderer.quad_geometry, {0, 1, 1, timeline_h_px}, 
+                     .BOTTOM_LEFT, with_alpha(color_white, 0.1))
+    push_layout_rect(&window.renderer.quad_geometry, {0, 1, active_map_finish_fract, timeline_h_px}, 
+                     .BOTTOM_LEFT, with_alpha(color_white, 0.4))
+    if active_map_leadin_fract > 0 {
+        push_layout_rect(&window.renderer.quad_geometry, {0, 1, active_map_leadin_fract, timeline_h_px}, 
+                         .BOTTOM_LEFT, with_alpha(color_lime_green, 0.2))
+    }
+}
 
 convert_approach_rate_to_preempt :: proc(ar: f64) -> f64 {
     return 1800 - min(ar, 5) * 120 - (max(ar, 5) - 5) * 150

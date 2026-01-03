@@ -559,11 +559,100 @@ batch_end :: proc(renderer: ^Renderer) {
     sbo_bind(&window.circle_geo_buffer, 3)
     sbo_bind(&window.slider_instance_store, 4)
     ubo_bind(&window.transform_buffer, 5)
+
+    batch_process_command_buffer(renderer)
 }
 
 batch_flush :: proc(renderer: ^Renderer) {
     batch_end(renderer)
     batch_begin(renderer)
+}
+
+batch_process_command_buffer :: proc(renderer: ^Renderer) {
+    trace := renderer.trace_frame
+    
+    for &command_queue in renderer.layer_command_queues {
+
+        for command_queue.len > 0 {
+            cmd_type := queue.pop_front(&command_queue)
+
+            switch Command_Type(cmd_type) {
+                case .CLEAR: {
+                    gl.ClearColor(0,0,0,0)
+                    gl.ClearDepth(1.0)
+                    gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+                    if (trace) { fmt.println("clear") }
+                }
+                case .PUSH_TRANSFORM: {
+                    cmd := _command_consume(&command_queue, Command_Push_Transform)
+                    commit_transform(cmd.transform)
+                    
+                    if (trace) { 
+                        fmt.println("push xform", cmd.transform) 
+                    }
+                }
+                case .POP_TRANSFORM: {
+                    assert(false)
+
+                    // todo(isak) implement
+                    
+                    if (trace) { 
+                        fmt.println("pop xform") 
+                    }
+                }
+                case .DRAW: {
+                    cmd := _command_consume(&command_queue, Command_Draw)
+                    assert(cmd.base_instance == 0, "base_instance is unhandled")
+                    
+                    sg.draw(cmd.index_offset, cmd.index_count, cmd.instance_count)
+
+                    if (trace) { fmt.println("draw", cmd.index_offset, cmd.index_count, cmd.instance_count, cmd.base_instance ) }
+                }
+                case .DRAW_SLIDER: {
+                    cmd := _command_consume(&command_queue, Command_Draw_Slider)
+                                    
+                    gl.DrawArraysInstancedBaseInstance(
+                        gl.TRIANGLE_FAN, 
+                        0, 
+                        renderer.circle_geometry.count,
+                        cmd.instance_count, cmd.base_instance)
+
+                    if (trace) { fmt.println("drawslider", cmd.instance_count, cmd.base_instance) }
+                }
+                case .BIND_PIPELINE: {
+                    cmd := _command_consume(&command_queue, Command_Bind_Pipeline)
+
+                    sg.apply_pipeline(window.pipelines[cmd.pipeline])
+                    
+                    if (trace) { fmt.println("pipeline", cmd.pipeline) }
+                }
+                case .BIND_FRAMEBUFFER: {
+                    cmd := _command_consume(&command_queue, Command_Bind_Framebuffer)
+
+                    fbo_bind(window.framebuffers[cmd.read].id, window.framebuffers[cmd.write].id)
+                    
+                    if (trace) { fmt.println("framebuffer", cmd.read, cmd.write) }
+                }
+                case .BIND_SSBO: {
+                    cmd := _command_consume(&command_queue, Command_Bind_SSBO)
+                    
+                    gl.BindBufferRange(
+                        gl.SHADER_STORAGE_BUFFER,
+                        cmd.slot,
+                        cmd.id,
+                        cmd.offset,
+                        cmd.size)
+                    
+                    if (trace) { fmt.println("ssbo", cmd.id, cmd.slot, cmd.size, cmd.offset) }
+                }
+            }
+        }
+    }
+    renderer.trace_frame = false
+
+    sg.end_pass()
+    sg.commit()
 }
 
 
@@ -606,14 +695,14 @@ push_quad_with_uvs :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv
     }
 }
 
-push_quad :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2, color: vec4, tex_index: u32) {
+push_quad :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2, color: vec4, tex_index: u32 = 0) {
     push_quad_with_uvs(geometry, 
-                       pos_min, uv_max, 
-                       {0, 0}, {1, 1}, 
+                       pos_min, pos_max, 
+                       uv_min, uv_max, 
                        color, tex_index)
 }
 
-push_xywh :: proc(geometry: ^Buffer(Quad), x, y, w, h: f32, color: vec4, tex_index: u32) {
+push_xywh :: proc(geometry: ^Buffer(Quad), x, y, w, h: f32, color: vec4, tex_index: u32 = 0) {
     push_quad_with_uvs(geometry, 
                        {x, y}, {x + w, y + h}, 
                        {0, 0}, {1, 1}, 

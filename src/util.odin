@@ -94,23 +94,25 @@ kilobytes :: proc "contextless" (v: int) -> int {return v * 1024}
 megabytes :: proc "contextless" (v: int) -> int {return v * 1024 * 1024}
 gigabytes :: proc "contextless" (v: int) -> int {return v * 1024 * 1024 * 1024}
 
-units_str := [4]string {
+size_units_str := [4]string {
     "B",
     "KiB",
     "MiB",
     "GiB"
 }
 
-init_growing_arena :: proc(arena: ^virtual.Arena, size_mb: uint = 1) -> (runtime.Allocator, runtime.Allocator_Error) {
+init_growing_arena :: proc(arena: ^virtual.Arena, alloc: ^runtime.Allocator, size_mb: int = 1) -> runtime.Allocator_Error {
     alloc_err := virtual.arena_init_growing(arena, reserved = 1)
     assert(alloc_err == .None)
-    return virtual.arena_allocator(arena), alloc_err
+    alloc^ = virtual.arena_allocator(arena)
+    return alloc_err
 }
 
-init_static_arena :: proc(arena: ^virtual.Arena, size: uint = runtime.Megabyte) -> (runtime.Allocator, runtime.Allocator_Error) {
-    alloc_err := virtual.arena_init_static(arena, reserved = size)
+init_static_arena :: proc(arena: ^virtual.Arena, alloc: ^runtime.Allocator, size: int = runtime.Megabyte) -> runtime.Allocator_Error {
+    alloc_err := virtual.arena_init_static(arena, reserved = uint(size))
     assert(alloc_err == .None)
-    return virtual.arena_allocator(arena), alloc_err
+    alloc^ = virtual.arena_allocator(arena)
+    return alloc_err
 }
 
 //////////////////////////////////////////////////////

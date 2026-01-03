@@ -90,6 +90,10 @@ text_init :: proc() {
                      {0, 0, DEFAULT_FONT_ATLAS_SIZE, DEFAULT_FONT_ATLAS_SIZE},
                      raw_data(text_engine.ctx.textureData),
                      len(text_engine.ctx.textureData))
+
+    window.renderer.text_draw = {
+        instance_count = 1
+    }
 }
 
 text_resize_callback :: proc(ctx: rawptr, w, h: int) {
@@ -142,11 +146,13 @@ push_text :: proc(
         y_inc^ += lh
     }
 
+    text_vertex_buffer := &renderer.text_geometry.vertices
+
     for iter := fs.TextIterInit(&text_engine.ctx, pos.x, pos.y, text); true; {
         quad: fs.Quad
         fs.TextIterNext(&text_engine.ctx, &iter, &quad) or_break
-
-        buffer_push(&renderer.text_geometry, Glyph_Quad {
+        
+        buffer_push(text_vertex_buffer, Glyph_Quad {
             pos_min = {quad.x0, quad.y0},
             pos_max = {quad.x1, quad.y1},
             uv_min  = {quad.s0, quad.t0},
@@ -156,21 +162,24 @@ push_text :: proc(
     }
     
     if x_inc != nil {
-        last := renderer.text_geometry.data[renderer.text_geometry.count - 1]
+        last := text_vertex_buffer.data[text_vertex_buffer.count - 1]
         x_inc^ += last.pos_max.x - pos.x
     }
 }
 
-text_end_frame :: proc(renderer: ^Renderer) {
+text_submit_geometry :: proc(renderer: ^Renderer) {
     // note(isak): bad api - the state management isn't needed, but this checks if texture updates
     // is necessary and calls the callback with the dirty rect
     fs.EndState(&text_engine.ctx)
     
     // note(isak): since we do vertex picking and our vertex data composes a whole glyph, 
     // i've written the shader to draw a glyph quad by invoking a quad 6 times
-    command_push_draw({
-        index_count = renderer.text_geometry.count * 6,
+    r_bind_pipeline({ .TEXT })
+    r_bind_vertex_buffer(&window.text_store, 0)
+    r_draw(
+        index_offset = 0,
+        index_count = renderer.text_geometry.vertices.count * 6,
         instance_count = 1
-    })
+    )
 }
 

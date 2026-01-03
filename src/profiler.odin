@@ -2,9 +2,8 @@ package notosu
 
 import "core:mem/virtual"
 import "core:fmt"
-import "core:math/rand"
 import "core:mem"
-import "core:strconv"
+import "core:container/queue"
 
 import sdl "vendor:sdl3"
 
@@ -24,6 +23,9 @@ profiler: struct {
     prev_frame_blocks_elapsed: [Trace_Blocks]u64,
     frame_times: [fps_average_running_frame_count]u64,
     next_frame_time_at: i32,
+    
+    prev_frame_command_buffer_lens: [Layer]uint,
+    prev_frame_command_buffer_caps: [Layer]int,
 
     pixels: [profiler_h]u32,
     frame_pixel_count: i32,
@@ -130,20 +132,69 @@ profiler_push_blocks_as_text :: proc(renderer: ^Renderer, frame_count: u64) {
     }
 }
 
+profiler_collect_command_buffer_memory_data :: proc() {
+    for layer in Layer {
+        layer_queue := &window.renderer.layer_command_queues[layer]
+        profiler.prev_frame_command_buffer_lens[layer] = layer_queue.len
+        profiler.prev_frame_command_buffer_caps[layer] = cap(layer_queue.data)
+    }
+}
+
 profiler_push_memory_diag_text :: proc(renderer: ^Renderer) {
-    y_inc: f32 = 24
-    pos_top_left := vec2{ window.rect.w - 300, y_inc*1.5 }
-    
+    y_spacing: f32 = 24
+    pos_top_left := vec2{ window.rect.w - 400, y_spacing*1.5 }
+
+    // note(isak): command buffer section
     x_inc: f32
     x_inc_max: f32 = min(f32)
+    
+    for layer in Layer {
+        push_text(renderer, 
+                  fmt.enum_value_to_string(layer) or_else unreachable(),
+                  pos_top_left + {0 , y_spacing * f32(layer)},
+                  size = y_spacing,
+                  x_inc = &x_inc)
+        x_inc_max = max(x_inc, x_inc_max)
+        x_inc = 0
+    }
 
-    arenas := [4]^virtual.Arena{ &memory.global_arena, &memory.mapset_arena, &memory.frame_arena, &memory.command_buffer_arena }
+    for layer in Layer {
+        unit_i: int
+        len_in_units := profiler.prev_frame_command_buffer_lens[layer]
+        cap_in_units := profiler.prev_frame_command_buffer_caps[layer]
+        if profiler.prev_frame_command_buffer_caps[layer] > mem.Kilobyte * 10 {
+            unit_i += 1
+            len_in_units /= mem.Kilobyte
+            cap_in_units /= mem.Kilobyte
+        }
+        if profiler.prev_frame_command_buffer_caps[layer] > mem.Megabyte * 10 {
+            unit_i += 1
+            len_in_units /= mem.Kilobyte
+            cap_in_units /= mem.Kilobyte
+        }
+        
+        push_text(renderer, 
+                  fmt.tprintf("%d/%d %s", len_in_units, cap_in_units, size_units_str[unit_i]),
+                  pos_top_left + {16 + x_inc_max, f32(layer) * y_spacing },
+                  size = y_spacing,
+                  x_inc = &x_inc)
+    }
+    
+    // note(isak): arena section
+    pos_top_left.y += y_spacing * len(Layer)
+
+    arenas := [?]^virtual.Arena{ 
+        &memory.global_arena, 
+        &memory.mapset_arena, 
+        &memory.frame_arena
+    }
+
     for i in 0..<len(arenas) {
         arena := arenas[i]
         push_text(renderer, 
                   memory_arena_names[i],
-                  pos_top_left + {0 , y_inc * f32(i)},
-                  size = y_inc,
+                  pos_top_left + {0 , y_spacing * f32(i)},
+                  size = y_spacing,
                   x_inc = &x_inc)
         x_inc_max = max(x_inc, x_inc_max)
         x_inc = 0
@@ -154,26 +205,21 @@ profiler_push_memory_diag_text :: proc(renderer: ^Renderer) {
         used_in_units := arenas[i].total_used
         reserved_in_units := arenas[i].total_reserved
 
-        if arenas[i].total_used > mem.Kilobyte * 10 {
+        if arenas[i].total_reserved > mem.Kilobyte * 10 {
             unit_i += 1
             used_in_units /= mem.Kilobyte
             reserved_in_units /= mem.Kilobyte
         }
-        if arenas[i].total_used > mem.Megabyte * 10 {
-            unit_i += 1
-            used_in_units /= mem.Kilobyte
-            reserved_in_units /= mem.Kilobyte
-        }
-        if arenas[i].total_used > mem.Gigabyte * 10 {
+        if arenas[i].total_reserved > mem.Megabyte * 10 {
             unit_i += 1
             used_in_units /= mem.Kilobyte
             reserved_in_units /= mem.Kilobyte
         }
         
         push_text(renderer, 
-                  fmt.tprintf("%d/%d %s", used_in_units, reserved_in_units, units_str[unit_i]),
-                  pos_top_left + {16 + x_inc_max , y_inc * f32(i)},
-                  size = y_inc,
+                  fmt.tprintf("%d/%d %s", used_in_units, reserved_in_units, size_units_str[unit_i]),
+                  pos_top_left + {16 + x_inc_max , y_spacing * f32(i)},
+                  size = y_spacing,
                   x_inc = &x_inc)
     }
 }

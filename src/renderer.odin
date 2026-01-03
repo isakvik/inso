@@ -17,7 +17,8 @@ import slog "vendor:sokol/log"
 MAX_BATCH_VERTICES :: 64*1024
 MAX_SLIDER_INSTANCES :: 64*1024
 MAX_TEXTURE_HANDLES :: 1024
-//max_slider_draw_commands :: 1024
+
+MAX_DRAW_CALLS_PER_LAYER :: 4096
 
 UNIT_CIRCLE_VERTEX_COUNT :: 30
 
@@ -53,21 +54,39 @@ Static_Geometry_Store :: struct(T: typeid) {
     index_buffer: GL_Buffer(u32),
 }
 
+
+Draw_Call :: struct {
+    index_offset: u32,
+    index_count: i32,
+    base_instance: u32,
+    instance_count: i32,
+}
+
 Renderer :: struct {
     quad_geometry: Geometry_Buffer(Quad_Vertex),
     slider_instances: Buffer(vec2),
     
-    text_geometry: Buffer(Glyph_Quad),
+    text_geometry: Geometry_Buffer(Glyph_Quad),
     
     circle_geometry: Buffer(Slider_Vertex),
 
     transform_queue: queue.Queue(Transform),
-    default_transform: Transform,
+    default_transform: Transform, // todo(isak) remove
 
-    command_queue: queue.Queue(u8),
+    layer_command_queues: [Layer]queue.Queue(u8),
 
     current_draw: ^Command_Draw,
     null_draw: Command_Draw,
+    
+    text_draw: Command_Draw,
+    
+    new_draw_on_next_push: bool,
+    current_layer: Layer,
+    current_transform: Transform,
+    current_vertex_buffer: Command_Bind_SSBO,
+    current_index_buffer: Command_Bind_SSBO,
+    current_pipeline: Command_Bind_Pipeline,
+    current_framebuffer: Command_Bind_Framebuffer,
 
     trace_frame: bool
 }
@@ -99,13 +118,12 @@ Rect :: struct {
     x, y, w, h: f32,
 }
 
-
 rect_to_array :: proc(r: Rect) -> [4]f32 {
     return {r.x, r.y, r.w, r.h}
 }
 
 //////////////////////////////////////////////////////
-// note(isak): resource api
+// note(isak): core
 
 renderer_init :: proc() {
     renderer := &window.renderer
@@ -199,19 +217,18 @@ renderer_init :: proc() {
     
     //
     
-    renderer.text_geometry.size = MAX_BATCH_VERTICES
+    renderer.text_geometry.vertices.size = MAX_BATCH_VERTICES
+    renderer.text_geometry.indices.size = 6
     
-    window.current_transform = renderer.default_transform
+    renderer.current_transform = renderer.default_transform
     commit_transform(renderer.default_transform)
 
-    renderer.slider_instances = 
-        buffer_init(MAX_SLIDER_INSTANCES, window.slider_instance_store.data)
+    renderer.slider_instances = buffer_init(MAX_SLIDER_INSTANCES, window.slider_instance_store.data)
 
-    alloc_err: runtime.Allocator_Error
-    alloc_err = queue.init(&renderer.command_queue, megabytes(1), memory.command_buffer_allocator)
-    assert(alloc_err == .None)
-    if alloc_err != .None {
-        fmt.println("command queue init error:", alloc_err)
+    for layer in Layer {
+        alloc_err: runtime.Allocator_Error
+        alloc_err = queue.init(&renderer.layer_command_queues[layer], kilobytes(1), memory.command_buffer_allocators[layer])
+        assert(alloc_err == .None, "command queue alloc error")
     }
 }
 
@@ -305,7 +322,6 @@ reinit_pipeline :: proc(pipeline: ^sg.Pipeline, pipeline_desc: sg.Pipeline_Desc)
 Command_Type :: enum(u8) {
     PUSH_TRANSFORM,
     POP_TRANSFORM,
-    SET_MODE,
     CLEAR,
     DRAW,
     DRAW_SLIDER,
@@ -359,7 +375,6 @@ Command_Bind_SSBO :: struct {
 command_push_clear             :: proc() -> bool { return _command_push_header(.CLEAR) }
 command_push_push_transform    :: proc(cmd: Command_Push_Transform) -> bool { return _command_push(cmd, .PUSH_TRANSFORM) }
 command_push_pop_transform     :: proc() -> bool { return _command_push_header(.POP_TRANSFORM) }
-command_push_set_mode          :: proc(cmd: Command_Set_Mode) -> bool { return _command_push(cmd, .SET_MODE) }
 command_push_draw              :: proc(cmd: Command_Draw) -> bool { return _command_push(cmd, .DRAW) }
 command_push_draw_slider       :: proc(cmd: Command_Draw_Slider) -> bool { return _command_push(cmd, .DRAW_SLIDER) }
 command_push_bind_pipeline     :: proc(cmd: Command_Bind_Pipeline) -> bool { return _command_push(cmd, .BIND_PIPELINE) }
@@ -387,55 +402,117 @@ command_push_bind_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_index: u32) -> bo
 
 
 _command_push_header :: proc(type: Command_Type) -> bool {
-    ok, err := queue.push_back(&window.renderer.command_queue, u8(type))
+    using window.renderer
+    ok, err := queue.push_back(&layer_command_queues[current_layer], u8(type))
     assert(err == .None)
     return ok
 }
 
 _command_push :: proc(cmd: $T, type: Command_Type) -> bool {
+    using window.renderer
     cmd := cmd
     ok := _command_push_header(type)
     if ok {
         err: runtime.Allocator_Error
         cmd_data: []u8 = slice.from_ptr((^u8)(&cmd), size_of(T))
-        ok, err = queue.push_back_elems(&window.renderer.command_queue, ..cmd_data)
+        ok, err = queue.push_back_elems(&layer_command_queues[current_layer], ..cmd_data)
         assert(err == .None)
     }
     assert(ok)
     return ok
 }
 
-
-command_pop_clear             :: proc() {
-
+_command_consume :: proc(cmd_queue: ^queue.Queue(u8), $T: typeid) -> ^T {
+    cmd_ptr := (^T)(queue.front_ptr(cmd_queue))
+    queue.consume_front(cmd_queue, size_of(T))
+    return cmd_ptr
 }
 
-command_pop_push_transform    :: proc() {
 
+r_clear :: proc() {
+    command_push_clear()
 }
 
-command_pop_pop_transform     :: proc() {
-
+r_draw :: proc(index_offset: u32, index_count: i32, instance_count: i32 = 1, base_instance: u32 = 0) {
+    command_push_draw({
+        index_offset = index_offset,
+        index_count = index_count,
+        base_instance = base_instance,
+        instance_count = instance_count
+    })
+    cmds := &window.renderer.layer_command_queues[window.renderer.current_layer]
+    window.renderer.current_draw = transmute(^Command_Draw)&cmds.data[cmds.len - size_of(Command_Draw)]
+    
+    window.renderer.new_draw_on_next_push = false
 }
 
-command_pop_set_mode          :: proc() {
-
+r_bind_framebuffer :: proc(cmd: Command_Bind_Framebuffer) {
+    window.renderer.new_draw_on_next_push = true
+    command_push_bind_framebuffer(cmd)
 }
 
-command_pop_draw              :: proc() {
-
+r_bind_pipeline :: proc(cmd: Command_Bind_Pipeline) {
+    window.renderer.new_draw_on_next_push = true
+    command_push_bind_pipeline(cmd)
 }
 
-command_pop_draw_slider       :: proc() {
-
+r_bind_vertex_buffer_sbo :: proc(sbo: ^GL_Buffer($T), bind_index: u32) {
+    cmd := Command_Bind_SSBO{
+        id = sbo.id,
+        slot = bind_index,
+        size = sbo.size
+    }
+    window.renderer.new_draw_on_next_push = true
+    _command_push(cmd, .BIND_SSBO)
 }
 
-command_pop_bind_pipeline     :: proc() {
-
+r_bind_vertex_buffer_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_index: u32) {
+    cmd := Command_Bind_SSBO{
+        id = tbo.id,
+        slot = bind_index,
+        size = tbo.size
+    }
+    window.renderer.new_draw_on_next_push = true
+    _command_push(cmd, .BIND_SSBO)
 }
 
-command_pop_bind_framebuffer  :: proc() {
+r_bind_vertex_buffer :: proc {
+    r_bind_vertex_buffer_sbo,
+    r_bind_vertex_buffer_tbo
+}
 
+r_bind_index_buffer_sbo :: proc(sbo: ^GL_Buffer($T), bind_index: u32) {
+    cmd := Command_Bind_SSBO{
+        id = sbo.id,
+        slot = bind_index,
+        size = sbo.size
+    }
+    window.renderer.new_draw_on_next_push = true
+    _command_push(cmd, .BIND_SSBO)
+}
+
+r_bind_index_buffer_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_index: u32) {
+    cmd := Command_Bind_SSBO{
+        id = tbo.id,
+        slot = bind_index,
+        size = tbo.size
+    }
+    window.renderer.new_draw_on_next_push = true
+    _command_push(cmd, .BIND_SSBO)
+}
+
+r_bind_index_buffer :: proc {
+    r_bind_index_buffer_sbo,
+    r_bind_index_buffer_tbo
+}
+
+r_push_transform :: proc(transform: Transform) {
+    window.renderer.new_draw_on_next_push = true
+    command_push_push_transform({transform})
+}
+
+r_pop_transform :: proc() {
+    // todo(isak) implement
 }
 
 
@@ -458,44 +535,8 @@ commit_transform :: proc(transform: Transform) {
 }
 
 reset_transform :: proc() {
-    push_transform(window.renderer.default_transform)
+    r_push_transform(window.renderer.default_transform)
 }
-
-push_transform :: proc(transform: Transform) -> bool {
-    return command_push_push_transform({
-        transform = transform
-    })
-}
-
-pop_transform :: proc() -> bool {
-    return command_push_pop_transform()
-}
-
-/*
-    note(isak): this takes care of draw command stats for the previously set current draw;
-                we don't need an end_draw() as far as i can tell (except to avoid branching)
-*/
-begin_draw_with_transform :: proc(transform: Transform) -> bool {
-    renderer := &window.renderer
-
-    command_push_push_transform({
-        transform = transform
-    }) or_return
-    window.current_transform = transform
-
-    current_index_count := renderer.current_draw != nil ? renderer.current_draw.index_count : 0
-    current_index_offset := renderer.current_draw != nil ? renderer.current_draw.index_offset : 0
-
-    command_push_draw({ 
-        index_offset = current_index_offset + u32(current_index_count),
-        instance_count = 1
-    }) or_return
-
-    cmds := &renderer.command_queue
-    renderer.current_draw = transmute(^Command_Draw)&cmds.data[cmds.len - size_of(Command_Draw)]
-    return true
-}
-
 
 
 batch_begin :: proc(renderer: ^Renderer) {
@@ -504,8 +545,8 @@ batch_begin :: proc(renderer: ^Renderer) {
     renderer.quad_geometry.indices.data = tbo_advance_and_get(&window.quad_store.index_buffer)
     renderer.quad_geometry.indices.count = 0
 
-    renderer.text_geometry.data = tbo_advance_and_get(&window.text_store)
-    renderer.text_geometry.count = 0
+    renderer.text_geometry.vertices.data = tbo_advance_and_get(&window.text_store)
+    renderer.text_geometry.vertices.count = 0
 
     renderer.current_draw.index_count = 0
     renderer.current_draw.index_offset = 0
@@ -524,6 +565,11 @@ batch_end :: proc(renderer: ^Renderer) {
     ubo_bind(&window.transform_buffer, 5)
 }
 
+batch_flush :: proc(renderer: ^Renderer) {
+    batch_end(renderer)
+    batch_begin(renderer)
+}
+
 
 write_quad_indices :: proc(indices: []u32, index_at, vert: i32) {
     indices[index_at + 0] = u32(vert) + 0
@@ -539,8 +585,13 @@ push_quad_with_uvs :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), pos1, uv1, p
     assert(window.renderer.current_draw != nil)
 
     if geometry.vertices.count + 4 > MAX_BATCH_VERTICES {
-        batch_end(&window.renderer)
-        batch_begin(&window.renderer)
+        batch_flush(&window.renderer)
+    }
+    if window.renderer.new_draw_on_next_push {
+        r_draw(
+            index_offset = u32(geometry.indices.count), 
+            index_count = 0
+        )
     }
 
     #no_bounds_check {
@@ -609,7 +660,7 @@ push_layout_rect :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, an
 
 // todo(isak): thickness doesn't really work anymore... should prolly fetch scale from current transform
 push_rect_outline :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), rect: Rect, color: vec4, thickness_px: f32) {
-    xform := window.current_transform
+    xform := window.renderer.current_transform
 
     offset: f32 = math.mod(thickness_px, 2)
     thickness_y: f32 = thickness_px

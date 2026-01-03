@@ -110,7 +110,6 @@ Difficulty_Setting :: struct {
 
 
 Layer :: enum {
-    NONE,
     BACKGROUND,
     FOREGROUND,
     HIT_OBJECT,
@@ -264,23 +263,23 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     // todo(isak): we don't need to do the instance writing immediate mode, just do a pass on instances on mapset load
     // and generate the draws and the bounding quads like the smart cookie you are
 
-    command_push_bind_pipeline({.SLIDER})
-    command_push_bind_framebuffer({ write = .SLIDERS })
-    command_push_clear()
+    r_bind_pipeline({.SLIDER})
+    r_bind_framebuffer({ write = .SLIDERS })
+    r_clear()
 
     pf_size: f32 = 512/circle_radius_osupx
 
-    command_push_push_transform({transform_from_bounds({0,0,pf_size,pf_size}, window.aspect_ratio)})
+    r_push_transform(transform_from_bounds({0,0,pf_size,pf_size}, window.aspect_ratio))
 
     command_push_draw_slider(Command_Draw_Slider{
         base_instance = u32(slider.first_instance_at),
         instance_count = i32(len(slider.instances))
     })
     
-    command_push_bind_framebuffer({ read = .SLIDERS })
-    command_push_bind_pipeline({.QUAD})
+    r_bind_framebuffer({ read = .SLIDERS })
+    r_bind_pipeline({.QUAD})
     
-    begin_draw_with_transform(transform_from_bounds({0, 0, 1, 1}, 1))
+    r_push_transform(transform_from_bounds({0, 0, 1, 1}, 1))
     push_rect(&renderer.quad_geometry, {0, 0, 1, 1}, {1, 1, 1, 0.5}, reserved_texture(.SLIDER_FRAMEBUFFER))
 }
 

@@ -47,34 +47,43 @@ scrubbing support (jump to arbitrary time, display content)
 
 */
 
-memory_arena_names := [4]string {
+memory_arena_names := [?]string {
     "Global",
     "Mapset",
     "Frame",
-    "Command buffer"
+    "Command buffer[BACKGROUND]",
+    "Command buffer[FOREGROUND]",
+    "Command buffer[HIT_OBJECT]",
+    "Command buffer[OVERLAY]",
+    "Command buffer[UI]",
+    "Command buffer[DEBUG]",
 }
 
 memory: struct {
     global_allocator: runtime.Allocator, // cleared on mapset load
+    global_arena: virtual.Arena,
     // note(isak): this is to be used for mapset runtime data, such as timing state, 
     // judgements, etc. (fill in)
     mapset_allocator: runtime.Allocator, // cleared on mapset load
+    mapset_arena: virtual.Arena,
+    
     // cleared on frame end
     frame_allocator: runtime.Allocator,
-    command_buffer_allocator: runtime.Allocator,
-
-    global_arena: virtual.Arena,
-    mapset_arena: virtual.Arena,
     frame_arena: virtual.Arena,
-    command_buffer_arena: virtual.Arena,
+
+    command_buffer_allocators: [Layer]runtime.Allocator,
+    command_buffer_arenas: [Layer]virtual.Arena,
 }
 
 // note(isak): this should take care of error printing
 memory_init :: proc() -> runtime.Allocator_Error {
-    memory.global_allocator, _ = init_growing_arena(&memory.global_arena)
-    memory.mapset_allocator, _ = init_growing_arena(&memory.mapset_arena)
-    memory.frame_allocator, _ = init_growing_arena(&memory.frame_arena)
-    memory.command_buffer_allocator, _ = init_static_arena(&memory.command_buffer_arena)
+    _ = init_growing_arena(&memory.global_arena, &memory.global_allocator)
+    _ = init_growing_arena(&memory.mapset_arena, &memory.mapset_allocator)
+    _ = init_growing_arena(&memory.frame_arena, &memory.frame_allocator)
+
+    for layer in Layer {
+        _ = init_growing_arena(&memory.command_buffer_arenas[layer], &memory.command_buffer_allocators[layer])
+    }
 
     context.allocator = memory.global_allocator
     context.temp_allocator = memory.frame_allocator
@@ -110,7 +119,6 @@ window: struct {
     
     text_store: GL_Triple_Buffer(Glyph_Quad),
     
-    current_transform: Transform,
     transform_buffer: GL_Uniform_Buffer(Transform),
     circle_geo_buffer: GL_Buffer(Slider_Vertex),
     texture_buffer: GL_Buffer(u64),
@@ -123,7 +131,8 @@ window: struct {
 }
 
 debug_info: struct {
-    display_profiler: bool,
+    display_frame_profiler: bool,
+    display_memory_profiler: bool,
     display_fontatlas: bool
 }
 
@@ -449,10 +458,12 @@ main :: proc() {
                     #partial switch (event.key.scancode) {
                         case sdl.Scancode.F1:
                             renderer.trace_frame = !renderer.trace_frame
-                        case sdl.Scancode.F10:
+                        case sdl.Scancode.F2:
                             debug_info.display_fontatlas = !debug_info.display_fontatlas
+                        case sdl.Scancode.F3:
+                            debug_info.display_memory_profiler = !debug_info.display_memory_profiler
                         case sdl.Scancode.F11:
-                            debug_info.display_profiler = !debug_info.display_profiler
+                            debug_info.display_frame_profiler = !debug_info.display_frame_profiler
                     }
                 }
                 
@@ -494,7 +505,7 @@ main :: proc() {
             
             osu_on_update(dt)
             
-            begin_draw_with_transform(window_get_screenspace_transform())
+            r_push_transform(window_get_screenspace_transform())
             
             // game update
             input_display(osu_controller.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
@@ -510,7 +521,7 @@ main :: proc() {
                                        color_sky_blue, with_alpha(color_sky_blue, 0.3), 1)
             }
 
-            begin_draw_with_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
+            r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
             push_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
 
             // todo(isak): create some kinda iterator for this; keep track of earliest active object and 
@@ -531,44 +542,47 @@ main :: proc() {
                     of draw calls
 
                 optimization:
-                - opengl has pretty bad overhead per frame even if it's not doing much work, so i think
-                    directx is a better choice cuz we don't do anything fancy
                 - the vertex generation pipeline for main isn't particularly efficient, should be
                     rewritten to be more like text where quads are just written directly to the gpu
             */
             profiler_block_begin(.GAME_DRAW); defer profiler_block_end()
 
             if debug_info.display_fontatlas {
-                begin_draw_with_transform(window_get_screenspace_transform())
+                r_push_transform(window_get_screenspace_transform())
                 push_rect(&renderer.quad_geometry,
                     {0, 0, f32(text_engine.ctx.width), f32(text_engine.ctx.height)},
                     color_white,
                     reserved_texture(.FONT_ATLAS))
             }
 
-            if debug_info.display_profiler {
-                begin_draw_with_transform(window_get_screenspace_transform())
+            if debug_info.display_frame_profiler {
+                r_push_transform(window_get_screenspace_transform())
                 profiler_push_quad(&renderer.quad_geometry, frame_count)
             }
 
-            render_slider(renderer, &test_slider)
-            command_push_bind_framebuffer({})
+            for i in 0..<10 {
+                render_slider(renderer, &test_slider)
+            }
+            r_bind_framebuffer({})
             
-            command_push_set_mode({mode = .TEXT})
-            begin_draw_with_transform(window_get_screenspace_transform())
+            r_push_transform(window_get_screenspace_transform())
 
             push_text(renderer, "Hello, world!", {100, 100})
             push_text(renderer, "饕餮尤魔 :3", {200, 200}, size=24)
             
             game_timer_str := fmt.tprintf("%.3f", game.play_timer_ms)
             push_text(renderer, game_timer_str, {20, 20}, size = 22)
-
-            if debug_info.display_profiler {
+            
+            if debug_info.display_frame_profiler {
                 profiler_push_blocks_as_text(renderer, frame_count)
+            }
+            if debug_info.display_memory_profiler {
                 profiler_push_memory_diag_text(renderer)
             }
 
-            text_end_frame(renderer)
+            text_submit_geometry(renderer)
+
+            profiler_collect_command_buffer_memory_data()
             end_frame(renderer)
         }
 
@@ -582,7 +596,7 @@ main :: proc() {
 
             process_watch_changes(&shaders_watch)
 
-            if debug_info.display_profiler {
+            if debug_info.display_frame_profiler {
                 profiler_write_texture_column(frame_count, window.profiler_texture)
 
                 if frame_count % 100 == 0 {
@@ -591,7 +605,11 @@ main :: proc() {
             }
             
             frame_count += 1
+            
             virtual.arena_free_all(&memory.frame_arena)
+            for layer in Layer {
+                queue.clear(&window.renderer.layer_command_queues[layer])
+            }
         }
     }
 }
@@ -600,10 +618,11 @@ begin_frame :: proc(renderer: ^Renderer) {
     sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
     
     batch_begin(renderer)
-    sg.apply_pipeline(window.pipelines[.QUAD])
-
+    
+    r_bind_pipeline({.QUAD})
+    r_push_transform(renderer.default_transform)
+    
     renderer.transform_queue.len = 0
-    begin_draw_with_transform(renderer.default_transform)
 }
 
 end_frame :: proc(renderer: ^Renderer) {
@@ -611,112 +630,84 @@ end_frame :: proc(renderer: ^Renderer) {
 
     trace := renderer.trace_frame
     
-    for renderer.command_queue.len > 0 {
-        cmd_type := queue.pop_front(&renderer.command_queue)
+    for &command_queue in renderer.layer_command_queues {
 
-        switch Command_Type(cmd_type) {
-            case .SET_MODE: {
-                cmd := (^Command_Set_Mode)(queue.front_ptr(&renderer.command_queue))
-                queue.consume_front(&renderer.command_queue, size_of(Command_Set_Mode))
+        for command_queue.len > 0 {
+            cmd_type := queue.pop_front(&command_queue)
 
-                switch(cmd.mode) {
-                    case .QUAD_UV: {
-                        fbo_bind_default()
+            switch Command_Type(cmd_type) {
+                case .CLEAR: {
+                    gl.ClearColor(0,0,0,0)
+                    gl.ClearDepth(1.0)
+                    gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-                        tbo_bind(&window.quad_store.vertex_buffer, 0)
-                        tbo_bind(&window.quad_store.index_buffer, 1)
-
-                        sg.apply_pipeline(window.pipelines[.QUAD])
-                        
-                        if (trace) { fmt.println("quads") }
-                    }
-                    case .TEXT: {
-                        sg.apply_pipeline(window.pipelines[.TEXT])
-                        
-                        tbo_bind(&window.text_store, 0)
+                    if (trace) { fmt.println("clear") }
+                }
+                case .PUSH_TRANSFORM: {
+                    cmd := _command_consume(&command_queue, Command_Push_Transform)
+                    commit_transform(cmd.transform)
+                    
+                    if (trace) { 
+                        fmt.println("push xform", cmd.transform) 
                     }
                 }
-            }
-            case .PUSH_TRANSFORM: {
-                cmd := (^Command_Push_Transform)(queue.front_ptr(&renderer.command_queue))
-                queue.consume_front(&renderer.command_queue, size_of(Command_Push_Transform))
+                case .POP_TRANSFORM: {
+                    assert(false)
 
-                commit_transform(cmd.transform)
-                
-                if (trace) { 
-                    fmt.println("push xform", cmd.transform) 
+                    // todo(isak) implement
+                    
+                    if (trace) { 
+                        fmt.println("pop xform") 
+                    }
                 }
-            }
-            case .POP_TRANSFORM: {
-                transform := Transform{}
-                commit_transform(transform)
+                case .DRAW: {
+                    cmd := _command_consume(&command_queue, Command_Draw)
+                    assert(cmd.base_instance == 0, "base_instance is unhandled")
+                    
+                    sg.draw(cmd.index_offset, cmd.index_count, cmd.instance_count)
 
-                // todo(isak) implement
-                
-                if (trace) { 
-                    fmt.println("push xform", transform) 
+                    if (trace) { fmt.println("draw", cmd.index_offset, cmd.index_count, cmd.instance_count, cmd.base_instance ) }
                 }
-            }
-            case .CLEAR: {
-                gl.ClearColor(0,0,0,0)
-                gl.ClearDepth(1.0)
-                gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+                case .DRAW_SLIDER: {
+                    cmd := _command_consume(&command_queue, Command_Draw_Slider)
+                                    
+                    gl.DrawArraysInstancedBaseInstance(
+                        gl.TRIANGLE_FAN, 
+                        0, 
+                        renderer.circle_geometry.count,
+                        cmd.instance_count, cmd.base_instance)
 
-                if (trace) { fmt.println("clear") }
-            }
-            case .DRAW: {
-                cmd := (^Command_Draw)(queue.front_ptr(&renderer.command_queue))
-                queue.consume_front(&renderer.command_queue, size_of(Command_Draw))
-                
-                sg.draw(cmd.index_offset, cmd.index_count, cmd.instance_count)
+                    if (trace) { fmt.println("drawslider", cmd.instance_count, cmd.base_instance) }
+                }
+                case .BIND_PIPELINE: {
+                    cmd := _command_consume(&command_queue, Command_Bind_Pipeline)
 
-                if (trace) { fmt.println("draw", cmd.index_count, cmd.index_offset, cmd.instance_count) }
-            }
-            case .DRAW_SLIDER: {
-                cmd := (^Command_Draw_Slider)(queue.front_ptr(&renderer.command_queue))
-                queue.consume_front(&renderer.command_queue, size_of(Command_Draw_Slider))
-                                
-                gl.DrawArraysInstancedBaseInstance(
-                    gl.TRIANGLE_FAN, 
-                    0, 
-                    renderer.circle_geometry.count,
-                    cmd.instance_count, cmd.base_instance)
+                    sg.apply_pipeline(window.pipelines[cmd.pipeline])
+                    
+                    if (trace) { fmt.println("pipeline", cmd.pipeline) }
+                }
+                case .BIND_FRAMEBUFFER: {
+                    cmd := _command_consume(&command_queue, Command_Bind_Framebuffer)
 
-                if (trace) { fmt.println("drawslider", cmd.instance_count, cmd.base_instance) }
-            }
-            case .BIND_PIPELINE: {
-                cmd := (^Command_Bind_Pipeline)(queue.front_ptr(&renderer.command_queue))
-                queue.consume_front(&renderer.command_queue, size_of(Command_Bind_Pipeline))
-
-                sg.apply_pipeline(window.pipelines[cmd.pipeline])
-                
-                if (trace) { fmt.println("pipeline", cmd.pipeline) }
-            }
-            case .BIND_FRAMEBUFFER: {
-                cmd := (^Command_Bind_Framebuffer)(queue.front_ptr(&renderer.command_queue))
-                queue.consume_front(&renderer.command_queue, size_of(Command_Bind_Framebuffer))
-
-                fbo_bind(window.framebuffers[cmd.read].id, window.framebuffers[cmd.write].id)
-                
-                if (trace) { fmt.println("framebuffer", cmd.read, cmd.write) }
-            }
-            case .BIND_SSBO: {
-                cmd := (^Command_Bind_SSBO)(queue.front_ptr(&renderer.command_queue))
-                queue.consume_front(&renderer.command_queue, size_of(Command_Bind_SSBO))
-                
-                gl.BindBufferRange(
-                    gl.SHADER_STORAGE_BUFFER,
-                    cmd.slot,
-                    cmd.id,
-                    cmd.offset,
-                    cmd.size)
-                
-                if (trace) { fmt.println("ssbo", cmd.id, cmd.slot, cmd.size, cmd.offset) }
+                    fbo_bind(window.framebuffers[cmd.read].id, window.framebuffers[cmd.write].id)
+                    
+                    if (trace) { fmt.println("framebuffer", cmd.read, cmd.write) }
+                }
+                case .BIND_SSBO: {
+                    cmd := _command_consume(&command_queue, Command_Bind_SSBO)
+                    
+                    gl.BindBufferRange(
+                        gl.SHADER_STORAGE_BUFFER,
+                        cmd.slot,
+                        cmd.id,
+                        cmd.offset,
+                        cmd.size)
+                    
+                    if (trace) { fmt.println("ssbo", cmd.id, cmd.slot, cmd.size, cmd.offset) }
+                }
             }
         }
     }
-
-    queue.clear(&renderer.command_queue)
     renderer.trace_frame = false
 
     sg.end_pass()

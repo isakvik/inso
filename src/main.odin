@@ -100,12 +100,16 @@ memory_init :: proc() -> runtime.Allocator_Error {
 window: struct {
     rect: Rect,
     aspect_ratio: f32, // note(isak): height over width
+    screenspace_transform: Transform,
     renderer: Renderer,
+
+    cursor_hidden: bool,
 
     handle: ^sdl.Window,
     gl_context: sdl.GLContext,
     
     ui_ctx: mu.Context,
+    ui_dragging: bool,
     
     // note(isak): graphical resources used by the drawing context go here 
 
@@ -167,13 +171,14 @@ window_init :: proc(rect: Rect) {
     window.gl_context = sdl.GL_CreateContext(window.handle)
     gl.load_up_to(4, 6, sdl.gl_set_proc_address)
     gl.ClipControl(gl.UPPER_LEFT, gl.ZERO_TO_ONE)
+    gl.Enable(gl.SCISSOR_TEST)
 
     win_x, win_y: i32
     sdl.GetWindowPosition(window.handle, &win_x, &win_y)
     window.rect.x = f32(win_x)
     window.rect.y = f32(win_y)
 
-    _ignored := sdl.HideCursor()
+    window.cursor_hidden = sdl.HideCursor()
 }
 
 window_resize :: proc(new_w, new_h: i32) {
@@ -182,13 +187,9 @@ window_resize :: proc(new_w, new_h: i32) {
     window.swapchain.width = new_w
     window.swapchain.height = new_h
     window.aspect_ratio = window.rect.h / window.rect.w
+    window.screenspace_transform = transform_from_bounds({0, 0, window.rect.w, window.rect.h}, 1)
 
     fbo_reinit(&window.framebuffers[.SLIDERS], new_w, new_h)
-    window.renderer.default_transform = transform_from_bounds({0, 0, 1, 1}, window.aspect_ratio)
-}
-
-window_get_screenspace_transform :: proc() -> Transform {
-    return transform_from_bounds({0, 0, window.rect.w, window.rect.h}, 1)
 }
 
 clipspace_transform := transform_from_bounds({0, 0, 1, 1}, 1)
@@ -202,8 +203,15 @@ window_cleanup :: proc() {
 }
 
 
+Mouse_Button :: enum {
+    LEFT,
+    RIGHT,
+    MIDDLE,
+}
+
 mouse: struct {
-    pos: vec2
+    pos: vec2,
+    buttons: [Mouse_Button]Button_State
 }
 
 Button_State :: struct {
@@ -387,10 +395,6 @@ main :: proc() {
 
     osu_on_init()
 
-    selection_active: bool
-    selection_start_mouse_pos: vec2
-    
-    
     active := true
     event: sdl.Event
 
@@ -402,6 +406,10 @@ main :: proc() {
             profiler_block_begin(.MESSAGE_HANDLING); defer profiler_block_end()
 
             // message handling, time handling
+            for &button in mouse.buttons {
+                button.was_down = button.is_down
+            }
+
             osu_controller.k1.was_down = osu_controller.k1.is_down
             osu_controller.k2.was_down = osu_controller.k2.is_down
             osu_controller.m1.was_down = osu_controller.m1.is_down
@@ -409,23 +417,32 @@ main :: proc() {
 
             for sdl.PollEvent(&event) {
                 #partial switch event.type {
-                case sdl.EventType.QUIT:
-                    active = false
-
-                case sdl.EventType.WINDOW_FOCUS_LOST:
-                    selection_active = false
-
                 case sdl.EventType.WINDOW_RESIZED:
                     cleanup_textures_for_rendering()
                     window_resize(max(event.window.data1, 1), max(event.window.data2, 1))
                     prepare_textures_for_rendering()
                         
                 case sdl.EventType.MOUSE_BUTTON_DOWN:
-                    selection_start_mouse_pos = {event.button.x, event.button.y}
-                    selection_active = true
+                    switch event.button.button {
+                        case sdl.BUTTON_LEFT:
+                            mouse.buttons[.LEFT].is_down = true
+                            mu.input_mouse_down(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .LEFT)
+                        case sdl.BUTTON_MIDDLE:
+                            mu.input_mouse_down(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .MIDDLE)
+                        case sdl.BUTTON_RIGHT:
+                            mu.input_mouse_down(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .RIGHT)
+                    }
 
                 case sdl.EventType.MOUSE_BUTTON_UP:
-                    selection_active = false
+                    switch event.button.button {
+                        case sdl.BUTTON_LEFT:
+                            mouse.buttons[.LEFT].is_down = false
+                            mu.input_mouse_up(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .LEFT)
+                        case sdl.BUTTON_MIDDLE:
+                            mu.input_mouse_up(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .MIDDLE)
+                        case sdl.BUTTON_RIGHT:
+                            mu.input_mouse_up(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .RIGHT)
+                    }
 
                 case sdl.EventType.KEY_DOWN:
                     #partial switch (event.key.scancode) {
@@ -438,6 +455,12 @@ main :: proc() {
                         case sdl.Scancode.F11:
                             debug_info.display_frame_profiler = !debug_info.display_frame_profiler
                     }
+                    
+                case sdl.EventType.QUIT:
+                    active = false
+
+                case sdl.EventType.WINDOW_FOCUS_LOST:
+                    window.ui_dragging = false
                 }
                 
                 if (osu_controller.in_gameplay) {
@@ -460,6 +483,8 @@ main :: proc() {
 
             mouse.pos.x = mouse.pos.x - f32(xi)
             mouse.pos.y = mouse.pos.y - f32(yi)
+
+            mu.input_mouse_move(&window.ui_ctx, i32(mouse.pos.x), i32(mouse.pos.y))
         }
 
         {   
@@ -477,25 +502,18 @@ main :: proc() {
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
             
             osu_on_update(dt)
-            
+
             r_bind_layer(.UI)
-            r_push_transform(window_get_screenspace_transform())
+            r_push_transform(window.screenspace_transform)
             
             // game update
             render_input_display(&renderer.quad_geometry)            
-            
-            if selection_active {
-                push_rect_outline_fill(&window.renderer.quad_geometry, rect_from_points(mouse.pos, selection_start_mouse_pos), 
-                                       color_sky_blue, with_alpha(color_sky_blue, 0.3), 1)
-            }
             
             cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 80, 80 }
             push_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture_slot(.CURSOR))
 
             r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
             push_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
-            
-            r_bind_layer(.BACKGROUND)
         }
         
         {
@@ -509,26 +527,20 @@ main :: proc() {
                     of draw calls
             */
             profiler_block_begin(.GAME_DRAW); defer profiler_block_end()
-
-            for i in 0..<1 {
-                render_slider(renderer, &test_slider)
-            }
             
-            r_bind_layer(.DEBUG, transform = window_get_screenspace_transform())
+            r_push_transform(window.screenspace_transform)
+            mu.begin(&window.ui_ctx)
+            write_debug_ui(&window.ui_ctx)
+            mu.end(&window.ui_ctx)
+            handle_debug_ui_events(&window.ui_ctx)
+            render_debug_ui(renderer, &window.ui_ctx)
+            
+            r_bind_layer(.DEBUG, transform = window.screenspace_transform)
 
-            push_text(renderer, "饕餮尤魔 :3", {100, 100}, size=24)
             game_timer_str := fmt.tprintf("%.3f", game.active_map.play_timer_ms)
             push_text(renderer, game_timer_str, {20, 20}, size = 22)
-            
-            if debug_info.display_frame_profiler {
-                profiler_push_blocks_as_text(renderer, frame_count)
-            }
-            if debug_info.display_memory_profiler {
-                profiler_push_memory_diag_text(renderer)
-            }
 
             if debug_info.display_fontatlas {
-                r_push_transform(window_get_screenspace_transform())
                 push_rect(&renderer.quad_geometry,
                     {0, 0, f32(text_engine.ctx.width), f32(text_engine.ctx.height)},
                     color_white,
@@ -536,14 +548,12 @@ main :: proc() {
             }
 
             if debug_info.display_frame_profiler {
-                r_push_transform(window_get_screenspace_transform())
+                profiler_push_blocks_as_text(renderer, frame_count)
                 profiler_push_quad(&renderer.quad_geometry, frame_count)
             }
-
-            mu.begin(&window.ui_ctx)
-            render_debug_ui(&window.ui_ctx)
-            mu.end(&window.ui_ctx)
-
+            if debug_info.display_memory_profiler {
+                profiler_push_memory_diag_text(renderer)
+            }
             end_frame(renderer)
         }
 
@@ -575,8 +585,92 @@ main :: proc() {
     }
 }
 
-render_debug_ui :: proc(ctx: ^mu.Context) {
+write_debug_ui :: proc(ctx: ^mu.Context) {
+    @static opts := mu.Options{.NO_CLOSE, .HOLD_FOCUS}
 
+    if mu.window(ctx, "饕餮尤魔 :3", {40, 40, 160, 110}, opts) {
+        
+        win := mu.get_current_container(ctx)
+        mu.layout_row(ctx, {54, -1}, 0)
+        mu.label(ctx, "Position:")
+        mu.label(ctx, fmt.tprintf("%d, %d", win.rect.x, win.rect.y))
+        mu.label(ctx, "Size:")
+        mu.label(ctx, fmt.tprintf("%d, %d", win.rect.w, win.rect.h))
+        
+    }
+}
+
+handle_debug_ui_events :: proc(ctx: ^mu.Context) {
+    // note(isak): handle offscreen windows
+    if ctx.focus_id > 0 && is_held(mouse.buttons[.LEFT]) {
+        window.ui_dragging = true
+    }
+    if is_released(mouse.buttons[.LEFT]) {
+        for container in ctx.root_list.items[:ctx.root_list.idx] {
+            window_rect := mu.Rect{ 0, 0, i32(window.rect.w) - container.rect.w, i32(window.rect.h) - container.rect.h }
+            if container.rect.x < window_rect.x {
+                container.rect.x = max(window_rect.x, container.rect.x)
+            } else if container.rect.x > window_rect.w {
+                container.rect.x = min(window_rect.w, container.rect.x)
+            }
+
+            if container.rect.y < window_rect.y {
+                container.rect.y = max(window_rect.y, container.rect.y)
+            } else if container.rect.y > window_rect.h {
+                container.rect.y = min(window_rect.h, container.rect.y)
+            }
+        }
+        window.ui_dragging = false
+    }
+    
+    // note(isak): handle cursor visibility inside ui rects
+    if window.cursor_hidden {
+        for container in ctx.root_list.items[:ctx.root_list.idx] {
+            if mu.rect_overlaps_vec2(container.rect, ctx.mouse_pos) {
+                window.cursor_hidden = !sdl.ShowCursor()
+                break
+            }
+        }
+    } else {
+        for container in ctx.root_list.items[:ctx.root_list.idx] {
+            if mu.rect_overlaps_vec2(container.rect, ctx.mouse_pos) {
+                continue
+            }
+            window.cursor_hidden = sdl.HideCursor()
+        }
+    }
+}
+
+render_debug_ui :: proc(renderer: ^Renderer, ctx: ^mu.Context) {
+    push_icon :: proc(renderer: ^Renderer, rect, icon_rect: mu.Rect, color: Color) {
+        pos := Rect{f32(rect.x + icon_rect.w/2), f32(rect.y + icon_rect.h/2), f32(icon_rect.w), f32(icon_rect.h)}
+        uv := Rect{
+            f32(icon_rect.x) / f32(window.ui_atlas_texture.w), 
+            f32(window.ui_atlas_texture.h - icon_rect.y) / f32(window.ui_atlas_texture.h), 
+            f32(icon_rect.w) / f32(window.ui_atlas_texture.w), 
+            f32(-icon_rect.h) / f32(window.ui_atlas_texture.h)
+        }
+        push_rect_with_uv(&renderer.quad_geometry, pos, uv, color, reserved_texture(.UI_ATLAS))
+    }
+
+    command_backing: ^mu.Command
+    for variant in mu.next_command_iterator(ctx, &command_backing) {
+        switch cmd in variant {
+            case ^mu.Command_Text:
+                push_text(renderer, cmd.str, {f32(cmd.pos.x), f32(cmd.pos.y)}, size = 16, align_v = .Top )
+            case ^mu.Command_Clip:
+                r_begin_scissor_mode(cmd.rect.x, cmd.rect.y, cmd.rect.w, i32(window.rect.h) - cmd.rect.h)
+            case ^mu.Command_Rect:
+                push_rect(&renderer.quad_geometry, {f32(cmd.rect.x), f32(cmd.rect.y), f32(cmd.rect.w), f32(cmd.rect.h)}, 
+                          transmute(Color)cmd.color)
+            case ^mu.Command_Icon:
+                icon_rect := mu.default_atlas[cmd.id]
+                push_icon(renderer, cmd.rect, icon_rect, transmute(Color)cmd.color)
+            case ^mu.Command_Jump:
+                unreachable()
+        }
+    }
+    r_end_scissor_mode()
 }
 
 begin_frame :: proc(renderer: ^Renderer) {
@@ -585,7 +679,7 @@ begin_frame :: proc(renderer: ^Renderer) {
     batch_begin(renderer)
     
     r_bind_pipeline({.QUAD})
-    r_push_transform(renderer.default_transform)
+    r_push_transform(identity_transform)
 
     r_bind_framebuffer(window.renderer.current_framebuffer)
     r_bind_pipeline(window.renderer.current_pipeline)

@@ -23,20 +23,12 @@ MAX_DRAW_CALLS_PER_LAYER :: 4096
 UNIT_CIRCLE_VERTEX_COUNT :: 30
 
 
-Quad_Vertex :: struct {
-    pos:   vec2,
-    uv:    vec2,
-    color: vec4,
-    tex_index: u32,
-    __padding: [3]u32
-}
-
 Quad :: struct {
     pos_min:   vec2,
     pos_max:   vec2,
     uv_min:    vec2,
     uv_max:    vec2,
-    color: u32,
+    color:     u32,
     tex_index: u32
 }
 
@@ -69,7 +61,6 @@ Renderer :: struct {
     circle_geometry: Buffer(Slider_Vertex),
 
     transform_queue: queue.Queue(Transform),
-    default_transform: Transform, // todo(isak) remove
 
     layer_command_queues: [Layer]queue.Queue(u8),
 
@@ -81,6 +72,7 @@ Renderer :: struct {
     new_draw_on_next_push: bool,
     current_layer: Layer,
     current_transform: Transform,
+    current_scissor: Command_Scissor_Mode,
     current_pipeline: Command_Bind_Pipeline,
     current_framebuffer: Command_Bind_Framebuffer,
     current_ssbo_binds: [Shader_SSBO_Bind_Slot]Command_Bind_SSBO,
@@ -125,7 +117,6 @@ rect_to_array :: proc(r: Rect) -> [4]f32 {
 renderer_init :: proc() {
     renderer := &window.renderer
     renderer.current_draw = &renderer.null_draw
-    renderer.default_transform = transform_from_bounds({0, 0, 1, 1}, window.aspect_ratio)
 
     sg.setup({
         environment = {
@@ -201,14 +192,14 @@ renderer_init :: proc() {
     //
 
     fullscreen_geometry := buffer_init(MAX_BATCH_VERTICES, window.fullscreen_store.data)
-    push_rect(&fullscreen_geometry, {0,0,1,1}, {1,1,1,0.5}, reserved_texture(.SLIDER_FRAMEBUFFER))
+    push_rect(&fullscreen_geometry, {0,0,1,1}, with_alpha(color_white, 0.5), reserved_texture(.SLIDER_FRAMEBUFFER))
     
     //
     
     renderer.text_geometry.size = MAX_BATCH_VERTICES
     
-    renderer.current_transform = renderer.default_transform
-    commit_transform(renderer.default_transform)
+    renderer.current_transform = identity_transform
+    commit_transform(renderer.current_transform)
 
     renderer.slider_instances = buffer_init(MAX_SLIDER_INSTANCES, window.slider_instance_store.data)
 
@@ -313,6 +304,7 @@ Command_Type :: enum(u8) {
     BIND_PIPELINE,
     BIND_FRAMEBUFFER,
     BIND_SSBO,
+    SCISSOR_MODE,
 }
 
 Command_Mode_Type :: enum(u8) {
@@ -358,6 +350,10 @@ Command_Bind_SSBO :: struct {
     size, offset: int
 }
 
+Command_Scissor_Mode :: struct {
+    x, y, width, height: i32
+}
+
 command_push_clear             :: proc() -> bool { return _command_push_header(.CLEAR) }
 command_push_push_transform    :: proc(cmd: Command_Push_Transform) -> bool { return _command_push(cmd, .PUSH_TRANSFORM) }
 command_push_pop_transform     :: proc() -> bool { return _command_push_header(.POP_TRANSFORM) }
@@ -366,6 +362,7 @@ command_push_draw_slider       :: proc(cmd: Command_Draw_Slider) -> bool { retur
 command_push_bind_pipeline     :: proc(cmd: Command_Bind_Pipeline) -> bool { return _command_push(cmd, .BIND_PIPELINE) }
 command_push_bind_framebuffer  :: proc(cmd: Command_Bind_Framebuffer) -> bool { return _command_push(cmd, .BIND_FRAMEBUFFER) }
 command_push_bind_ssbo         :: proc(cmd: Command_Bind_SSBO) -> bool { return _command_push(cmd, .BIND_SSBO) }
+command_push_scissor_mode      :: proc(cmd: Command_Scissor_Mode) -> bool { return _command_push(cmd, .SCISSOR_MODE) }
 
 
 _command_push_header :: proc(type: Command_Type) -> bool {
@@ -460,21 +457,45 @@ r_push_transform :: proc(transform: Transform) {
     command_push_push_transform({transform})
 }
 
+r_begin_scissor_mode :: proc(x, y, width, height: i32) {
+    cmd := Command_Scissor_Mode{x, y, width, height}
+    window.renderer.new_draw_on_next_push = true
+    window.renderer.current_scissor = cmd
+    command_push_scissor_mode(cmd)
+}
+
+r_end_scissor_mode :: proc() {
+    r_begin_scissor_mode(0, 0, i32(window.rect.w), i32(window.rect.h))
+}
+
 r_pop_transform :: proc() {
     // todo(isak) implement
 }
 
+/*
+    note(isak): layers are processed sequentially via the command buffer system (for transparency blending purposes). 
+    this means that if render procedures/scripts are run without matching this order, we might have state issues
+    since the bound state at the end of a layer might not match what one would expect from reading the code.
+    we guard against this by pushing the currently bound state on layer switch, but this means switching often
+    might be bad for performance, so try to not do that. 
+    (maybe just keeping state per layer is better? this may require some discipline though.)
+*/
 r_bind_layer :: proc(
     layer: Layer,
     cmd_framebuffer: Command_Bind_Framebuffer = window.renderer.current_framebuffer,
     cmd_pipeline: Command_Bind_Pipeline = window.renderer.current_pipeline,
-    transform: Transform = window.renderer.current_transform
+    transform: Transform = window.renderer.current_transform,
+    scissor_region: Command_Scissor_Mode = window.renderer.current_scissor
 ) {
     window.renderer.current_layer = layer
     r_bind_framebuffer(cmd_framebuffer)
     r_bind_pipeline(cmd_pipeline)
+    r_begin_scissor_mode(scissor_region.x, scissor_region.y, scissor_region.width, scissor_region.height)
     r_push_transform(transform)
-    _r_push_ssbo(window.renderer.current_ssbo_binds[.VERTEX_BUFFER])
+
+    for ssbo_slot in Shader_SSBO_Bind_Slot {
+        _r_push_ssbo(window.renderer.current_ssbo_binds[ssbo_slot])
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -494,11 +515,6 @@ commit_transform :: proc(transform: Transform) {
     transform := transform
     gl.NamedBufferSubData(window.transform_buffer.id, 0, window.transform_buffer.size, &transform)
 }
-
-reset_transform :: proc() {
-    r_push_transform(window.renderer.default_transform)
-}
-
 
 batch_begin :: proc(renderer: ^Renderer) {
     renderer.quad_geometry.data = tbo_advance_and_get(&window.quad_store)
@@ -610,6 +626,13 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                     
                     if (trace) { fmt.println("  ssbo", cmd.id, cmd.slot, cmd.size, cmd.offset) }
                 }
+                case .SCISSOR_MODE: {
+                    cmd := _command_consume(&command_queue, Command_Scissor_Mode)
+                    
+                    gl.Scissor(cmd.x, cmd.y, max(cmd.width, 0), max(cmd.height, 0))
+                    
+                    if (trace) { fmt.println("  scissor", cmd.x, cmd.y, cmd.width, cmd.height) }
+                }
             }
         }
     }
@@ -620,8 +643,8 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
 }
 
 
-push_quad_with_uvs :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2, 
-                           color: vec4, tex_index: u32) {
+push_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2, 
+                          color: Color, tex_index: u32) {
     assert(window.renderer.current_draw != nil)
 
     if geometry.count + 4 > MAX_BATCH_VERTICES {
@@ -638,19 +661,12 @@ push_quad_with_uvs :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv
         vert_i := geometry.count
         verts := geometry.data
 
-        q_color: [4]u8 = { 
-            u8(f32(0xFF) * color.r),
-            u8(f32(0xFF) * color.g),
-            u8(f32(0xFF) * color.b),
-            u8(f32(0xFF) * color.a),
-        }
-
         verts[vert_i] = {
             pos_min = pos_min,
             pos_max = pos_max,
             uv_min = uv_min,
             uv_max = uv_max,
-            color = transmute(u32)q_color,
+            color = transmute(u32)color,
             tex_index = tex_index
         }
 
@@ -659,32 +675,30 @@ push_quad_with_uvs :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv
     }
 }
 
-push_quad :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2, color: vec4, tex_index: u32 = 0) {
-    push_quad_with_uvs(geometry, 
-                       pos_min, pos_max, 
-                       uv_min, uv_max, 
-                       color, tex_index)
+push_quad :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2, color: Color, tex_index: u32 = 0) {
+    push_quad_with_uv(geometry, 
+                      pos_min, pos_max, 
+                      uv_min, uv_max, 
+                      color, tex_index)
 }
 
-push_xywh :: proc(geometry: ^Buffer(Quad), x, y, w, h: f32, color: vec4, tex_index: u32 = 0) {
-    push_quad_with_uvs(geometry, 
-                       {x, y}, {x + w, y + h}, 
-                       {0, 0}, {1, 1}, 
-                       color, tex_index)
+push_rect :: proc(geometry: ^Buffer(Quad), r: Rect, color: Color, tex_index: u32 = 0) {
+    push_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h}, 
+                                {0, 0}, {1, 1}, color, tex_index)
 }
 
-push_rect :: proc(geometry: ^Buffer(Quad), r: Rect, color: vec4, tex_index: u32 = 0) {
-    push_quad_with_uvs(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h}, 
-                                 {0, 0}, {1, 1}, color, tex_index)
+push_rect_with_uv :: proc(geometry: ^Buffer(Quad), r, uv: Rect, color: Color, tex_index: u32 = 0) {
+    push_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h}, 
+                                {uv.x, uv.y}, {uv.x + uv.w, uv.y + uv.h}, color, tex_index)
 }
 
-push_layout_rect :: proc(geometry: ^Buffer(Quad), rect: Rect, anchor: Layout_Anchor, color: vec4 = color_white, tex_index: u32 = 0) {
+push_layout_rect :: proc(geometry: ^Buffer(Quad), rect: Rect, anchor: Layout_Anchor, color: Color = color_white, tex_index: u32 = 0) {
     push_rect(geometry, rect_translate_by_anchor(rect, anchor), color, tex_index) 
 }
 
 
 // todo(isak): thickness doesn't really work anymore... should prolly fetch scale from current transform
-push_rect_outline :: proc(geometry: ^Buffer(Quad), rect: Rect, color: vec4, thickness_px: f32) {
+push_rect_outline :: proc(geometry: ^Buffer(Quad), rect: Rect, color: Color, thickness_px: f32) {
     xform := window.renderer.current_transform
 
     offset: f32 = math.mod(thickness_px, 2)
@@ -713,7 +727,7 @@ push_rect_outline :: proc(geometry: ^Buffer(Quad), rect: Rect, color: vec4, thic
                               rect.h - thickness_y/2 }, color)
 }
 
-push_rect_outline_fill :: proc(geometry: ^Buffer(Quad), rect: Rect, color_outline, color_fill: vec4, thickness_px: f32) {
+push_rect_outline_fill :: proc(geometry: ^Buffer(Quad), rect: Rect, color_outline, color_fill: Color, thickness_px: f32) {
     push_rect(geometry, rect, color_fill)
     push_rect_outline(geometry, rect, color_outline, thickness_px)
 }

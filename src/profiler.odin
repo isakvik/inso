@@ -47,7 +47,7 @@ Trace_Blocks :: enum {
     BETWEEN_FRAMES,
 }
 
-trace_block_colors := [Trace_Blocks]vec4 {
+trace_block_colors := [Trace_Blocks]Color {
     .NONE = color_none,
     .MESSAGE_HANDLING = color_orange,
     .PREPARE_FRAME = color_yellow,
@@ -142,62 +142,15 @@ profiler_collect_command_buffer_memory_data :: proc() {
 
 profiler_push_memory_diag_text :: proc(renderer: ^Renderer) {
     y_spacing: f32 = 24
-    pos_top_left := vec2{ window.rect.w - 400, y_spacing*1.5 }
-
-    // note(isak): command buffer section
+    pos_top_right := vec2{ window.rect.w - 32, y_spacing*1.5 }
     x_inc: f32
     x_inc_max: f32 = min(f32)
     
-    for layer in Layer {
-        push_text(renderer, 
-                  fmt.enum_value_to_string(layer) or_else unreachable(),
-                  pos_top_left + {0 , y_spacing * f32(layer)},
-                  size = y_spacing,
-                  x_inc = &x_inc)
-        x_inc_max = max(x_inc, x_inc_max)
-        x_inc = 0
-    }
-
-    for layer in Layer {
-        unit_i: int
-        len_in_units := profiler.prev_frame_command_buffer_lens[layer]
-        cap_in_units := profiler.prev_frame_command_buffer_caps[layer]
-        if profiler.prev_frame_command_buffer_caps[layer] > mem.Kilobyte * 10 {
-            unit_i += 1
-            len_in_units /= mem.Kilobyte
-            cap_in_units /= mem.Kilobyte
-        }
-        if profiler.prev_frame_command_buffer_caps[layer] > mem.Megabyte * 10 {
-            unit_i += 1
-            len_in_units /= mem.Kilobyte
-            cap_in_units /= mem.Kilobyte
-        }
-        
-        push_text(renderer, 
-                  fmt.tprintf("%d/%d %s", len_in_units, cap_in_units, size_units_str[unit_i]),
-                  pos_top_left + {16 + x_inc_max, f32(layer) * y_spacing },
-                  size = y_spacing,
-                  x_inc = &x_inc)
-    }
-    
     // note(isak): arena section
-    pos_top_left.y += y_spacing * len(Layer)
-
     arenas := [?]^virtual.Arena{ 
         &memory.global_arena, 
         &memory.mapset_arena, 
         &memory.frame_arena
-    }
-
-    for i in 0..<len(arenas) {
-        arena := arenas[i]
-        push_text(renderer, 
-                  memory_arena_names[i],
-                  pos_top_left + {0 , y_spacing * f32(i)},
-                  size = y_spacing,
-                  x_inc = &x_inc)
-        x_inc_max = max(x_inc, x_inc_max)
-        x_inc = 0
     }
 
     for i in 0..<len(arenas) {
@@ -218,9 +171,61 @@ profiler_push_memory_diag_text :: proc(renderer: ^Renderer) {
         
         push_text(renderer, 
                   fmt.tprintf("%d/%d %s", used_in_units, reserved_in_units, size_units_str[unit_i]),
-                  pos_top_left + {16 + x_inc_max , y_spacing * f32(i)},
+                  pos_top_right + {0, y_spacing * f32(i)},
                   size = y_spacing,
+                  align_h = .Right,
                   x_inc = &x_inc)
+                  
+        x_inc_max = max(x_inc, x_inc_max)
+        x_inc = 0
+    }
+
+    for i in 0..<len(arenas) {
+        arena := arenas[i]
+        push_text(renderer, 
+                  memory_arena_names[i],
+                  pos_top_right + { -x_inc_max - 16 , y_spacing * f32(i)},
+                  size = y_spacing,
+                  align_h = .Right)
+    }
+    
+    // note(isak): command buffer section
+    x_inc = 0
+    x_inc_max = min(f32)
+    pos_top_right.y += y_spacing * len(arenas)
+
+    for layer in Layer {
+        unit_i: int
+        len_in_units := profiler.prev_frame_command_buffer_lens[layer]
+        cap_in_units := profiler.prev_frame_command_buffer_caps[layer]
+        if profiler.prev_frame_command_buffer_caps[layer] > mem.Kilobyte * 10 {
+            unit_i += 1
+            len_in_units /= mem.Kilobyte
+            cap_in_units /= mem.Kilobyte
+        }
+        if profiler.prev_frame_command_buffer_caps[layer] > mem.Megabyte * 10 {
+            unit_i += 1
+            len_in_units /= mem.Kilobyte
+            cap_in_units /= mem.Kilobyte
+        }
+        
+        push_text(renderer, 
+                  fmt.tprintf("%d/%d %s", len_in_units, cap_in_units, size_units_str[unit_i]),
+                  pos_top_right + { 0, f32(layer) * y_spacing },
+                  size = y_spacing,
+                  align_h = .Right,
+                  x_inc = &x_inc)
+
+        x_inc_max = max(x_inc, x_inc_max)
+        x_inc = 0
+    }
+
+    for layer in Layer {
+        push_text(renderer, 
+                  fmt.enum_value_to_string(layer) or_else unreachable(),
+                  pos_top_right + { -x_inc_max - 16, y_spacing * f32(layer) },
+                  size = y_spacing,
+                  align_h = .Right)
     }
 }
 
@@ -239,8 +244,7 @@ profiler_write_texture_column :: proc(frame_count: u64, texture: Texture) {
                 profiler.frame_pixel_count = profiler_h
                 break blocks
             }
-            profiler.pixels[pixel_i] =
-                color_to_pixel(trace_block_colors[trace_block])
+            profiler.pixels[pixel_i] = color_to_pixel(trace_block_colors[trace_block])
         }
         profiler.frame_pixel_count += block_frame_pixel_count
     }
@@ -261,7 +265,7 @@ profiler_push_quad :: proc(geometry: ^Buffer(Quad), frame_count: u64) {
     profiler_rect: Rect = { f32(window.rect.w), f32(window.rect.h), f32(profiler_w), f32(profiler_h) }
     r := rect_translate_by_anchor(profiler_rect, .BOTTOM_RIGHT)
     
-    push_quad_with_uvs(geometry, {r.x,       r.y      }, {r.x + r.w, r.y + r.h},
+    push_quad_with_uv(geometry, {r.x,       r.y      }, {r.x + r.w, r.y + r.h},
                                  {0 + pixel_shift_clipspace, 0}, {1 + pixel_shift_clipspace, 1}, 
                                  color_white, u32(Reserved_Texture_Slot.PROFILER))
 }

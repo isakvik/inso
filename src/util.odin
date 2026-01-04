@@ -45,26 +45,56 @@ time_since_beginning_of_program :: proc() -> f64 {
 //////////////////////////////////////////////////////
 // note(isak): color api
 
-color_none       :: vec4{0,0,0,0}
-color_white      :: vec4{1,1,1,1}
-color_black      :: vec4{0,0,0,1}
-color_red        :: vec4{1,0,0,1}
-color_green      :: vec4{0,1,0,1}
-color_blue       :: vec4{0,0,1,1}
-color_orange     :: vec4{1, 0.5, 0, 1}
-color_lime_green :: vec4{0.5, 1, 0, 1}
-color_yellow     :: vec4{1, 1, 0, 1}
-color_sky_blue   :: vec4{0.3, 0.35, 1.0, 1}
-color_dark_blue  :: vec4{0, 0, 0.8, 1}
-color_purple     :: vec4{0.5, 0, 1, 1}
+Color :: [4]u8
 
-with_alpha :: proc "contextless" (v: vec4, alpha: f32) -> vec4 { return {v.x, v.y, v.z, alpha} }
+color_none          := color_from_vec({0,0,0,0})
+color_white         := color_from_vec({1,1,1,1})
+color_dark_gray     := color_from_vec({0.2,0.2,0.2,1})
+color_medium_gray   := color_from_vec({0.5,0.5,0.5,1})
+color_light_gray    := color_from_vec({0.7,0.7,0.7,1})
+color_black         := color_from_vec({0,0,0,1})
+color_red           := color_from_vec({1,0,0,1})
+color_green         := color_from_vec({0,1,0,1})
+color_blue          := color_from_vec({0,0,1,1})
+color_orange        := color_from_vec({1, 0.5, 0, 1})
+color_lime_green    := color_from_vec({0.5, 1, 0, 1})
+color_yellow        := color_from_vec({1, 1, 0, 1})
+color_sky_blue      := color_from_vec({0.3, 0.35, 1.0, 1})
+color_dark_blue     := color_from_vec({0, 0, 0.8, 1})
+color_purple        := color_from_vec({0.5, 0, 1, 1})
 
-color_to_pixel :: proc "contextless" (v: vec4) -> u32 {
+with_alpha_f32 :: proc "contextless" (c: Color, alpha: f32) -> Color { return {c.x, c.y, c.z, u8(alpha * 0xFF)} }
+with_alpha_u8 :: proc "contextless" (c: Color, alpha: u8) -> Color { return {c.x, c.y, c.z, alpha} }
+with_alpha :: proc {
+    with_alpha_f32,
+    with_alpha_u8
+}
+
+color_to_pixel_f32 :: proc "contextless" (v: vec4) -> u32 {
     result := u32(v.x * 0xFF)
     result |= u32(v.y * 0xFF) << 8
     result |= u32(v.z * 0xFF) << 16
     result |= u32(v.w * 0xFF) << 24
+    return result
+}
+color_to_pixel_u8 :: proc "contextless" (c: Color) -> u32 {
+    result := u32(c.x)
+    result |= u32(c.y) << 8
+    result |= u32(c.z) << 16
+    result |= u32(c.w) << 24
+    return result
+}
+color_to_pixel :: proc {
+    color_to_pixel_f32,
+    color_to_pixel_u8,
+}
+
+color_from_vec :: proc "contextless" (v: vec4) -> Color {
+    result: Color
+    result[0] = u8(v.x * 0xFF)
+    result[1] = u8(v.y * 0xFF)
+    result[2] = u8(v.z * 0xFF)
+    result[3] = u8(v.w * 0xFF)
     return result
 }
 
@@ -142,3 +172,10 @@ transform_from_bounds :: proc "contextless" (r: vec4, aspect_ratio: f32) -> Tran
         0.0, 0.0, 0.0, 0.0
     }
 }
+
+identity_transform :: Transform {
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 0
+} 

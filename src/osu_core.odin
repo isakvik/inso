@@ -171,8 +171,10 @@ osu_on_update :: proc(dt: f64) {
     if active_map.play_timer_ms > active_map.length_ms {
         active_map.play_timer_ms = -active_map.lead_in
     }
+    
+    render_slider(&window.renderer, &test_slider)
 
-    render_timeline()
+    render_timeline(&window.renderer)
 
     // todo(isak): create some kinda iterator for this; keep track of earliest active object and 
     // stop once first nonstarted obj is done
@@ -316,7 +318,7 @@ render_hit_object :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
         case .CIRCLE: {
             if hobj.start_time_ms < active_map.play_timer_ms && active_map.play_timer_ms < hobj.end_time_ms {
                 ho_pos := rect_translate_by_anchor(Rect{hobj.pos.x, hobj.pos.y, 40, 40}, .CENTER)
-                push_rect(&renderer.quad_geometry, ho_pos, vec4(0.5), skin_texture_slot(.HITCIRCLE))
+                push_rect(&renderer.quad_geometry, ho_pos, color_red, skin_texture_slot(.HITCIRCLE))
             }
         }
         case .SLIDER: {
@@ -348,10 +350,10 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     r_bind_pipeline({.QUAD})
     
     r_push_transform(transform_from_bounds({0, 0, 1, 1}, 1))
-    push_rect(&renderer.quad_geometry, {0, 0, 1, 1}, {1, 1, 1, 0.5}, reserved_texture(.SLIDER_FRAMEBUFFER))
+    push_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.5), reserved_texture(.SLIDER_FRAMEBUFFER))
 }
 
-render_timeline :: proc() {
+render_timeline :: proc(renderer: ^Renderer) {
     active_map := game.active_map
     preempt := convert_approach_rate_to_preempt(active_map.diff_overall_difficulty)
     map_len_with_preempt := active_map.length_ms + preempt
@@ -362,33 +364,33 @@ render_timeline :: proc() {
     r_push_transform(window_get_clipspace_transform())
     
     timeline_h_px := 4 / window.rect.h
-    push_layout_rect(&window.renderer.quad_geometry, {0, 1, 1, timeline_h_px}, 
+    push_layout_rect(&renderer.quad_geometry, {0, 1, 1, timeline_h_px}, 
                      .BOTTOM_LEFT, with_alpha(color_white, 0.1))
-    push_layout_rect(&window.renderer.quad_geometry, {0, 1, active_map_finish_fract, timeline_h_px}, 
+    push_layout_rect(&renderer.quad_geometry, {0, 1, active_map_finish_fract, timeline_h_px}, 
                      .BOTTOM_LEFT, with_alpha(color_white, 0.4))
     if active_map_leadin_fract > 0 {
-        push_layout_rect(&window.renderer.quad_geometry, {0, 1, active_map_leadin_fract, timeline_h_px}, 
+        push_layout_rect(&renderer.quad_geometry, {0, 1, active_map_leadin_fract, timeline_h_px}, 
                          .BOTTOM_LEFT, with_alpha(color_lime_green, 0.2))
     }
 }
 
 render_input_display :: proc(geometry: ^Buffer(Quad)) {
-    render_input_key :: proc(key: Button_State, rect: Rect, anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
+    render_input_key :: proc(key: Button_State, rect: Rect, anchor: Layout_Anchor, color: Color, tex_index: u32 = 0) {
         if is_pressed(key) {
             push_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
         } else if is_held(key) {
             push_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
         } else if is_released(key) {
-            push_layout_rect(&window.renderer.quad_geometry, rect, anchor, {0.2,0.2,0.2,1}, tex_index)
+            push_layout_rect(&window.renderer.quad_geometry, rect, anchor, color_dark_gray, tex_index)
         } else {
-            push_layout_rect(&window.renderer.quad_geometry, rect, anchor, {0.2,0.2,0.2,1}, tex_index)
+            push_layout_rect(&window.renderer.quad_geometry, rect, anchor, color_dark_gray, tex_index)
         }
     }
 
-    render_input_key(osu_controller.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
-    render_input_key(osu_controller.k2, { window.rect.w, window.rect.h / 2,      30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
-    render_input_key(osu_controller.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
-    render_input_key(osu_controller.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
+    render_input_key(osu_controller.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 }, .BOTTOM_RIGHT, color_light_gray)
+    render_input_key(osu_controller.k2, { window.rect.w, window.rect.h / 2,      30, 30 }, .BOTTOM_RIGHT, color_light_gray)
+    render_input_key(osu_controller.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 }, .BOTTOM_RIGHT, color_light_gray)
+    render_input_key(osu_controller.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 }, .BOTTOM_RIGHT, color_light_gray)
 }
 
 convert_approach_rate_to_preempt :: proc(ar: f64) -> f64 {

@@ -147,6 +147,7 @@ push_text :: proc(
     }
 
     text_vertex_buffer := &renderer.text_geometry
+    text_glyph_next_index := renderer.text_geometry.count
 
     for iter := fs.TextIterInit(&text_engine.ctx, pos.x, pos.y, text); true; {
         quad: fs.Quad
@@ -161,9 +162,10 @@ push_text :: proc(
         })
     }
     
-    if x_inc != nil {
+    if x_inc != nil && text_vertex_buffer.count > 0 {
+        first := text_vertex_buffer.data[text_glyph_next_index]
         last := text_vertex_buffer.data[text_vertex_buffer.count - 1]
-        x_inc^ += last.pos_max.x - pos.x
+        x_inc^ += last.pos_max.x - first.pos_min.x
     }
 }
 

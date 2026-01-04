@@ -23,7 +23,7 @@ Skin_Element_Path := #partial [Skin_Element]string {
 supported_image_extensions :: []string{".png", ".jpg"}
 
 skin_texture_slot :: proc(tex_id: Skin_Element) -> u32 { 
-    return u32(tex_id) + len(Reserved_Texture_Slots) 
+    return u32(tex_id) + len(Reserved_Texture_Slot) 
 }
 
 load_skin_textures :: proc(skin_path: string) {

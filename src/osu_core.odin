@@ -5,6 +5,8 @@ import "core:math/linalg"
 import queue "core:container/queue"
 import sa "core:container/small_array"
 
+import sdl "vendor:sdl3"
+
 
 osu_playfield_size_osupx :: 512
 playfield_rect :: Rect{ 0, 0, osu_playfield_size_osupx, osu_playfield_size_osupx }
@@ -110,7 +112,6 @@ Difficulty_Setting :: struct {
 Layer :: enum {
     BACKGROUND,
     FOREGROUND,
-    HIT_OBJECT,
     OVERLAY,
     UI,
     DEBUG
@@ -151,7 +152,7 @@ osu_on_map_init :: proc() {
         final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
     }
 
-    active_map.lead_in = preempt + 3000 + active_map.audio_lead_in
+    active_map.lead_in = preempt + active_map.audio_lead_in
     active_map.length_ms = final_hobj_time_ms + 1000
     active_map.play_timer_ms = -active_map.lead_in
 }
@@ -179,6 +180,58 @@ osu_on_update :: proc(dt: f64) {
     for &hit_object in game.active_map.hit_objects {
         render_hit_object(&window.renderer, &hit_object)
     }
+}
+
+check_game_input :: proc(event: sdl.Event) {
+    //osu_controller.k1_key = sdl.Scancode.Z
+    //osu_controller.k2_key = sdl.Scancode.X
+
+    if (event.type == sdl.EventType.KEY_DOWN) { //TODO(yokes): make this code shorter
+        if (event.key.scancode == osu_controller.k1_key) {
+            osu_controller.k1.is_down = true
+        }
+        if (event.key.scancode == osu_controller.k2_key) {
+            osu_controller.k2.is_down = true
+        }
+    }
+    if (event.type == sdl.EventType.KEY_UP) {
+        if (event.key.scancode == osu_controller.k1_key) {
+            osu_controller.k1.is_down = false
+        }
+        if (event.key.scancode == osu_controller.k2_key) {
+            osu_controller.k2.is_down = false
+        }
+    }
+    if (event.type == sdl.EventType.MOUSE_BUTTON_DOWN) {
+        if (event.button.button == sdl.BUTTON_LEFT) {
+            osu_controller.m1.is_down = true
+        }
+        if (event.button.button == sdl.BUTTON_RIGHT) {
+            osu_controller.m2.is_down = true
+        }
+    }
+    if (event.type == sdl.EventType.MOUSE_BUTTON_UP) {
+        if (event.button.button == sdl.BUTTON_LEFT) {
+            osu_controller.m1.is_down = false
+        }
+        if (event.button.button == sdl.BUTTON_RIGHT) {
+            osu_controller.m2.is_down = false
+        }
+    }
+}
+
+//NOTE(yokes): API for in-game button input
+
+is_held :: proc(button: Button_State) -> bool {
+    return button.is_down
+}
+
+is_pressed :: proc(button: Button_State) -> bool {
+    return button.is_down && !button.was_down
+}
+
+is_released :: proc(button: Button_State) -> bool {
+    return !button.is_down && button.was_down
 }
 
 split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> []Slider_Curve {
@@ -277,7 +330,8 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     // todo(isak):  generate partial instance draws (snaking) and the bounding quads like the smart cookie you are
 
     r_bind_pipeline({.SLIDER})
-    r_bind_framebuffer({ write = .SLIDERS })
+    r_bind_framebuffer({ write = .SLIDERS })    
+    r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
     r_clear()
 
     pf_size: f32 = 512/circle_radius_osupx
@@ -290,6 +344,7 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     })
     
     r_bind_framebuffer({ read = .SLIDERS })
+    r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
     r_bind_pipeline({.QUAD})
     
     r_push_transform(transform_from_bounds({0, 0, 1, 1}, 1))
@@ -302,11 +357,11 @@ render_timeline :: proc() {
     map_len_with_preempt := active_map.length_ms + preempt
 
     active_map_leadin_fract := f32(max(0, -active_map.play_timer_ms - preempt) / (active_map.lead_in - preempt))
-    active_map_finish_fract := f32((active_map.play_timer_ms + preempt) / map_len_with_preempt)
+    active_map_finish_fract := f32((active_map.play_timer_ms + active_map.lead_in) / map_len_with_preempt)
     
     r_push_transform(window_get_clipspace_transform())
     
-    timeline_h_px := 6 / window.rect.h
+    timeline_h_px := 4 / window.rect.h
     push_layout_rect(&window.renderer.quad_geometry, {0, 1, 1, timeline_h_px}, 
                      .BOTTOM_LEFT, with_alpha(color_white, 0.1))
     push_layout_rect(&window.renderer.quad_geometry, {0, 1, active_map_finish_fract, timeline_h_px}, 
@@ -315,6 +370,25 @@ render_timeline :: proc() {
         push_layout_rect(&window.renderer.quad_geometry, {0, 1, active_map_leadin_fract, timeline_h_px}, 
                          .BOTTOM_LEFT, with_alpha(color_lime_green, 0.2))
     }
+}
+
+render_input_display :: proc(geometry: ^Buffer(Quad)) {
+    render_input_key :: proc(key: Button_State, rect: Rect, anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
+        if is_pressed(key) {
+            push_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
+        } else if is_held(key) {
+            push_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
+        } else if is_released(key) {
+            push_layout_rect(&window.renderer.quad_geometry, rect, anchor, {0.2,0.2,0.2,1}, tex_index)
+        } else {
+            push_layout_rect(&window.renderer.quad_geometry, rect, anchor, {0.2,0.2,0.2,1}, tex_index)
+        }
+    }
+
+    render_input_key(osu_controller.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
+    render_input_key(osu_controller.k2, { window.rect.w, window.rect.h / 2,      30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
+    render_input_key(osu_controller.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
+    render_input_key(osu_controller.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
 }
 
 convert_approach_rate_to_preempt :: proc(ar: f64) -> f64 {

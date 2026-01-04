@@ -15,11 +15,11 @@ struct Vertex {
     vec2 uv;
 };
 
-layout(binding = 0, std140) readonly buffer vertexData {
+layout(binding = 1, std140) readonly buffer vertexData {
     GlyphQuad vertices[];
 };
 
-layout (binding = 5, std140) uniform transform {
+layout (binding = 3, std140) uniform transform {
     mat3 t;
 };
 

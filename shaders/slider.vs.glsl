@@ -6,13 +6,13 @@ struct Vertex {
     vec3 pos;
 };
 
-layout(binding = 3, std430) readonly buffer sliderVertexData {
+layout(binding = 1, std430) readonly buffer sliderVertexData {
     Vertex vertices[];
 };
-layout(binding = 4, std430) readonly buffer sliderInstanceData {
+layout(binding = 5, std430) readonly buffer sliderInstanceData {
     vec2 points[];
 };
-layout (binding = 5, std140) uniform transform {
+layout (binding = 3, std140) uniform transform {
     mat3 t;
 };
 

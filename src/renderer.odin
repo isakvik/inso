@@ -81,10 +81,9 @@ Renderer :: struct {
     new_draw_on_next_push: bool,
     current_layer: Layer,
     current_transform: Transform,
-    current_vertex_buffer: Command_Bind_SSBO,
-    current_index_buffer: Command_Bind_SSBO,
     current_pipeline: Command_Bind_Pipeline,
     current_framebuffer: Command_Bind_Framebuffer,
+    current_ssbo_binds: [Shader_SSBO_Bind_Slot]Command_Bind_SSBO,
 
     trace_frame: bool
 }
@@ -354,7 +353,8 @@ Command_Bind_Framebuffer :: struct {
 }
 
 Command_Bind_SSBO :: struct {
-    id, slot: u32,
+    id: u32,
+    slot: Shader_SSBO_Bind_Slot,
     size, offset: int
 }
 
@@ -365,27 +365,7 @@ command_push_draw              :: proc(cmd: Command_Draw) -> bool { return _comm
 command_push_draw_slider       :: proc(cmd: Command_Draw_Slider) -> bool { return _command_push(cmd, .DRAW_SLIDER) }
 command_push_bind_pipeline     :: proc(cmd: Command_Bind_Pipeline) -> bool { return _command_push(cmd, .BIND_PIPELINE) }
 command_push_bind_framebuffer  :: proc(cmd: Command_Bind_Framebuffer) -> bool { return _command_push(cmd, .BIND_FRAMEBUFFER) }
-
-
-command_push_bind_sbo :: proc(sbo: ^GL_Buffer($T), bind_index: u32) -> bool {
-    cmd := Command_Bind_SSBO{
-        id = sbo.id,
-        slot = bind_index,
-        size = sbo.size
-    }
-    return _command_push(cmd, .BIND_SSBO) 
-}
-
-command_push_bind_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_index: u32) -> bool {
-    cmd := Command_Bind_SSBO{
-        id = tbo.id,
-        slot = bind_index,
-        size = tbo.size,
-        offset = tbo.size * int(tbo.current_index)
-    }
-    window.renderer.current_vertex_buffer = cmd
-    return _command_push(cmd, .BIND_SSBO) 
-}
+command_push_bind_ssbo         :: proc(cmd: Command_Bind_SSBO) -> bool { return _command_push(cmd, .BIND_SSBO) }
 
 
 _command_push_header :: proc(type: Command_Type) -> bool {
@@ -413,6 +393,15 @@ _command_consume :: proc(cmd_queue: ^queue.Queue(u8), $T: typeid) -> ^T {
     cmd_ptr := (^T)(queue.front_ptr(cmd_queue))
     queue.consume_front(cmd_queue, size_of(T))
     return cmd_ptr
+}
+
+
+_r_push_ssbo :: proc(cmd: Command_Bind_SSBO) {
+    if cmd.slot != .NONE {
+        window.renderer.new_draw_on_next_push = true
+        window.renderer.current_ssbo_binds[cmd.slot] = cmd
+        command_push_bind_ssbo(cmd)
+    }
 }
 
 
@@ -445,59 +434,25 @@ r_bind_pipeline :: proc(cmd: Command_Bind_Pipeline) {
     command_push_bind_pipeline(cmd)
 }
 
-r_bind_vertex_buffer_sbo :: proc(sbo: ^GL_Buffer($T), bind_index: u32) {
-    cmd := Command_Bind_SSBO{
-        id = sbo.id,
-        slot = bind_index,
-        size = sbo.size
-    }
-    window.renderer.new_draw_on_next_push = true
-    window.renderer.current_vertex_buffer = cmd
-    _command_push(cmd, .BIND_SSBO)
+
+r_get_ssbo_cmd_from_sbo :: proc(sbo: ^GL_Buffer($T), bind_slot: Shader_SSBO_Bind_Slot) -> Command_Bind_SSBO {
+    return Command_Bind_SSBO{ sbo.id, bind_slot, sbo.size, 0 }
+}
+r_get_ssbo_cmd_from_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_slot: Shader_SSBO_Bind_Slot) -> Command_Bind_SSBO {
+    return Command_Bind_SSBO{ tbo.id, bind_slot, tbo.size, tbo.buffers[tbo.current_index].offset }
 }
 
-r_bind_vertex_buffer_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_index: u32) {
-    cmd := Command_Bind_SSBO{
-        id = tbo.id,
-        slot = bind_index,
-        size = tbo.size
-    }
-    window.renderer.new_draw_on_next_push = true
-    window.renderer.current_vertex_buffer = cmd
-    _command_push(cmd, .BIND_SSBO)
+r_bind_sbo :: proc(sbo: ^GL_Buffer($T), bind_index: Shader_SSBO_Bind_Slot) {
+    _r_push_ssbo(r_get_ssbo_cmd_from_sbo(sbo, bind_index))
+}
+r_bind_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_index: Shader_SSBO_Bind_Slot) {
+    _r_push_ssbo(r_get_ssbo_cmd_from_tbo(tbo, bind_index))
+}
+r_bind_ssbo :: proc {
+    r_bind_sbo,
+    r_bind_tbo
 }
 
-r_bind_vertex_buffer :: proc {
-    r_bind_vertex_buffer_sbo,
-    r_bind_vertex_buffer_tbo
-}
-
-r_bind_index_buffer_sbo :: proc(sbo: ^GL_Buffer($T), bind_index: u32) {
-    cmd := Command_Bind_SSBO{
-        id = sbo.id,
-        slot = bind_index,
-        size = sbo.size
-    }
-    window.renderer.new_draw_on_next_push = true
-    window.renderer.current_index_buffer = cmd
-    _command_push(cmd, .BIND_SSBO)
-}
-
-r_bind_index_buffer_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_index: u32) {
-    cmd := Command_Bind_SSBO{
-        id = tbo.id,
-        slot = bind_index,
-        size = tbo.size
-    }
-    window.renderer.new_draw_on_next_push = true
-    window.renderer.current_index_buffer = cmd
-    _command_push(cmd, .BIND_SSBO)
-}
-
-r_bind_index_buffer :: proc {
-    r_bind_index_buffer_sbo,
-    r_bind_index_buffer_tbo
-}
 
 r_push_transform :: proc(transform: Transform) {
     window.renderer.new_draw_on_next_push = true
@@ -509,12 +464,17 @@ r_pop_transform :: proc() {
     // todo(isak) implement
 }
 
-r_bind_layer :: proc(layer: Layer) {
+r_bind_layer :: proc(
+    layer: Layer,
+    cmd_framebuffer: Command_Bind_Framebuffer = window.renderer.current_framebuffer,
+    cmd_pipeline: Command_Bind_Pipeline = window.renderer.current_pipeline,
+    transform: Transform = window.renderer.current_transform
+) {
     window.renderer.current_layer = layer
-    command_push_bind_framebuffer(window.renderer.current_framebuffer)
-    command_push_bind_pipeline(window.renderer.current_pipeline)
-    _command_push(window.renderer.current_vertex_buffer, .BIND_SSBO)
-    command_push_push_transform({window.renderer.current_transform})
+    r_bind_framebuffer(cmd_framebuffer)
+    r_bind_pipeline(cmd_pipeline)
+    r_push_transform(transform)
+    _r_push_ssbo(window.renderer.current_ssbo_binds[.VERTEX_BUFFER])
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -555,10 +515,9 @@ batch_end :: proc(renderer: ^Renderer) {
     tbo_lock(&window.quad_store)
     tbo_lock(&window.text_store)
     
-    sbo_bind(&window.texture_buffer, 2)
-    sbo_bind(&window.circle_geo_buffer, 3)
-    sbo_bind(&window.slider_instance_store, 4)
-    ubo_bind(&window.transform_buffer, 5)
+    sbo_bind(&window.texture_buffer, u32(Shader_SSBO_Bind_Slot.TEXTURES))
+    ubo_bind(&window.transform_buffer, u32(Shader_SSBO_Bind_Slot.TRANSFORM))
+    sbo_bind(&window.slider_instance_store, u32(Shader_SSBO_Bind_Slot.INSTANCE_BUFFER))
 
     batch_process_command_buffer(renderer)
 }
@@ -639,7 +598,7 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                     
                     gl.BindBufferRange(
                         gl.SHADER_STORAGE_BUFFER,
-                        cmd.slot,
+                        u32(cmd.slot),
                         cmd.id,
                         cmd.offset,
                         cmd.size)

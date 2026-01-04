@@ -27,14 +27,25 @@ Framebuffer_ID :: enum {
     SLIDERS,
 }
 
-Reserved_Texture_Slots :: enum u32 {
+Shader_SSBO_Bind_Slot :: enum u32 {
+    NONE,
+    VERTEX_BUFFER,
+    INDEX_BUFFER,
+    TRANSFORM,
+    TEXTURES,
+    INSTANCE_BUFFER,
+}
+
+
+Reserved_Texture_Slot :: enum u32 {
     WHITE,
     PROFILER,
     FONT_ATLAS,
+    UI_ATLAS,
     SLIDER_FRAMEBUFFER
 }
 
-reserved_texture :: proc(slot: Reserved_Texture_Slots) -> u32 { return u32(slot) }
+reserved_texture :: proc(slot: Reserved_Texture_Slot) -> u32 { return u32(slot) }
 
 
 
@@ -112,14 +123,20 @@ text_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block { return {} }
 //////////////////////////////////////////////////////
 // note(isak): texture api
 
+/*
+    todo(isak): i don't actually know the texture resource limits; every resource being active at the same time
+    may break horrifically down the line, but at that point we should have a decent amount of test scenes for me 
+    to write a packing system or another way of handling multi-texture draws that doesn't hit the limit
+*/
 prepare_textures_for_rendering :: proc() {
     textures := &window.texture_buffer.data
 
-    textures[Reserved_Texture_Slots.WHITE] = window.white_texture.tex_handle
-    textures[Reserved_Texture_Slots.PROFILER] = window.profiler_texture.tex_handle
-    textures[Reserved_Texture_Slots.FONT_ATLAS] = window.font_atlas_texture.tex_handle
-    textures[Reserved_Texture_Slots.SLIDER_FRAMEBUFFER] = window.framebuffers[.SLIDERS].color_texture_handles[0]
-    num_elements := len(Reserved_Texture_Slots)
+    textures[Reserved_Texture_Slot.WHITE] = window.white_texture.tex_handle
+    textures[Reserved_Texture_Slot.PROFILER] = window.profiler_texture.tex_handle
+    textures[Reserved_Texture_Slot.FONT_ATLAS] = window.font_atlas_texture.tex_handle
+    textures[Reserved_Texture_Slot.UI_ATLAS] = window.ui_atlas_texture.tex_handle
+    textures[Reserved_Texture_Slot.SLIDER_FRAMEBUFFER] = window.framebuffers[.SLIDERS].color_texture_handles[0]
+    num_elements := len(Reserved_Texture_Slot)
 
     for element in Skin_Element {
         textures[num_elements] = window.skin_textures[element].tex_handle
@@ -134,7 +151,7 @@ prepare_textures_for_rendering :: proc() {
 cleanup_textures_for_rendering :: proc() {
     textures := &window.texture_buffer.data
     
-    num_elements := len(Reserved_Texture_Slots) + len(Skin_Element)
+    num_elements := len(Reserved_Texture_Slot) + len(Skin_Element)
     for i in 0..<num_elements {
         gl.MakeTextureHandleNonResidentARB(textures[i])
     }

@@ -263,7 +263,7 @@ profiler_push_quad :: proc(geometry: ^Buffer(Quad), frame_count: u64) {
     
     push_quad_with_uvs(geometry, {r.x,       r.y      }, {r.x + r.w, r.y + r.h},
                                  {0 + pixel_shift_clipspace, 0}, {1 + pixel_shift_clipspace, 1}, 
-                                 color_white, u32(Reserved_Texture_Slots.PROFILER))
+                                 color_white, u32(Reserved_Texture_Slot.PROFILER))
 }
 
 profiler_get_fps :: proc() -> f64 {

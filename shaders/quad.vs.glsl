@@ -11,13 +11,13 @@ struct Quad {
     uint texIndex;
 };
 
-layout(binding = 0, std430) readonly buffer vertexData {
+layout(binding = 1, std430) readonly buffer vertexData {
     Quad vertices[];
 };
-layout(binding = 1, std430) readonly buffer indexData {
+layout(binding = 2, std430) readonly buffer indexData {
     uint indices[];
 };
-layout (binding = 5, std140) uniform transform {
+layout (binding = 3, std140) uniform transform {
     mat3 t;
 };
 

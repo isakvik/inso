@@ -13,6 +13,7 @@ import "core:strings"
 
 import lua "vendor:lua/5.4"
 import miniaudio "vendor:miniaudio"
+import mu "vendor:microui"
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
@@ -26,24 +27,30 @@ core runtime info such as map time and objects
 - state buffer
 - graphics buffer (will be uploaded to gpu, loaded pipelines (shaders) work with it)
     are these just defined as lua metatables?
+- expose rendering and resource api
 
 -- todos
 
 general:
 ui core (map selector, skin select?)
-.osu support
+"full" .osu support (no sb, editor features, osu integration)
 
 play mode:
 audio play (miniaudio)
     desync proofing (always wait for sound to be able to be played, like osu (so device errors will just freeze the game))
+    multiple channels, 
 input handling
 
 figure out if we need some graphical core of a playfield (i'm thinking we have some default implementation; optionally hide it and let people render whatever based on mapset data)
 
 editor mode:
 (viewer mode only? edit functionality is probably low priority, osu can be used for the map)
-automatic reload
 scrubbing support (jump to arbitrary time, display content)
+
+eventual YEAST on-scene features:
+local networking
+    multiple client sync
+    potentially display other client cursors? w
 
 */
 
@@ -60,11 +67,11 @@ memory_arena_names := [?]string {
 }
 
 memory: struct {
-    global_allocator: runtime.Allocator, // cleared on mapset load
+    global_allocator: runtime.Allocator,
     global_arena: virtual.Arena,
-    // note(isak): this is to be used for mapset runtime data, such as timing state, 
-    // judgements, etc. (fill in)
-    mapset_allocator: runtime.Allocator, // cleared on mapset load
+    // note(isak): this is to be used for mapset runtime data, such as timing state, judgements, etc. (fill in)
+    // cleared on mapset reload/unload
+    mapset_allocator: runtime.Allocator,
     mapset_arena: virtual.Arena,
     
     // cleared on frame end
@@ -97,6 +104,10 @@ window: struct {
 
     handle: ^sdl.Window,
     gl_context: sdl.GLContext,
+    
+    ui_ctx: mu.Context,
+    
+    // note(isak): graphical resources used by the drawing context go here 
 
     bindings: sg.Bindings,
     pass_action: sg.Pass_Action,
@@ -126,6 +137,7 @@ window: struct {
     white_texture: Texture,
     profiler_texture: Texture,
     font_atlas_texture: Texture,
+    ui_atlas_texture: Texture,
 
     skin_textures: [Skin_Element]Texture,
 }
@@ -211,81 +223,19 @@ rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
     }
 }
 
-check_game_input :: proc(event: sdl.Event) {
-    //osu_controller.k1_key = sdl.Scancode.Z
-    //osu_controller.k2_key = sdl.Scancode.X
-
-    if (event.type == sdl.EventType.KEY_DOWN) { //TODO(yokes): make this code shorter
-        if (event.key.scancode == osu_controller.k1_key) {
-            osu_controller.k1.is_down = true
-        }
-        if (event.key.scancode == osu_controller.k2_key) {
-            osu_controller.k2.is_down = true
-        }
-    }
-    if (event.type == sdl.EventType.KEY_UP) {
-        if (event.key.scancode == osu_controller.k1_key) {
-            osu_controller.k1.is_down = false
-        }
-        if (event.key.scancode == osu_controller.k2_key) {
-            osu_controller.k2.is_down = false
-        }
-    }
-    if (event.type == sdl.EventType.MOUSE_BUTTON_DOWN) {
-        if (event.button.button == sdl.BUTTON_LEFT) {
-            osu_controller.m1.is_down = true
-        }
-        if (event.button.button == sdl.BUTTON_RIGHT) {
-            osu_controller.m2.is_down = true
-        }
-    }
-    if (event.type == sdl.EventType.MOUSE_BUTTON_UP) {
-        if (event.button.button == sdl.BUTTON_LEFT) {
-            osu_controller.m1.is_down = false
-        }
-        if (event.button.button == sdl.BUTTON_RIGHT) {
-            osu_controller.m2.is_down = false
-        }
-    }
+audio_ctx: struct {
+    g_engine: miniaudio.engine,
+    g_sound: miniaudio.sound,
 }
 
-//NOTE(yokes): API for in-game button input
-is_held :: proc(button: Button_State) -> bool {
-    return button.is_down
-}
-
-is_pressed :: proc(button: Button_State) -> bool {
-    return button.is_down && !button.was_down
-}
-
-is_released :: proc(button: Button_State) -> bool {
-    return !button.is_down && button.was_down
-}
-
-input_display :: proc(key: Button_State, rect: Rect, anchor: Layout_Anchor, color: vec4, tex_index: u32 = 0) {
-    if is_pressed(key) {
-        push_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
-    } else if is_held(key) {
-        push_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
-    } else if is_released(key) {
-        push_layout_rect(&window.renderer.quad_geometry, rect, anchor, {0.2,0.2,0.2,1}, tex_index)
-    } else {
-        push_layout_rect(&window.renderer.quad_geometry, rect, anchor, {0.2,0.2,0.2,1}, tex_index)
-        //push_layout_rect(&window.renderer, key_input_rect, .BOTTOM_RIGHT, {0.5,0.5,0.5,1})
-    }
-}
-
-g_engine: miniaudio.engine
-g_sound: miniaudio.sound
-
-data_callback :: proc "c" (pUserData: rawptr, pStream: ^sdl.AudioStream, additional_amount, total_amount: i32) {
+miniaudio_data_callback :: proc "c" (pUserData: rawptr, pStream: ^sdl.AudioStream, additional_amount, total_amount: i32) {
     numSamples := additional_amount / size_of(f32)
     numFrames := u64(numSamples / 2)
     numFramesRead: u64
-    g_sound := transmute(^miniaudio.sound)pUserData
+    sound := transmute(^miniaudio.sound)pUserData
     samples: [1024]f32
     
-    miniaudio.data_source_read_pcm_frames(g_sound.pDataSource, raw_data(&samples), numFrames, &numFramesRead)
+    miniaudio.data_source_read_pcm_frames(sound.pDataSource, raw_data(&samples), numFrames, &numFramesRead)
     sdl.PutAudioStreamData(pStream, raw_data(&samples), i32(numFramesRead * size_of(f32) * 2))
 }
 
@@ -346,26 +296,26 @@ main :: proc() {
         engineConfig.sampleRate = u32(obtainedSpec.freq)
         engineConfig.noDevice = true
     
-        result = miniaudio.engine_init(&engineConfig, &g_engine)
+        result = miniaudio.engine_init(&engineConfig, &audio_ctx.g_engine)
         if (result != .SUCCESS) {
             fmt.printf("Failed to initialize audio engine.")
             return
         }
     
-        result = miniaudio.sound_init_from_file(&g_engine, "songs/test/test.mp3", {.STREAM}, nil, nil, &g_sound)
+        result = miniaudio.sound_init_from_file(&audio_ctx.g_engine, "songs/test/test.mp3", {.STREAM}, nil, nil, &audio_ctx.g_sound)
         if (result != .SUCCESS) {
             fmt.printf("Failed to initialize sound.")
             return
         }
     
         // Register the callback, passing a pointer to the sound object as user data
-        sdl.SetAudioStreamGetCallback(stream, data_callback, &g_sound);
+        sdl.SetAudioStreamGetCallback(stream, miniaudio_data_callback, &audio_ctx.g_sound);
     
         // Bind the stream to a logical audio device
         sdl.BindAudioStreams(deviceID, &stream, 1);
         
         sdl.ResumeAudioDevice(deviceID)
-        miniaudio.sound_start(&g_sound)
+        miniaudio.sound_start(&audio_ctx.g_sound)
     }
 
     window_init({w = 1024, h = 512})
@@ -376,7 +326,28 @@ main :: proc() {
     defer renderer_cleanup()
 
     window_resize(i32(window.rect.w), i32(window.rect.h))
-    
+
+    mu_init :: proc() {
+        mu.init(&window.ui_ctx)
+        window.ui_ctx.text_width = mu.default_atlas_text_width
+        window.ui_ctx.text_height = mu.default_atlas_text_height
+
+        pixels := make([][4]u8, mu.DEFAULT_ATLAS_WIDTH*mu.DEFAULT_ATLAS_HEIGHT)
+        defer delete(pixels)
+        for alpha, i in mu.default_atlas_alpha {
+            pixels[i] = {0xff, 0xff, 0xff, alpha}
+        }
+        
+        window.ui_atlas_texture = texture_from_data(
+            width = mu.DEFAULT_ATLAS_WIDTH,
+            height = mu.DEFAULT_ATLAS_HEIGHT,
+            data = raw_data(pixels),
+            internal_format = gl.RGBA8,
+            format = gl.RGBA,
+        )
+    }
+
+    mu_init()
     text_init()
     
     load_skin_textures("skins/gn/")
@@ -511,18 +482,15 @@ main :: proc() {
             r_push_transform(window_get_screenspace_transform())
             
             // game update
-            input_display(osu_controller.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
-            input_display(osu_controller.k2, { window.rect.w, window.rect.h / 2,      30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
-            input_display(osu_controller.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
-            input_display(osu_controller.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 }, .BOTTOM_RIGHT, {0.7,0.7,0.7,1})
-            
-            cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 80, 80 }
-            push_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture_slot(.CURSOR))
+            render_input_display(&renderer.quad_geometry)            
             
             if selection_active {
                 push_rect_outline_fill(&window.renderer.quad_geometry, rect_from_points(mouse.pos, selection_start_mouse_pos), 
                                        color_sky_blue, with_alpha(color_sky_blue, 0.3), 1)
             }
+            
+            cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 80, 80 }
+            push_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture_slot(.CURSOR))
 
             r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
             push_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
@@ -534,9 +502,9 @@ main :: proc() {
             /*
                 todo(isak): state of the renderer:
                 usage:
+                - the rect pushing in the draw section is artificial; only end_frame() needs to happen here
+                    and maybe also profiler calls
                 - batch overrun has not been tested but won't work; it should run end_frame().. probably
-                - the rect pushing in the draw section is artificial; only text_end_frame() and 
-                    end_frame() need to happen here
                 - transforms should be a dynamic stack that we just write as we process the frame; can save a bunch
                     of draw calls
             */
@@ -562,8 +530,7 @@ main :: proc() {
             
             r_push_transform(window_get_screenspace_transform())
 
-            push_text(renderer, "Hello, world!", {100, 100})
-            push_text(renderer, "饕餮尤魔 :3", {200, 200}, size=24)
+            push_text(renderer, "饕餮尤魔 :3", {100, 100}, size=24)
             
             game_timer_str := fmt.tprintf("%.3f", game.active_map.play_timer_ms)
             push_text(renderer, game_timer_str, {20, 20}, size = 22)
@@ -574,13 +541,18 @@ main :: proc() {
             if debug_info.display_memory_profiler {
                 profiler_push_memory_diag_text(renderer)
             }
+            
+            r_bind_layer(.DEBUG, transform = window_get_screenspace_transform())
+            mu.begin(&window.ui_ctx)
+            render_debug_ui(&window.ui_ctx)
+            mu.end(&window.ui_ctx)
 
             end_frame(renderer)
         }
 
         {
             profiler_block_begin(.SWAP_FRAME); defer profiler_block_end() 
-            swap_frame()
+            sdl.GL_SwapWindow(window.handle)
         }
         
         {
@@ -606,6 +578,10 @@ main :: proc() {
     }
 }
 
+render_debug_ui :: proc(ctx: ^mu.Context) {
+
+}
+
 begin_frame :: proc(renderer: ^Renderer) {
     sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
     
@@ -614,10 +590,9 @@ begin_frame :: proc(renderer: ^Renderer) {
     r_bind_pipeline({.QUAD})
     r_push_transform(renderer.default_transform)
 
-    command_push_bind_framebuffer(window.renderer.current_framebuffer)
-    command_push_bind_pipeline(window.renderer.current_pipeline)
-    command_push_bind_tbo(&window.quad_store, 0)
-    command_push_push_transform({window.renderer.current_transform})
+    r_bind_framebuffer(window.renderer.current_framebuffer)
+    r_bind_pipeline(window.renderer.current_pipeline)
+    r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
     
     renderer.transform_queue.len = 0
 }
@@ -627,11 +602,6 @@ end_frame :: proc(renderer: ^Renderer) {
 
     profiler_collect_command_buffer_memory_data()
     batch_end(renderer)
-}
-
-// note(isak): stolen wisdom; this is its own profiler section
-swap_frame :: proc() {
-    sdl.GL_SwapWindow(window.handle)
 }
 
 process_builtin_shader_changes :: proc(watch: ^Win32_Directory_Watch) {

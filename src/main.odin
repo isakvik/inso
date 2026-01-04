@@ -510,6 +510,23 @@ main :: proc() {
             */
             profiler_block_begin(.GAME_DRAW); defer profiler_block_end()
 
+            for i in 0..<1 {
+                render_slider(renderer, &test_slider)
+            }
+            
+            r_bind_layer(.DEBUG, transform = window_get_screenspace_transform())
+
+            push_text(renderer, "饕餮尤魔 :3", {100, 100}, size=24)
+            game_timer_str := fmt.tprintf("%.3f", game.active_map.play_timer_ms)
+            push_text(renderer, game_timer_str, {20, 20}, size = 22)
+            
+            if debug_info.display_frame_profiler {
+                profiler_push_blocks_as_text(renderer, frame_count)
+            }
+            if debug_info.display_memory_profiler {
+                profiler_push_memory_diag_text(renderer)
+            }
+
             if debug_info.display_fontatlas {
                 r_push_transform(window_get_screenspace_transform())
                 push_rect(&renderer.quad_geometry,
@@ -523,26 +540,6 @@ main :: proc() {
                 profiler_push_quad(&renderer.quad_geometry, frame_count)
             }
 
-            for i in 0..<1 {
-                render_slider(renderer, &test_slider)
-            }
-            r_bind_framebuffer({})
-            
-            r_push_transform(window_get_screenspace_transform())
-
-            push_text(renderer, "饕餮尤魔 :3", {100, 100}, size=24)
-            
-            game_timer_str := fmt.tprintf("%.3f", game.active_map.play_timer_ms)
-            push_text(renderer, game_timer_str, {20, 20}, size = 22)
-            
-            if debug_info.display_frame_profiler {
-                profiler_push_blocks_as_text(renderer, frame_count)
-            }
-            if debug_info.display_memory_profiler {
-                profiler_push_memory_diag_text(renderer)
-            }
-            
-            r_bind_layer(.DEBUG, transform = window_get_screenspace_transform())
             mu.begin(&window.ui_ctx)
             render_debug_ui(&window.ui_ctx)
             mu.end(&window.ui_ctx)

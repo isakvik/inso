@@ -29,7 +29,9 @@ Quad :: struct {
     uv_min:    vec2,
     uv_max:    vec2,
     color:     u32,
-    tex_index: u32
+    tex_index: u32,
+    angle:     f32,
+    padding:   [1]u32
 }
 
 Slider_Vertex :: struct {
@@ -37,8 +39,6 @@ Slider_Vertex :: struct {
     __padding: u32,
 }
 
-
-Transform :: mat4
 
 Geometry_Buffer :: struct(T: typeid) {
     vertices: Buffer(T),
@@ -50,6 +50,11 @@ Draw_Call :: struct {
     index_count: i32,
     base_instance: u32,
     instance_count: i32,
+}
+
+Shader_Globals :: struct {
+    t: Transform,
+    time: f32
 }
 
 Renderer :: struct {
@@ -71,7 +76,7 @@ Renderer :: struct {
     
     new_draw_on_next_push: bool,
     current_layer: Layer,
-    current_transform: Transform,
+    current_global_data: Shader_Globals,
     current_scissor: Command_Scissor_Mode,
     current_pipeline: Command_Bind_Pipeline,
     current_framebuffer: Command_Bind_Framebuffer,
@@ -130,15 +135,15 @@ renderer_init :: proc() {
     })
 
     err: Shader_Error
-    window.shaders[.QUAD], err = init_shader(quad_vs_path, quad_fs_path, quad_uniform_desc())
+    window.shaders[.QUAD], err = shader_init(quad_vs_path, quad_fs_path, quad_uniform_desc())
     assert(err == .NONE)
     window.pipelines[.QUAD] = sg.make_pipeline(quad_pipeline())
 
-    window.shaders[.SLIDER], err = init_shader(slider_vs_path, slider_fs_path, slider_uniform_desc())
+    window.shaders[.SLIDER], err = shader_init(slider_vs_path, slider_fs_path, slider_uniform_desc())
     assert(err == .NONE)
     window.pipelines[.SLIDER] = sg.make_pipeline(slider_pipeline())
     
-    window.shaders[.TEXT], err = init_shader(text_vs_path, text_fs_path, text_uniform_desc())
+    window.shaders[.TEXT], err = shader_init(text_vs_path, text_fs_path, text_uniform_desc())
     assert(err == .NONE)
     window.pipelines[.TEXT] = sg.make_pipeline(text_pipeline())
 
@@ -152,7 +157,7 @@ renderer_init :: proc() {
     window.fullscreen_store = sbo_init(Quad, 4)
     window.texture_buffer = sbo_init(u64, MAX_TEXTURE_HANDLES)
     
-    window.transform_buffer = ubo_init(Transform, 1)
+    window.shader_global_buffer = ubo_init(Shader_Globals, 1)
 
 
     window.pass_action = { 
@@ -192,14 +197,14 @@ renderer_init :: proc() {
     //
 
     fullscreen_geometry := buffer_init(MAX_BATCH_VERTICES, window.fullscreen_store.data)
-    push_rect(&fullscreen_geometry, {0,0,1,1}, with_alpha(color_white, 0.5), reserved_texture(.SLIDER_FRAMEBUFFER))
+    r_draw_rect(&fullscreen_geometry, {0,0,1,1}, with_alpha(color_white, 0.5), reserved_texture(.SLIDER_FRAMEBUFFER))
     
     //
     
     renderer.text_geometry.size = MAX_BATCH_VERTICES
     
-    renderer.current_transform = identity_transform
-    commit_transform(renderer.current_transform)
+    renderer.current_global_data = {identity_transform, 0}
+    gl.NamedBufferSubData(window.shader_global_buffer.id, 0, size_of(Shader_Globals), &renderer.current_global_data)
 
     renderer.slider_instances = buffer_init(MAX_SLIDER_INSTANCES, window.slider_instance_store.data)
 
@@ -219,7 +224,7 @@ renderer_cleanup :: proc() {
     sbo_cleanup(&window.texture_buffer)
     sbo_cleanup(&window.slider_instance_store)
 
-    ubo_cleanup(&window.transform_buffer)
+    ubo_cleanup(&window.shader_global_buffer)
 }
 
 
@@ -239,7 +244,7 @@ Shader :: struct {
     uniform_desc: [8]sg.Shader_Uniform_Block
 }
 
-init_shader :: proc(vs_path, fs_path: string, uniform_desc: [8]sg.Shader_Uniform_Block) -> (Shader, Shader_Error) {
+shader_init :: proc(vs_path, fs_path: string, uniform_desc: [8]sg.Shader_Uniform_Block) -> (Shader, Shader_Error) {
     vs_filedata, vs_err := read_entire_file(vs_path)
     if vs_err != os.ERROR_NONE {
         fmt.printfln("loading vert shader file '{}' failed: {}", vs_path, vs_err)
@@ -275,8 +280,8 @@ init_shader :: proc(vs_path, fs_path: string, uniform_desc: [8]sg.Shader_Uniform
     return {}, .COMPILE_ERROR
 }
 
-reinit_shader :: proc(shader: ^Shader) -> Shader_Error {
-    new_shader, err := init_shader(shader.vs_path, shader.fs_path, shader.uniform_desc)
+shader_reinit :: proc(shader: ^Shader) -> Shader_Error {
+    new_shader, err := shader_init(shader.vs_path, shader.fs_path, shader.uniform_desc)
     if err != .NONE {
         assert(err == .COMPILE_ERROR)
         fmt.println("Shader compile errors found. Paths:", shader.vs_path, shader.fs_path)
@@ -287,7 +292,7 @@ reinit_shader :: proc(shader: ^Shader) -> Shader_Error {
     return err
 }
 
-reinit_pipeline :: proc(pipeline: ^sg.Pipeline, pipeline_desc: sg.Pipeline_Desc) {
+pipeline_reinit :: proc(pipeline: ^sg.Pipeline, pipeline_desc: sg.Pipeline_Desc) {
     sg.destroy_pipeline(pipeline^)
     pipeline^ = sg.make_pipeline(pipeline_desc)
 }
@@ -392,6 +397,8 @@ _command_consume :: proc(cmd_queue: ^queue.Queue(u8), $T: typeid) -> ^T {
     return cmd_ptr
 }
 
+//////////////////////////////////////////////////////
+// note(isak): core renderer api
 
 _r_push_ssbo :: proc(cmd: Command_Bind_SSBO) {
     if cmd.slot != .NONE {
@@ -432,29 +439,42 @@ r_bind_pipeline :: proc(cmd: Command_Bind_Pipeline) {
 }
 
 
-r_get_ssbo_cmd_from_sbo :: proc(sbo: ^GL_Buffer($T), bind_slot: Shader_SSBO_Bind_Slot) -> Command_Bind_SSBO {
+_r_get_ssbo_cmd_from_sbo :: proc(sbo: ^GL_Buffer($T), bind_slot: Shader_SSBO_Bind_Slot) -> Command_Bind_SSBO {
     return Command_Bind_SSBO{ sbo.id, bind_slot, sbo.size, 0 }
 }
-r_get_ssbo_cmd_from_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_slot: Shader_SSBO_Bind_Slot) -> Command_Bind_SSBO {
+_r_get_ssbo_cmd_from_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_slot: Shader_SSBO_Bind_Slot) -> Command_Bind_SSBO {
     return Command_Bind_SSBO{ tbo.id, bind_slot, tbo.size, tbo.buffers[tbo.current_index].offset }
 }
 
 r_bind_sbo :: proc(sbo: ^GL_Buffer($T), bind_index: Shader_SSBO_Bind_Slot) {
-    _r_push_ssbo(r_get_ssbo_cmd_from_sbo(sbo, bind_index))
+    _r_push_ssbo(_r_get_ssbo_cmd_from_sbo(sbo, bind_index))
 }
 r_bind_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_index: Shader_SSBO_Bind_Slot) {
-    _r_push_ssbo(r_get_ssbo_cmd_from_tbo(tbo, bind_index))
+    _r_push_ssbo(_r_get_ssbo_cmd_from_tbo(tbo, bind_index))
 }
 r_bind_ssbo :: proc {
     r_bind_sbo,
     r_bind_tbo
 }
 
+/*
+    note(isak): 2D transforms are tricky - we use them to define the coordinate system that spans the
+    window without distortion. we do these calculations on the GPU using the bounds rect and the 
+    aspect ratio of the window, which are uploaded using commit_transform.
 
+    a rect of [0,0,1,1] means the points (0,0) and (1,1) would touch opposite corners of a square area
+    placed in the middle of the window (note: only when the aspect ratio <= 1). a rect of 
+    [0, 0, window_width, window_height ] is used with an aspect_ratio of 1 to create a pixel-perfect
+    screen transform, such that w=1, h=1 corresponds to one pixel.
+*/
 r_push_transform :: proc(transform: Transform) {
     window.renderer.new_draw_on_next_push = true
-    window.renderer.current_transform = transform
+    window.renderer.current_global_data.t = transform
     command_push_push_transform({transform})
+}
+
+r_pop_transform :: proc() {
+    // todo(isak) implement
 }
 
 r_begin_scissor_mode :: proc(x, y, width, height: i32) {
@@ -468,30 +488,37 @@ r_end_scissor_mode :: proc() {
     r_begin_scissor_mode(0, 0, i32(window.rect.w), i32(window.rect.h))
 }
 
-r_pop_transform :: proc() {
-    // todo(isak) implement
-}
-
 /*
     note(isak): layers are processed sequentially via the command buffer system (for transparency blending purposes). 
     this means that if render procedures/scripts are run without matching this order, we might have state issues
     since the bound state at the end of a layer might not match what one would expect from reading the code.
-    we guard against this by pushing the currently bound state on layer switch, but this means switching often
-    might be bad for performance, so try to not do that. 
+    
     (maybe just keeping state per layer is better? this may require some discipline though.)
 */
-r_bind_layer :: proc(
-    layer: Layer,
+_r_bind_layer :: proc(layer: Layer) {
+    window.renderer.current_layer = layer
+}
+
+r_push_layer :: proc(layer: Layer,    
     cmd_framebuffer: Command_Bind_Framebuffer = window.renderer.current_framebuffer,
     cmd_pipeline: Command_Bind_Pipeline = window.renderer.current_pipeline,
-    transform: Transform = window.renderer.current_transform,
+    transform: Transform = window.renderer.current_global_data.t,
     scissor_region: Command_Scissor_Mode = window.renderer.current_scissor
 ) {
-    window.renderer.current_layer = layer
+    _r_bind_layer(layer)
+    r_push_current_state(cmd_framebuffer, cmd_pipeline, transform, scissor_region)
+}
+
+r_push_current_state :: proc(
+    cmd_framebuffer: Command_Bind_Framebuffer = window.renderer.current_framebuffer,
+    cmd_pipeline: Command_Bind_Pipeline = window.renderer.current_pipeline,
+    transform: Transform = window.renderer.current_global_data.t,
+    scissor_region: Command_Scissor_Mode = window.renderer.current_scissor
+) {
     r_bind_framebuffer(cmd_framebuffer)
     r_bind_pipeline(cmd_pipeline)
-    r_begin_scissor_mode(scissor_region.x, scissor_region.y, scissor_region.width, scissor_region.height)
     r_push_transform(transform)
+    r_begin_scissor_mode(scissor_region.x, scissor_region.y, scissor_region.width, scissor_region.height)
 
     for ssbo_slot in Shader_SSBO_Bind_Slot {
         _r_push_ssbo(window.renderer.current_ssbo_binds[ssbo_slot])
@@ -499,21 +526,17 @@ r_bind_layer :: proc(
 }
 
 ///////////////////////////////////////////////////////////////////////////
-// note(isak): draw api - PS: we use our nice global window.renderer here to make the api easier
+// note(isak): renderer control api
 
-/*
-    note(isak): 2D transforms are tricky - we use them to define the coordinate system that spans the
-    window without distortion. we do these calculations on the GPU using the bounds rect and the 
-    aspect ratio of the window, which are uploaded using commit_transform.
+commit_time :: proc(time: f32) {
+    time := time
+    gl.NamedBufferSubData(window.shader_global_buffer.id, 
+                          int(offset_of_by_string(Shader_Globals, "time")), size_of(f32), &time)
+}
 
-    a rect of [0,0,1,1] means the points (0,0) and (1,1) would touch opposite corners of a square area
-    placed in the middle of the window (note: only when the aspect ratio <= 1). a rect of 
-    [0, 0, window_width, window_height ] is used with an aspect_ratio of 1 to create a pixel-perfect
-    screen transform, such that w=1, h=1 corresponds to one pixel.
-*/
 commit_transform :: proc(transform: Transform) {
     transform := transform
-    gl.NamedBufferSubData(window.transform_buffer.id, 0, window.transform_buffer.size, &transform)
+    gl.NamedBufferSubData(window.shader_global_buffer.id, 0, size_of(transform), &transform)
 }
 
 batch_begin :: proc(renderer: ^Renderer) {
@@ -532,7 +555,7 @@ batch_end :: proc(renderer: ^Renderer) {
     tbo_lock(&window.text_store)
     
     sbo_bind(&window.texture_buffer, u32(Shader_SSBO_Bind_Slot.TEXTURES))
-    ubo_bind(&window.transform_buffer, u32(Shader_SSBO_Bind_Slot.TRANSFORM))
+    ubo_bind(&window.shader_global_buffer, u32(Shader_SSBO_Bind_Slot.TRANSFORM))
     sbo_bind(&window.slider_instance_store, u32(Shader_SSBO_Bind_Slot.INSTANCE_BUFFER))
 
     batch_process_command_buffer(renderer)
@@ -643,8 +666,11 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
 }
 
 
-push_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2, 
-                          color: Color, tex_index: u32) {
+///////////////////////////////////////////////////////////////////////////
+// note(isak): draw api - PS: we use our nice global window.renderer here to make the api easier
+
+r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2, 
+                          color: Color, tex_index: u32, angle: f32 = 0) {
     assert(window.renderer.current_draw != nil)
 
     if geometry.count + 4 > MAX_BATCH_VERTICES {
@@ -667,7 +693,8 @@ push_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_
             uv_min = uv_min,
             uv_max = uv_max,
             color = transmute(u32)color,
-            tex_index = tex_index
+            tex_index = tex_index,
+            angle = angle
         }
 
         geometry.count += 1
@@ -675,61 +702,66 @@ push_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_
     }
 }
 
-push_quad :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2, color: Color, tex_index: u32 = 0) {
-    push_quad_with_uv(geometry, 
+r_draw_quad :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2, 
+                    color: Color, tex_index: u32 = 0, angle: f32 = 0) {
+    r_draw_quad_with_uv(geometry, 
                       pos_min, pos_max, 
                       uv_min, uv_max, 
-                      color, tex_index)
+                      color, tex_index, angle)
 }
 
-push_rect :: proc(geometry: ^Buffer(Quad), r: Rect, color: Color, tex_index: u32 = 0) {
-    push_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h}, 
-                                {0, 0}, {1, 1}, color, tex_index)
+r_draw_rect :: proc(geometry: ^Buffer(Quad), r: Rect,
+                    color: Color, tex_index: u32 = 0, angle: f32 = 0) {
+    r_draw_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h}, 
+                                {0, 0}, {1, 1}, color, tex_index, angle)
 }
 
-push_rect_with_uv :: proc(geometry: ^Buffer(Quad), r, uv: Rect, color: Color, tex_index: u32 = 0) {
-    push_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h}, 
-                                {uv.x, uv.y}, {uv.x + uv.w, uv.y + uv.h}, color, tex_index)
+r_draw_rect_with_uv :: proc(geometry: ^Buffer(Quad), r, uv: Rect, 
+                            color: Color, tex_index: u32 = 0, angle: f32 = 0) {
+    r_draw_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h}, 
+                                {uv.x, uv.y}, {uv.x + uv.w, uv.y + uv.h}, color, tex_index, angle)
 }
 
-push_layout_rect :: proc(geometry: ^Buffer(Quad), rect: Rect, anchor: Layout_Anchor, color: Color = color_white, tex_index: u32 = 0) {
-    push_rect(geometry, rect_translate_by_anchor(rect, anchor), color, tex_index) 
+r_draw_layout_rect :: proc(geometry: ^Buffer(Quad), rect: Rect, anchor: Layout_Anchor, 
+                           color: Color = color_white, tex_index: u32 = 0, angle: f32 = 0) {
+    r_draw_rect(geometry, rect_translate_by_anchor(rect, anchor), color, tex_index, angle) 
 }
 
 
 // todo(isak): thickness doesn't really work anymore... should prolly fetch scale from current transform
-push_rect_outline :: proc(geometry: ^Buffer(Quad), rect: Rect, color: Color, thickness_px: f32) {
-    xform := window.renderer.current_transform
+// todo(isak): add angle, but that requires placing the rects on the middle of each side with respect to it
+r_draw_rect_outline :: proc(geometry: ^Buffer(Quad), rect: Rect, color: Color, thickness_px: f32) {
+    xform := window.renderer.current_global_data
 
     offset: f32 = math.mod(thickness_px, 2)
     thickness_y: f32 = thickness_px
     thickness_x: f32 = thickness_px
     
     // top
-    push_rect(geometry, Rect{ rect.x - (thickness_y + offset)/2,
+    r_draw_rect(geometry, Rect{ rect.x - (thickness_y + offset)/2,
                               rect.y - (thickness_y + offset)/2, 
                               rect.w + thickness_y, 
                               thickness_y }, color)
     // bottom
-    push_rect(geometry, Rect{ rect.x - (thickness_y + offset)/2, 
+    r_draw_rect(geometry, Rect{ rect.x - (thickness_y + offset)/2, 
                               rect.y + rect.h - (thickness_y + offset)/2, 
                               rect.w + thickness_y, 
                               thickness_y }, color)
     // left
-    push_rect(geometry, Rect{ rect.x - (thickness_y + offset)/2, 
+    r_draw_rect(geometry, Rect{ rect.x - (thickness_y + offset)/2, 
                               rect.y - (offset)/2, 
                               thickness_x, 
                               rect.h - thickness_y/2 }, color)
     // right
-    push_rect(geometry, Rect{ rect.x - (thickness_y + offset)/2 + rect.w, 
+    r_draw_rect(geometry, Rect{ rect.x - (thickness_y + offset)/2 + rect.w, 
                               rect.y - (offset)/2, 
                               thickness_x, 
                               rect.h - thickness_y/2 }, color)
 }
 
-push_rect_outline_fill :: proc(geometry: ^Buffer(Quad), rect: Rect, color_outline, color_fill: Color, thickness_px: f32) {
-    push_rect(geometry, rect, color_fill)
-    push_rect_outline(geometry, rect, color_outline, thickness_px)
+r_draw_rect_outline_fill :: proc(geometry: ^Buffer(Quad), rect: Rect, color_outline, color_fill: Color, thickness_px: f32) {
+    r_draw_rect(geometry, rect, color_fill)
+    r_draw_rect_outline(geometry, rect, color_outline, thickness_px)
 }
 
 

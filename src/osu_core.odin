@@ -142,7 +142,7 @@ osu_on_map_init :: proc() {
     make_test_instances(&test_slider)
     write_instances_from_path(&window.renderer.slider_instances, &test_slider, memory.mapset_allocator)
     
-    preempt: f64 = convert_approach_rate_to_preempt(game.active_map.diff_approach_rate)
+    preempt: f64 = convert_approach_rate_to_preempt_ms(game.active_map.diff_approach_rate)
     
     active_map := game.active_map
 
@@ -182,58 +182,6 @@ osu_on_update :: proc(dt: f64) {
     for &hit_object in game.active_map.hit_objects {
         render_hit_object(&window.renderer, &hit_object)
     }
-}
-
-check_game_input :: proc(event: sdl.Event) {
-    //osu_controller.k1_key = sdl.Scancode.Z
-    //osu_controller.k2_key = sdl.Scancode.X
-
-    if (event.type == sdl.EventType.KEY_DOWN) { //TODO(yokes): make this code shorter
-        if (event.key.scancode == osu_controller.k1_key) {
-            osu_controller.k1.is_down = true
-        }
-        if (event.key.scancode == osu_controller.k2_key) {
-            osu_controller.k2.is_down = true
-        }
-    }
-    if (event.type == sdl.EventType.KEY_UP) {
-        if (event.key.scancode == osu_controller.k1_key) {
-            osu_controller.k1.is_down = false
-        }
-        if (event.key.scancode == osu_controller.k2_key) {
-            osu_controller.k2.is_down = false
-        }
-    }
-    if (event.type == sdl.EventType.MOUSE_BUTTON_DOWN) {
-        if (event.button.button == sdl.BUTTON_LEFT) {
-            osu_controller.m1.is_down = true
-        }
-        if (event.button.button == sdl.BUTTON_RIGHT) {
-            osu_controller.m2.is_down = true
-        }
-    }
-    if (event.type == sdl.EventType.MOUSE_BUTTON_UP) {
-        if (event.button.button == sdl.BUTTON_LEFT) {
-            osu_controller.m1.is_down = false
-        }
-        if (event.button.button == sdl.BUTTON_RIGHT) {
-            osu_controller.m2.is_down = false
-        }
-    }
-}
-
-//NOTE(yokes): API for in-game button input
-
-is_held :: proc(button: Button_State) -> bool {
-    return button.is_down
-}
-
-is_pressed :: proc(button: Button_State) -> bool {
-    return button.is_down && !button.was_down
-}
-
-is_released :: proc(button: Button_State) -> bool {
-    return !button.is_down && button.was_down
 }
 
 split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> []Slider_Curve {
@@ -318,7 +266,7 @@ render_hit_object :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
         case .CIRCLE: {
             if hobj.start_time_ms < active_map.play_timer_ms && active_map.play_timer_ms < hobj.end_time_ms {
                 ho_pos := rect_translate_by_anchor(Rect{hobj.pos.x, hobj.pos.y, 40, 40}, .CENTER)
-                push_rect(&renderer.quad_geometry, ho_pos, color_red, skin_texture_slot(.HITCIRCLE))
+                r_draw_rect(&renderer.quad_geometry, ho_pos, color_red, skin_texture(.HITCIRCLE))
             }
         }
         case .SLIDER: {
@@ -329,7 +277,7 @@ render_hit_object :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
 }
 
 render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
-    // todo(isak):  generate partial instance draws (snaking) and the bounding quads like the smart cookie you are
+    // todo(isak): generate partial instance draws (snaking) and the bounding quads like the smart cookie you are
 
     r_bind_pipeline({.SLIDER})
     r_bind_framebuffer({ write = .SLIDERS })    
@@ -350,12 +298,12 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     r_bind_pipeline({.QUAD})
     
     r_push_transform(transform_from_bounds({0, 0, 1, 1}, 1))
-    push_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.5), reserved_texture(.SLIDER_FRAMEBUFFER))
+    r_draw_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.5), reserved_texture(.SLIDER_FRAMEBUFFER))
 }
 
 render_timeline :: proc(renderer: ^Renderer) {
     active_map := game.active_map
-    preempt := convert_approach_rate_to_preempt(active_map.diff_overall_difficulty)
+    preempt := convert_approach_rate_to_preempt_ms(active_map.diff_overall_difficulty)
     map_len_with_preempt := active_map.length_ms + preempt
 
     active_map_leadin_fract := f32(max(0, -active_map.play_timer_ms - preempt) / (active_map.lead_in - preempt))
@@ -364,12 +312,12 @@ render_timeline :: proc(renderer: ^Renderer) {
     r_push_transform(window_get_clipspace_transform())
     
     timeline_h_px := 4 / window.rect.h
-    push_layout_rect(&renderer.quad_geometry, {0, 1, 1, timeline_h_px}, 
+    r_draw_layout_rect(&renderer.quad_geometry, {0, 1, 1, timeline_h_px}, 
                      .BOTTOM_LEFT, with_alpha(color_white, 0.1))
-    push_layout_rect(&renderer.quad_geometry, {0, 1, active_map_finish_fract, timeline_h_px}, 
+    r_draw_layout_rect(&renderer.quad_geometry, {0, 1, active_map_finish_fract, timeline_h_px}, 
                      .BOTTOM_LEFT, with_alpha(color_white, 0.4))
     if active_map_leadin_fract > 0 {
-        push_layout_rect(&renderer.quad_geometry, {0, 1, active_map_leadin_fract, timeline_h_px}, 
+        r_draw_layout_rect(&renderer.quad_geometry, {0, 1, active_map_leadin_fract, timeline_h_px}, 
                          .BOTTOM_LEFT, with_alpha(color_lime_green, 0.2))
     }
 }
@@ -377,13 +325,13 @@ render_timeline :: proc(renderer: ^Renderer) {
 render_input_display :: proc(geometry: ^Buffer(Quad)) {
     render_input_key :: proc(key: Button_State, rect: Rect, anchor: Layout_Anchor, color: Color, tex_index: u32 = 0) {
         if is_pressed(key) {
-            push_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
+            r_draw_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
         } else if is_held(key) {
-            push_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
+            r_draw_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
         } else if is_released(key) {
-            push_layout_rect(&window.renderer.quad_geometry, rect, anchor, color_dark_gray, tex_index)
+            r_draw_layout_rect(&window.renderer.quad_geometry, rect, anchor, color_dark_gray, tex_index)
         } else {
-            push_layout_rect(&window.renderer.quad_geometry, rect, anchor, color_dark_gray, tex_index)
+            r_draw_layout_rect(&window.renderer.quad_geometry, rect, anchor, color_dark_gray, tex_index)
         }
     }
 
@@ -393,7 +341,55 @@ render_input_display :: proc(geometry: ^Buffer(Quad)) {
     render_input_key(osu_controller.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 }, .BOTTOM_RIGHT, color_light_gray)
 }
 
-convert_approach_rate_to_preempt :: proc(ar: f64) -> f64 {
-    return 1800 - min(ar, 5) * 120 - (max(ar, 5) - 5) * 150
+
+check_game_input :: proc(event: sdl.Event) {
+    //osu_controller.k1_key = sdl.Scancode.Z
+    //osu_controller.k2_key = sdl.Scancode.X
+
+    if (event.type == sdl.EventType.KEY_DOWN) { //TODO(yokes): make this code shorter
+        if (event.key.scancode == osu_controller.k1_key) {
+            osu_controller.k1.is_down = true
+        }
+        if (event.key.scancode == osu_controller.k2_key) {
+            osu_controller.k2.is_down = true
+        }
+    }
+    if (event.type == sdl.EventType.KEY_UP) {
+        if (event.key.scancode == osu_controller.k1_key) {
+            osu_controller.k1.is_down = false
+        }
+        if (event.key.scancode == osu_controller.k2_key) {
+            osu_controller.k2.is_down = false
+        }
+    }
+    if (event.type == sdl.EventType.MOUSE_BUTTON_DOWN) {
+        if (event.button.button == sdl.BUTTON_LEFT) {
+            osu_controller.m1.is_down = true
+        }
+        if (event.button.button == sdl.BUTTON_RIGHT) {
+            osu_controller.m2.is_down = true
+        }
+    }
+    if (event.type == sdl.EventType.MOUSE_BUTTON_UP) {
+        if (event.button.button == sdl.BUTTON_LEFT) {
+            osu_controller.m1.is_down = false
+        }
+        if (event.button.button == sdl.BUTTON_RIGHT) {
+            osu_controller.m2.is_down = false
+        }
+    }
 }
 
+//NOTE(yokes): API for in-game button input
+
+is_held :: proc(button: Button_State) -> bool {
+    return button.is_down
+}
+
+is_pressed :: proc(button: Button_State) -> bool {
+    return button.is_down && !button.was_down
+}
+
+is_released :: proc(button: Button_State) -> bool {
+    return !button.is_down && button.was_down
+}

@@ -11,13 +11,6 @@ import "core:strings"
 import sdl "vendor:sdl3"
 
 
-vec2 :: linalg.Vector2f32
-vec3 :: linalg.Vector3f32
-vec4 :: linalg.Vector4f32
-
-mat3 :: linalg.Matrix3x3f32
-mat4 :: linalg.Matrix4x4f32
-
 //////////////////////////////////////////////////////
 // note(isak): time api
 
@@ -47,21 +40,21 @@ time_since_beginning_of_program :: proc() -> f64 {
 
 Color :: [4]u8
 
-color_none          := color_from_vec({0,0,0,0})
-color_white         := color_from_vec({1,1,1,1})
-color_dark_gray     := color_from_vec({0.2,0.2,0.2,1})
-color_medium_gray   := color_from_vec({0.5,0.5,0.5,1})
-color_light_gray    := color_from_vec({0.7,0.7,0.7,1})
-color_black         := color_from_vec({0,0,0,1})
-color_red           := color_from_vec({1,0,0,1})
-color_green         := color_from_vec({0,1,0,1})
-color_blue          := color_from_vec({0,0,1,1})
-color_orange        := color_from_vec({1, 0.5, 0, 1})
-color_lime_green    := color_from_vec({0.5, 1, 0, 1})
-color_yellow        := color_from_vec({1, 1, 0, 1})
-color_sky_blue      := color_from_vec({0.3, 0.35, 1.0, 1})
-color_dark_blue     := color_from_vec({0, 0, 0.8, 1})
-color_purple        := color_from_vec({0.5, 0, 1, 1})
+color_none          :: Color{0x00, 0x00, 0x00, 0x00}
+color_white         :: Color{0xFF, 0xFF, 0xFF, 0xFF}
+color_dark_gray     :: Color{0x33, 0x33, 0x33, 0xFF}
+color_medium_gray   :: Color{0x80, 0x80, 0x80, 0xFF}
+color_light_gray    :: Color{0xB2, 0xB2, 0xB2, 0xFF}
+color_black         :: Color{0x00, 0x00, 0x00, 0xFF}
+color_red           :: Color{0xFF, 0x00, 0x00, 0xFF}
+color_green         :: Color{0x00, 0xFF, 0x00, 0xFF}
+color_blue          :: Color{0x00, 0x00, 0xFF, 0xFF}
+color_orange        :: Color{0xFF, 0x80, 0x00, 0xFF}
+color_lime_green    :: Color{0x80, 0xFF, 0x00, 0xFF}
+color_yellow        :: Color{0xFF, 0xFF, 0x00, 0xFF}
+color_sky_blue      :: Color{0x4C, 0x59, 0xFF, 0xFF}
+color_dark_blue     :: Color{0x00, 0x00, 0xCC, 0xFF}
+color_purple        :: Color{0x80, 0x00, 0xFF, 0xFF}
 
 with_alpha_f32 :: proc "contextless" (c: Color, alpha: f32) -> Color { return {c.x, c.y, c.z, u8(alpha * 0xFF)} }
 with_alpha_u8 :: proc "contextless" (c: Color, alpha: u8) -> Color { return {c.x, c.y, c.z, alpha} }
@@ -117,7 +110,7 @@ read_entire_file_to_string :: proc(path: string, allocator := context.allocator)
 
 
 //////////////////////////////////////////////////////
-// note(isak): memory api
+// note(isak): memory utils
 
 bytes     :: proc "contextless" (v: int) -> int {return v * 1}
 kilobytes :: proc "contextless" (v: int) -> int {return v * 1024}
@@ -146,7 +139,16 @@ init_static_arena :: proc(arena: ^virtual.Arena, alloc: ^runtime.Allocator, size
 }
 
 //////////////////////////////////////////////////////
-// note(isak): math api
+// note(isak): math utils
+
+vec2 :: linalg.Vector2f32
+vec3 :: linalg.Vector3f32
+vec4 :: linalg.Vector4f32
+
+mat3 :: linalg.Matrix3x3f32
+mat4 :: linalg.Matrix4x4f32
+
+Transform :: linalg.Matrix4x3f32
 
 line_normal :: proc "contextless" (from_to: vec2) -> vec2 {
     return linalg.normalize(linalg.vector2_orthogonal(from_to))
@@ -166,16 +168,16 @@ transform_from_bounds :: proc "contextless" (r: vec4, aspect_ratio: f32) -> Tran
     sx: f32 = 2.0 * aspect_ratio / r.z
     sy: f32 = 2.0 / r.w
     return {
-        sx, 0.0, -sx * center.x, 0.0,
-        0.0, sy, -sy * center.y, 0.0,
-        0.0, 0.0, 1.0, 0.0, 
-        0.0, 0.0, 0.0, 0.0
+        sx, 0.0, -sx * center.x,
+        0.0, sy, -sy * center.y,
+        0.0, 0.0, 1.0,
+        0.0, 0.0, 0.0,
     }
 }
 
 identity_transform :: Transform {
-    1, 0, 0, 0,
-    0, 1, 0, 0,
-    0, 0, 1, 0,
-    0, 0, 0, 0
+    1, 0, 0,
+    0, 1, 0,
+    0, 0, 1,
+    0, 0, 0,
 } 

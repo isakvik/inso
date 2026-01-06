@@ -32,13 +32,17 @@ core runtime info such as map time and objects
 -- todos
 
 general:
-ui core (map selector, skin select?)
+ui core 
+    map selector
+    skin select
+    volume settings
+
 "full" .osu support (no sb, editor features, osu integration)
 
 play mode:
 audio play (miniaudio)
     desync proofing (always wait for sound to be able to be played, like osu (so device errors will just freeze the game))
-    multiple channels, 
+    multiple channels, sound effects
 input handling
 
 figure out if we need some graphical core of a playfield (i'm thinking we have some default implementation; optionally hide it and let people render whatever based on mapset data)
@@ -97,6 +101,26 @@ memory_init :: proc() -> runtime.Allocator_Error {
     return .None
 }
 
+mu_init :: proc() {
+    mu.init(&window.ui_ctx)
+    window.ui_ctx.text_width = mu.default_atlas_text_width
+    window.ui_ctx.text_height = mu.default_atlas_text_height
+
+    pixels := make([][4]u8, mu.DEFAULT_ATLAS_WIDTH*mu.DEFAULT_ATLAS_HEIGHT)
+    defer delete(pixels)
+    for alpha, i in mu.default_atlas_alpha {
+        pixels[i] = {0xff, 0xff, 0xff, alpha}
+    }
+    
+    window.ui_atlas_texture = texture_from_data(
+        width = mu.DEFAULT_ATLAS_WIDTH,
+        height = mu.DEFAULT_ATLAS_HEIGHT,
+        data = raw_data(pixels),
+        internal_format = gl.RGBA8,
+        format = gl.RGBA,
+    )
+}
+
 window: struct {
     rect: Rect,
     aspect_ratio: f32, // note(isak): height over width
@@ -108,6 +132,7 @@ window: struct {
     handle: ^sdl.Window,
     gl_context: sdl.GLContext,
     
+    ui_enabled: bool,
     ui_ctx: mu.Context,
     ui_dragging: bool,
     
@@ -134,7 +159,7 @@ window: struct {
     
     text_store: GL_Triple_Buffer(Glyph_Quad),
     
-    transform_buffer: GL_Uniform_Buffer(Transform),
+    shader_global_buffer: GL_Uniform_Buffer(Shader_Globals),
     circle_geo_buffer: GL_Buffer(Slider_Vertex),
     texture_buffer: GL_Buffer(u64),
 
@@ -232,8 +257,12 @@ rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
 }
 
 audio_ctx: struct {
-    g_engine: miniaudio.engine,
-    g_sound: miniaudio.sound,
+    engine: miniaudio.engine,
+    sound: miniaudio.sound,
+
+    device_id: sdl.AudioDeviceID,
+    obtained_spec: sdl.AudioSpec,
+    sample_frames: i32,
 }
 
 miniaudio_data_callback :: proc "c" (pUserData: rawptr, pStream: ^sdl.AudioStream, additional_amount, total_amount: i32) {
@@ -244,6 +273,10 @@ miniaudio_data_callback :: proc "c" (pUserData: rawptr, pStream: ^sdl.AudioStrea
     samples: [1024]f32
     
     miniaudio.data_source_read_pcm_frames(sound.pDataSource, raw_data(&samples), numFrames, &numFramesRead)
+    for &sample in samples {
+        sample *= 0.1
+    }
+
     sdl.PutAudioStreamData(pStream, raw_data(&samples), i32(numFramesRead * size_of(f32) * 2))
 }
 
@@ -269,11 +302,6 @@ main :: proc() {
     lua.L_dostring(lua_ctx.state, script)
     */
 
-    deviceID: sdl.AudioDeviceID
-    //desiredSpec: sdl.AudioSpec
-    obtainedSpec: sdl.AudioSpec
-    sample_frames: i32
-
     if (!sdl.Init({.AUDIO, .VIDEO})) {
         fmt.printfln("SDL init error: {}", sdl.GetError())
         return
@@ -281,52 +309,52 @@ main :: proc() {
 
     sound_enabled := false
     if sound_enabled {
+        using audio_ctx
         desiredSpec := sdl.AudioSpec{
             freq = 48000,
             format = .F32,
             channels = 2
         }
     
-        deviceID = sdl.OpenAudioDevice(sdl.AUDIO_DEVICE_DEFAULT_PLAYBACK, &desiredSpec)
-        if deviceID == 0 {
+        device_id = sdl.OpenAudioDevice(sdl.AUDIO_DEVICE_DEFAULT_PLAYBACK, &desiredSpec)
+        if device_id == 0 {
             fmt.printfln("SDL init error: {}", sdl.GetError())
             return
         }
     
         stream := sdl.CreateAudioStream(&desiredSpec, &desiredSpec); // Input and output specs can match initially
     
-        result: miniaudio.result
+        sdl.GetAudioDeviceFormat(device_id, &obtained_spec, &sample_frames)
     
-        sdl.GetAudioDeviceFormat(deviceID, &obtainedSpec, &sample_frames)
+        engine_config := miniaudio.engine_config_init()
+        engine_config.channels = u32(obtained_spec.channels)
+        engine_config.sampleRate = u32(obtained_spec.freq)
+        engine_config.noDevice = true
     
-        engineConfig := miniaudio.engine_config_init()
-        engineConfig.channels = u32(obtainedSpec.channels)
-        engineConfig.sampleRate = u32(obtainedSpec.freq)
-        engineConfig.noDevice = true
-    
-        result = miniaudio.engine_init(&engineConfig, &audio_ctx.g_engine)
+        result := miniaudio.engine_init(&engine_config, &engine)
         if (result != .SUCCESS) {
             fmt.printf("Failed to initialize audio engine.")
             return
         }
     
-        result = miniaudio.sound_init_from_file(&audio_ctx.g_engine, "songs/test/test.mp3", {.STREAM}, nil, nil, &audio_ctx.g_sound)
+        result = miniaudio.sound_init_from_file(&engine, "songs/test/test.mp3", {.STREAM}, nil, nil, &sound)
         if (result != .SUCCESS) {
             fmt.printf("Failed to initialize sound.")
             return
         }
     
         // Register the callback, passing a pointer to the sound object as user data
-        sdl.SetAudioStreamGetCallback(stream, miniaudio_data_callback, &audio_ctx.g_sound);
+        sdl.SetAudioStreamGetCallback(stream, miniaudio_data_callback, &sound);
     
         // Bind the stream to a logical audio device
-        sdl.BindAudioStreams(deviceID, &stream, 1);
+        sdl.BindAudioStreams(device_id, &stream, 1);
         
-        sdl.ResumeAudioDevice(deviceID)
-        miniaudio.sound_start(&audio_ctx.g_sound)
+        sdl.ResumeAudioDevice(device_id)
+        miniaudio.sound_start(&sound)
     }
 
     window_init({w = 1024, h = 512})
+    window.ui_enabled = true
     defer window_cleanup()
 
     renderer_init()
@@ -335,26 +363,6 @@ main :: proc() {
 
     window_resize(i32(window.rect.w), i32(window.rect.h))
 
-    mu_init :: proc() {
-        mu.init(&window.ui_ctx)
-        window.ui_ctx.text_width = mu.default_atlas_text_width
-        window.ui_ctx.text_height = mu.default_atlas_text_height
-
-        pixels := make([][4]u8, mu.DEFAULT_ATLAS_WIDTH*mu.DEFAULT_ATLAS_HEIGHT)
-        defer delete(pixels)
-        for alpha, i in mu.default_atlas_alpha {
-            pixels[i] = {0xff, 0xff, 0xff, alpha}
-        }
-        
-        window.ui_atlas_texture = texture_from_data(
-            width = mu.DEFAULT_ATLAS_WIDTH,
-            height = mu.DEFAULT_ATLAS_HEIGHT,
-            data = raw_data(pixels),
-            internal_format = gl.RGBA8,
-            format = gl.RGBA,
-        )
-    }
-
     mu_init()
     text_init()
     
@@ -362,16 +370,6 @@ main :: proc() {
     prepare_textures_for_rendering()
 
     builtin_shaders_watch := win32_init_directory_watch("shaders/")
-
-    {
-        ok: bool
-        test_mapset_path := "songs/test/"
-        game.active_mapset, ok = mapset_open_for_editing(test_mapset_path)
-        game.active_map = &game.active_mapset.osu_map
-        if !ok {
-            fmt.println("tried to open mapset, but failed:", test_mapset_path)
-        }
-    }
 
     /*
         todo(isak): some research on timestep (consistent deltatime) would be prudent
@@ -384,14 +382,15 @@ main :: proc() {
     frame_count: u64
     time_first_frame := time_current_frame
 
-    /* todo(isak): more rendering stuff to do...
-    
-    - sg_desc (sg.begin) pipeline_pool_size... grow pipeline pool size to num layers in mapset?
-    - create ui tree for menus?
-        - imgui?
-    - slider rendering
-        - slider path gen
-    */
+    {
+        ok: bool
+        test_mapset_path := "songs/test/"
+        game.active_mapset, ok = mapset_open_for_editing(test_mapset_path)
+        game.active_map = &game.active_mapset.osu_map
+        if !ok {
+            fmt.println("tried to open mapset, but failed:", test_mapset_path)
+        }
+    }
 
     osu_on_init()
 
@@ -446,13 +445,15 @@ main :: proc() {
 
                 case sdl.EventType.KEY_DOWN:
                     #partial switch (event.key.scancode) {
+                        case sdl.Scancode.ESCAPE:
+                            window.ui_enabled = !window.ui_enabled
                         case sdl.Scancode.F1:
                             renderer.trace_frame = !renderer.trace_frame
                         case sdl.Scancode.F2:
                             debug_info.display_fontatlas = !debug_info.display_fontatlas
                         case sdl.Scancode.F3:
                             debug_info.display_memory_profiler = !debug_info.display_memory_profiler
-                        case sdl.Scancode.F11:
+                        case sdl.Scancode.F10:
                             debug_info.display_frame_profiler = !debug_info.display_frame_profiler
                     }
                     
@@ -503,17 +504,18 @@ main :: proc() {
             
             osu_on_update(dt)
 
-            r_bind_layer(.UI)
+            r_push_layer(.UI)
             r_push_transform(window.screenspace_transform)
             
             // game update
             render_input_display(&renderer.quad_geometry)            
             
-            cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 80, 80 }
-            push_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture_slot(.CURSOR))
+            cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 40, 40 }
+            r_draw_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, reserved_texture(.WHITE),
+                f32(time_since_beginning_of_program()*20))
 
             r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
-            push_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
+            r_draw_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
         }
         
         {
@@ -528,20 +530,22 @@ main :: proc() {
             */
             profiler_block_begin(.GAME_DRAW); defer profiler_block_end()
             
-            r_push_transform(window.screenspace_transform)
-            mu.begin(&window.ui_ctx)
-            write_debug_ui(&window.ui_ctx)
-            mu.end(&window.ui_ctx)
-            handle_debug_ui_events(&window.ui_ctx)
-            render_debug_ui(renderer, &window.ui_ctx)
+            if window.ui_enabled {
+                r_push_transform(window.screenspace_transform)
+                mu.begin(&window.ui_ctx)
+                write_debug_ui(&window.ui_ctx)
+                mu.end(&window.ui_ctx)
+                handle_debug_ui_events(&window.ui_ctx)
+                render_debug_ui(renderer, &window.ui_ctx)
+            }
             
-            r_bind_layer(.DEBUG, transform = window.screenspace_transform)
+            r_push_layer(.DEBUG, transform = window.screenspace_transform)
 
             game_timer_str := fmt.tprintf("%.3f", game.active_map.play_timer_ms)
             push_text(renderer, game_timer_str, {20, 20}, size = 22)
 
             if debug_info.display_fontatlas {
-                push_rect(&renderer.quad_geometry,
+                r_draw_rect(&renderer.quad_geometry,
                     {0, 0, f32(text_engine.ctx.width), f32(text_engine.ctx.height)},
                     color_white,
                     reserved_texture(.FONT_ATLAS))
@@ -586,7 +590,7 @@ main :: proc() {
 }
 
 write_debug_ui :: proc(ctx: ^mu.Context) {
-    @static opts := mu.Options{.NO_CLOSE, .HOLD_FOCUS}
+    @static opts := mu.Options{.NO_CLOSE}
 
     if mu.window(ctx, "饕餮尤魔 :3", {40, 40, 160, 110}, opts) {
         
@@ -650,7 +654,7 @@ render_debug_ui :: proc(renderer: ^Renderer, ctx: ^mu.Context) {
             f32(icon_rect.w) / f32(window.ui_atlas_texture.w), 
             f32(-icon_rect.h) / f32(window.ui_atlas_texture.h)
         }
-        push_rect_with_uv(&renderer.quad_geometry, pos, uv, color, reserved_texture(.UI_ATLAS))
+        r_draw_rect_with_uv(&renderer.quad_geometry, pos, uv, color, reserved_texture(.UI_ATLAS))
     }
 
     command_backing: ^mu.Command
@@ -661,7 +665,7 @@ render_debug_ui :: proc(renderer: ^Renderer, ctx: ^mu.Context) {
             case ^mu.Command_Clip:
                 r_begin_scissor_mode(cmd.rect.x, cmd.rect.y, cmd.rect.w, i32(window.rect.h) - cmd.rect.h)
             case ^mu.Command_Rect:
-                push_rect(&renderer.quad_geometry, {f32(cmd.rect.x), f32(cmd.rect.y), f32(cmd.rect.w), f32(cmd.rect.h)}, 
+                r_draw_rect(&renderer.quad_geometry, {f32(cmd.rect.x), f32(cmd.rect.y), f32(cmd.rect.w), f32(cmd.rect.h)}, 
                           transmute(Color)cmd.color)
             case ^mu.Command_Icon:
                 icon_rect := mu.default_atlas[cmd.id]
@@ -677,12 +681,12 @@ begin_frame :: proc(renderer: ^Renderer) {
     sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
     
     batch_begin(renderer)
+    commit_time(f32(time_since_beginning_of_program()))
     
+    _r_bind_layer(.BACKGROUND)
     r_bind_pipeline({.QUAD})
+    r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
     r_push_transform(identity_transform)
-
-    r_bind_framebuffer(window.renderer.current_framebuffer)
-    r_bind_pipeline(window.renderer.current_pipeline)
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
     
     renderer.transform_queue.len = 0
@@ -690,7 +694,6 @@ begin_frame :: proc(renderer: ^Renderer) {
 
 end_frame :: proc(renderer: ^Renderer) {
     text_submit_geometry(renderer)
-
     profiler_collect_command_buffer_memory_data()
     batch_end(renderer)
 }
@@ -699,12 +702,12 @@ process_builtin_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
     updated_systems := mapset_check_system_file_watch(watch)
     if updated_systems[.SHADERS] {
         for &shader in window.shaders {
-            reinit_shader(&shader)
+            shader_reinit(&shader)
         }
         fmt.println("reloaded builtin shaders")
 
-        reinit_pipeline(&window.pipelines[.QUAD], quad_pipeline())
-        reinit_pipeline(&window.pipelines[.SLIDER], slider_pipeline())
-        reinit_pipeline(&window.pipelines[.TEXT], text_pipeline())
+        pipeline_reinit(&window.pipelines[.QUAD], quad_pipeline())
+        pipeline_reinit(&window.pipelines[.SLIDER], slider_pipeline())
+        pipeline_reinit(&window.pipelines[.TEXT], text_pipeline())
     }
 }

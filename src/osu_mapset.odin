@@ -303,3 +303,6 @@ mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
 }
 
 
+convert_approach_rate_to_preempt_ms :: proc(ar: f64) -> f64 {
+    return 1800 - min(ar, 5) * 120 - (max(ar, 5) - 5) * 150
+}

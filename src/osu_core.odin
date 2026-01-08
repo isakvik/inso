@@ -1,5 +1,6 @@
 package notosu
 
+import "core:mem/virtual"
 import "base:runtime"
 import "core:math/linalg"
 import queue "core:container/queue"
@@ -10,6 +11,25 @@ import sdl "vendor:sdl3"
 
 osu_playfield_size_osupx :: 512
 playfield_rect :: Rect{ 0, 0, osu_playfield_size_osupx, osu_playfield_size_osupx }
+
+// note(isak): state struct. keep it lean, put large data fields in arenas
+
+game: struct {
+    mode: Game_Mode,
+    play_timer_ms: f64,
+    time_rate: f64,
+
+    active_mapset: ^Mapset,
+    active_map: ^Osu_Map,
+    active_skin: [Skin_Element_Type]Skin_Element,
+    
+    test_nodes: sa.Small_Array(128, Slider_Node),
+    animations: queue.Queue(Animation),
+    elements: queue.Queue(Element),
+    bound_element_animations: [Element_Type][]Animation
+}
+
+// note(isak): core types
 
 Hit_Object_Type :: enum {
     NONE,
@@ -28,11 +48,40 @@ Hit_Object :: struct {
     hitsound_flags: byte,
 }
 
+Slider_Path_Type :: enum {
+    LINEAR,
+    BEZIER,
+    ARC,
+}
+
+Slider_Node :: vec2
+Slider_Curve :: []Slider_Node
+
+Slider_Path :: struct {
+    pos: vec2,
+    type: Slider_Path_Type,
+    distance_osupx: f64,
+
+    nodes: []Slider_Node, // note(isak): slice into our array of all nodes
+    curves: []Slider_Curve, // note(isak): slice into mapset arena
+    
+    instances: []vec2, // note(isak): slice into the gpu mapped instance buffer
+    first_instance_at: int,
+}
+
 
 Game_Mode :: enum {
     UNINITIALIZED,
     MENU,
     PLAY,
+}
+
+Layer :: enum {
+    BACKGROUND,
+    FOREGROUND,
+    OVERLAY,
+    UI,
+    DEBUG
 }
 
 Osu_Sample_Set :: enum {
@@ -67,59 +116,15 @@ Osu_Map :: struct {
     hit_objects: []Hit_Object,
     slider_paths: []Slider_Path,
     length_ms: f64,
-    total_lead_in_ms: f64
+    total_lead_in_ms: f64,
+
+    preempt_ms: f64,
+    circle_radius_osupx: f32,
 }
 
-game: struct {
-    mode: Game_Mode,
-
-    active_mapset: ^Mapset,
-    active_map: ^Osu_Map,
-    
-    test_nodes: sa.Small_Array(128, Slider_Node),
-
-    play_timer_ms: f64,
-}
-
-
-
-Slider_Path_Type :: enum {
-    LINEAR,
-    BEZIER,
-    ARC,
-}
-
-Slider_Node :: vec2
-
-Slider_Path :: struct {
-    pos: vec2,
-    type: Slider_Path_Type,
-    distance_osupx: f64,
-
-    nodes: []Slider_Node, // note(isak): slice into our array of all nodes
-    curves: []Slider_Curve, // note(isak): slice into mapset arena
-    
-    instances: []vec2, // note(isak): slice into the gpu mapped instance buffer
-    first_instance_at: int,
-}
-
-
-Difficulty_Setting :: struct {
-    circle_size_osupx: f32
-}
-
-
-Layer :: enum {
-    BACKGROUND,
-    FOREGROUND,
-    OVERLAY,
-    UI,
-    DEBUG
-}
 
 osu_slider_curve_points_separation: f32 = 2.5
 
-Slider_Curve :: []Slider_Node
 
 test_slider: Slider_Path
 test_slider2: Slider_Path
@@ -130,57 +135,39 @@ test_curve: Slider_Curve
 map_sliders: [128]Slider_Path
 slider_offset: int
 
+/*
+    game todos(isak)
+
+    should elements use some kinda ring buffer? a lot of them can be calculated at load time
+
+*/
+
 
 osu_on_init :: proc() {
-    test_elements = buffer_init(len(element_store), element_store[:])
+    game.time_rate = 1.0
+    game.play_timer_ms = -500
+
     osu_on_map_init()
 }
 
 osu_on_map_init :: proc() {
+    queue.init(&game.animations, 1024, memory.mapset_allocator)
+    queue.init(&game.elements, 8192, memory.element_allocator)
+
+    game.test_nodes.len = 0
     make_test_slider(&test_slider, 0)
     make_test_slider(&test_slider2, 1)
 
     make_test_instances(&test_slider)
     write_instances_from_path(&window.renderer.slider_instances, &test_slider, memory.mapset_allocator)
     
-    preempt: f64 = convert_approach_rate_to_preempt_ms(game.active_map.diff_approach_rate)
-    
-    active_map := game.active_map
-
-    final_hobj_time_ms: f64
-    i: int
-    for &hobj in game.active_map.hit_objects {
-        hobj.start_time_ms -= preempt
-        final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
-
-        types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE, .HIT_CIRCLE_OVERLAY, .APPROACH_CIRCLE}
-        for e_type in types {
-            e := Element{
-                type = e_type,
-                pos = hobj.pos,
-                size = 60,
-                anchor = .CENTER,
-                color = with_alpha(color_white, 1),
-                start_time = hobj.start_time_ms,
-                end_time = hobj.end_time_ms,
-            }
-            if e_type == .COMBO_NUMBER {
-                e.size.x *= 0.2
-                e.size.y *= -0.4
-            }
-            if e_type == .HIT_CIRCLE || e_type == .APPROACH_CIRCLE {
-                e.color = color_purple
-            }
-            buffer_push(&test_elements, e)
-        }
-    }
-
-    active_map.total_lead_in_ms = preempt + active_map.audio_lead_in
-    active_map.length_ms = final_hobj_time_ms + 1000
-    game.play_timer_ms = -active_map.total_lead_in_ms
+    write_default_animations(&game.animations, game.active_map)
+    write_default_elements_from_map(&game.elements, game.active_map)
 }
 
 osu_on_update :: proc(dt: f64) {
+    dt := dt * game.time_rate
+
     updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
     if updated_systems[.OSU_FILE] {
         game.active_mapset = mapset_clear_and_reload(game.active_mapset)
@@ -188,30 +175,22 @@ osu_on_update :: proc(dt: f64) {
         osu_on_map_init()
     }
     
-    active_map := game.active_map
-    
     game.play_timer_ms += dt * 1000
-    if game.play_timer_ms > active_map.length_ms {
-        game.play_timer_ms = -active_map.total_lead_in_ms
+    game.active_map.total_lead_in_ms = game.active_map.preempt_ms + game.active_map.audio_lead_in
+    if game.play_timer_ms > game.active_map.length_ms {
+        game.play_timer_ms = clamp(-game.active_map.total_lead_in_ms, -1000, 0)
     }
     
-    //render_slider(&window.renderer, &test_slider)
+    render_slider(&window.renderer, &test_slider)
 
     render_timeline(&window.renderer)
 
     r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
-    #reverse for &e in test_elements.data[:test_elements.count] {
-        render_element(&e, game.play_timer_ms - e.start_time)
-    }
-
     // todo(isak): create some kinda iterator for this; keep track of earliest active object and 
     // stop once first nonstarted obj is done
-    /*
-    r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
-    for &hit_object in game.active_map.hit_objects {
-        render_hit_object(&window.renderer, &hit_object)
+    #reverse for &e in game.elements.data[:game.elements.len] {
+        render_element(&e, game.play_timer_ms - e.start_time)
     }
-    */
 }
 
 split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> []Slider_Curve {
@@ -246,11 +225,10 @@ write_instances_from_path :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Pat
     }
 }
 
-// todo(isak): temp to be calculated from osu map cs
-circle_radius_osupx: f32 = 40
-
 make_test_slider :: proc(slider: ^Slider_Path, x_shift: f32) {
     node_i := game.test_nodes.len
+
+    circle_radius_osupx := convert_circle_size_to_radius_osupx(game.active_map.diff_circle_size)
 
     sa.append(&game.test_nodes, Slider_Node{0/circle_radius_osupx, 0/circle_radius_osupx})
     sa.append(&game.test_nodes, Slider_Node{100/circle_radius_osupx, 0/circle_radius_osupx})
@@ -284,28 +262,6 @@ make_test_instances :: proc(slider: ^Slider_Path) {
     }
 }
 
-
-render_hit_object :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
-    using game
-
-    if game.play_timer_ms < hobj.start_time_ms {
-        return
-    }
-
-    #partial switch hobj.type {
-        case .CIRCLE: {
-            if hobj.start_time_ms < game.play_timer_ms && game.play_timer_ms < hobj.end_time_ms {
-                ho_pos := rect_translate_by_anchor(Rect{hobj.pos.x, hobj.pos.y, 40, 40}, .CENTER)
-                r_draw_rect(&renderer.quad_geometry, ho_pos, color_red, skin_texture(.HITCIRCLE))
-            }
-        }
-        case .SLIDER: {
-            render_slider(renderer, &test_slider)
-        }
-    }
-
-}
-
 render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     // todo(isak): generate partial instance draws (snaking) and the bounding quads like the smart cookie you are
 
@@ -314,7 +270,7 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
     r_clear()
 
-    pf_size: f32 = osu_playfield_size_osupx/circle_radius_osupx
+    pf_size: f32 = osu_playfield_size_osupx / game.active_map.circle_radius_osupx
 
     r_push_transform(transform_from_bounds({0,0,pf_size,pf_size}, window.aspect_ratio))
 
@@ -333,7 +289,7 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
 
 render_timeline :: proc(renderer: ^Renderer) {
     active_map := game.active_map
-    preempt := convert_approach_rate_to_preempt_ms(active_map.diff_overall_difficulty)
+    preempt := active_map.preempt_ms
     map_len_with_preempt := active_map.length_ms + preempt
 
     active_map_leadin_fract := f32(max(0, -game.play_timer_ms - preempt) / (active_map.total_lead_in_ms - preempt))

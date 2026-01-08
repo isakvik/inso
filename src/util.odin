@@ -99,6 +99,7 @@ read_entire_file :: proc(path: string, allocator := context.allocator) -> ([]u8,
     for len(result) == 0 && err == os.General_Error.None {
         result, err = os.read_entire_file_from_path(path, allocator)
     }
+    null_guard := new(u8, allocator)
     return result, err
 }
 

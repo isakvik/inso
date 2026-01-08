@@ -1,5 +1,6 @@
 package notosu
 
+import "core:container/queue"
 import "core:math/linalg"
 import "core:math/ease"
 
@@ -13,12 +14,20 @@ Tween :: enum {
 }
 
 
+Animation_Variant :: enum {
+    TRANSLATE,
+    SCALE,
+    ROTATE,
+    COLOR,
+}
+
 Base_Animation :: struct {
+    variant: Animation_Variant,
     tween: Tween,
     start_time, end_time: f64,
 }
 
-Animation :: union {
+Animation :: union #align(4) {
     Animation_Translate,
     Animation_Scale,
     Animation_Rotate,
@@ -79,53 +88,104 @@ Element :: struct {
     start_time, end_time: f64,
 }
 
-test_animation: [4]Animation
-
-element_store: [512]Element
-test_elements: Buffer(Element)
-
-bound_animations: [Element_Type][]Animation
-
-@init init_bound_animations :: proc "contextless" () {
-    test_animation = {
-        0 = Animation_Scale{
-            start_time = 0, 
-            end_time = 1000,
-            start_scale = {1, 1}, 
-            end_scale = {3, 2}
-        },
-        1 = Animation_Scale{
-            start_time = 1000, 
-            end_time = 2000,
-            start_scale = {3, 2}, 
-            end_scale = {1, 1}
-        },
-        2 = Animation_Rotate{
-            start_time = 500, 
-            end_time = 1500,
-            start_angle = 0, 
-            end_angle = 90
-        },
-        3 = Animation_Scale{
-            start_time = 0, 
-            end_time = 1200,
-            start_scale = {3, 3}, 
-            end_scale = {1, 1}
-        },
-    }
-
-    bound_animations[.APPROACH_CIRCLE] = test_animation[3:4]
-}
-
-
 // mouse buttons
-skin_element_for_type_table := #partial [Element_Type]Skin_Element{
+skin_element_for_type_table := #partial [Element_Type]Skin_Element_Type{
     .HIT_CIRCLE           = .HITCIRCLE,
     .HIT_CIRCLE_OVERLAY   = .HITCIRCLEOVERLAY,
     .APPROACH_CIRCLE      = .APPROACHCIRCLE,
     .COMBO_NUMBER         = .COMBO_1,
     .SLIDER_FOLLOW_CIRCLE = .LIGHTING,
 }
+
+
+write_animations :: proc(buf: ^queue.Queue(Animation), elems: ..Animation) -> []Animation {
+    temp := buf.len
+    for &e in elems {
+        switch &v in e {
+            case Animation_Translate:   v.variant = .TRANSLATE
+            case Animation_Scale:       v.variant = .SCALE
+            case Animation_Rotate:      v.variant = .ROTATE
+            case Animation_Color:       v.variant = .COLOR
+        }
+    }
+    queue.append_elems(buf, ..elems)
+
+    return buf.data[temp:buf.len]
+}
+
+write_default_animations :: proc(buf: ^queue.Queue(Animation), osu_map: ^Osu_Map) {
+    end := osu_map.preempt_ms
+
+    game.bound_element_animations[.HIT_CIRCLE] = write_animations(buf, 
+        Animation_Scale{
+            start_time = 0, 
+            end_time = end,
+            start_scale = {1, 1}, 
+            end_scale = {4, 1}
+        }, 
+        Animation_Scale{
+            start_time = end * 0.5, 
+            end_time = end,
+            start_scale = {1, 4}, 
+            end_scale = {0, 0}
+        }, 
+        Animation_Rotate{
+            start_time = 0, 
+            end_time = end,
+            start_angle = 0, 
+            end_angle = 60
+        }, 
+        Animation_Rotate{
+            start_time = end * 0.5, 
+            end_time = end,
+            start_angle = 360, 
+            end_angle = 300
+        }
+    )
+
+    game.bound_element_animations[.APPROACH_CIRCLE] = write_animations(buf, Animation_Scale{
+        start_time = 0, 
+        end_time = end,
+        start_scale = {3, 3}, 
+        end_scale = {1, 1}
+    })
+}
+
+write_default_elements_from_map :: proc(buf: ^queue.Queue(Element), osu_map: ^Osu_Map) {
+    preempt: f64 = convert_approach_rate_to_preempt_ms(osu_map.diff_approach_rate)
+    circle_diameter_osupx := convert_circle_size_to_radius_osupx(osu_map.diff_circle_size) * 2
+
+    final_hobj_time_ms: f64
+    i: int
+    for &hobj in osu_map.hit_objects {
+        hobj.start_time_ms -= preempt
+        final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
+
+        hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
+        for el_type in hit_circle_el_types {
+            e := Element{
+                type = el_type,
+                pos = hobj.pos,
+                size = circle_diameter_osupx,
+                anchor = .CENTER,
+                color = with_alpha(color_white, 1),
+                start_time = hobj.start_time_ms,
+                end_time = hobj.end_time_ms,
+            }
+            if el_type == .COMBO_NUMBER {
+                e.size.x *= 0.2
+                e.size.y *= -0.4
+            }
+            if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE {
+                e.color = color_purple
+            }
+            queue.append(buf, e)
+        }
+    }
+
+    osu_map.length_ms = final_hobj_time_ms + 1000
+}
+
 
 // note(isak): uses relative time in ms (as with game.play_timer_ms)
 render_element :: proc(e: ^Element, at_time: f64) {
@@ -136,10 +196,11 @@ render_element :: proc(e: ^Element, at_time: f64) {
     rect := Rect{e.pos.x, e.pos.y, e.size.x, e.size.y}
     angle := f32(0)
     color := e.color
+    seen_animation_of_type: [Animation_Variant]bool
 
-    #reverse for &anim in bound_animations[e.type] {
+    #reverse for &anim in game.bound_element_animations[e.type] {
         base := transmute(^Base_Animation)&anim
-        if at_time < base.start_time {
+        if at_time < base.start_time || seen_animation_of_type[base.variant] {
             continue
         }
         t := min(f32((at_time - base.start_time) / (base.end_time - base.start_time)), 1)
@@ -162,6 +223,7 @@ render_element :: proc(e: ^Element, at_time: f64) {
                 color.b = u8(linalg.lerp(f32(a.start_color.b), f32(a.end_color.b), t)*0xFF)
                 color.a = u8(linalg.lerp(f32(a.start_color.a), f32(a.end_color.a), t)*0xFF)
         }
+        seen_animation_of_type[base.variant] = true
     }
 
     skin_element := skin_element_for_type_table[e.type]
@@ -173,8 +235,14 @@ render_element :: proc(e: ^Element, at_time: f64) {
 /*
     animation plans
 
+    animation memory use:
+    we don't really need unbounded dynamic arrays (i figured the exception might be if a script system would
+        add elements with separate animations, but if you're planning on doing something like that you could
+        probably just say to reserve 1000 slots for a particle-ish buffer)
+    so we just allocate a queue upfront in mapset_arena
+
     init graphical entities that are drawn in time on the playfield
-    entities are loosely coupled with game objects
+    both game elements and graphical features animate with the same system
     
     we want several entities from the same game object, since they all use a bunch of different sprites
     approachcircle,
@@ -224,15 +292,6 @@ render_element :: proc(e: ^Element, at_time: f64) {
         bind shader
         determine visible objects and iterate:
             push_element
-
-    for it_has_next(element) {
-        bind_pipeline(wave)
-        push_element(hit_circle)
-    }
-
-    blend order:
-    blend order within a layer is determined by push order... not a problem
-    hitobjects must be drawn back to front
 
 */
 

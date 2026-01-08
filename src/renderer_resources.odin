@@ -138,8 +138,8 @@ prepare_textures_for_rendering :: proc() {
     textures[Reserved_Texture_Slot.SLIDER_FRAMEBUFFER] = window.framebuffers[.SLIDERS].color_texture_handles[0]
     num_elements := len(Reserved_Texture_Slot)
 
-    for element in Skin_Element {
-        textures[num_elements] = window.skin_textures[element].texture.tex_handle
+    for element in Skin_Element_Type {
+        textures[num_elements] = window.skin_textures[element].tex_handle
         num_elements += 1
     }
 
@@ -153,7 +153,7 @@ prepare_textures_for_rendering :: proc() {
 cleanup_textures_for_rendering :: proc() {
     textures := &window.texture_buffer.data
     
-    num_elements := len(Reserved_Texture_Slot) + len(Skin_Element)
+    num_elements := len(Reserved_Texture_Slot) + len(Skin_Element_Type)
     for i in 0..<num_elements {
         if textures[i] > 0 {
             gl.MakeTextureHandleNonResidentARB(textures[i])

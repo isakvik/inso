@@ -150,7 +150,8 @@ profiler_push_memory_diag_text :: proc(renderer: ^Renderer) {
     arenas := [?]^virtual.Arena{ 
         &memory.global_arena, 
         &memory.mapset_arena, 
-        &memory.frame_arena
+        &memory.frame_arena,
+        &memory.element_arena,
     }
 
     for i in 0..<len(arenas) {

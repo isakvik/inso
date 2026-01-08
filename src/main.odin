@@ -62,6 +62,7 @@ memory_arena_names := [?]string {
     "Global",
     "Mapset",
     "Frame",
+    "Element",
     "Command buffer[BACKGROUND]",
     "Command buffer[FOREGROUND]",
     "Command buffer[HIT_OBJECT]",
@@ -78,6 +79,11 @@ memory: struct {
     mapset_allocator: runtime.Allocator,
     mapset_arena: virtual.Arena,
     
+    // note(isak): this is to be used for graphical entity data, "unbounded" since it's written to by
+    // game logic and scripts. cleared on mapset reload/unload
+    element_allocator: runtime.Allocator,
+    element_arena: virtual.Arena,
+    
     // cleared on frame end
     frame_allocator: runtime.Allocator,
     frame_arena: virtual.Arena,
@@ -91,13 +97,12 @@ memory_init :: proc() -> runtime.Allocator_Error {
     _ = init_growing_arena(&memory.global_arena, &memory.global_allocator)
     _ = init_growing_arena(&memory.mapset_arena, &memory.mapset_allocator)
     _ = init_growing_arena(&memory.frame_arena, &memory.frame_allocator)
+    _ = init_growing_arena(&memory.element_arena, &memory.element_allocator)
 
     for layer in Layer {
         _ = init_growing_arena(&memory.command_buffer_arenas[layer], &memory.command_buffer_allocators[layer])
     }
 
-    context.allocator = memory.global_allocator
-    context.temp_allocator = memory.frame_allocator
     return .None
 }
 
@@ -168,8 +173,8 @@ window: struct {
     font_atlas_texture: Texture,
     ui_atlas_texture: Texture,
 
-    skin_textures: [Skin_Element]Skin_Texture,
-    is_high_resolution: [Skin_Element]bool
+    skin_textures: [Skin_Element_Type]Texture,
+    is_high_resolution: [Skin_Element_Type]bool
 }
 
 debug_info: struct {
@@ -215,7 +220,7 @@ window_resize :: proc(new_w, new_h: i32) {
     window.aspect_ratio = window.rect.h / window.rect.w
     window.screenspace_transform = transform_from_bounds({0, 0, window.rect.w, window.rect.h}, 1)
 
-    //fbo_reinit(&window.framebuffers[.SLIDERS], new_w, new_h)
+    fbo_reinit(&window.framebuffers[.SLIDERS], new_w, new_h)
 }
 
 clipspace_transform := transform_from_bounds({0, 0, 1, 1}, 1)
@@ -287,6 +292,8 @@ main :: proc() {
     if memory_init() != .None {
         panic("memory init error")
     }
+    context.allocator = memory.global_allocator
+    context.temp_allocator = memory.frame_allocator
 
     current_dir, dir_error := os.get_working_directory(context.allocator)
     if strings.compare("build", filepath.base(current_dir)) == 0 {
@@ -354,7 +361,7 @@ main :: proc() {
         miniaudio.sound_start(&sound)
     }
 
-    window_init({w = 1280, h = 720})
+    window_init({w = 1024, h = 512})
     window.ui_enabled = true
     defer window_cleanup()
 
@@ -372,17 +379,6 @@ main :: proc() {
 
     builtin_shaders_watch := win32_init_directory_watch("shaders/")
 
-    /*
-        todo(isak): some research on timestep (consistent deltatime) would be prudent
-        https://jakubtomsu.github.io/posts/fixed_timestep_without_interpolation/
-    */
-    time_current_frame := current_time()
-    time_last_frame := time_current_frame
-    dt := 0.0
-
-    frame_count: u64
-    time_first_frame := time_current_frame
-
     {
         ok: bool
         test_mapset_path := "songs/test/"
@@ -394,6 +390,17 @@ main :: proc() {
     }
 
     osu_on_init()
+
+    /*
+        todo(isak): some research on timestep (consistent deltatime) would be prudent
+        https://jakubtomsu.github.io/posts/fixed_timestep_without_interpolation/
+    */
+    time_current_frame := current_time()
+    time_last_frame := time_current_frame
+    dt := 0.0
+
+    frame_count: u64
+    time_first_frame := time_current_frame
 
     active := true
     event: sdl.Event
@@ -446,8 +453,12 @@ main :: proc() {
 
                 case sdl.EventType.KEY_DOWN:
                     #partial switch (event.key.scancode) {
-                        case sdl.Scancode.ESCAPE:
-                            window.ui_enabled = !window.ui_enabled
+                        case sdl.Scancode.HOME:
+                            game.time_rate = 1
+                        case sdl.Scancode.PAGEUP:
+                            game.time_rate *= 2
+                        case sdl.Scancode.PAGEDOWN:
+                            game.time_rate /= 2
                         case sdl.Scancode.F1:
                             renderer.trace_frame = !renderer.trace_frame
                         case sdl.Scancode.F2:
@@ -597,10 +608,8 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
         
         win := mu.get_current_container(ctx)
         mu.layout_row(ctx, {54, -1}, 0)
-        mu.label(ctx, "Position:")
-        mu.label(ctx, fmt.tprintf("%d, %d", win.rect.x, win.rect.y))
-        mu.label(ctx, "Size:")
-        mu.label(ctx, fmt.tprintf("%d, %d", win.rect.w, win.rect.h))
+        mu.label(ctx, "Time rate:")
+        mu.label(ctx, fmt.tprintf("%f", game.time_rate))
         
     }
 }

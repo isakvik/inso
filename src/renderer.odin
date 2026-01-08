@@ -135,19 +135,19 @@ renderer_init :: proc() {
     })
 
     err: Shader_Error
-    window.shaders[.QUAD], err = shader_init(quad_vs_path, quad_fs_path, quad_uniform_desc())
+    window.shaders[.QUAD], err = shader_init(quad_vs_path, quad_fs_path, context.temp_allocator)
     assert(err == .NONE)
     window.pipelines[.QUAD] = sg.make_pipeline(quad_pipeline())
 
-    window.shaders[.SLIDER], err = shader_init(slider_vs_path, slider_fs_path, slider_uniform_desc())
+    window.shaders[.SLIDER], err = shader_init(slider_vs_path, slider_fs_path, context.temp_allocator)
     assert(err == .NONE)
     window.pipelines[.SLIDER] = sg.make_pipeline(slider_pipeline())
     
-    window.shaders[.TEXT], err = shader_init(text_vs_path, text_fs_path, text_uniform_desc())
+    window.shaders[.TEXT], err = shader_init(text_vs_path, text_fs_path, context.temp_allocator)
     assert(err == .NONE)
     window.pipelines[.TEXT] = sg.make_pipeline(text_pipeline())
 
-    //window.framebuffers[.SLIDERS] = fbo_init(1, 1, i32(window.rect.w), i32(window.rect.h), gl.RGBA8)
+    window.framebuffers[.SLIDERS] = fbo_init(1, 1, i32(window.rect.w), i32(window.rect.h), gl.RGBA8)
     
 
     window.quad_store = tbo_init(Quad, MAX_BATCH_VERTICES)
@@ -244,7 +244,7 @@ Shader :: struct {
     uniform_desc: [8]sg.Shader_Uniform_Block
 }
 
-shader_init :: proc(vs_path, fs_path: string, uniform_desc: [8]sg.Shader_Uniform_Block) -> (Shader, Shader_Error) {
+shader_init :: proc(vs_path, fs_path: string, alloc: runtime.Allocator = context.temp_allocator) -> (Shader, Shader_Error) {
     vs_filedata, vs_err := read_entire_file(vs_path)
     if vs_err != os.ERROR_NONE {
         fmt.printfln("loading vert shader file '{}' failed: {}", vs_path, vs_err)
@@ -262,9 +262,8 @@ shader_init :: proc(vs_path, fs_path: string, uniform_desc: [8]sg.Shader_Uniform
 
     temp_shader := sg.make_shader(
         sg.Shader_Desc {
-            vertex_func = {source = strings.unsafe_string_to_cstring(string(vs_filedata))},
-            fragment_func = {source = strings.unsafe_string_to_cstring(string(fs_filedata))},
-            uniform_blocks = uniform_desc
+            vertex_func = {source = strings.clone_to_cstring(string(vs_filedata))},
+            fragment_func = {source = strings.clone_to_cstring(string(fs_filedata))}
         },
     )
 
@@ -272,16 +271,15 @@ shader_init :: proc(vs_path, fs_path: string, uniform_desc: [8]sg.Shader_Uniform
         return {
             shader = temp_shader,
             vs_path = vs_path,
-            fs_path = fs_path,
-            uniform_desc = uniform_desc
+            fs_path = fs_path
         }, .NONE
     }
     sg.destroy_shader(temp_shader)
     return {}, .COMPILE_ERROR
 }
 
-shader_reinit :: proc(shader: ^Shader) -> Shader_Error {
-    new_shader, err := shader_init(shader.vs_path, shader.fs_path, shader.uniform_desc)
+shader_reinit :: proc(shader: ^Shader, alloc: runtime.Allocator = context.temp_allocator) -> Shader_Error {
+    new_shader, err := shader_init(shader.vs_path, shader.fs_path, alloc)
     if err != .NONE {
         assert(err == .COMPILE_ERROR)
         fmt.println("Shader compile errors found. Paths:", shader.vs_path, shader.fs_path)

@@ -69,7 +69,8 @@ osu_section_headers := []string{
 mapset_clear_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
     win32_close_directory_watch(&mapset.watch)
     mapset_path := strings.clone(mapset.folder_path, context.temp_allocator)
-
+    
+    virtual.arena_free_all(&memory.element_arena)
     virtual.arena_free_all(&memory.mapset_arena)
     reloaded_mapset, ok := mapset_open_for_editing(mapset_path)
     assert(ok)
@@ -92,7 +93,7 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
     dir_handle, io_err := os.open(path)
 
     // note(isak): file contents cannot exit this function, don't leave strings
-    files, io_err = os.read_dir(dir_handle, 128, context.temp_allocator)
+    files, io_err = os.read_dir(dir_handle, 1024, context.temp_allocator)
     defer mem.free_all(context.temp_allocator)
     
     for file in files {
@@ -256,10 +257,10 @@ mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
                                 type_flags, _ := strconv.parse_int(value)
                                 hobj.type_flags = type_flags
 
-                                is_circle :=    type_flags & (1 << 0)
-                                is_slider :=    type_flags & (1 << 1)
-                                is_nc :=        type_flags & (1 << 2)
-                                is_spinner :=   type_flags & (1 << 3)
+                                is_circle    := type_flags & (1 << 0)
+                                is_slider    := type_flags & (1 << 1)
+                                is_nc        := type_flags & (1 << 2)
+                                is_spinner   := type_flags & (1 << 3)
                                 colorhax_inc := type_flags & (0b111 << 4)
 
                                 if is_circle > 0 { 
@@ -275,7 +276,7 @@ mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
                                 if hobj.type == .SLIDER {
                                     //result.hit_objects = make(Slider_Path, alloc)
                                     
-                                    assert(false)
+                                    //assert(false)
                                 }
                                 // else handle hitsound flags
                         }
@@ -291,13 +292,17 @@ mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
                     if hobj.type == .SLIDER {
                         slider := &map_sliders[slider_offset]
                         write_instances_from_path(&window.renderer.slider_instances, slider, alloc)
-                        slider_offset += 1
+                        slider_offset = 0
+                        
+                        // todo(isak)
+                        hobj.end_time_ms = hobj.start_time_ms
                     }
                 }
         }
     }
     
-    
+    result.preempt_ms = convert_approach_rate_to_preempt_ms(result.diff_approach_rate)
+    result.circle_radius_osupx = convert_circle_size_to_radius_osupx(result.diff_circle_size)
 
     return result
 }
@@ -305,4 +310,8 @@ mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
 
 convert_approach_rate_to_preempt_ms :: proc(ar: f64) -> f64 {
     return 1800 - min(ar, 5) * 120 - (max(ar, 5) - 5) * 150
+}
+
+convert_circle_size_to_radius_osupx :: proc(cs: f64) -> f32 {
+    return f32((54.4 - 4.48 * cs) * 1.00041)
 }

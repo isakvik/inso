@@ -59,8 +59,7 @@ color_purple        :: Color{0x80, 0x00, 0xFF, 0xFF}
 with_alpha_f32 :: proc "contextless" (c: Color, alpha: f32) -> Color { return {c.x, c.y, c.z, u8(alpha * 0xFF)} }
 with_alpha_u8 :: proc "contextless" (c: Color, alpha: u8) -> Color { return {c.x, c.y, c.z, alpha} }
 with_alpha :: proc {
-    with_alpha_f32,
-    with_alpha_u8
+    with_alpha_f32
 }
 
 color_to_pixel_f32 :: proc "contextless" (v: vec4) -> u32 {
@@ -178,6 +177,13 @@ transform_from_bounds :: proc "contextless" (r: vec4, aspect_ratio: f32) -> Tran
 identity_transform :: Transform {
     1, 0, 0,
     0, 1, 0,
+    0, 0, 1,
+    0, 0, 0,
+} 
+
+fullscreen_transform :: Transform {
+    2, 0, -1,
+    0, 2, -1,
     0, 0, 1,
     0, 0, 0,
 } 

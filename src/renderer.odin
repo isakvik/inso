@@ -147,7 +147,7 @@ renderer_init :: proc() {
     assert(err == .NONE)
     window.pipelines[.TEXT] = sg.make_pipeline(text_pipeline())
 
-    window.framebuffers[.SLIDERS] = fbo_init(1, 1, i32(window.rect.w), i32(window.rect.h), gl.RGBA8)
+    //window.framebuffers[.SLIDERS] = fbo_init(1, 1, i32(window.rect.w), i32(window.rect.h), gl.RGBA8)
     
 
     window.quad_store = tbo_init(Quad, MAX_BATCH_VERTICES)

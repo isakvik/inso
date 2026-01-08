@@ -168,7 +168,8 @@ window: struct {
     font_atlas_texture: Texture,
     ui_atlas_texture: Texture,
 
-    skin_textures: [Skin_Element]Texture,
+    skin_textures: [Skin_Element]Skin_Texture,
+    is_high_resolution: [Skin_Element]bool
 }
 
 debug_info: struct {
@@ -214,7 +215,7 @@ window_resize :: proc(new_w, new_h: i32) {
     window.aspect_ratio = window.rect.h / window.rect.w
     window.screenspace_transform = transform_from_bounds({0, 0, window.rect.w, window.rect.h}, 1)
 
-    fbo_reinit(&window.framebuffers[.SLIDERS], new_w, new_h)
+    //fbo_reinit(&window.framebuffers[.SLIDERS], new_w, new_h)
 }
 
 clipspace_transform := transform_from_bounds({0, 0, 1, 1}, 1)
@@ -353,7 +354,7 @@ main :: proc() {
         miniaudio.sound_start(&sound)
     }
 
-    window_init({w = 1024, h = 512})
+    window_init({w = 1280, h = 720})
     window.ui_enabled = true
     defer window_cleanup()
 
@@ -541,7 +542,7 @@ main :: proc() {
             
             r_push_layer(.DEBUG, transform = window.screenspace_transform)
 
-            game_timer_str := fmt.tprintf("%.3f", game.active_map.play_timer_ms)
+            game_timer_str := fmt.tprintf("%.3f", game.play_timer_ms)
             push_text(renderer, game_timer_str, {20, 20}, size = 22)
 
             if debug_info.display_fontatlas {
@@ -575,7 +576,7 @@ main :: proc() {
                 profiler_write_texture_column(frame_count, window.profiler_texture)
 
                 if frame_count % 100 == 0 {
-                    fmt.println("ms:", profiler_get_frametime())
+                    fmt.println("ms:", profiler_get_fps())
                 }
             }
             

@@ -67,9 +67,7 @@ Osu_Map :: struct {
     hit_objects: []Hit_Object,
     slider_paths: []Slider_Path,
     length_ms: f64,
-    lead_in: f64,
-
-    play_timer_ms: f64,
+    total_lead_in_ms: f64
 }
 
 game: struct {
@@ -79,6 +77,8 @@ game: struct {
     active_map: ^Osu_Map,
     
     test_nodes: sa.Small_Array(128, Slider_Node),
+
+    play_timer_ms: f64,
 }
 
 
@@ -132,6 +132,7 @@ slider_offset: int
 
 
 osu_on_init :: proc() {
+    test_elements = buffer_init(len(element_store), element_store[:])
     osu_on_map_init()
 }
 
@@ -147,14 +148,36 @@ osu_on_map_init :: proc() {
     active_map := game.active_map
 
     final_hobj_time_ms: f64
+    i: int
     for &hobj in game.active_map.hit_objects {
         hobj.start_time_ms -= preempt
         final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
+
+        types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE, .HIT_CIRCLE_OVERLAY, .APPROACH_CIRCLE}
+        for e_type in types {
+            e := Element{
+                type = e_type,
+                pos = hobj.pos,
+                size = 60,
+                anchor = .CENTER,
+                color = with_alpha(color_white, 1),
+                start_time = hobj.start_time_ms,
+                end_time = hobj.end_time_ms,
+            }
+            if e_type == .COMBO_NUMBER {
+                e.size.x *= 0.2
+                e.size.y *= -0.4
+            }
+            if e_type == .HIT_CIRCLE || e_type == .APPROACH_CIRCLE {
+                e.color = color_purple
+            }
+            buffer_push(&test_elements, e)
+        }
     }
 
-    active_map.lead_in = preempt + active_map.audio_lead_in
+    active_map.total_lead_in_ms = preempt + active_map.audio_lead_in
     active_map.length_ms = final_hobj_time_ms + 1000
-    active_map.play_timer_ms = -active_map.lead_in
+    game.play_timer_ms = -active_map.total_lead_in_ms
 }
 
 osu_on_update :: proc(dt: f64) {
@@ -167,21 +190,28 @@ osu_on_update :: proc(dt: f64) {
     
     active_map := game.active_map
     
-    active_map.play_timer_ms += dt * 1000
-    if active_map.play_timer_ms > active_map.length_ms {
-        active_map.play_timer_ms = -active_map.lead_in
+    game.play_timer_ms += dt * 1000
+    if game.play_timer_ms > active_map.length_ms {
+        game.play_timer_ms = -active_map.total_lead_in_ms
     }
     
-    render_slider(&window.renderer, &test_slider)
+    //render_slider(&window.renderer, &test_slider)
 
     render_timeline(&window.renderer)
 
+    r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
+    #reverse for &e in test_elements.data[:test_elements.count] {
+        render_element(&e, game.play_timer_ms - e.start_time)
+    }
+
     // todo(isak): create some kinda iterator for this; keep track of earliest active object and 
     // stop once first nonstarted obj is done
+    /*
     r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
     for &hit_object in game.active_map.hit_objects {
         render_hit_object(&window.renderer, &hit_object)
     }
+    */
 }
 
 split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> []Slider_Curve {
@@ -258,13 +288,13 @@ make_test_instances :: proc(slider: ^Slider_Path) {
 render_hit_object :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
     using game
 
-    if active_map.play_timer_ms < hobj.start_time_ms {
+    if game.play_timer_ms < hobj.start_time_ms {
         return
     }
 
     #partial switch hobj.type {
         case .CIRCLE: {
-            if hobj.start_time_ms < active_map.play_timer_ms && active_map.play_timer_ms < hobj.end_time_ms {
+            if hobj.start_time_ms < game.play_timer_ms && game.play_timer_ms < hobj.end_time_ms {
                 ho_pos := rect_translate_by_anchor(Rect{hobj.pos.x, hobj.pos.y, 40, 40}, .CENTER)
                 r_draw_rect(&renderer.quad_geometry, ho_pos, color_red, skin_texture(.HITCIRCLE))
             }
@@ -284,7 +314,7 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
     r_clear()
 
-    pf_size: f32 = 512/circle_radius_osupx
+    pf_size: f32 = osu_playfield_size_osupx/circle_radius_osupx
 
     r_push_transform(transform_from_bounds({0,0,pf_size,pf_size}, window.aspect_ratio))
 
@@ -297,7 +327,7 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
     r_bind_pipeline({.QUAD})
     
-    r_push_transform(transform_from_bounds({0, 0, 1, 1}, 1))
+    r_push_transform(fullscreen_transform)
     r_draw_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.5), reserved_texture(.SLIDER_FRAMEBUFFER))
 }
 
@@ -306,8 +336,8 @@ render_timeline :: proc(renderer: ^Renderer) {
     preempt := convert_approach_rate_to_preempt_ms(active_map.diff_overall_difficulty)
     map_len_with_preempt := active_map.length_ms + preempt
 
-    active_map_leadin_fract := f32(max(0, -active_map.play_timer_ms - preempt) / (active_map.lead_in - preempt))
-    active_map_finish_fract := f32((active_map.play_timer_ms + active_map.lead_in) / map_len_with_preempt)
+    active_map_leadin_fract := f32(max(0, -game.play_timer_ms - preempt) / (active_map.total_lead_in_ms - preempt))
+    active_map_finish_fract := f32((game.play_timer_ms + active_map.total_lead_in_ms) / map_len_with_preempt)
     
     r_push_transform(window_get_clipspace_transform())
     

@@ -139,12 +139,14 @@ prepare_textures_for_rendering :: proc() {
     num_elements := len(Reserved_Texture_Slot)
 
     for element in Skin_Element {
-        textures[num_elements] = window.skin_textures[element].tex_handle
+        textures[num_elements] = window.skin_textures[element].texture.tex_handle
         num_elements += 1
     }
 
     for i in 0..<num_elements {
-        gl.MakeTextureHandleResidentARB(textures[i])
+        if textures[i] > 0 {
+            gl.MakeTextureHandleResidentARB(textures[i])
+        }
     }
 }
 
@@ -153,7 +155,9 @@ cleanup_textures_for_rendering :: proc() {
     
     num_elements := len(Reserved_Texture_Slot) + len(Skin_Element)
     for i in 0..<num_elements {
-        gl.MakeTextureHandleNonResidentARB(textures[i])
+        if textures[i] > 0 {
+            gl.MakeTextureHandleNonResidentARB(textures[i])
+        }
     }
 }
 

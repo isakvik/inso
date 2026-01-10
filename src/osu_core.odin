@@ -1,5 +1,6 @@
 package notosu
 
+import "core:math"
 import "base:runtime"
 import "core:math/linalg"
 import sa "core:container/small_array"
@@ -138,6 +139,34 @@ split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> 
 }
 
 write_instances_from_curve :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, type: Slider_Path_Type, curve_distance: f64) -> f64 {
+        if type == .ARC {
+        is_parallel: bool
+
+        base_dist : f32 = 2.5
+        if is_parallel {
+            start_pos := curve[0]
+            end_pos := curve[2]
+            h := (end_pos.y - start_pos.y) / (end_pos.x - start_pos.x)
+            y := base_dist / (math.pow(math.pow(h, 2) + 1, 0.5))
+            x := base_dist * h / (math.pow(math.pow(h, 2) + 1, 0.5))
+            iterations := abs((end_pos.x - start_pos.x) / x)
+            xy_vector : [2]f32 = {x, y}
+            for i in 0..<iterations {
+                buffer_push(slider_instances, start_pos + i * xy_vector)
+            }
+
+            travelled_distance := math.pow(math.pow(end_pos.y - start_pos.y, 2) + math.pow(end_pos.x - start_pos.x, 2), 0.5)
+            buffer_push(slider_instances, start_pos + iterations * xy_vector)
+            remaining_distance := curve_distance - travelled_distance
+        } else {
+            //todo(yokes): buffer_push points between nodes (arc)
+        }
+    } else if type == .LINEAR || len(curve) < 3 {
+        //todo(yokes): buffer_push points between nodes (linear)
+    } else {
+        //todo(yokes): buffer_push points inbetween nodes (bezier)
+    }
+
     return curve_distance
 }
 

@@ -453,6 +453,8 @@ main :: proc() {
 
                 case sdl.EventType.KEY_DOWN:
                     #partial switch (event.key.scancode) {
+                        case sdl.Scancode.SPACE:
+                            game.play_paused = !game.play_paused
                         case sdl.Scancode.HOME:
                             game.time_rate = 1
                         case sdl.Scancode.PAGEUP:
@@ -609,7 +611,7 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
         win := mu.get_current_container(ctx)
         mu.layout_row(ctx, {54, -1}, 0)
         mu.label(ctx, "Time rate:")
-        mu.label(ctx, fmt.tprintf("%f", game.time_rate))
+        mu.label(ctx, fmt.tprintf("%f%s", game.time_rate * (game.play_paused ? 0 : 1), game.play_paused ? " (paused)": ""))
         
     }
 }

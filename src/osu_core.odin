@@ -18,6 +18,7 @@ playfield_rect :: Rect{ 0, 0, osu_playfield_size_osupx, osu_playfield_size_osupx
 game: struct {
     mode: Game_Mode,
     play_timer_ms: f64,
+    play_paused: bool,
     time_rate: f64,
 
     active_mapset: ^Mapset,
@@ -173,7 +174,7 @@ osu_on_map_init :: proc() {
 }
 
 osu_on_update :: proc(dt: f64) {
-    dt := dt * game.time_rate
+    dt := dt * game.time_rate * (game.play_paused ? 0 : 1)
 
     updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
     if updated_systems[.OSU_FILE] {

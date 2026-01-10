@@ -300,8 +300,7 @@ mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
                         mapset_parse_osu_slider_params(hobj, &slider, hobj_extra_params)
                         slider.instance_count, slider.first_instance_at = 
                             write_instances_from_path(&window.renderer.slider_instances, 
-                                                      &slider, 
-                                                      result.circle_radius_osupx)
+                                                      &slider)
                                                       
                         hobj.slider_path_index = int(slider_temp_queue.len)
                         queue.append(&slider_temp_queue, slider)

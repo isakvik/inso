@@ -691,7 +691,11 @@ begin_frame :: proc(renderer: ^Renderer) {
     sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
     
     batch_begin(renderer)
-    commit_time(f32(time_since_beginning_of_program()))
+    r_set_shader_globals({
+        transform = identity_transform,
+        circle_size_osupx = game.active_map.circle_radius_osupx,
+        time = f32(game.play_timer_ms)
+    })
     
     _r_bind_layer(.BACKGROUND)
     r_bind_pipeline({.QUAD})

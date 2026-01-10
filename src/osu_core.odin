@@ -225,19 +225,17 @@ write_instances_from_curve :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Cu
 
 /*
  note(isak): calculates and writes slider instances, or positions used for rendering to the screen, based on a 
- given path. it should write instances into the bounds of [0, playfield_size / circle size]. if this proves to be
- cumbersome we could add the circle size as a size uniform to the slider shader instead (because it only has to be)
- calculated once, but right now this is the way it is.
+ given path. it should write instances into the bounds of [0, playfield_size]
 */
 write_instances_from_path :: proc(
-    instance_buf: ^Buffer(vec2), path: ^Slider_Path, circle_size: f32, alloc: runtime.Allocator = context.allocator
+    instance_buf: ^Buffer(vec2), path: ^Slider_Path, alloc: runtime.Allocator = context.allocator
 ) -> (i32, i32) {
     instance_offset := instance_buf.count
 
     // todo(isak): test code that just pushes a point for each node
     path.curves = split_path_into_curves(path, alloc)
     for curve in path.curves {
-        buffer_push(instance_buf, curve[0] / circle_size)
+        buffer_push(instance_buf, curve[0])
     }
     if true {
         return instance_buf.count - instance_offset, instance_offset

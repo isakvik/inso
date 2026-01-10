@@ -14,13 +14,15 @@ layout(binding = 5, std430) readonly buffer sliderInstanceData {
 };
 layout (binding = 3, std140) uniform transform {
     mat3 t;
+    float circleSizeOsupx;
+    float time;
 };
 
 out float color;
 
 void main() {
     Vertex v = vertices[gl_VertexID];
-    vec2 ppos = vec2(v.pos.x, v.pos.y) + points[gl_BaseInstance + gl_InstanceID];
+    vec2 ppos = vec2(v.pos.x, v.pos.y) + points[gl_BaseInstance + gl_InstanceID] / circleSizeOsupx;
     vec3 pos = t * vec3(ppos, 1.0);
 
     color = v.pos.z;

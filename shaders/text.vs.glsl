@@ -21,6 +21,8 @@ layout(binding = 1, std140) readonly buffer vertexData {
 
 layout (binding = 3, std140) uniform transform {
     mat3 t;
+    float circleSizeOsupx;
+    float time;
 };
 
 out vec4 color;

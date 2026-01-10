@@ -53,8 +53,9 @@ Draw_Call :: struct {
 }
 
 Shader_Globals :: struct {
-    t: Transform,
-    time: f32
+    transform: Transform,
+    circle_size_osupx: f32,
+    time: f32,
 }
 
 Renderer :: struct {
@@ -203,7 +204,7 @@ renderer_init :: proc() {
     
     renderer.text_geometry.size = MAX_BATCH_VERTICES
     
-    renderer.current_global_data = {identity_transform, 0}
+    renderer.current_global_data = {identity_transform, 0, 0}
     gl.NamedBufferSubData(window.shader_global_buffer.id, 0, size_of(Shader_Globals), &renderer.current_global_data)
 
     renderer.slider_instances = buffer_init(MAX_SLIDER_INSTANCES, window.slider_instance_store.data)
@@ -467,7 +468,7 @@ r_bind_ssbo :: proc {
 */
 r_push_transform :: proc(transform: Transform) {
     window.renderer.new_draw_on_next_push = true
-    window.renderer.current_global_data.t = transform
+    window.renderer.current_global_data.transform = transform
     command_push_push_transform({transform})
 }
 
@@ -500,7 +501,7 @@ _r_bind_layer :: proc(layer: Layer) {
 r_push_layer :: proc(layer: Layer,    
     cmd_framebuffer: Command_Bind_Framebuffer = window.renderer.current_framebuffer,
     cmd_pipeline: Command_Bind_Pipeline = window.renderer.current_pipeline,
-    transform: Transform = window.renderer.current_global_data.t,
+    transform: Transform = window.renderer.current_global_data.transform,
     scissor_region: Command_Scissor_Mode = window.renderer.current_scissor
 ) {
     _r_bind_layer(layer)
@@ -510,7 +511,7 @@ r_push_layer :: proc(layer: Layer,
 r_push_current_state :: proc(
     cmd_framebuffer: Command_Bind_Framebuffer = window.renderer.current_framebuffer,
     cmd_pipeline: Command_Bind_Pipeline = window.renderer.current_pipeline,
-    transform: Transform = window.renderer.current_global_data.t,
+    transform: Transform = window.renderer.current_global_data.transform,
     scissor_region: Command_Scissor_Mode = window.renderer.current_scissor
 ) {
     r_bind_framebuffer(cmd_framebuffer)
@@ -526,10 +527,22 @@ r_push_current_state :: proc(
 ///////////////////////////////////////////////////////////////////////////
 // note(isak): renderer control api
 
-commit_time :: proc(time: f32) {
-    time := time
+r_set_shader_globals :: proc(val: Shader_Globals) {
+    val := val
     gl.NamedBufferSubData(window.shader_global_buffer.id, 
-                          int(offset_of_by_string(Shader_Globals, "time")), size_of(f32), &time)
+                          0, size_of(Shader_Globals), &val)
+}
+
+r_set_time :: proc(time: f32) {
+    val := time
+    gl.NamedBufferSubData(window.shader_global_buffer.id, 
+                          int(offset_of_by_string(Shader_Globals, "time")), size_of(f32), &val)
+}
+
+r_set_circle_size_osupx :: proc(circle_size_osupx: f32) {
+    val := circle_size_osupx
+    gl.NamedBufferSubData(window.shader_global_buffer.id, 
+                          int(offset_of_by_string(Shader_Globals, "circle_size_osupx")), size_of(f32), &val)
 }
 
 commit_transform :: proc(transform: Transform) {

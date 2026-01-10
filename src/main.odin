@@ -623,17 +623,31 @@ handle_debug_ui_events :: proc(ctx: ^mu.Context) {
     }
     if is_released(mouse.buttons[.LEFT]) {
         for container in ctx.root_list.items[:ctx.root_list.idx] {
-            window_rect := mu.Rect{ 0, 0, i32(window.rect.w) - container.rect.w, i32(window.rect.h) - container.rect.h }
-            if container.rect.x < window_rect.x {
-                container.rect.x = max(window_rect.x, container.rect.x)
-            } else if container.rect.x > window_rect.w {
-                container.rect.x = min(window_rect.w, container.rect.x)
+            confined_rect := mu.Rect{ 
+                0, 
+                0, 
+                max(i32(window.rect.w) - container.rect.w, 0), 
+                max(i32(window.rect.h) - ctx.style.title_height, 0)
+            }
+            if container.rect.w > i32(window.rect.w) {
+                container.rect.w = min(i32(window.rect.w), container.rect.w)
+                container.rect.x = 0
+            }
+            if container.rect.h > i32(window.rect.h) {
+                container.rect.h = min(i32(window.rect.h), container.rect.h)
+                container.rect.y = 0
+            }
+            
+            if container.rect.x < confined_rect.x {
+                container.rect.x = max(confined_rect.x, container.rect.x)
+            } else if container.rect.x > confined_rect.w {
+                container.rect.x = min(confined_rect.w, container.rect.x)
             }
 
-            if container.rect.y < window_rect.y {
-                container.rect.y = max(window_rect.y, container.rect.y)
-            } else if container.rect.y > window_rect.h {
-                container.rect.y = min(window_rect.h, container.rect.y)
+            if container.rect.y < confined_rect.y {
+                container.rect.y = max(confined_rect.y, container.rect.y)
+            } else if container.rect.y > confined_rect.h {
+                container.rect.y = min(confined_rect.h, container.rect.y)
             }
         }
         window.ui_dragging = false
@@ -691,12 +705,13 @@ begin_frame :: proc(renderer: ^Renderer) {
     sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
     
     batch_begin(renderer)
+
     r_set_shader_globals({
         transform = identity_transform,
         circle_size_osupx = game.active_map.circle_radius_osupx,
         time = f32(game.play_timer_ms)
     })
-    
+
     _r_bind_layer(.BACKGROUND)
     r_bind_pipeline({.QUAD})
     r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})

@@ -669,7 +669,7 @@ render_debug_ui :: proc(renderer: ^Renderer, ctx: ^mu.Context) {
 
     command_backing: ^mu.Command
     for variant in mu.next_command_iterator(ctx, &command_backing) {
-        switch cmd in variant {
+        #partial switch cmd in variant {
             case ^mu.Command_Text:
                 push_text(renderer, cmd.str, {f32(cmd.pos.x), f32(cmd.pos.y)}, size = 16, align_v = .Top )
             case ^mu.Command_Clip:
@@ -680,8 +680,6 @@ render_debug_ui :: proc(renderer: ^Renderer, ctx: ^mu.Context) {
             case ^mu.Command_Icon:
                 icon_rect := mu.default_atlas[cmd.id]
                 push_icon(renderer, cmd.rect, icon_rect, transmute(Color)cmd.color)
-            case ^mu.Command_Jump:
-                unreachable()
         }
     }
     r_end_scissor_mode()

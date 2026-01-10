@@ -1,5 +1,7 @@
 package notosu
 
+import "core:slice"
+import "core:container/queue"
 import "core:mem"
 import "core:mem/virtual"
 import "core:fmt"
@@ -74,7 +76,6 @@ mapset_clear_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
     virtual.arena_free_all(&memory.mapset_arena)
     reloaded_mapset, ok := mapset_open_for_editing(mapset_path)
     assert(ok)
-    write_instances_from_path(&window.renderer.slider_instances, &test_slider, memory.mapset_allocator)
     return reloaded_mapset
 }
 
@@ -105,7 +106,8 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
             }
             case ".osu": {
                 filedata, file_err := read_entire_file_to_string(file.fullpath, context.temp_allocator)
-                mapset.osu_map = mapset_parse_osu(filedata, memory.mapset_allocator)
+                context.allocator = memory.mapset_allocator
+                mapset.osu_map = mapset_parse_osu(filedata)
             }
         }
     }
@@ -159,7 +161,7 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, data: string) {
 }
 
 
-mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
+mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
     result: Osu_Map
     
     c: Consumer = {
@@ -200,7 +202,7 @@ mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
                     key, value := get_key_value(lines[i])
                     ok: bool
                     switch key {
-                        case "AudioFilename": result.audio_filename = strings.clone(value, alloc)
+                        case "AudioFilename": result.audio_filename = strings.clone(value)
                         case "AudioLeadIn": result.audio_lead_in, ok = strconv.parse_f64(value); assert(ok)
                         case "SampleSet": 
                             switch value {
@@ -215,12 +217,12 @@ mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
                 for i in 1..<len(lines) {
                     key, value := get_key_value(lines[i])
                     switch key {
-                        case "Title": result.title = strings.clone(value, alloc)
-                        case "TitleUnicode": result.title_unicode = strings.clone(value, alloc)
-                        case "Artist": result.artist = strings.clone(value, alloc)
-                        case "ArtistUnicode": result.artist_unicode = strings.clone(value, alloc)
-                        case "Creator": result.creator = strings.clone(value, alloc)
-                        case "Version": result.difficulty_name = strings.clone(value, alloc)
+                        case "Title":         result.title           = strings.clone(value)
+                        case "TitleUnicode":  result.title_unicode   = strings.clone(value)
+                        case "Artist":        result.artist          = strings.clone(value)
+                        case "ArtistUnicode": result.artist_unicode  = strings.clone(value)
+                        case "Creator":       result.creator         = strings.clone(value)
+                        case "Version":       result.difficulty_name = strings.clone(value)
                     }
                 }
             case .DIFFICULTY: 
@@ -230,22 +232,31 @@ mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
                     switch key {
                         case "HPDrainRate": result.diff_hp_drain, ok = strconv.parse_f64(value); assert(ok)
                         case "CircleSize": result.diff_circle_size, ok = strconv.parse_f64(value); assert(ok)
+                            result.circle_radius_osupx = convert_circle_size_to_radius_osupx(result.diff_circle_size)
                         case "OverallDifficulty": result.diff_overall_difficulty, ok = strconv.parse_f64(value); assert(ok)
-                        case "ApproachRate": result.diff_approach_rate, ok = strconv.parse_f64(value); assert(ok)
+                        case "ApproachRate": 
+                            result.diff_approach_rate, ok = strconv.parse_f64(value); assert(ok)
+                            result.preempt_ms = convert_approach_rate_to_preempt_ms(result.diff_approach_rate)
                         case "SliderMultiplier": result.diff_slider_velocity, ok = strconv.parse_f64(value); assert(ok)
                         case "SliderTickRate": result.diff_slider_tickrate, ok = strconv.parse_int(value); assert(ok)
                     }
                 }
             case .HITOBJECTS:
-                result.hit_objects = make_slice([]Hit_Object, len(lines) - 1, alloc)
+                result.hit_objects = make_slice([]Hit_Object, len(lines) - 1)
+
+                slider_temp_queue: queue.Queue(Slider_Path)
+                queue.init(&slider_temp_queue, 1024, context.temp_allocator)
                 
                 for i in 1..<len(lines) {
                     hobj := &result.hit_objects[i - 1]
+                    hobj_extra_params: string
 
+                    // note(isak): parse base params - every hobj type has a differing set of params after these
                     from_i, s_len: int
                     arg_i: int
-
                     for from_i < len(lines[i]) && 0 <= s_len {
+                        defer arg_i += 1
+                        defer from_i += s_len + 1
                         s_len = strings.index_byte(lines[i][from_i:], ',')
                         value := s_len >= 0 ? lines[i][from_i:from_i + s_len] : lines[i][from_i:]
 
@@ -273,16 +284,11 @@ mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
                                     hobj.type = .SPINNER 
                                 }
                             case 4:
-                                if hobj.type == .SLIDER {
-                                    //result.hit_objects = make(Slider_Path, alloc)
-                                    
-                                    //assert(false)
-                                }
-                                // else handle hitsound flags
+                                // hitsound flag
+                            case 5:
+                                hobj_extra_params = lines[i][from_i:]
+                                break
                         }
-
-                        from_i += s_len + 1
-                        arg_i += 1
                     }
 
                     if hobj.type == .CIRCLE {
@@ -290,19 +296,85 @@ mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
                     }
                     
                     if hobj.type == .SLIDER {
-                        slider := &map_sliders[slider_offset]
-                        write_instances_from_path(&window.renderer.slider_instances, slider, alloc)
-                        slider_offset = 0
+                        slider: Slider_Path
+                        mapset_parse_osu_slider_params(hobj, &slider, hobj_extra_params)
+                        slider.instance_count, slider.first_instance_at = 
+                            write_instances_from_path(&window.renderer.slider_instances, 
+                                                      &slider, 
+                                                      result.circle_radius_osupx)
+                                                      
+                        hobj.slider_path_index = int(slider_temp_queue.len)
+                        queue.append(&slider_temp_queue, slider)
                         
-                        // todo(isak)
-                        hobj.end_time_ms = hobj.start_time_ms
+
+                        // todo(isak) slider time calculation... requires redline & greenline handling. formula:
+                        // length / (SliderMultiplier * 100 * SV) * beatLength
+
+                        hobj.end_time_ms = hobj.start_time_ms + slider.distance_osupx * 2
                     }
                 }
+
+                temp_slider_size := int(slider_temp_queue.len) * size_of(Slider_Path)
+                slider_array_ptr, err := mem.alloc(temp_slider_size); assert(err == .None)
+                mem.copy(slider_array_ptr, raw_data(slider_temp_queue.data), temp_slider_size)
+                result.slider_paths = slice.from_ptr(transmute(^Slider_Path)slider_array_ptr, int(slider_temp_queue.len))
         }
     }
-    
-    result.preempt_ms = convert_approach_rate_to_preempt_ms(result.diff_approach_rate)
-    result.circle_radius_osupx = convert_circle_size_to_radius_osupx(result.diff_circle_size)
+
+    return result
+}
+
+mapset_parse_osu_slider_params :: proc(hobj: ^Hit_Object, slider: ^Slider_Path, params: string, alloc: mem.Allocator = context.allocator) {
+    from_i, s_len: int
+    arg_i: int
+    for from_i < len(params) && 0 <= s_len {
+        defer arg_i += 1
+        defer from_i += s_len + 1
+        s_len = strings.index_byte(params[from_i:], ',')
+        value := s_len >= 0 ? params[from_i:from_i + s_len] : params[from_i:]
+        ok: bool
+        switch arg_i {
+            case 0:
+                slider_type, slider_nodes_str := get_key_value(value, '|')
+                switch slider_type {
+                    case "B": slider.type = .BEZIER
+                    case "P": slider.type = .ARC
+                    case "L": slider.type = .LINEAR
+                    case "C": slider.type = .CATMULL
+                }
+                slider.nodes = mapset_parse_osu_slider_nodes(slider_nodes_str)
+            case 1:
+                hobj.slider_repeats, ok = strconv.parse_int(value); assert(ok)
+            case 2:
+                slider.distance_osupx, ok = strconv.parse_f64(value); assert(ok)
+            case 3:
+                // edgesounds
+            case 4:
+                // edgesets
+        }
+    }
+    assert(slider.type != .NONE, fmt.tprintln("slider parse error: unknown slidertype ::", params))
+}
+
+@(require_results)
+mapset_parse_osu_slider_nodes :: proc(value: string, alloc: mem.Allocator = context.allocator) -> []Slider_Node {
+    temp := virtual.arena_temp_begin(&memory.frame_arena)
+    defer virtual.arena_temp_end(temp)
+
+    sections := strings.split(value, "|", virtual.arena_allocator(temp.arena))
+    result := make_slice([]Slider_Node, len(sections), alloc)
+
+    sec_i: int
+    ok: bool
+    for section in sections {
+        defer sec_i += 1
+        node := &result[sec_i]
+
+        sep_at := strings.index_byte(section, ':')
+        assert(sep_at > 0, fmt.tprintfln("slider parse error: unsized node ::", value))
+        node.x, ok = strconv.parse_f32(section[:sep_at]); assert(ok, fmt.tprintfln("slider parse error: node.x is not a number ::", value))
+        node.y, ok = strconv.parse_f32(section[sep_at + 1:]); assert(ok, fmt.tprintfln("slider parse error: node.y is not a number ::", value))
+    }
 
     return result
 }

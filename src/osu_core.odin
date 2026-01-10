@@ -1,5 +1,6 @@
 package notosu
 
+import "core:slice"
 import "core:mem/virtual"
 import "base:runtime"
 import "core:math/linalg"
@@ -23,7 +24,6 @@ game: struct {
     active_map: ^Osu_Map,
     active_skin: [Skin_Element_Type]Skin_Element,
     
-    test_nodes: sa.Small_Array(128, Slider_Node),
     animations: queue.Queue(Animation),
     elements: queue.Queue(Element),
     bound_element_animations: [Element_Type][]Animation
@@ -46,12 +46,17 @@ Hit_Object :: struct {
     
     type_flags: int,
     hitsound_flags: byte,
+
+    slider_path_index: int,
+    slider_repeats: int,
 }
 
 Slider_Path_Type :: enum {
+    NONE,
     LINEAR,
     BEZIER,
     ARC,
+    CATMULL,
 }
 
 Slider_Node :: vec2
@@ -65,8 +70,7 @@ Slider_Path :: struct {
     nodes: []Slider_Node, // note(isak): slice into our array of all nodes
     curves: []Slider_Curve, // note(isak): slice into mapset arena
     
-    instances: []vec2, // note(isak): slice into the gpu mapped instance buffer
-    first_instance_at: int,
+    instance_count, first_instance_at: i32, // todo(isak): this could be a slice, but data reads are probs unnecessary...
 }
 
 
@@ -138,10 +142,16 @@ slider_offset: int
 /*
     game todos(isak)
 
-    should elements use some kinda ring buffer? a lot of them can be calculated at load time
+    element storage...
+        should elements use some kinda ring buffer? if there's a memory budget we should stick to....
 
+        a lot of elements can be calculated at load time, but scripts will add stuff at runtime
+        a lot of these runtime els will probably run for a short duration, they can be marked inactive and
+        slots reused... yeah a runtime ring buffer with alive/dead flags will work.
+        queue is good, can alloc a finite big amount and just not grow it but rather loop through and find new slots.
+        priority system might be prudent (gameplay elements always pushes over visual elements if there are no
+        open slots.)
 */
-
 
 osu_on_init :: proc() {
     game.time_rate = 1.0
@@ -154,12 +164,9 @@ osu_on_map_init :: proc() {
     queue.init(&game.animations, 1024, memory.mapset_allocator)
     queue.init(&game.elements, 8192, memory.element_allocator)
 
-    game.test_nodes.len = 0
-    make_test_slider(&test_slider, 0)
-    make_test_slider(&test_slider2, 1)
-
-    make_test_instances(&test_slider)
-    write_instances_from_path(&window.renderer.slider_instances, &test_slider, memory.mapset_allocator)
+    //make_test_slider(&test_slider, 0)
+    //make_test_instances(&test_slider)
+    //write_instances_from_path(&window.renderer.slider_instances, &test_slider, memory.mapset_allocator)
     
     write_default_animations(&game.animations, game.active_map)
     write_default_elements_from_map(&game.elements, game.active_map)
@@ -181,7 +188,15 @@ osu_on_update :: proc(dt: f64) {
         game.play_timer_ms = clamp(-game.active_map.total_lead_in_ms, -1000, 0)
     }
     
-    render_slider(&window.renderer, &test_slider)
+    for hobj in game.active_map.hit_objects {
+        if hobj.type != .SLIDER || 
+                game.play_timer_ms < hobj.start_time_ms - game.active_map.preempt_ms || 
+                hobj.end_time_ms < game.play_timer_ms {
+            continue
+        }
+
+        render_slider(&window.renderer, &game.active_map.slider_paths[hobj.slider_path_index])
+    }
 
     render_timeline(&window.renderer)
 
@@ -194,17 +209,38 @@ osu_on_update :: proc(dt: f64) {
 }
 
 split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> []Slider_Curve {
-    return nil
+    // todo(isak): we just make a curve for each node here for testing, but we have to read nodes to figure out 
+    // which ones are red nodes and split by those
+    result := make_slice([]Slider_Curve, len(path.nodes))
+    for i in 0..<len(path.nodes) {
+        result[i] = path.nodes[i:i+1]
+    }
+    return result
 }
 
 write_instances_from_curve :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, type: Slider_Path_Type, curve_distance: f64) -> f64 {
     return curve_distance
 }
 
-// todo(isak): caller needs to populate path with num instances written, plus instance offset.
-// maybe not the best api?
-write_instances_from_path :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, alloc: runtime.Allocator) {
+/*
+ note(isak): calculates and writes slider instances, or positions used for rendering to the screen, based on a 
+ given path. it should write instances into the bounds of [0, playfield_size / circle size]. if this proves to be
+ cumbersome we could add the circle size as a size uniform to the slider shader instead (because it only has to be)
+ calculated once, but right now this is the way it is.
+*/
+write_instances_from_path :: proc(
+    instance_buf: ^Buffer(vec2), path: ^Slider_Path, circle_size: f32, alloc: runtime.Allocator = context.allocator
+) -> (i32, i32) {
+    instance_offset := instance_buf.count
+
+    // todo(isak): test code that just pushes a point for each node
     path.curves = split_path_into_curves(path, alloc)
+    for curve in path.curves {
+        buffer_push(instance_buf, curve[0] / circle_size)
+    }
+    if true {
+        return instance_buf.count - instance_offset, instance_offset
+    }
 
     distance_to_cover := path.distance_osupx
     for curve in path.curves {
@@ -217,46 +253,51 @@ write_instances_from_path :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Pat
             distance_to_cover -= distance_covered_by_curve
         }
     }
+    
 
     // todo(yokes): if we still have distance left over but zero curves, a linear path needs to cover
     // the remaining distance. maybe mcosu has something neat for this?
     if distance_to_cover > 0 {
 
     }
+
+    return 0, 0
 }
 
 make_test_slider :: proc(slider: ^Slider_Path, x_shift: f32) {
-    node_i := game.test_nodes.len
-
     circle_radius_osupx := convert_circle_size_to_radius_osupx(game.active_map.diff_circle_size)
-
-    sa.append(&game.test_nodes, Slider_Node{0/circle_radius_osupx, 0/circle_radius_osupx})
-    sa.append(&game.test_nodes, Slider_Node{100/circle_radius_osupx, 0/circle_radius_osupx})
-    sa.append(&game.test_nodes, Slider_Node{100/circle_radius_osupx, 100/circle_radius_osupx})
-    sa.append(&game.test_nodes, Slider_Node{200/circle_radius_osupx, 100/circle_radius_osupx})
+    
+    nodes := new([4]Slider_Node, memory.mapset_allocator)
+    nodes^ = {
+        Slider_Node{0/circle_radius_osupx, 0/circle_radius_osupx},
+        Slider_Node{100/circle_radius_osupx, 0/circle_radius_osupx},
+        Slider_Node{100/circle_radius_osupx, 100/circle_radius_osupx},
+        Slider_Node{200/circle_radius_osupx, 100/circle_radius_osupx},
+    }
 
     slider^ = {
         pos = {0 + x_shift, 0},
-        nodes = game.test_nodes.data[node_i + 0:node_i + 4],
+        nodes = slice.from_ptr(&nodes[0], len(nodes)),
         distance_osupx = 999,
 
-        first_instance_at = int(window.renderer.slider_instances.count)
+        first_instance_at = window.renderer.slider_instances.count,
+        instance_count = len(nodes),
     }
     
     instance_buf := &window.renderer.slider_instances
-    write_instances_from_path(instance_buf, slider, memory.mapset_allocator)
+    //write_instances_from_path(instance_buf, slider, memory.mapset_allocator)
     
-    num_instances_written := int(window.renderer.slider_instances.count)
-    slider.instances = 
-        window.renderer.slider_instances.data[slider.first_instance_at:num_instances_written]
+    //num_instances_written := int(window.renderer.slider_instances.count)
+    //slider.instances = window.renderer.slider_instances.data[slider.first_instance_at:num_instances_written]
 }
 
 make_test_instances :: proc(slider: ^Slider_Path) {
     instance_buf := &window.renderer.slider_instances
 
-    ct := int(instance_buf.count)
+    ct := instance_buf.count
     slider.first_instance_at = ct
-    slider.instances = instance_buf.data[ct:ct + len(slider.nodes)]
+    slider.instance_count = i32(len(slider.nodes))
+    //slider.instances = instance_buf.data[ct:ct + i32(len(slider.nodes))]
     for i in 0..<len(slider.nodes) {
         buffer_push(instance_buf, slider.nodes[i])
     }
@@ -276,7 +317,7 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
 
     command_push_draw_slider(Command_Draw_Slider{
         base_instance = u32(slider.first_instance_at),
-        instance_count = i32(len(slider.instances))
+        instance_count = i32(slider.instance_count)
     })
     
     r_bind_framebuffer({ read = .SLIDERS })
@@ -284,7 +325,7 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     r_bind_pipeline({.QUAD})
     
     r_push_transform(fullscreen_transform)
-    r_draw_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.5), reserved_texture(.SLIDER_FRAMEBUFFER))
+    r_draw_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.4), reserved_texture(.SLIDER_FRAMEBUFFER))
 }
 
 render_timeline :: proc(renderer: ^Renderer) {

@@ -158,7 +158,6 @@ write_default_elements_from_map :: proc(buf: ^queue.Queue(Element), osu_map: ^Os
     final_hobj_time_ms: f64
     i: int
     for &hobj in osu_map.hit_objects {
-        hobj.start_time_ms -= preempt
         final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
 
         hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
@@ -169,8 +168,8 @@ write_default_elements_from_map :: proc(buf: ^queue.Queue(Element), osu_map: ^Os
                 size = circle_diameter_osupx,
                 anchor = .CENTER,
                 color = with_alpha(color_white, 1),
-                start_time = hobj.start_time_ms,
-                end_time = hobj.end_time_ms,
+                start_time = hobj.start_time_ms - preempt,
+                end_time = hobj.start_time_ms,
             }
             if el_type == .COMBO_NUMBER {
                 e.size.x *= 0.2

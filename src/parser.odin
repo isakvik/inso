@@ -1,6 +1,7 @@
 package notosu
 
 import "base:runtime"
+import "core:strings"
 
 
 Consumer :: struct {
@@ -59,14 +60,8 @@ consume_section :: proc(c: ^Consumer, alloc: runtime.Allocator = context.temp_al
     return arr
 }
 
-get_key_value :: proc(str: string, separator: u8 = ':') -> (string, string) {
-    sep_at := -1
-    for i in 0..<len(str) {
-        if str[i] == separator {
-            sep_at = i
-            break
-        }
-    }
+get_key_value :: proc "contextless" (str: string, separator: u8 = ':') -> (string, string) {
+    sep_at := strings.index_byte(str, separator)
     if sep_at < 0 {
         return str, ""
     }

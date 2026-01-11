@@ -2,14 +2,13 @@ package notosu
 
 import "base:runtime"
 import "core:container/queue"
-import sa "core:container/small_array"
 import "core:fmt"
-import "core:math"
 import "core:math/linalg"
 import "core:mem/virtual"
 import os "core:os/os2"
 import "core:path/filepath"
 import "core:strings"
+import "core:time"
 
 import lua "vendor:lua/5.4"
 import miniaudio "vendor:miniaudio"
@@ -17,8 +16,6 @@ import mu "vendor:microui"
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
-
-import "core:time"
 
 
 /*
@@ -683,9 +680,9 @@ render_debug_ui :: proc(renderer: ^Renderer, ctx: ^mu.Context) {
         pos := Rect{f32(rect.x + icon_rect.w/2), f32(rect.y + icon_rect.h/2), f32(icon_rect.w), f32(icon_rect.h)}
         uv := Rect{
             f32(icon_rect.x) / f32(window.ui_atlas_texture.w), 
-            f32(window.ui_atlas_texture.h - icon_rect.y) / f32(window.ui_atlas_texture.h), 
+            f32(icon_rect.y) / f32(window.ui_atlas_texture.h), 
             f32(icon_rect.w) / f32(window.ui_atlas_texture.w), 
-            f32(-icon_rect.h) / f32(window.ui_atlas_texture.h)
+            f32(icon_rect.h) / f32(window.ui_atlas_texture.h)
         }
         r_draw_rect_with_uv(&renderer.quad_geometry, pos, uv, color, reserved_texture(.UI_ATLAS))
     }

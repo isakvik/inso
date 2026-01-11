@@ -198,12 +198,12 @@ osu_on_update :: proc(dt: f64) {
             continue
         }
 
+
+        
         if hobj.type == .SLIDER {
             render_slider(&window.renderer, &game.active_map.slider_paths[hobj.slider_path_index])
         }
     }
-
-    render_timeline(&window.renderer)
 
     r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
 
@@ -216,6 +216,8 @@ osu_on_update :: proc(dt: f64) {
 
         render_element(&e, game.play_timer_ms - e.start_time_ms)
     }
+
+    render_timeline(&window.renderer)
 }
 
 

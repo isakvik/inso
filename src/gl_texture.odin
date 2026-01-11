@@ -93,7 +93,7 @@ texture_from_file :: proc(path: string) -> (Texture, os.Error) {
     result: Texture
     result.path = path
 
-    data, err := read_entire_file(path)
+    data, err := read_entire_file(path, context.temp_allocator)
     if err != os.General_Error.None {
         return result, err
     }

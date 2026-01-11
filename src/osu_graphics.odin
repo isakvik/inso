@@ -14,7 +14,6 @@ Tween :: enum {
     SLEEP
 }
 
-
 Animation_Variant :: enum {
     TRANSLATE,
     SCALE,
@@ -174,7 +173,7 @@ write_default_elements_from_map :: proc(buf: ^queue.Queue(Element), osu_map: ^Os
             }
             if el_type == .COMBO_NUMBER {
                 e.size.x *= 0.2
-                e.size.y *= -0.4
+                e.size.y *= 0.4
             }
             if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE {
                 e.color = color_purple

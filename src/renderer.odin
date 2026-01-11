@@ -246,12 +246,12 @@ Shader :: struct {
 }
 
 shader_init :: proc(vs_path, fs_path: string, alloc: runtime.Allocator = context.temp_allocator) -> (Shader, Shader_Error) {
-    vs_filedata, vs_err := read_entire_file(vs_path)
+    vs_filedata, vs_err := read_entire_file(vs_path, alloc)
     if vs_err != os.ERROR_NONE {
         fmt.printfln("loading vert shader file '{}' failed: {}", vs_path, vs_err)
         return {}, .READ_ERROR
     }
-    fs_filedata, fs_err := read_entire_file(fs_path)
+    fs_filedata, fs_err := read_entire_file(fs_path, alloc)
     if fs_err != os.ERROR_NONE {
         fmt.printfln("loading frag shader file '{}' failed: {}", fs_path, fs_err)
         return {}, .READ_ERROR

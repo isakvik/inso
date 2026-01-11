@@ -1,11 +1,9 @@
 package notosu
 
-import "core:slice"
-import "core:mem/virtual"
+import "base:intrinsics"
 import "base:runtime"
 import "core:math/linalg"
 import queue "core:container/queue"
-import sa "core:container/small_array"
 
 import sdl "vendor:sdl3"
 
@@ -27,10 +25,16 @@ game: struct {
     
     animations: queue.Queue(Animation),
     elements: queue.Queue(Element),
-    bound_element_animations: [Element_Type][]Animation
+    visible_element_state: Visibility_State,
+
+    bound_element_animations: [Element_Type][]Animation,
 }
 
 // note(isak): core types
+
+Visibility_State :: struct {
+    earliest_i, latest_i: int,
+}
 
 Hit_Object_Type :: enum {
     NONE,
@@ -119,6 +123,8 @@ Osu_Map :: struct {
     // map 
 
     hit_objects: []Hit_Object,
+    visible_hit_object_state: Visibility_State,
+
     slider_paths: []Slider_Path,
     length_ms: f64,
     total_lead_in_ms: f64,
@@ -126,19 +132,6 @@ Osu_Map :: struct {
     preempt_ms: f64,
     circle_radius_osupx: f32,
 }
-
-
-osu_slider_curve_points_separation: f32 = 2.5
-
-
-test_slider: Slider_Path
-test_slider2: Slider_Path
-
-test_curve: Slider_Curve
-
-// todo(isak): move this to arena and to osu_map as slider_count (offset in parsing function)
-map_sliders: [128]Slider_Path
-slider_offset: int
 
 /*
     game todos(isak)
@@ -158,19 +151,28 @@ osu_on_init :: proc() {
     game.time_rate = 1.0
     game.play_timer_ms = -500
 
-    osu_on_map_init()
+    game.mode = .PLAY
+    
+    osu_controller.k1_key = sdl.Scancode.Z
+    osu_controller.k2_key = sdl.Scancode.X
+
+    osu_on_map_load()
 }
 
-osu_on_map_init :: proc() {
+osu_on_map_load :: proc() {
     queue.init(&game.animations, 1024, memory.mapset_allocator)
     queue.init(&game.elements, 8192, memory.element_allocator)
 
-    //make_test_slider(&test_slider, 0)
-    //make_test_instances(&test_slider)
-    //write_instances_from_path(&window.renderer.slider_instances, &test_slider, memory.mapset_allocator)
-    
     write_default_animations(&game.animations, game.active_map)
     write_default_elements_from_map(&game.elements, game.active_map)
+}
+
+osu_start_map :: proc(osu_map: ^Osu_Map) {
+    game.mode = .PLAY
+    game.play_timer_ms = clamp(-game.active_map.total_lead_in_ms, -1000, 0)
+    
+    osu_map.visible_hit_object_state = {}
+    game.visible_element_state = {}
 }
 
 osu_on_update :: proc(dt: f64) {
@@ -180,34 +182,111 @@ osu_on_update :: proc(dt: f64) {
     if updated_systems[.OSU_FILE] {
         game.active_mapset = mapset_clear_and_reload(game.active_mapset)
         game.active_map = &game.active_mapset.osu_map
-        osu_on_map_init()
+        osu_on_map_load()
     }
     
     game.play_timer_ms += dt * 1000
     game.active_map.total_lead_in_ms = game.active_map.preempt_ms + game.active_map.audio_lead_in
     if game.play_timer_ms > game.active_map.length_ms {
-        game.play_timer_ms = clamp(-game.active_map.total_lead_in_ms, -1000, 0)
+        osu_start_map(game.active_map)
     }
-    
-    for hobj in game.active_map.hit_objects {
-        if hobj.type != .SLIDER || 
-                game.play_timer_ms < hobj.start_time_ms - game.active_map.preempt_ms || 
-                hobj.end_time_ms < game.play_timer_ms {
+
+    time := game.play_timer_ms
+    hobj_it := get_visible_hobj_iterator(&game.active_map.visible_hit_object_state, game.play_timer_ms)
+    for hobj, i in hobj_it {
+        if time < hobj.start_time_ms - game.active_map.preempt_ms || hobj.end_time_ms < time {
             continue
         }
 
-        render_slider(&window.renderer, &game.active_map.slider_paths[hobj.slider_path_index])
+        if hobj.type == .SLIDER {
+            render_slider(&window.renderer, &game.active_map.slider_paths[hobj.slider_path_index])
+        }
     }
 
     render_timeline(&window.renderer)
 
     r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
-    // todo(isak): create some kinda iterator for this; keep track of earliest active object and 
-    // stop once first nonstarted obj is done
-    #reverse for &e in game.elements.data[:game.elements.len] {
-        render_element(&e, game.play_timer_ms - e.start_time)
+
+    // note(isak): we render elements back to front
+    elem_it := get_visible_element_iterator(&game.visible_element_state, game.play_timer_ms)
+    #reverse for &e in elem_it {
+        if time < e.start_time_ms || e.end_time_ms < time {
+            continue
+        }
+
+        render_element(&e, game.play_timer_ms - e.start_time_ms)
     }
 }
+
+
+// note(isak): this function assumes the start times of objects are sorted, but doesn't require end times to be.
+// a pathological case might be a 2B element that stretches from the beginning of the map to the end
+// todo(isak): it doesn't read from the latest object state; it's a viable small optimization
+get_visible_hobj_iterator :: proc(state: ^Visibility_State, time: f64) -> []Hit_Object {
+    result: []Hit_Object
+    updated_from_index := state.earliest_i
+
+    hit_objects := game.active_map.hit_objects
+    if len(hit_objects) > 0 {
+        looking_for_finished_objects := true
+        count_until_next_unstarted_hobj: int
+        includes_final_index := 1
+
+        for hobj, i in hit_objects[state.earliest_i:] {
+            count_until_next_unstarted_hobj = i
+            if time < hobj.start_time_ms - game.active_map.preempt_ms {
+                includes_final_index = 0
+                break
+            }
+            if looking_for_finished_objects {
+                if hobj.end_time_ms < time {
+                    updated_from_index += 1
+                } else {
+                    looking_for_finished_objects = false
+                }
+            }
+        }
+        state.latest_i = updated_from_index + count_until_next_unstarted_hobj + includes_final_index
+        state.earliest_i = updated_from_index
+        result = hit_objects[state.earliest_i:min(state.latest_i, len(hit_objects))]
+    }
+    return result
+}
+
+// todo(isak): see above
+get_visible_element_iterator :: proc(state: ^Visibility_State, time: f64) -> []Element {
+    result: []Element
+    updated_from_index := state.earliest_i
+
+    elements := game.elements.data
+    if len(elements) > 0 {
+        looking_for_finished_objects := true
+        count_until_next_unstarted_elem: int
+        includes_final_index := 1
+
+        for e, i in elements[state.earliest_i:] {
+            count_until_next_unstarted_elem = i
+            if time < e.start_time_ms {
+                includes_final_index = 0
+                break
+            }
+            if looking_for_finished_objects {
+                if e.end_time_ms < time {
+                    updated_from_index += 1
+                } else {
+                    looking_for_finished_objects = false
+                }
+            }
+        }
+        state.latest_i = updated_from_index + count_until_next_unstarted_elem + includes_final_index
+        result = elements[state.earliest_i:min(state.latest_i, len(elements))]
+    }
+    state.earliest_i = updated_from_index
+    return result
+}
+
+
+osu_slider_curve_points_separation :: f32(2.5)
 
 split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> []Slider_Curve {
     // todo(isak): we just make a curve for each node here for testing, but we have to read nodes to figure out 
@@ -224,8 +303,8 @@ write_instances_from_curve :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Cu
 }
 
 /*
- note(isak): calculates and writes slider instances, or positions used for rendering to the screen, based on a 
- given path. it should write instances into the bounds of [0, playfield_size]
+    note(isak): calculates and writes slider instances, or positions used for rendering to the screen, based on a 
+    given path. it should write instances into the bounds of [0, playfield_size]
 */
 write_instances_from_path :: proc(
     instance_buf: ^Buffer(vec2), path: ^Slider_Path, alloc: runtime.Allocator = context.allocator
@@ -263,115 +342,8 @@ write_instances_from_path :: proc(
     return 0, 0
 }
 
-make_test_slider :: proc(slider: ^Slider_Path, x_shift: f32) {
-    circle_radius_osupx := convert_circle_size_to_radius_osupx(game.active_map.diff_circle_size)
-    
-    nodes := new([4]Slider_Node, memory.mapset_allocator)
-    nodes^ = {
-        Slider_Node{0/circle_radius_osupx, 0/circle_radius_osupx},
-        Slider_Node{100/circle_radius_osupx, 0/circle_radius_osupx},
-        Slider_Node{100/circle_radius_osupx, 100/circle_radius_osupx},
-        Slider_Node{200/circle_radius_osupx, 100/circle_radius_osupx},
-    }
-
-    slider^ = {
-        pos = {0 + x_shift, 0},
-        nodes = slice.from_ptr(&nodes[0], len(nodes)),
-        distance_osupx = 999,
-
-        first_instance_at = window.renderer.slider_instances.count,
-        instance_count = len(nodes),
-    }
-    
-    instance_buf := &window.renderer.slider_instances
-    //write_instances_from_path(instance_buf, slider, memory.mapset_allocator)
-    
-    //num_instances_written := int(window.renderer.slider_instances.count)
-    //slider.instances = window.renderer.slider_instances.data[slider.first_instance_at:num_instances_written]
-}
-
-make_test_instances :: proc(slider: ^Slider_Path) {
-    instance_buf := &window.renderer.slider_instances
-
-    ct := instance_buf.count
-    slider.first_instance_at = ct
-    slider.instance_count = i32(len(slider.nodes))
-    //slider.instances = instance_buf.data[ct:ct + i32(len(slider.nodes))]
-    for i in 0..<len(slider.nodes) {
-        buffer_push(instance_buf, slider.nodes[i])
-    }
-}
-
-render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
-    // todo(isak): generate partial instance draws (snaking) and the bounding quads like the smart cookie you are
-
-    r_bind_pipeline({.SLIDER})
-    r_bind_framebuffer({ write = .SLIDERS })    
-    r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
-    r_clear()
-
-    pf_size: f32 = osu_playfield_size_osupx / game.active_map.circle_radius_osupx
-
-    r_push_transform(transform_from_bounds({0,0,pf_size,pf_size}, window.aspect_ratio))
-
-    command_push_draw_slider(Command_Draw_Slider{
-        base_instance = u32(slider.first_instance_at),
-        instance_count = i32(slider.instance_count)
-    })
-    
-    r_bind_framebuffer({ read = .SLIDERS })
-    r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
-    r_bind_pipeline({.QUAD})
-    
-    r_push_transform(fullscreen_transform)
-    r_draw_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.4), reserved_texture(.SLIDER_FRAMEBUFFER))
-}
-
-render_timeline :: proc(renderer: ^Renderer) {
-    active_map := game.active_map
-    preempt := active_map.preempt_ms
-    map_len_with_preempt := active_map.length_ms + preempt
-
-    active_map_leadin_fract := f32(max(0, -game.play_timer_ms - preempt) / (active_map.total_lead_in_ms - preempt))
-    active_map_finish_fract := f32((game.play_timer_ms + active_map.total_lead_in_ms) / map_len_with_preempt)
-    
-    r_push_transform(window_get_clipspace_transform())
-    
-    timeline_h_px := 4 / window.rect.h
-    r_draw_layout_rect(&renderer.quad_geometry, {0, 1, 1, timeline_h_px}, 
-                     .BOTTOM_LEFT, with_alpha(color_white, 0.1))
-    r_draw_layout_rect(&renderer.quad_geometry, {0, 1, active_map_finish_fract, timeline_h_px}, 
-                     .BOTTOM_LEFT, with_alpha(color_white, 0.4))
-    if active_map_leadin_fract > 0 {
-        r_draw_layout_rect(&renderer.quad_geometry, {0, 1, active_map_leadin_fract, timeline_h_px}, 
-                         .BOTTOM_LEFT, with_alpha(color_lime_green, 0.2))
-    }
-}
-
-render_input_display :: proc(geometry: ^Buffer(Quad)) {
-    render_input_key :: proc(key: Button_State, rect: Rect, anchor: Layout_Anchor, color: Color, tex_index: u32 = 0) {
-        if is_pressed(key) {
-            r_draw_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
-        } else if is_held(key) {
-            r_draw_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
-        } else if is_released(key) {
-            r_draw_layout_rect(&window.renderer.quad_geometry, rect, anchor, color_dark_gray, tex_index)
-        } else {
-            r_draw_layout_rect(&window.renderer.quad_geometry, rect, anchor, color_dark_gray, tex_index)
-        }
-    }
-
-    render_input_key(osu_controller.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 }, .BOTTOM_RIGHT, color_light_gray)
-    render_input_key(osu_controller.k2, { window.rect.w, window.rect.h / 2,      30, 30 }, .BOTTOM_RIGHT, color_light_gray)
-    render_input_key(osu_controller.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 }, .BOTTOM_RIGHT, color_light_gray)
-    render_input_key(osu_controller.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 }, .BOTTOM_RIGHT, color_light_gray)
-}
-
 
 check_game_input :: proc(event: sdl.Event) {
-    //osu_controller.k1_key = sdl.Scancode.Z
-    //osu_controller.k2_key = sdl.Scancode.X
-
     if (event.type == sdl.EventType.KEY_DOWN) { //TODO(yokes): make this code shorter
         if (event.key.scancode == osu_controller.k1_key) {
             osu_controller.k1.is_down = true

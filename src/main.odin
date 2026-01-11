@@ -18,6 +18,8 @@ import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
 
+import "core:time"
+
 
 /*
 note(isak):
@@ -252,7 +254,6 @@ Button_State :: struct {
 osu_controller: struct {
     k1, k2, m1, m2: Button_State,
     k1_key, k2_key: sdl.Scancode, //TODO(yokes): add keybinding menu
-    in_gameplay: bool
 }
 
 rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
@@ -478,10 +479,9 @@ main :: proc() {
                     window.ui_dragging = false
                 }
                 
-                if (osu_controller.in_gameplay) {
+                if (game.mode == .PLAY) {
                     check_game_input(event)
                 }
-                check_game_input(event)
 
                 if is_held(osu_controller.m1) {
                     rebind_input(event, &osu_controller.k1_key)
@@ -613,6 +613,13 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
         mu.label(ctx, "Time rate:")
         mu.label(ctx, fmt.tprintf("%f%s", game.time_rate * (game.play_paused ? 0 : 1), game.play_paused ? " (paused)": ""))
         
+        mu.layout_row(ctx, {90, -1}, 0)
+        mu.label(ctx, "Visible hitobjects:")
+        hobj_visibility := game.active_map.visible_hit_object_state
+        mu.label(ctx, fmt.tprintf("%i", hobj_visibility.latest_i - hobj_visibility.earliest_i - 1))
+        mu.label(ctx, "Visible elements:")
+        elem_visibility := game.visible_element_state
+        mu.label(ctx, fmt.tprintf("%i", elem_visibility.latest_i - elem_visibility.earliest_i - 1))
     }
 }
 

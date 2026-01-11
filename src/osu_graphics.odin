@@ -3,6 +3,7 @@ package notosu
 import "core:container/queue"
 import "core:math/linalg"
 import "core:math/ease"
+import "core:slice"
 
 
 Tween :: enum {
@@ -85,7 +86,7 @@ Element :: struct {
     anchor: Layout_Anchor,
     color: Color,
     
-    start_time, end_time: f64,
+    start_time_ms, end_time_ms: f64,
 }
 
 // mouse buttons
@@ -168,8 +169,8 @@ write_default_elements_from_map :: proc(buf: ^queue.Queue(Element), osu_map: ^Os
                 size = circle_diameter_osupx,
                 anchor = .CENTER,
                 color = with_alpha(color_white, 1),
-                start_time = hobj.start_time_ms - preempt,
-                end_time = hobj.start_time_ms,
+                start_time_ms = hobj.start_time_ms - preempt,
+                end_time_ms = hobj.start_time_ms,
             }
             if el_type == .COMBO_NUMBER {
                 e.size.x *= 0.2
@@ -188,7 +189,7 @@ write_default_elements_from_map :: proc(buf: ^queue.Queue(Element), osu_map: ^Os
 
 // note(isak): uses relative time in ms (as with game.play_timer_ms)
 render_element :: proc(e: ^Element, at_time: f64) {
-    if at_time < 0 || e.end_time - e.start_time < at_time {
+    if at_time < 0 || e.end_time_ms - e.start_time_ms < at_time {
         return
     }
 
@@ -230,6 +231,115 @@ render_element :: proc(e: ^Element, at_time: f64) {
 
     r_draw_layout_rect(&window.renderer.quad_geometry, rect, e.anchor, color, tex, angle)
 }
+
+
+
+make_test_slider :: proc(slider: ^Slider_Path, x_shift: f32) {
+    circle_radius_osupx := convert_circle_size_to_radius_osupx(game.active_map.diff_circle_size)
+    
+    nodes := new([4]Slider_Node, memory.mapset_allocator)
+    nodes^ = {
+        Slider_Node{0/circle_radius_osupx, 0/circle_radius_osupx},
+        Slider_Node{100/circle_radius_osupx, 0/circle_radius_osupx},
+        Slider_Node{100/circle_radius_osupx, 100/circle_radius_osupx},
+        Slider_Node{200/circle_radius_osupx, 100/circle_radius_osupx},
+    }
+
+    slider^ = {
+        pos = {0 + x_shift, 0},
+        nodes = slice.from_ptr(&nodes[0], len(nodes)),
+        distance_osupx = 999,
+
+        first_instance_at = window.renderer.slider_instances.count,
+        instance_count = len(nodes),
+    }
+    
+    instance_buf := &window.renderer.slider_instances
+    write_instances_from_path(instance_buf, slider, memory.mapset_allocator)
+    
+    //num_instances_written := int(window.renderer.slider_instances.count)
+    //slider.instances = window.renderer.slider_instances.data[slider.first_instance_at:num_instances_written]
+}
+
+make_test_instances :: proc(slider: ^Slider_Path) {
+    instance_buf := &window.renderer.slider_instances
+
+    ct := instance_buf.count
+    slider.first_instance_at = ct
+    slider.instance_count = i32(len(slider.nodes))
+    //slider.instances = instance_buf.data[ct:ct + i32(len(slider.nodes))]
+    for i in 0..<len(slider.nodes) {
+        buffer_push(instance_buf, slider.nodes[i])
+    }
+}
+
+
+
+render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
+    // todo(isak): generate partial instance draws (snaking) and the bounding quads like the smart cookie you are
+
+    r_bind_pipeline({.SLIDER})
+    r_bind_framebuffer({ write = .SLIDERS })    
+    r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
+    r_clear()
+
+    pf_size: f32 = osu_playfield_size_osupx / game.active_map.circle_radius_osupx
+
+    r_push_transform(transform_from_bounds({0,0,pf_size,pf_size}, window.aspect_ratio))
+
+    command_push_draw_slider(Command_Draw_Slider{
+        base_instance = u32(slider.first_instance_at),
+        instance_count = i32(slider.instance_count)
+    })
+    
+    r_bind_framebuffer({ read = .SLIDERS })
+    r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
+    r_bind_pipeline({.QUAD})
+    
+    r_push_transform(fullscreen_transform)
+    r_draw_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.4), reserved_texture(.SLIDER_FRAMEBUFFER))
+}
+
+render_timeline :: proc(renderer: ^Renderer) {
+    active_map := game.active_map
+    preempt := active_map.preempt_ms
+    map_len_with_preempt := active_map.length_ms + preempt
+
+    active_map_leadin_fract := f32(max(0, -game.play_timer_ms - preempt) / (active_map.total_lead_in_ms - preempt))
+    active_map_finish_fract := f32((game.play_timer_ms + active_map.total_lead_in_ms) / map_len_with_preempt)
+    
+    r_push_transform(window_get_clipspace_transform())
+    
+    timeline_h_px := 4 / window.rect.h
+    r_draw_layout_rect(&renderer.quad_geometry, {0, 1, 1, timeline_h_px}, 
+                     .BOTTOM_LEFT, with_alpha(color_white, 0.1))
+    r_draw_layout_rect(&renderer.quad_geometry, {0, 1, active_map_finish_fract, timeline_h_px}, 
+                     .BOTTOM_LEFT, with_alpha(color_white, 0.4))
+    if active_map_leadin_fract > 0 {
+        r_draw_layout_rect(&renderer.quad_geometry, {0, 1, active_map_leadin_fract, timeline_h_px}, 
+                         .BOTTOM_LEFT, with_alpha(color_lime_green, 0.2))
+    }
+}
+
+render_input_display :: proc(geometry: ^Buffer(Quad)) {
+    render_input_key :: proc(key: Button_State, rect: Rect, anchor: Layout_Anchor, color: Color, tex_index: u32 = 0) {
+        if is_pressed(key) {
+            r_draw_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
+        } else if is_held(key) {
+            r_draw_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
+        } else if is_released(key) {
+            r_draw_layout_rect(&window.renderer.quad_geometry, rect, anchor, color_dark_gray, tex_index)
+        } else {
+            r_draw_layout_rect(&window.renderer.quad_geometry, rect, anchor, color_dark_gray, tex_index)
+        }
+    }
+
+    render_input_key(osu_controller.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 }, .BOTTOM_RIGHT, color_light_gray)
+    render_input_key(osu_controller.k2, { window.rect.w, window.rect.h / 2,      30, 30 }, .BOTTOM_RIGHT, color_light_gray)
+    render_input_key(osu_controller.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 }, .BOTTOM_RIGHT, color_light_gray)
+    render_input_key(osu_controller.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 }, .BOTTOM_RIGHT, color_light_gray)
+}
+
 
 /*
     animation plans

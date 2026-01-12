@@ -56,24 +56,24 @@ color_sky_blue      :: Color{0x4C, 0x59, 0xFF, 0xFF}
 color_dark_blue     :: Color{0x00, 0x00, 0xCC, 0xFF}
 color_purple        :: Color{0x80, 0x00, 0xFF, 0xFF}
 
-with_alpha_f32 :: proc "contextless" (c: Color, alpha: f32) -> Color { return {c.x, c.y, c.z, u8(alpha * 0xFF)} }
-with_alpha_u8 :: proc "contextless" (c: Color, alpha: u8) -> Color { return {c.x, c.y, c.z, alpha} }
+with_alpha_f32 :: proc "contextless" (c: Color, alpha: f32) -> Color { return {c.r, c.g, c.b, u8(alpha * 0xFF)} }
+with_alpha_u8 :: proc "contextless" (c: Color, alpha: u8) -> Color { return {c.r, c.g, c.b, alpha} }
 with_alpha :: proc {
     with_alpha_f32
 }
 
 color_to_pixel_f32 :: proc "contextless" (v: vec4) -> u32 {
-    result := u32(v.x * 0xFF)
-    result |= u32(v.y * 0xFF) << 8
-    result |= u32(v.z * 0xFF) << 16
-    result |= u32(v.w * 0xFF) << 24
+    result := u32(v.r * 0xFF)
+    result |= u32(v.g * 0xFF) << 8
+    result |= u32(v.b * 0xFF) << 16
+    result |= u32(v.a * 0xFF) << 24
     return result
 }
 color_to_pixel_u8 :: proc "contextless" (c: Color) -> u32 {
-    result := u32(c.x)
-    result |= u32(c.y) << 8
-    result |= u32(c.z) << 16
-    result |= u32(c.w) << 24
+    result := u32(c.r)
+    result |= u32(c.g) << 8
+    result |= u32(c.b) << 16
+    result |= u32(c.a) << 24
     return result
 }
 color_to_pixel :: proc {
@@ -83,10 +83,10 @@ color_to_pixel :: proc {
 
 color_from_vec :: proc "contextless" (v: vec4) -> Color {
     result: Color
-    result[0] = u8(v.x * 0xFF)
-    result[1] = u8(v.y * 0xFF)
-    result[2] = u8(v.z * 0xFF)
-    result[3] = u8(v.w * 0xFF)
+    result[0] = u8(v.r * 0xFF)
+    result[1] = u8(v.g * 0xFF)
+    result[2] = u8(v.b * 0xFF)
+    result[3] = u8(v.a * 0xFF)
     return result
 }
 

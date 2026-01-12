@@ -267,7 +267,7 @@ profiler_push_quad :: proc(geometry: ^Buffer(Quad), frame_count: u64) {
     r := rect_translate_by_anchor(profiler_rect, .BOTTOM_RIGHT)
     
     r_draw_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h},
-                                 {0 + pixel_shift_clipspace, 0}, {1 + pixel_shift_clipspace, 1}, 
+                                 {0 + pixel_shift_clipspace, 1}, {1 + pixel_shift_clipspace, 0}, 
                                  color_white, u32(Reserved_Texture_Slot.PROFILER))
 }
 

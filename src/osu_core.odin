@@ -1,9 +1,12 @@
 package notosu
 
+import "rb"
+
+import "core:sort"
 import "base:intrinsics"
 import "base:runtime"
 import "core:math/linalg"
-import queue "core:container/queue"
+import q "core:container/queue"
 
 import sdl "vendor:sdl3"
 
@@ -23,10 +26,11 @@ game: struct {
     active_map: ^Osu_Map,
     active_skin: [Skin_Element_Type]Skin_Element,
     
-    animations: queue.Queue(Animation),
-    elements: queue.Queue(Element),
+    elements: rb.Ring_Buffer(Element),
+    last_added_element: uint,
     visible_element_state: Visibility_State,
 
+    animations: q.Queue(Animation),
     bound_element_animations: [Element_Type][]Animation,
 }
 
@@ -48,6 +52,7 @@ Hit_Object :: struct {
     start_time_ms, end_time_ms: f64,
     pos: vec2,
     type: Hit_Object_Type,
+    first_element_at, num_elements: int,
     
     type_flags: int,
     hitsound_flags: byte,
@@ -136,21 +141,12 @@ Osu_Map :: struct {
 /*
     game todos(isak)
 
-    element storage...
-        should elements use some kinda ring buffer? if there's a memory budget we should stick to....
-
-        a lot of elements can be calculated at load time, but scripts will add stuff at runtime
-        a lot of these runtime els will probably run for a short duration, they can be marked inactive and
-        slots reused... yeah a runtime ring buffer with alive/dead flags will work.
-        queue is good, can alloc a finite big amount and just not grow it but rather loop through and find new slots.
-        priority system might be prudent (gameplay elements always pushes over visual elements if there are no
-        open slots.)
+    
 */
 
 osu_on_init :: proc() {
     game.time_rate = 1.0
     game.play_timer_ms = -500
-
     game.mode = .PLAY
     
     osu_controller.k1_key = sdl.Scancode.Z
@@ -160,19 +156,29 @@ osu_on_init :: proc() {
 }
 
 osu_on_map_load :: proc() {
-    queue.init(&game.animations, 1024, memory.mapset_allocator)
-    queue.init(&game.elements, 8192, memory.element_allocator)
-
+    q.init(&game.animations, 1024, memory.mapset_allocator)
     write_default_animations(&game.animations, game.active_map)
+
+    rb.init(&game.elements, 8192, memory.element_allocator)
+    game.elements.length = cap(game.elements.data)
     write_default_elements_from_map(&game.elements, game.active_map)
 }
 
-osu_start_map :: proc(osu_map: ^Osu_Map) {
+osu_on_map_unload :: proc() {
+    for &e in game.elements.data {
+        e.flags &= ~{.ACTIVE}
+    }
+}
+
+osu_restart_map :: proc(osu_map: ^Osu_Map) {
     game.mode = .PLAY
     game.play_timer_ms = clamp(-game.active_map.total_lead_in_ms, -1000, 0)
     
     osu_map.visible_hit_object_state = {}
     game.visible_element_state = {}
+    
+    osu_on_map_unload()
+    write_default_elements_from_map(&game.elements, game.active_map)
 }
 
 osu_on_update :: proc(dt: f64) {
@@ -188,37 +194,62 @@ osu_on_update :: proc(dt: f64) {
     game.play_timer_ms += dt * 1000
     game.active_map.total_lead_in_ms = game.active_map.preempt_ms + game.active_map.audio_lead_in
     if game.play_timer_ms > game.active_map.length_ms {
-        osu_start_map(game.active_map)
+        osu_restart_map(game.active_map)
     }
 
     time := game.play_timer_ms
     hobj_it := get_visible_hobj_iterator(&game.active_map.visible_hit_object_state, game.play_timer_ms)
-    for hobj, i in hobj_it {
+    for hobj, i in hobj_it {      
         if time < hobj.start_time_ms - game.active_map.preempt_ms || hobj.end_time_ms < time {
             continue
         }
-
-
-        
         if hobj.type == .SLIDER {
             render_slider(&window.renderer, &game.active_map.slider_paths[hobj.slider_path_index])
         }
     }
 
+    if is_pressed(osu_controller.k1) {
+        debug_simulate_press = true
+    }
+
+    if debug_simulate_press {
+        for &hobj, i in hobj_it {
+            if hobj.num_elements == 1 {
+                continue
+            }
+            clear_hitobject_elements(&game.elements, hobj)
+            hobj.first_element_at, hobj.num_elements = reserve_elements(&game.elements, 1)
+
+            push_element(&game.elements, Element{
+                flags = {.ACTIVE},
+                type = .JUDGMENT,
+                pos = hobj.pos,
+                size = game.active_map.circle_radius_osupx * 2,
+                anchor = .CENTER,
+                color = color_white,
+                start_time_ms = time,
+                end_time_ms = time + 600
+            })
+        }
+        debug_simulate_press = false
+    }
+
     r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
 
-    // note(isak): we render elements back to front
-    elem_it := get_visible_element_iterator(&game.visible_element_state, game.play_timer_ms)
-    #reverse for &e in elem_it {
-        if time < e.start_time_ms || e.end_time_ms < time {
-            continue
-        }
+    // note(isak): we render elements back to front for correct blending
+    #reverse for &hobj in game.active_map.hit_objects {
+        t := time
 
-        render_element(&e, game.play_timer_ms - e.start_time_ms)
+        for i in 0..<hobj.num_elements {
+            e := &game.elements.data[hobj.first_element_at + i %% cap(game.elements.data)]
+            render_element(e, t)
+        }
     }
 
     render_timeline(&window.renderer)
 }
+
+debug_simulate_press: bool
 
 
 // note(isak): this function assumes the start times of objects are sorted, but doesn't require end times to be.
@@ -252,38 +283,6 @@ get_visible_hobj_iterator :: proc(state: ^Visibility_State, time: f64) -> []Hit_
         state.earliest_i = updated_from_index
         result = hit_objects[state.earliest_i:min(state.latest_i, len(hit_objects))]
     }
-    return result
-}
-
-// todo(isak): see above
-get_visible_element_iterator :: proc(state: ^Visibility_State, time: f64) -> []Element {
-    result: []Element
-    updated_from_index := state.earliest_i
-
-    elements := game.elements.data
-    if len(elements) > 0 {
-        looking_for_finished_objects := true
-        count_until_next_unstarted_elem: int
-        includes_final_index := 1
-
-        for e, i in elements[state.earliest_i:] {
-            count_until_next_unstarted_elem = i
-            if time < e.start_time_ms {
-                includes_final_index = 0
-                break
-            }
-            if looking_for_finished_objects {
-                if e.end_time_ms < time {
-                    updated_from_index += 1
-                } else {
-                    looking_for_finished_objects = false
-                }
-            }
-        }
-        state.latest_i = updated_from_index + count_until_next_unstarted_elem + includes_final_index
-        result = elements[state.earliest_i:min(state.latest_i, len(elements))]
-    }
-    state.earliest_i = updated_from_index
     return result
 }
 

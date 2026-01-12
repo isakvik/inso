@@ -359,7 +359,7 @@ main :: proc() {
         miniaudio.sound_start(&sound)
     }
 
-    window_init({w = 1024, h = 512})
+    window_init({w = 1280, h = 720})
     window.ui_enabled = true
     defer window_cleanup()
 

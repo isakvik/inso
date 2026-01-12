@@ -5,6 +5,10 @@ import "core:math/linalg"
 import "core:math/ease"
 import "core:slice"
 
+import "rb"
+
+//////////////////////////////////////////////////////
+// note(isak): core types
 
 Tween :: enum {
     LINEAR,
@@ -72,11 +76,11 @@ Element_Type :: enum {
 
 Element_Flags :: distinct bit_set[Element_Flag; u32]
 Element_Flag :: enum {
-    ANIMATED
+    ACTIVE,
 }
 
 Element :: struct {
-    id: int,
+    id: uint,
     type: Element_Type,
     flags: Element_Flags,
 
@@ -88,15 +92,19 @@ Element :: struct {
     start_time_ms, end_time_ms: f64,
 }
 
-// mouse buttons
+
+// note(isak): texture id lookup table for skin elements
 skin_element_for_type_table := #partial [Element_Type]Skin_Element_Type{
-    .HIT_CIRCLE           = .HITCIRCLE,
-    .HIT_CIRCLE_OVERLAY   = .HITCIRCLEOVERLAY,
-    .APPROACH_CIRCLE      = .APPROACHCIRCLE,
-    .COMBO_NUMBER         = .COMBO_1,
-    .SLIDER_FOLLOW_CIRCLE = .LIGHTING,
+    .HIT_CIRCLE = .HITCIRCLE,
+    .HIT_CIRCLE_OVERLAY = .HITCIRCLEOVERLAY,
+    .APPROACH_CIRCLE = .APPROACHCIRCLE,
+    .COMBO_NUMBER = .COMBO_1,
+    .JUDGMENT = .LIGHTING,
 }
 
+
+//////////////////////////////////////////////////////
+// note(isak): animation api
 
 write_animations :: proc(buf: ^queue.Queue(Animation), elems: ..Animation) -> []Animation {
     temp := buf.len
@@ -114,30 +122,30 @@ write_animations :: proc(buf: ^queue.Queue(Animation), elems: ..Animation) -> []
 }
 
 write_default_animations :: proc(buf: ^queue.Queue(Animation), osu_map: ^Osu_Map) {
-    end := osu_map.preempt_ms
+    ar_ms := osu_map.preempt_ms
 
     game.bound_element_animations[.HIT_CIRCLE] = write_animations(buf, 
         Animation_Scale{
-            start_time = 0, 
-            end_time = end,
+            start_time = -ar_ms, 
+            end_time = 0,
             start_scale = {1, 1}, 
             end_scale = {4, 1}
         }, 
         Animation_Scale{
-            start_time = end * 0.5, 
-            end_time = end,
+            start_time = -ar_ms, 
+            end_time = -ar_ms * 0.5,
             start_scale = {1, 4}, 
             end_scale = {0, 0}
         }, 
         Animation_Rotate{
-            start_time = 0, 
-            end_time = end,
+            start_time = -ar_ms * 0.5, 
+            end_time = 0,
             start_angle = 0, 
             end_angle = 60
         }, 
         Animation_Rotate{
-            start_time = end * 0.5, 
-            end_time = end,
+            start_time = -ar_ms, 
+            end_time = -ar_ms * 0.5,
             start_angle = 360, 
             end_angle = 300
         }
@@ -145,15 +153,72 @@ write_default_animations :: proc(buf: ^queue.Queue(Animation), osu_map: ^Osu_Map
 
     game.bound_element_animations[.APPROACH_CIRCLE] = write_animations(buf, Animation_Scale{
         start_time = 0, 
-        end_time = end,
+        end_time = ar_ms,
         start_scale = {3, 3}, 
         end_scale = {1, 1}
     })
+    
+    game.bound_element_animations[.JUDGMENT] = write_animations(buf, 
+        Animation_Scale{
+            start_time = 0, 
+            end_time = 600,
+            start_scale = {1, 1}, 
+            end_scale = {3, 3}
+        },
+        Animation_Color{
+            start_time = 0, 
+            end_time = 600,
+            start_color = color_white,
+            end_color = with_alpha(color_white, 0),
+        }
+    )
 }
 
-write_default_elements_from_map :: proc(buf: ^queue.Queue(Element), osu_map: ^Osu_Map) {
+
+//////////////////////////////////////////////////////
+// note(isak): element api
+
+clear_hitobject_elements :: proc(buf: ^rb.Ring_Buffer(Element), hobj: Hit_Object) {
+    for i in 0..<hobj.num_elements {
+        e := &game.elements.data[hobj.first_element_at + i %% cap(game.elements.data)]
+        e.flags &= ~{.ACTIVE}
+    }
+}
+
+
+push_element :: proc(buf: ^rb.Ring_Buffer(Element), el: Element) {
+    el := el
+    game.last_added_element += 1
+    el.id = game.last_added_element
+    buf.data[buf.cursor %% cap(buf.data)] = el
+    buf.cursor += 1
+}
+
+// todo(isak): needs eviction strategy in case of gameplay elements (use another element flag for this)
+reserve_elements :: proc(buf: ^rb.Ring_Buffer(Element), #any_int n: int) -> (int, int) {
+    at := buf.cursor
+    has_contiguous_space: bool
+    for !has_contiguous_space && at < cap(buf.data) {
+        found_active_el: bool
+        for i in 0..<n {
+            e := &buf.data[at + i %% cap(buf.data)]
+            if .ACTIVE in e.flags {
+                at += i + 1
+                found_active_el = true
+                break
+            }
+        }
+        has_contiguous_space = !found_active_el
+    }
+    
+    if has_contiguous_space {
+        return at, n
+    }
+    return buf.cursor, 0
+}
+
+write_default_elements_from_map :: proc(buf: ^rb.Ring_Buffer(Element), osu_map: ^Osu_Map) {
     preempt: f64 = convert_approach_rate_to_preempt_ms(osu_map.diff_approach_rate)
-    circle_diameter_osupx := convert_circle_size_to_radius_osupx(osu_map.diff_circle_size) * 2
 
     final_hobj_time_ms: f64
     i: int
@@ -161,11 +226,14 @@ write_default_elements_from_map :: proc(buf: ^queue.Queue(Element), osu_map: ^Os
         final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
 
         hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
-        for el_type in hit_circle_el_types {
+        hobj.first_element_at, hobj.num_elements = reserve_elements(buf, 4)
+
+        #reverse for el_type in hit_circle_el_types {
             e := Element{
+                flags = {.ACTIVE},
                 type = el_type,
                 pos = hobj.pos,
-                size = circle_diameter_osupx,
+                size = osu_map.circle_radius_osupx * 2,
                 anchor = .CENTER,
                 color = with_alpha(color_white, 1),
                 start_time_ms = hobj.start_time_ms - preempt,
@@ -178,7 +246,7 @@ write_default_elements_from_map :: proc(buf: ^queue.Queue(Element), osu_map: ^Os
             if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE {
                 e.color = color_purple
             }
-            queue.append(buf, e)
+            push_element(buf, e)
         }
     }
 
@@ -188,9 +256,10 @@ write_default_elements_from_map :: proc(buf: ^queue.Queue(Element), osu_map: ^Os
 
 // note(isak): uses relative time in ms (as with game.play_timer_ms)
 render_element :: proc(e: ^Element, at_time: f64) {
-    if at_time < 0 || e.end_time_ms - e.start_time_ms < at_time {
+    if at_time < e.start_time_ms || e.end_time_ms < at_time {
         return
     }
+    rel_time := at_time - e.start_time_ms
 
     rect := Rect{e.pos.x, e.pos.y, e.size.x, e.size.y}
     angle := f32(0)
@@ -199,10 +268,10 @@ render_element :: proc(e: ^Element, at_time: f64) {
 
     #reverse for &anim in game.bound_element_animations[e.type] {
         base := transmute(^Base_Animation)&anim
-        if at_time < base.start_time || seen_animation_of_type[base.variant] {
+        if rel_time < base.start_time || seen_animation_of_type[base.variant] {
             continue
         }
-        t := min(f32((at_time - base.start_time) / (base.end_time - base.start_time)), 1)
+        t := min(f32((rel_time - base.start_time) / (base.end_time - base.start_time)), 1)
 
         switch a in anim {
             case Animation_Translate:
@@ -217,16 +286,21 @@ render_element :: proc(e: ^Element, at_time: f64) {
                 angle = linalg.lerp(a.start_angle, a.end_angle, t)
 
             case Animation_Color:
-                color.r = u8(linalg.lerp(f32(a.start_color.r), f32(a.end_color.r), t)*0xFF)
-                color.g = u8(linalg.lerp(f32(a.start_color.g), f32(a.end_color.g), t)*0xFF)
-                color.b = u8(linalg.lerp(f32(a.start_color.b), f32(a.end_color.b), t)*0xFF)
-                color.a = u8(linalg.lerp(f32(a.start_color.a), f32(a.end_color.a), t)*0xFF)
+                color.r = u8(linalg.lerp(f32(a.start_color.r), f32(a.end_color.r), t))
+                color.g = u8(linalg.lerp(f32(a.start_color.g), f32(a.end_color.g), t))
+                color.b = u8(linalg.lerp(f32(a.start_color.b), f32(a.end_color.b), t))
+                color.a = u8(linalg.lerp(f32(a.start_color.a), f32(a.end_color.a), t))
         }
         seen_animation_of_type[base.variant] = true
     }
 
     skin_element := skin_element_for_type_table[e.type]
-    tex := skin_texture(skin_element)
+    tex: u32
+    if skin_element == .NONE {
+        tex = reserved_texture(.WHITE)
+    } else {
+        tex = skin_texture(skin_element)
+    }
 
     r_draw_layout_rect(&window.renderer.quad_geometry, rect, e.anchor, color, tex, angle)
 }
@@ -297,6 +371,7 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     
     r_push_transform(fullscreen_transform)
     r_draw_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.4), reserved_texture(.SLIDER_FRAMEBUFFER))
+    r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
 }
 
 render_timeline :: proc(renderer: ^Renderer) {

@@ -100,10 +100,6 @@ texture_from_file :: proc(path: string) -> (Texture, os.Error) {
     
     channels: i32
     pixels := stbi.load_from_memory(raw_data(data[:]), i32(len(data)), &result.w, &result.h, &channels, 4)
-    if channels != 4 {
-        fmt.println("image with less than 4 channels unhandled:", path)
-        assert(channels == 4)
-    }
     result.tex_id, result.tex_handle = _texture_init_with_data(result.w, result.h, pixels)
 
     return result, err

@@ -180,7 +180,7 @@ write_default_animations :: proc(buf: ^queue.Queue(Animation), osu_map: ^Osu_Map
 
 clear_hitobject_elements :: proc(buf: ^rb.Ring_Buffer(Element), hobj: Hit_Object) {
     for i in 0..<hobj.num_elements {
-        e := &game.elements.data[hobj.first_element_at + i %% cap(game.elements.data)]
+        e := &game.elements.data[hobj.first_element_at + i & rb.mask(&game.elements)]
         e.flags &= ~{.ACTIVE}
     }
 }
@@ -190,7 +190,7 @@ push_element :: proc(buf: ^rb.Ring_Buffer(Element), el: Element) {
     el := el
     game.last_added_element += 1
     el.id = game.last_added_element
-    buf.data[buf.cursor %% cap(buf.data)] = el
+    buf.data[buf.cursor & rb.mask(&game.elements)] = el
     buf.cursor += 1
 }
 
@@ -201,7 +201,7 @@ reserve_elements :: proc(buf: ^rb.Ring_Buffer(Element), #any_int n: int) -> (int
     for !has_contiguous_space && at < cap(buf.data) {
         found_active_el: bool
         for i in 0..<n {
-            e := &buf.data[at + i %% cap(buf.data)]
+            e := &buf.data[at + i & rb.mask(buf)]
             if .ACTIVE in e.flags {
                 at += i + 1
                 found_active_el = true

@@ -241,7 +241,7 @@ osu_on_update :: proc(dt: f64) {
         t := time
 
         for i in 0..<hobj.num_elements {
-            e := &game.elements.data[hobj.first_element_at + i %% cap(game.elements.data)]
+            e := &game.elements.data[hobj.first_element_at + i & rb.mask(&game.elements)]
             render_element(e, t)
         }
     }

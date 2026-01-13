@@ -139,6 +139,7 @@ window: struct {
     
     ui_enabled: bool,
     ui_ctx: mu.Context,
+    ui_hovered: bool,
     ui_dragging: bool,
     
     // note(isak): graphical resources used by the drawing context go here 
@@ -518,11 +519,23 @@ main :: proc() {
 
             // prepare drawing
             begin_frame(renderer)
+            
         }
         
         {   
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
             
+            r_push_layer(.DEBUG, transform = window.screenspace_transform)
+            if window.ui_enabled {
+                r_push_transform(window.screenspace_transform)
+                mu.begin(&window.ui_ctx)
+                write_debug_ui(&window.ui_ctx)
+                mu.end(&window.ui_ctx)
+                handle_debug_ui_events(&window.ui_ctx)
+                render_debug_ui(renderer, &window.ui_ctx)
+            }
+            
+            r_push_layer(.BACKGROUND, transform = window.screenspace_transform)
             osu_on_update(dt)
 
             r_push_layer(.UI)
@@ -552,15 +565,6 @@ main :: proc() {
             profiler_block_begin(.GAME_DRAW); defer profiler_block_end()
             
             r_push_layer(.DEBUG, transform = window.screenspace_transform)
-
-            if window.ui_enabled {
-                r_push_transform(window.screenspace_transform)
-                mu.begin(&window.ui_ctx)
-                write_debug_ui(&window.ui_ctx)
-                mu.end(&window.ui_ctx)
-                handle_debug_ui_events(&window.ui_ctx)
-                render_debug_ui(renderer, &window.ui_ctx)
-            }
 
             if debug_info.display_fontatlas {
                 r_draw_rect(&renderer.quad_geometry,
@@ -647,8 +651,8 @@ handle_debug_ui_events :: proc(ctx: ^mu.Context) {
     if is_released(mouse.buttons[.LEFT]) {
         for container in ctx.root_list.items[:ctx.root_list.idx] {
             confined_rect := mu.Rect{ 
-                0, 
-                0, 
+                0,
+                0,
                 max(i32(window.rect.w) - container.rect.w, 0), 
                 max(i32(window.rect.h) - ctx.style.title_height, 0)
             }
@@ -674,6 +678,14 @@ handle_debug_ui_events :: proc(ctx: ^mu.Context) {
             }
         }
         window.ui_dragging = false
+    }
+    
+    window.ui_hovered = false
+    for container in ctx.root_list.items[:ctx.root_list.idx] {
+        if mu.rect_overlaps_vec2(container.rect, ctx.mouse_pos) {
+            window.ui_hovered = true
+            break
+        }
     }
     
     // note(isak): handle cursor visibility inside ui rects

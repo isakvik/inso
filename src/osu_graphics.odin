@@ -177,10 +177,6 @@ write_default_animations :: proc(buf: ^queue.Queue(Animation), osu_map: ^Osu_Map
             end_time = 600,
             start_color = color_white,
             end_color = with_alpha(color_white, 0),
-        },
-        Animation_Texture{
-            start_time = ar_ms * 0.25,
-            texture_id = skin_texture(.APPROACHCIRCLE),
         }
     )
 }

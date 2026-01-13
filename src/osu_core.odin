@@ -176,7 +176,7 @@ osu_on_map_unload :: proc() {
 
 osu_restart_map :: proc(osu_map: ^Osu_Map) {
     game.mode = .PLAY
-    game.play_timer_ms = clamp(-game.active_map.total_lead_in_ms, -1000, 0)
+    game.play_timer_ms = clamp(-game.active_map.total_lead_in_ms, -1800, 0)
     
     osu_map.visible_hit_object_state = {}
     
@@ -249,7 +249,7 @@ osu_on_update :: proc(dt: f64) {
         }
     }
 
-    ui_update_timeline(&game.ui_timeline, game_dt)
+    ui_update_timeline(&game.ui_timeline, dt)
     render_timeline(&window.renderer, &game.ui_timeline)
 }
 
@@ -286,7 +286,7 @@ ui_init_timeline :: proc(ui: ^UI_Timeline) {
 ui_update_timeline :: proc(ui: ^UI_Timeline, dt: f64) {
     timeline_hitbox := rect_from_points({0, window.rect.h - ui.hitbox_h_px}, {window.rect.w, window.rect.h})
 
-    if is_pressed(mouse.buttons[.LEFT]) && point_in_rect(mouse.last_click_position[.LEFT], timeline_hitbox) {
+    if !window.ui_hovered && is_pressed(mouse.buttons[.LEFT]) && point_in_rect(mouse.last_click_position[.LEFT], timeline_hitbox) {
         ui.dragging = true
         ui.pause_on_release = game.play_paused
     }
@@ -299,6 +299,7 @@ ui_update_timeline :: proc(ui: ^UI_Timeline, dt: f64) {
         map_len_with_preempt := cur_map.length_ms + cur_map.preempt_ms
 
         game.play_timer_ms = linalg.mix(0.0, map_len_with_preempt, timeline_new_x) - cur_map.preempt_ms
+        cur_map.visible_hit_object_state = {}
 
         if !is_held(mouse.buttons[.LEFT]) {
             game.play_paused = ui.pause_on_release

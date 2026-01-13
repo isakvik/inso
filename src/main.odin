@@ -3,6 +3,7 @@ package notosu
 import "base:runtime"
 import "core:container/queue"
 import "core:fmt"
+import "core:math"
 import "core:math/linalg"
 import "core:mem/virtual"
 import os "core:os/os2"
@@ -241,7 +242,8 @@ Mouse_Button :: enum {
 
 mouse: struct {
     pos: vec2,
-    buttons: [Mouse_Button]Button_State
+    buttons: [Mouse_Button]Button_State,
+    last_click_position: [Mouse_Button]vec2,
 }
 
 Button_State :: struct {
@@ -414,27 +416,26 @@ main :: proc() {
             for &button in mouse.buttons {
                 button.was_down = button.is_down
             }
-
-            osu_controller.k1.was_down = osu_controller.k1.is_down
-            osu_controller.k2.was_down = osu_controller.k2.is_down
-            osu_controller.m1.was_down = osu_controller.m1.is_down
-            osu_controller.m2.was_down = osu_controller.m2.is_down
+            kb_buttons := [?]^Button_State{&osu_controller.k1, &osu_controller.k2, &osu_controller.m1, &osu_controller.m2}
+            for &kb_button in kb_buttons {
+                kb_button.was_down = kb_button.is_down
+            }
 
             for sdl.PollEvent(&event) {
                 #partial switch event.type {
-                case sdl.EventType.WINDOW_RESIZED:
-                    cleanup_textures_for_rendering()
-                    window_resize(max(event.window.data1, 1), max(event.window.data2, 1))
-                    prepare_textures_for_rendering()
-                        
                 case sdl.EventType.MOUSE_BUTTON_DOWN:
                     switch event.button.button {
                         case sdl.BUTTON_LEFT:
                             mouse.buttons[.LEFT].is_down = true
+                            mouse.last_click_position[.LEFT] = {event.button.x, event.button.y}
                             mu.input_mouse_down(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .LEFT)
                         case sdl.BUTTON_MIDDLE:
+                            mouse.buttons[.MIDDLE].is_down = true
+                            mouse.last_click_position[.MIDDLE] = {event.button.x, event.button.y}
                             mu.input_mouse_down(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .MIDDLE)
                         case sdl.BUTTON_RIGHT:
+                            mouse.buttons[.RIGHT].is_down = true
+                            mouse.last_click_position[.RIGHT] = {event.button.x, event.button.y}
                             mu.input_mouse_down(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .RIGHT)
                     }
 
@@ -444,13 +445,17 @@ main :: proc() {
                             mouse.buttons[.LEFT].is_down = false
                             mu.input_mouse_up(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .LEFT)
                         case sdl.BUTTON_MIDDLE:
+                            mouse.buttons[.MIDDLE].is_down = false
                             mu.input_mouse_up(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .MIDDLE)
                         case sdl.BUTTON_RIGHT:
+                            mouse.buttons[.RIGHT].is_down = false
                             mu.input_mouse_up(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .RIGHT)
                     }
 
                 case sdl.EventType.KEY_DOWN:
                     #partial switch (event.key.scancode) {
+                        case sdl.Scancode.R:
+                            osu_restart_map(game.active_map)
                         case sdl.Scancode.SPACE:
                             game.play_paused = !game.play_paused
                         case sdl.Scancode.HOME:
@@ -469,11 +474,16 @@ main :: proc() {
                             debug_info.display_frame_profiler = !debug_info.display_frame_profiler
                     }
                     
-                case sdl.EventType.QUIT:
-                    active = false
-
+                case sdl.EventType.WINDOW_RESIZED:
+                    cleanup_textures_for_rendering()
+                    window_resize(max(event.window.data1, 1), max(event.window.data2, 1))
+                    prepare_textures_for_rendering()
+                        
                 case sdl.EventType.WINDOW_FOCUS_LOST:
                     window.ui_dragging = false
+                    
+                case sdl.EventType.QUIT:
+                    active = false
                 }
                 
                 if (game.mode == .PLAY) {
@@ -521,8 +531,8 @@ main :: proc() {
             // game update
             render_input_display(&renderer.quad_geometry)            
             
-            cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 40, 40 }
-            r_draw_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, reserved_texture(.WHITE),
+            cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 80, 80 }
+            r_draw_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture(.CURSOR),
                 f32(time_since_beginning_of_program()*20))
 
             r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
@@ -541,6 +551,8 @@ main :: proc() {
             */
             profiler_block_begin(.GAME_DRAW); defer profiler_block_end()
             
+            r_push_layer(.DEBUG, transform = window.screenspace_transform)
+
             if window.ui_enabled {
                 r_push_transform(window.screenspace_transform)
                 mu.begin(&window.ui_ctx)
@@ -549,11 +561,6 @@ main :: proc() {
                 handle_debug_ui_events(&window.ui_ctx)
                 render_debug_ui(renderer, &window.ui_ctx)
             }
-            
-            r_push_layer(.DEBUG, transform = window.screenspace_transform)
-
-            game_timer_str := fmt.tprintf("%.3f", game.play_timer_ms)
-            push_text(renderer, game_timer_str, {20, 20}, size = 22)
 
             if debug_info.display_fontatlas {
                 r_draw_rect(&renderer.quad_geometry,
@@ -604,8 +611,23 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
     @static opts := mu.Options{.NO_CLOSE}
 
     if mu.window(ctx, "饕餮尤魔 :3", {40, 40, 160, 110}, opts) {
-        
         win := mu.get_current_container(ctx)
+
+        mu.layout_row(ctx, {54, -1}, 0)
+        mu.label(ctx, "Time:")
+        timer_str: string
+        if game.play_timer_ms < 0 {
+            abs_time := abs(game.play_timer_ms)
+            min := math.floor(abs_time / 60000)
+            sec := math.floor(abs_time / 1000)
+            timer_str = fmt.tprintf("-%.0f:%2.0f:%3.0f", min, sec, math.mod_f64(abs_time, 1000))
+        } else {
+            min := math.floor(game.play_timer_ms / 60000)
+            sec := math.floor(game.play_timer_ms / 1000)
+            timer_str = fmt.tprintf("%.0f:%2.0f:%3.0f", min, sec, math.mod_f64(game.play_timer_ms, 1000))
+        }
+        mu.label(ctx, timer_str)
+        
         mu.layout_row(ctx, {54, -1}, 0)
         mu.label(ctx, "Time rate:")
         mu.label(ctx, fmt.tprintf("%f%s", game.time_rate * (game.play_paused ? 0 : 1), game.play_paused ? " (paused)": ""))
@@ -614,9 +636,6 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
         mu.label(ctx, "Visible hitobjects:")
         hobj_visibility := game.active_map.visible_hit_object_state
         mu.label(ctx, fmt.tprintf("%i", hobj_visibility.latest_i - hobj_visibility.earliest_i - 1))
-        mu.label(ctx, "Visible elements:")
-        elem_visibility := game.visible_element_state
-        mu.label(ctx, fmt.tprintf("%i", elem_visibility.latest_i - elem_visibility.earliest_i - 1))
     }
 }
 

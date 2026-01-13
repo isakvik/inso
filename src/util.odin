@@ -175,6 +175,12 @@ transform_from_bounds :: proc "contextless" (r: vec4, aspect_ratio: f32) -> Tran
     }
 }
 
+point_in_rect :: proc(p: vec2, r: Rect) -> bool {
+    is_within_x := p.x >= (r.x) && p.x <= (r.x + r.w);
+    is_within_y := p.y >= (r.y) && p.y <= (r.y + r.h);
+    return is_within_x && is_within_y;
+}
+
 identity_transform :: Transform {
     1, 0, 0,
     0, 1, 0,

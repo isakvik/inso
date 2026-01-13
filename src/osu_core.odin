@@ -2,7 +2,8 @@ package notosu
 
 import "rb"
 
-import "core:sort"
+import "core:fmt"
+import "core:math/ease"
 import "base:intrinsics"
 import "base:runtime"
 import "core:math/linalg"
@@ -28,10 +29,11 @@ game: struct {
     
     elements: rb.Ring_Buffer(Element),
     last_added_element: uint,
-    visible_element_state: Visibility_State,
 
     animations: q.Queue(Animation),
     bound_element_animations: [Element_Type][]Animation,
+
+    ui_timeline: UI_Timeline,
 }
 
 // note(isak): core types
@@ -149,6 +151,8 @@ osu_on_init :: proc() {
     game.play_timer_ms = -500
     game.mode = .PLAY
     
+    ui_init_timeline(&game.ui_timeline)
+    
     osu_controller.k1_key = sdl.Scancode.Z
     osu_controller.k2_key = sdl.Scancode.X
 
@@ -175,14 +179,13 @@ osu_restart_map :: proc(osu_map: ^Osu_Map) {
     game.play_timer_ms = clamp(-game.active_map.total_lead_in_ms, -1000, 0)
     
     osu_map.visible_hit_object_state = {}
-    game.visible_element_state = {}
     
     osu_on_map_unload()
     write_default_elements_from_map(&game.elements, game.active_map)
 }
 
 osu_on_update :: proc(dt: f64) {
-    dt := dt * game.time_rate * (game.play_paused ? 0 : 1)
+    game_dt := dt * game.time_rate * (game.play_paused ? 0 : 1)
 
     updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
     if updated_systems[.OSU_FILE] {
@@ -191,7 +194,7 @@ osu_on_update :: proc(dt: f64) {
         osu_on_map_load()
     }
     
-    game.play_timer_ms += dt * 1000
+    game.play_timer_ms += game_dt * 1000
     game.active_map.total_lead_in_ms = game.active_map.preempt_ms + game.active_map.audio_lead_in
     if game.play_timer_ms > game.active_map.length_ms {
         osu_restart_map(game.active_map)
@@ -246,10 +249,83 @@ osu_on_update :: proc(dt: f64) {
         }
     }
 
-    render_timeline(&window.renderer)
+    ui_update_timeline(&game.ui_timeline, game_dt)
+    render_timeline(&window.renderer, &game.ui_timeline)
 }
 
 debug_simulate_press: bool
+
+
+UI_Timeline :: struct {
+    h_px: f32,
+    hitbox_h_px: f32,
+    display_h_px: f32,
+
+    ease: ease.Ease,
+    animation_time: f64,
+    hovered: bool,
+    hover_state_change_timer: f64,
+    done_on_stage_change: f64,
+
+    dragging: bool,
+    pause_on_release: bool,
+}
+
+ui_init_timeline :: proc(ui: ^UI_Timeline) {
+    ui^ = {
+        h_px = 4,
+        display_h_px = ui.h_px,
+        hitbox_h_px = 32,
+
+        done_on_stage_change = 0,
+        animation_time = 0.3,
+        ease = .Cubic_Out,
+    }
+}
+
+ui_update_timeline :: proc(ui: ^UI_Timeline, dt: f64) {
+    timeline_hitbox := rect_from_points({0, window.rect.h - ui.hitbox_h_px}, {window.rect.w, window.rect.h})
+
+    if is_pressed(mouse.buttons[.LEFT]) && point_in_rect(mouse.last_click_position[.LEFT], timeline_hitbox) {
+        ui.dragging = true
+        ui.pause_on_release = game.play_paused
+    }
+
+    if ui.dragging {
+        game.play_paused = true
+        timeline_new_x := f64(clamp((mouse.pos.x + timeline_hitbox.x) / timeline_hitbox.w, 0, 1))
+
+        cur_map := game.active_map
+        map_len_with_preempt := cur_map.length_ms + cur_map.preempt_ms
+
+        game.play_timer_ms = linalg.mix(0.0, map_len_with_preempt, timeline_new_x) - cur_map.preempt_ms
+
+        if !is_held(mouse.buttons[.LEFT]) {
+            game.play_paused = ui.pause_on_release
+            ui.dragging = false
+        }
+    } else {
+        ui.hover_state_change_timer += dt
+        ui.hover_state_change_timer = min(ui.hover_state_change_timer, ui.animation_time)
+
+        was_hovered := ui.hovered
+        ui.hovered = point_in_rect(mouse.pos, timeline_hitbox)
+        if ui.hovered != was_hovered {
+            ui.done_on_stage_change = ui.hover_state_change_timer / ui.animation_time
+            ui.hover_state_change_timer = 0
+        }
+        
+        t := clamp(f32(ui.hover_state_change_timer), 0, f32(ui.animation_time))
+        if ui.hovered {
+            h_at_state_change := linalg.mix(ui.hitbox_h_px, ui.h_px, ease.ease(ui.ease, f32(ui.done_on_stage_change)))
+            ui.display_h_px = linalg.mix(h_at_state_change, ui.hitbox_h_px, ease.ease(ui.ease, t / f32(ui.animation_time)))
+        } else {
+            h_at_state_change := linalg.mix(ui.h_px, ui.hitbox_h_px, ease.ease(ui.ease, f32(ui.done_on_stage_change)))
+            ui.display_h_px = linalg.mix(h_at_state_change, ui.h_px, ease.ease(ui.ease, t / f32(ui.animation_time)))
+        }
+
+    }
+}
 
 
 // note(isak): this function assumes the start times of objects are sorted, but doesn't require end times to be.

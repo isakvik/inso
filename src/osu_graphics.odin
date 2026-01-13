@@ -23,6 +23,7 @@ Animation_Variant :: enum {
     SCALE,
     ROTATE,
     COLOR,
+    TEXTURE,
 }
 
 Base_Animation :: struct {
@@ -36,6 +37,7 @@ Animation :: union #align(4) {
     Animation_Scale,
     Animation_Rotate,
     Animation_Color,
+    Animation_Texture,
 }
 
 Animation_Translate :: struct {
@@ -53,6 +55,10 @@ Animation_Color :: struct {
 Animation_Rotate :: struct {
     using base: Base_Animation,
     start_angle, end_angle: f32,
+}
+Animation_Texture :: struct {
+    using base: Base_Animation,
+    texture_id: u32,
 }
 
 Element_Type :: enum {
@@ -114,6 +120,7 @@ write_animations :: proc(buf: ^queue.Queue(Animation), elems: ..Animation) -> []
             case Animation_Scale:       v.variant = .SCALE
             case Animation_Rotate:      v.variant = .ROTATE
             case Animation_Color:       v.variant = .COLOR
+            case Animation_Texture:     v.variant = .TEXTURE
         }
     }
     queue.append_elems(buf, ..elems)
@@ -170,6 +177,10 @@ write_default_animations :: proc(buf: ^queue.Queue(Animation), osu_map: ^Osu_Map
             end_time = 600,
             start_color = color_white,
             end_color = with_alpha(color_white, 0),
+        },
+        Animation_Texture{
+            start_time = ar_ms * 0.25,
+            texture_id = skin_texture(.APPROACHCIRCLE),
         }
     )
 }
@@ -264,6 +275,8 @@ render_element :: proc(e: ^Element, at_time: f64) {
     rect := Rect{e.pos.x, e.pos.y, e.size.x, e.size.y}
     angle := f32(0)
     color := e.color
+    tex: u32
+    texture_override: bool
     seen_animation_of_type: [Animation_Variant]bool
 
     #reverse for &anim in game.bound_element_animations[e.type] {
@@ -271,6 +284,7 @@ render_element :: proc(e: ^Element, at_time: f64) {
         if rel_time < base.start_time || seen_animation_of_type[base.variant] {
             continue
         }
+
         t := min(f32((rel_time - base.start_time) / (base.end_time - base.start_time)), 1)
 
         switch a in anim {
@@ -290,18 +304,22 @@ render_element :: proc(e: ^Element, at_time: f64) {
                 color.g = u8(linalg.lerp(f32(a.start_color.g), f32(a.end_color.g), t))
                 color.b = u8(linalg.lerp(f32(a.start_color.b), f32(a.end_color.b), t))
                 color.a = u8(linalg.lerp(f32(a.start_color.a), f32(a.end_color.a), t))
+                
+            case Animation_Texture:
+                texture_override = true
+                tex = a.texture_id
         }
         seen_animation_of_type[base.variant] = true
     }
 
-    skin_element := skin_element_for_type_table[e.type]
-    tex: u32
-    if skin_element == .NONE {
-        tex = reserved_texture(.WHITE)
-    } else {
-        tex = skin_texture(skin_element)
+    if !texture_override {
+        skin_element := skin_element_for_type_table[e.type]
+        if skin_element == .NONE {
+            tex = reserved_texture(.WHITE)
+        } else {
+            tex = skin_texture(skin_element)
+        }
     }
-
     r_draw_layout_rect(&window.renderer.quad_geometry, rect, e.anchor, color, tex, angle)
 }
 
@@ -374,23 +392,22 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
 }
 
-render_timeline :: proc(renderer: ^Renderer) {
-    active_map := game.active_map
+render_timeline :: proc(renderer: ^Renderer, ui: ^UI_Timeline) {
+    using game
     preempt := active_map.preempt_ms
     map_len_with_preempt := active_map.length_ms + preempt
 
-    active_map_leadin_fract := f32(max(0, -game.play_timer_ms - preempt) / (active_map.total_lead_in_ms - preempt))
-    active_map_finish_fract := f32((game.play_timer_ms + active_map.total_lead_in_ms) / map_len_with_preempt)
+    active_map_leadin_fract := f32(max(0, -play_timer_ms - preempt) / (active_map.total_lead_in_ms - preempt))
+    active_map_finish_fract := f32((play_timer_ms + active_map.total_lead_in_ms) / map_len_with_preempt)
     
     r_push_transform(window_get_clipspace_transform())
     
-    timeline_h_px := 4 / window.rect.h
-    r_draw_layout_rect(&renderer.quad_geometry, {0, 1, 1, timeline_h_px}, 
+    r_draw_layout_rect(&renderer.quad_geometry, {0, 1, 1, ui.display_h_px / window.rect.h}, 
                      .BOTTOM_LEFT, with_alpha(color_white, 0.1))
-    r_draw_layout_rect(&renderer.quad_geometry, {0, 1, active_map_finish_fract, timeline_h_px}, 
+    r_draw_layout_rect(&renderer.quad_geometry, {0, 1, active_map_finish_fract, ui.display_h_px / window.rect.h}, 
                      .BOTTOM_LEFT, with_alpha(color_white, 0.4))
     if active_map_leadin_fract > 0 {
-        r_draw_layout_rect(&renderer.quad_geometry, {0, 1, active_map_leadin_fract, timeline_h_px}, 
+        r_draw_layout_rect(&renderer.quad_geometry, {0, 1, active_map_leadin_fract, ui.display_h_px / window.rect.h}, 
                          .BOTTOM_LEFT, with_alpha(color_lime_green, 0.2))
     }
 }

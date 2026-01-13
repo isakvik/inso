@@ -623,11 +623,11 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
         if game.play_timer_ms < 0 {
             abs_time := abs(game.play_timer_ms)
             min := math.floor(abs_time / 60000)
-            sec := math.floor(abs_time / 1000)
+            sec := math.mod(math.floor(abs_time / 1000), 60)
             timer_str = fmt.tprintf("-%.0f:%2.0f:%3.0f", min, sec, math.mod_f64(abs_time, 1000))
         } else {
             min := math.floor(game.play_timer_ms / 60000)
-            sec := math.floor(game.play_timer_ms / 1000)
+            sec := math.mod(math.floor(game.play_timer_ms / 1000), 60)
             timer_str = fmt.tprintf("%.0f:%2.0f:%3.0f", min, sec, math.mod_f64(game.play_timer_ms, 1000))
         }
         mu.label(ctx, timer_str)

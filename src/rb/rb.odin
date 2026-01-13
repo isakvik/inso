@@ -28,20 +28,26 @@ clear :: proc(using rb: ^$R/Ring_Buffer($T)) {
 }
 
 
-mask :: proc "contextless" (using rb: ^$R/Ring_Buffer($T)) -> int {
-    return cap(rb.data) - 1
+
+// note(isak): beware the high precedence of the & operator
+mask :: proc "contextless" (using rb: ^$R/Ring_Buffer($T), #any_int n: int) -> int {
+    return n & (cap(rb.data) - 1)
+}
+
+at :: proc "contextless" (using rb: ^$R/Ring_Buffer($T), #any_int n: int) -> ^T {
+    return &rb.data[mask(rb, n)]
 }
 
 ptr_front :: proc(using rb: ^$R/Ring_Buffer($T)) -> ^T #no_bounds_check {
-    return &data[cursor & mask(rb)]
+    return at(rb, cursor)
 }
 
 ptr_back :: proc(using rb: ^$R/Ring_Buffer($T)) -> ^T #no_bounds_check {
-    return &data[cursor + length & mask(rb)]
+    return at(rb, cursor + length)
 }
 
 push_back :: proc(using rb: ^$R/Ring_Buffer($T), v: T) -> bool #no_bounds_check {
-    data[(cursor + length) & mask(rb)] = v
+    at(rb, cursor + length)^ = v
     if length < cap(rb.data) {
         length += 1
         return true
@@ -52,7 +58,7 @@ push_back :: proc(using rb: ^$R/Ring_Buffer($T), v: T) -> bool #no_bounds_check 
 }
 
 push_front :: proc(using rb: ^$R/Ring_Buffer($T), v: T) -> bool #no_bounds_check {
-    data[(cursor - 1) & mask(rb)] = v
+    at(rb, cursor - 1)^ = v
     cursor -= 1
     if length < cap(rb.data) {
         length += 1
@@ -65,7 +71,7 @@ push_front :: proc(using rb: ^$R/Ring_Buffer($T), v: T) -> bool #no_bounds_check
 pop_back :: proc(using rb: ^$R/Ring_Buffer($T)) -> (T, bool) #no_bounds_check {
     if length == 0 do return T{}, false
 
-    v := data[(cursor + length - 1) & mask(rb)]
+    v := at(rb, cursor + length - 1)^
     length -= 1
     return v, true
 }
@@ -73,7 +79,7 @@ pop_back :: proc(using rb: ^$R/Ring_Buffer($T)) -> (T, bool) #no_bounds_check {
 pop_front :: proc(using rb: ^$R/Ring_Buffer($T)) -> (T, bool) #no_bounds_check {
     if length == 0 do return T{}, false
 
-    v := data[cursor & mask(rb)]
+    v := at(rb, cursor)^
     length -= 1
     cursor += 1
     return v, true
@@ -81,17 +87,17 @@ pop_front :: proc(using rb: ^$R/Ring_Buffer($T)) -> (T, bool) #no_bounds_check {
 
 peek_front :: proc(using rb: ^$R/Ring_Buffer($T)) -> (T, bool) #no_bounds_check {
     if length == 0 do return T{}, false
-    return data[cursor & mask(rb)], true
+    return at(rb, cursor)^, true
 }
 
 peek_back :: proc(using rb: ^$R/Ring_Buffer($T)) -> (T, bool) #no_bounds_check {
     if length == 0 do return T{}, false
-    return data[(cursor + length - 1) & mask(rb)], true
+    return at(rb, cursor + length - 1)^, true
 }
 
 peek :: proc(using rb: ^$R/Ring_Buffer($T), i: int) -> (T, bool) #no_bounds_check {
     if length == 0 do return T{}, false
-    return data[(cursor + i) & mask(rb)], true
+    return at(rb, cursor + i)^, true
 }
 
 slice_first :: proc(using rb: ^$R/Ring_Buffer($T)) -> []T #no_bounds_check {

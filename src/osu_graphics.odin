@@ -187,7 +187,7 @@ write_default_animations :: proc(buf: ^queue.Queue(Animation), osu_map: ^Osu_Map
 
 clear_hitobject_elements :: proc(buf: ^rb.Ring_Buffer(Element), hobj: Hit_Object) {
     for i in 0..<hobj.num_elements {
-        e := &game.elements.data[hobj.first_element_at + i & rb.mask(&game.elements)]
+        e := rb.at(&game.elements, hobj.first_element_at + i)
         e.flags &= ~{.ACTIVE}
     }
 }
@@ -197,18 +197,18 @@ push_element :: proc(buf: ^rb.Ring_Buffer(Element), el: Element) {
     el := el
     game.last_added_element += 1
     el.id = game.last_added_element
-    buf.data[buf.cursor & rb.mask(&game.elements)] = el
+    rb.at(&game.elements, buf.cursor)^ = el
     buf.cursor += 1
 }
 
 // todo(isak): needs eviction strategy in case of gameplay elements (use another element flag for this)
 reserve_elements :: proc(buf: ^rb.Ring_Buffer(Element), #any_int n: int) -> (int, int) {
-    at := buf.cursor
+    at: int 
     has_contiguous_space: bool
     for !has_contiguous_space && at < cap(buf.data) {
         found_active_el: bool
         for i in 0..<n {
-            e := &buf.data[at + i & rb.mask(buf)]
+            e := rb.at(buf, buf.cursor + at + i)
             if .ACTIVE in e.flags {
                 at += i + 1
                 found_active_el = true
@@ -219,7 +219,7 @@ reserve_elements :: proc(buf: ^rb.Ring_Buffer(Element), #any_int n: int) -> (int
     }
     
     if has_contiguous_space {
-        return at, n
+        return buf.cursor + at, n
     }
     return buf.cursor, 0
 }
@@ -234,6 +234,7 @@ write_default_elements_from_map :: proc(buf: ^rb.Ring_Buffer(Element), osu_map: 
 
         hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
         hobj.first_element_at, hobj.num_elements = reserve_elements(buf, 4)
+        assert(hobj.num_elements > 0)
 
         #reverse for el_type in hit_circle_el_types {
             e := Element{

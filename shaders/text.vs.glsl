@@ -15,12 +15,14 @@ struct Vertex {
     vec2 uv;
 };
 
-layout(binding = 0, std140) readonly buffer vertexData {
+layout(binding = 1, std140) readonly buffer vertexData {
     GlyphQuad vertices[];
 };
 
-layout (binding = 5, std140) uniform transform {
+layout (binding = 3, std140) uniform transform {
     mat3 t;
+    float circleSizeOsupx;
+    float time;
 };
 
 out vec4 color;
@@ -32,9 +34,9 @@ const int instanceToIndex[] = {0, 2, 1, 1, 2, 3};
 void main() {
     GlyphQuad q = vertices[gl_VertexID / 6];
 
-    int index = instanceToIndex[gl_VertexID % 6];
-    int right =  (index & 1);
-    int bottom = ((index >> 1) & 1);
+    int i = instanceToIndex[gl_VertexID % 6];
+    int right =  (i & 1);
+    int bottom = ((i >> 1) & 1);
 
     vec2 pos[2] = {q.pos_min, q.pos_max};
     vec2 uvs[2] = {q.uv_min, q.uv_max};

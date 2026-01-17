@@ -1,9 +1,9 @@
 package notosu
 
+import "core:mem/virtual"
 import "core:fmt"
-import "core:math/rand"
 import "core:mem"
-import "core:strconv"
+import "core:container/queue"
 
 import sdl "vendor:sdl3"
 
@@ -16,19 +16,22 @@ profiler_h :: i32(200)
 
 fps_average_running_frame_count :: 100
 
-profiler_pixels: [profiler_h]u32
-profiler_frame_pixel_count: i32
-
 profiler: struct {
     trace_points: [Trace_Blocks]Trace_Block_Timer,
     start_tsc: u64,
 
     prev_frame_blocks_elapsed: [Trace_Blocks]u64,
     frame_times: [fps_average_running_frame_count]u64,
-    next_frame_time_at: i32
-}
+    next_frame_time_at: i32,
+    
+    prev_frame_command_buffer_lens: [Layer]uint,
+    prev_frame_command_buffer_caps: [Layer]int,
 
-_profiler_current_open_block: Trace_Blocks
+    pixels: [profiler_h]u32,
+    frame_pixel_count: i32,
+
+    current_open_block: Trace_Blocks
+}
 
 //////////////////////////////////////////////////////
 // note(isak): types
@@ -44,7 +47,7 @@ Trace_Blocks :: enum {
     BETWEEN_FRAMES,
 }
 
-trace_block_colors := [Trace_Blocks]vec4 {
+trace_block_colors := [Trace_Blocks]Color {
     .NONE = color_none,
     .MESSAGE_HANDLING = color_orange,
     .PREPARE_FRAME = color_yellow,
@@ -81,18 +84,18 @@ profiler_end :: proc() {
 }
 
 profiler_block_begin :: proc(block: Trace_Blocks) {
-    assert(_profiler_current_open_block == .NONE)
-    _profiler_current_open_block = block
+    assert(profiler.current_open_block == .NONE)
+    profiler.current_open_block = block
 
     profiler.trace_points[block].start_tsc = sdl.GetPerformanceCounter()
 }
 
 profiler_block_end :: proc() {
-    trace_point := &profiler.trace_points[_profiler_current_open_block]
+    trace_point := &profiler.trace_points[profiler.current_open_block]
     trace_point.elapsed_tsc = sdl.GetPerformanceCounter() - trace_point.start_tsc
     
-    assert(_profiler_current_open_block != .NONE)
-    _profiler_current_open_block = .NONE
+    assert(profiler.current_open_block != .NONE)
+    profiler.current_open_block = .NONE
 }
 
 
@@ -129,8 +132,106 @@ profiler_push_blocks_as_text :: proc(renderer: ^Renderer, frame_count: u64) {
     }
 }
 
+profiler_collect_command_buffer_memory_data :: proc() {
+    for layer in Layer {
+        layer_queue := &window.renderer.layer_command_queues[layer]
+        profiler.prev_frame_command_buffer_lens[layer] = layer_queue.len
+        profiler.prev_frame_command_buffer_caps[layer] = cap(layer_queue.data)
+    }
+}
+
+profiler_push_memory_diag_text :: proc(renderer: ^Renderer) {
+    y_spacing: f32 = 24
+    pos_top_right := vec2{ window.rect.w - 32, y_spacing*1.5 }
+    x_inc: f32
+    x_inc_max: f32 = min(f32)
+    
+    // note(isak): arena section
+    arenas := [?]^virtual.Arena{ 
+        &memory.global_arena, 
+        &memory.mapset_arena, 
+        &memory.frame_arena,
+        &memory.element_arena,
+    }
+
+    for i in 0..<len(arenas) {
+        unit_i: int
+        used_in_units := arenas[i].total_used
+        reserved_in_units := arenas[i].total_reserved
+
+        if arenas[i].total_reserved > mem.Kilobyte * 10 {
+            unit_i += 1
+            used_in_units /= mem.Kilobyte
+            reserved_in_units /= mem.Kilobyte
+        }
+        if arenas[i].total_reserved > mem.Megabyte * 10 {
+            unit_i += 1
+            used_in_units /= mem.Kilobyte
+            reserved_in_units /= mem.Kilobyte
+        }
+        
+        push_text(renderer, 
+                  fmt.tprintf("%d/%d %s", used_in_units, reserved_in_units, size_units_str[unit_i]),
+                  pos_top_right + {0, y_spacing * f32(i)},
+                  size = y_spacing,
+                  align_h = .Right,
+                  x_inc = &x_inc)
+                  
+        x_inc_max = max(x_inc, x_inc_max)
+        x_inc = 0
+    }
+
+    for i in 0..<len(arenas) {
+        arena := arenas[i]
+        push_text(renderer, 
+                  memory_arena_names[i],
+                  pos_top_right + { -x_inc_max - 16 , y_spacing * f32(i)},
+                  size = y_spacing,
+                  align_h = .Right)
+    }
+    
+    // note(isak): command buffer section
+    x_inc = 0
+    x_inc_max = min(f32)
+    pos_top_right.y += y_spacing * len(arenas)
+
+    for layer in Layer {
+        unit_i: int
+        len_in_units := profiler.prev_frame_command_buffer_lens[layer]
+        cap_in_units := profiler.prev_frame_command_buffer_caps[layer]
+        if profiler.prev_frame_command_buffer_caps[layer] > mem.Kilobyte * 10 {
+            unit_i += 1
+            len_in_units /= mem.Kilobyte
+            cap_in_units /= mem.Kilobyte
+        }
+        if profiler.prev_frame_command_buffer_caps[layer] > mem.Megabyte * 10 {
+            unit_i += 1
+            len_in_units /= mem.Kilobyte
+            cap_in_units /= mem.Kilobyte
+        }
+        
+        push_text(renderer, 
+                  fmt.tprintf("%d/%d %s", len_in_units, cap_in_units, size_units_str[unit_i]),
+                  pos_top_right + { 0, f32(layer) * y_spacing },
+                  size = y_spacing,
+                  align_h = .Right,
+                  x_inc = &x_inc)
+
+        x_inc_max = max(x_inc, x_inc_max)
+        x_inc = 0
+    }
+
+    for layer in Layer {
+        push_text(renderer, 
+                  fmt.enum_value_to_string(layer) or_else unreachable(),
+                  pos_top_right + { -x_inc_max - 16, y_spacing * f32(layer) },
+                  size = y_spacing,
+                  align_h = .Right)
+    }
+}
+
 profiler_write_texture_column :: proc(frame_count: u64, texture: Texture) {
-    profiler_frame_pixel_count = 0
+    profiler.frame_pixel_count = 0
     blocks: for trace_block in Trace_Blocks {
         if trace_block == .NONE { continue }
 
@@ -139,40 +240,35 @@ profiler_write_texture_column :: proc(frame_count: u64, texture: Texture) {
         block_frame_pixel_count := elapsed_pixels
 
         for i in 0..<block_frame_pixel_count {
-            pixel_i := profiler_frame_pixel_count + i
+            pixel_i := profiler.frame_pixel_count + i
             if pixel_i >= profiler_h {
-                profiler_frame_pixel_count = profiler_h
+                profiler.frame_pixel_count = profiler_h
                 break blocks
             }
-            profiler_pixels[pixel_i] =
-                color_to_pixel(trace_block_colors[trace_block])
+            profiler.pixels[pixel_i] = color_to_pixel(trace_block_colors[trace_block])
         }
-        profiler_frame_pixel_count += block_frame_pixel_count
+        profiler.frame_pixel_count += block_frame_pixel_count
     }
 
-    if profiler_frame_pixel_count < profiler_h {
-        mem.zero_slice(profiler_pixels[profiler_frame_pixel_count:profiler_h])
+    if profiler.frame_pixel_count < profiler_h {
+        mem.zero_slice(profiler.pixels[profiler.frame_pixel_count:profiler_h])
     }
 
     texture_write_u32_to(window.profiler_texture, 
         {f32(i32(frame_count) % profiler_w), 0, 1, f32(profiler_h)},
-        profiler_pixels[:])
+        profiler.pixels[:])
 }
 
-profiler_push_quad :: proc(geometry: ^Geometry_Buffer(Quad_Vertex), frame_count: u64) {
+profiler_push_quad :: proc(geometry: ^Buffer(Quad), frame_count: u64) {
     pixel_shift := i32(frame_count % u64(profiler_w))
     pixel_shift_clipspace := f32(pixel_shift) / f32(profiler_w)
 
     profiler_rect: Rect = { f32(window.rect.w), f32(window.rect.h), f32(profiler_w), f32(profiler_h) }
     r := rect_translate_by_anchor(profiler_rect, .BOTTOM_RIGHT)
     
-
-    push_quad_with_uvs(geometry, {r.x,       r.y      }, {0 + pixel_shift_clipspace, 0},
-                                 {r.x,       r.y + r.h}, {0 + pixel_shift_clipspace, 1},
-                                 {r.x + r.w, r.y      }, {1 + pixel_shift_clipspace, 0},
-                                 {r.x + r.w, r.y + r.h}, {1 + pixel_shift_clipspace, 1}, 
-                                 color_white, u32(Reserved_Texture_Slots.PROFILER))
-      
+    r_draw_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h},
+                                 {0 + pixel_shift_clipspace, 1}, {1 + pixel_shift_clipspace, 0}, 
+                                 color_white, u32(Reserved_Texture_Slot.PROFILER))
 }
 
 profiler_get_fps :: proc() -> f64 {
@@ -182,5 +278,15 @@ profiler_get_fps :: proc() -> f64 {
     }
 
     s_per_n_frames := tsc_to_s(cum_frame_time_tsc)
-    return fps_average_running_frame_count / s_per_n_frames
+    return s_per_n_frames == 0 ? 0 : fps_average_running_frame_count / s_per_n_frames
+}
+
+profiler_get_frametime :: proc() -> f64 {
+    cum_frame_time_tsc: u64
+    for frame_time in profiler.frame_times {
+        cum_frame_time_tsc += frame_time
+    }
+
+    s_per_n_frames := tsc_to_ms(cum_frame_time_tsc)
+    return s_per_n_frames / fps_average_running_frame_count
 }

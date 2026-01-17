@@ -1,5 +1,7 @@
 package notosu
 
+import "core:slice"
+import "core:container/queue"
 import "core:mem"
 import "core:mem/virtual"
 import "core:fmt"
@@ -30,8 +32,16 @@ Mapset :: struct {
     open: bool,
     folder_path: string,
     osu_map: Osu_Map,
+    texture_assets: map[string]Texture,
 
     watch: Win32_Directory_Watch
+}
+
+Notosu_Map_System :: enum {
+    OSU_FILE,
+    NOTOSU_FILES, // note(isak): this also includes scripts
+    SHADERS,
+    Count
 }
 
 Osu_Section_Header_Types :: enum {
@@ -59,46 +69,58 @@ osu_section_headers := []string{
 }
 
 
-mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
+mapset_cleanup_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
+    win32_close_directory_watch(&mapset.watch)
+    mapset_path := strings.clone(mapset.folder_path, context.temp_allocator)
+    
+    virtual.arena_free_all(&memory.element_arena)
     virtual.arena_free_all(&memory.mapset_arena)
+    reloaded_mapset, ok := mapset_open_for_editing(mapset_path)
+    assert(ok)
+    return reloaded_mapset
+}
 
-    mapset, alloc_err := arena_push(&memory.mapset_arena, Mapset)
-    if alloc_err != .None || !os.exists(path) {
+mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
+    mapset_path := strings.clone(path, memory.mapset_allocator)
+    mapset, alloc_err := new(Mapset, memory.mapset_allocator)
+    assert(alloc_err == .None)
+
+    if !os.exists(path) {
         return mapset, false
     }
 
-    mapset.folder_path = path
+    mapset.folder_path = mapset_path
     
     files: []os.File_Info
     dir_handle, io_err := os.open(path)
 
     // note(isak): file contents cannot exit this function, don't leave strings
-    files, io_err = os.read_dir(dir_handle, 128, context.temp_allocator)
+    files, io_err = os.read_dir(dir_handle, 1024, context.temp_allocator)
     defer mem.free_all(context.temp_allocator)
+
+    mapset.texture_assets = make(map[string]Texture, len(files) * 2, memory.mapset_allocator)
     
     for file in files {
         extension := filepath.ext(file.name)
         switch extension {
             case ".notosu": {
                 filedata, file_err := read_entire_file_to_string(file.fullpath, context.temp_allocator)
-                _mapset_parse_notosu(mapset, filedata)
+                mapset_parse_notosu(mapset, filedata)
             }
             case ".osu": {
                 filedata, file_err := read_entire_file_to_string(file.fullpath, context.temp_allocator)
-                mapset.osu_map = _mapset_parse_osu(filedata, memory.mapset_allocator)
+                mapset.osu_map = mapset_parse_osu(filedata)
+            }
+            case ".png", ".jpg": {
+                tex_key := strings.clone(file.name, memory.mapset_allocator)
+                tex, file_err := texture_from_file(file.fullpath)
+                mapset.texture_assets[tex_key] = tex
             }
         }
     }
 
     mapset.watch = win32_init_directory_watch(path)
     return mapset, true
-}
-
-Notosu_Map_System :: enum {
-    OSU_FILE,
-    NOTOSU_FILES, // note(isak): this also includes scripts
-    SHADERS,
-    Count
 }
 
 mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu_Map_System]bool {
@@ -141,13 +163,14 @@ mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu
 }
 
 
-_mapset_parse_notosu :: proc(mapset: ^Mapset, data: string) {
+mapset_parse_notosu :: proc(mapset: ^Mapset, data: string) {
     fmt.println(data)
 }
 
 
-_mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
+mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
     result: Osu_Map
+    context.allocator = memory.mapset_allocator
     
     c: Consumer = {
         str = osu_file
@@ -187,7 +210,7 @@ _mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
                     key, value := get_key_value(lines[i])
                     ok: bool
                     switch key {
-                        case "AudioFilename": result.audio_filename = strings.clone(value, alloc)
+                        case "AudioFilename": result.audio_filename = strings.clone(value)
                         case "AudioLeadIn": result.audio_lead_in, ok = strconv.parse_f64(value); assert(ok)
                         case "SampleSet": 
                             switch value {
@@ -202,12 +225,12 @@ _mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
                 for i in 1..<len(lines) {
                     key, value := get_key_value(lines[i])
                     switch key {
-                        case "Title": result.title = strings.clone(value, alloc)
-                        case "TitleUnicode": result.title_unicode = strings.clone(value, alloc)
-                        case "Artist": result.artist = strings.clone(value, alloc)
-                        case "ArtistUnicode": result.artist_unicode = strings.clone(value, alloc)
-                        case "Creator": result.creator = strings.clone(value, alloc)
-                        case "Version": result.difficulty_name = strings.clone(value, alloc)
+                        case "Title":         result.title           = strings.clone(value)
+                        case "TitleUnicode":  result.title_unicode   = strings.clone(value)
+                        case "Artist":        result.artist          = strings.clone(value)
+                        case "ArtistUnicode": result.artist_unicode  = strings.clone(value)
+                        case "Creator":       result.creator         = strings.clone(value)
+                        case "Version":       result.difficulty_name = strings.clone(value)
                     }
                 }
             case .DIFFICULTY: 
@@ -217,22 +240,40 @@ _mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
                     switch key {
                         case "HPDrainRate": result.diff_hp_drain, ok = strconv.parse_f64(value); assert(ok)
                         case "CircleSize": result.diff_circle_size, ok = strconv.parse_f64(value); assert(ok)
+                            result.circle_radius_osupx = convert_circle_size_to_radius_osupx(result.diff_circle_size)
                         case "OverallDifficulty": result.diff_overall_difficulty, ok = strconv.parse_f64(value); assert(ok)
-                        case "ApproachRate": result.diff_approach_rate, ok = strconv.parse_f64(value); assert(ok)
+                        case "ApproachRate": 
+                            result.diff_approach_rate, ok = strconv.parse_f64(value); assert(ok)
+                            result.preempt_ms = convert_approach_rate_to_preempt_ms(result.diff_approach_rate)
                         case "SliderMultiplier": result.diff_slider_velocity, ok = strconv.parse_f64(value); assert(ok)
                         case "SliderTickRate": result.diff_slider_tickrate, ok = strconv.parse_int(value); assert(ok)
                     }
                 }
+            case .EVENTS:
+                for i in 1..<len(lines) {
+                    if lines[i] == "//Background and Video events" {
+                        path_from := strings.index_byte(lines[i+1], '"')
+                        path_to := strings.last_index_byte(lines[i+1], '"')
+
+                        result.bg_filename = strings.clone(lines[i+1][path_from+1:path_to])
+                    }
+                }
             case .HITOBJECTS:
-                result.hit_objects = make_slice([]Hit_Object, len(lines) - 1, alloc)
+                result.hit_objects = make_slice([]Hit_Object, len(lines) - 1)
+
+                slider_temp_queue: queue.Queue(Slider_Path)
+                queue.init(&slider_temp_queue, 1024, context.temp_allocator)
                 
                 for i in 1..<len(lines) {
                     hobj := &result.hit_objects[i - 1]
+                    hobj_extra_params: string
 
+                    // note(isak): parse base params - every hobj type has a differing set of params after these
                     from_i, s_len: int
                     arg_i: int
-
                     for from_i < len(lines[i]) && 0 <= s_len {
+                        defer arg_i += 1
+                        defer from_i += s_len + 1
                         s_len = strings.index_byte(lines[i][from_i:], ',')
                         value := s_len >= 0 ? lines[i][from_i:from_i + s_len] : lines[i][from_i:]
 
@@ -244,10 +285,10 @@ _mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
                                 type_flags, _ := strconv.parse_int(value)
                                 hobj.type_flags = type_flags
 
-                                is_circle :=    type_flags & (1 << 0)
-                                is_slider :=    type_flags & (1 << 1)
-                                is_nc :=        type_flags & (1 << 2)
-                                is_spinner :=   type_flags & (1 << 3)
+                                is_circle    := type_flags & (1 << 0)
+                                is_slider    := type_flags & (1 << 1)
+                                is_nc        := type_flags & (1 << 2)
+                                is_spinner   := type_flags & (1 << 3)
                                 colorhax_inc := type_flags & (0b111 << 4)
 
                                 if is_circle > 0 { 
@@ -260,34 +301,104 @@ _mapset_parse_osu :: proc(osu_file: string, alloc: mem.Allocator) -> Osu_Map {
                                     hobj.type = .SPINNER 
                                 }
                             case 4:
-                                if hobj.type == .SLIDER {
-                                    //result.hit_objects = make(Slider_Path, alloc)
-                                    
-                                    assert(false)
-                                }
-                                // else handle hitsound flags
+                                // hitsound flag
+                            case 5:
+                                hobj_extra_params = lines[i][from_i:]
+                                break
                         }
-
-                        from_i += s_len + 1
-                        arg_i += 1
                     }
-                    
+
                     if hobj.type == .CIRCLE {
                         hobj.end_time_ms = hobj.start_time_ms
                     }
                     
                     if hobj.type == .SLIDER {
-                        slider := &map_sliders[slider_offset]
-                        write_instances_from_path(&window.renderer.slider_instances, slider, alloc)
-                        slider_offset += 1
+                        slider: Slider_Path
+                        mapset_parse_osu_slider_params(hobj, &slider, hobj_extra_params)
+                        slider.instance_count, slider.first_instance_at = 
+                            write_instances_from_path(&window.renderer.slider_instances, &slider)
+                                                      
+                        hobj.slider_path_index = int(slider_temp_queue.len)
+                        queue.append(&slider_temp_queue, slider)
+                        
+
+                        // todo(isak) slider time calculation... requires redline & greenline handling. formula:
+                        // length / (SliderMultiplier * 100 * SV) * beatLength
+
+                        hobj.end_time_ms = hobj.start_time_ms + slider.distance_osupx * 2
                     }
                 }
+
+                temp_slider_size := int(slider_temp_queue.len) * size_of(Slider_Path)
+                slider_array_ptr, err := mem.alloc(temp_slider_size); assert(err == .None)
+                mem.copy(slider_array_ptr, raw_data(slider_temp_queue.data), temp_slider_size)
+                result.slider_paths = slice.from_ptr(transmute(^Slider_Path)slider_array_ptr, int(slider_temp_queue.len))
         }
     }
-    
-    
+
+    return result
+}
+
+mapset_parse_osu_slider_params :: proc(hobj: ^Hit_Object, slider: ^Slider_Path, params: string, alloc: mem.Allocator = context.allocator) {
+    from_i, s_len: int
+    arg_i: int
+    for from_i < len(params) && 0 <= s_len {
+        defer arg_i += 1
+        defer from_i += s_len + 1
+        s_len = strings.index_byte(params[from_i:], ',')
+        value := s_len >= 0 ? params[from_i:from_i + s_len] : params[from_i:]
+        ok: bool
+        switch arg_i {
+            case 0:
+                slider_type, slider_nodes_str := get_key_value(value, '|')
+                switch slider_type {
+                    case "B": slider.type = .BEZIER
+                    case "P": slider.type = .ARC
+                    case "L": slider.type = .LINEAR
+                    case "C": slider.type = .CATMULL
+                }
+                slider.nodes = mapset_parse_osu_slider_nodes(slider_nodes_str)
+            case 1:
+                hobj.slider_repeats, ok = strconv.parse_int(value); assert(ok)
+            case 2:
+                slider.distance_osupx, ok = strconv.parse_f64(value); assert(ok)
+            case 3:
+                // edgesounds
+            case 4:
+                // edgesets
+        }
+    }
+    assert(slider.type != .NONE, fmt.tprintln("slider parse error: unknown slidertype ::", params))
+}
+
+@(require_results)
+mapset_parse_osu_slider_nodes :: proc(value: string, alloc: mem.Allocator = context.allocator) -> []Slider_Node {
+    temp := virtual.arena_temp_begin(&memory.frame_arena)
+    defer virtual.arena_temp_end(temp)
+
+    sections := strings.split(value, "|", virtual.arena_allocator(temp.arena))
+    result := make_slice([]Slider_Node, len(sections), alloc)
+
+    sec_i: int
+    ok: bool
+    for section in sections {
+        defer sec_i += 1
+        node := &result[sec_i]
+
+        sep_at := strings.index_byte(section, ':')
+        assert(sep_at > 0, fmt.tprintfln("slider parse error: unsized node ::", value))
+        node.x, ok = strconv.parse_f32(section[:sep_at]); assert(ok, fmt.tprintfln("slider parse error: node.x is not a number ::", value))
+        node.y, ok = strconv.parse_f32(section[sep_at + 1:]); assert(ok, fmt.tprintfln("slider parse error: node.y is not a number ::", value))
+    }
 
     return result
 }
 
 
+convert_approach_rate_to_preempt_ms :: proc(ar: f64) -> f64 {
+    return 1800 - min(ar, 5) * 120 - (max(ar, 5) - 5) * 150
+}
+
+convert_circle_size_to_radius_osupx :: proc(cs: f64) -> f32 {
+    return f32((54.4 - 4.48 * cs) * 1.00041)
+}

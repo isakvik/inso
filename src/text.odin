@@ -1,19 +1,17 @@
 package notosu
 
 import "core:fmt"
-import "core:mem"
-import "core:sys/windows"
-import sa "core:container/small_array"
+import os "core:os/os2"
 
 import fs "vendor:fontstash"
 import gl "vendor:OpenGL"
-import sg "vendor:sokol/gfx"
 import sdl "vendor:sdl3"
 
 
 /* todo(isak): 
     - string caching by way of a pool system that can allocate/free within the buffer
         @speed, but it's probably not necessary at all
+        easily viable for constant strings/constant positions? may as well just use a small buffer for em
 */
 
 
@@ -48,10 +46,11 @@ Glyph_Quad :: struct {
     __padding: [3]u32
 }
 
-
+// note(isak) @release: arial unicode ships with some microsoft products and contains pretty much everything, but
+// we can't really depend on it being there. so if it doesn't exist, we use the bundled font, but we should
+// probably just slap arial unicode into our executable at release time
 font_paths := [Font]string{
-    //.FALLBACK = "c:/Windows/Fonts/ARIAL_UNICODE_MS.ttf",
-    .FALLBACK = "data/segoeui.ttf",
+    .FALLBACK = "c:/Windows/Fonts/ARIAL_UNICODE_MS.ttf",
     .DEFAULT = "data/segoeui.ttf",
 }
 
@@ -65,6 +64,10 @@ text_init :: proc() {
     fs.Init(&text_engine.ctx, DEFAULT_FONT_ATLAS_SIZE, DEFAULT_FONT_ATLAS_SIZE, .TOPLEFT)
     text_engine.ctx.callbackResize = text_resize_callback
     text_engine.ctx.callbackUpdate = text_update_callback
+
+    if !os.exists(font_paths[.FALLBACK]) {
+        font_paths[.FALLBACK] = font_paths[.DEFAULT]
+    }
     
     for font in Font {
         fs.AddFontPath(
@@ -87,10 +90,14 @@ text_init :: proc() {
                      {0, 0, DEFAULT_FONT_ATLAS_SIZE, DEFAULT_FONT_ATLAS_SIZE},
                      raw_data(text_engine.ctx.textureData),
                      len(text_engine.ctx.textureData))
+
+    window.renderer.text_draw = {
+        instance_count = 1
+    }
 }
 
 text_resize_callback :: proc(ctx: rawptr, w, h: int) {
-    texture_reinit(&window.font_atlas_texture, i32(w), i32(h), ctx)
+    _texture_reinit(&window.font_atlas_texture, i32(w), i32(h), ctx)
     fs.__dirtyRectReset(transmute(^fs.FontContext)ctx)
 }
 
@@ -110,6 +117,8 @@ text_update_callback :: proc(ctx: rawptr, dirty_rect: [4]f32, texture_data: rawp
     }
 }
 
+// todo(isak): this is actually pretty slow since it has to push a bunch of stuff for every call.
+// string and state caching would help, but that might not be so useful during play mode?
 push_text :: proc(
     renderer: ^Renderer,
     text: string,
@@ -139,11 +148,14 @@ push_text :: proc(
         y_inc^ += lh
     }
 
+    text_vertex_buffer := &renderer.text_geometry
+    text_glyph_next_index := renderer.text_geometry.count
+
     for iter := fs.TextIterInit(&text_engine.ctx, pos.x, pos.y, text); true; {
         quad: fs.Quad
         fs.TextIterNext(&text_engine.ctx, &iter, &quad) or_break
-
-        buffer_push(&renderer.text_geometry, Glyph_Quad {
+        
+        buffer_push(text_vertex_buffer, Glyph_Quad {
             pos_min = {quad.x0, quad.y0},
             pos_max = {quad.x1, quad.y1},
             uv_min  = {quad.s0, quad.t0},
@@ -152,22 +164,27 @@ push_text :: proc(
         })
     }
     
-    if x_inc != nil {
-        last := renderer.text_geometry.data[renderer.text_geometry.count - 1]
-        x_inc^ += last.pos_max.x - pos.x
+    if x_inc != nil && text_vertex_buffer.count > 0 {
+        first := text_vertex_buffer.data[text_glyph_next_index]
+        last := text_vertex_buffer.data[text_vertex_buffer.count - 1]
+        x_inc^ += last.pos_max.x - first.pos_min.x
     }
 }
 
-text_end_frame :: proc(renderer: ^Renderer) {
-    // note(isak): bad api - the state management isn't needed, but this checks if texture updates
+text_submit_geometry :: proc(renderer: ^Renderer) {
+    // note(isak): the state management isn't needed, but this checks if texture updates
     // is necessary and calls the callback with the dirty rect
     fs.EndState(&text_engine.ctx)
     
     // note(isak): since we do vertex picking and our vertex data composes a whole glyph, 
     // i've written the shader to draw a glyph quad by invoking a quad 6 times
-    command_push_draw({
+    r_push_layer(.DEBUG)
+    r_bind_pipeline({ .TEXT })
+    r_bind_ssbo(&window.text_store, .VERTEX_BUFFER)
+    r_draw(
+        index_offset = 0,
         index_count = renderer.text_geometry.count * 6,
         instance_count = 1
-    })
+    )
 }
 

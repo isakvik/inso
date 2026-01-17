@@ -32,6 +32,7 @@ Mapset :: struct {
     open: bool,
     folder_path: string,
     osu_map: Osu_Map,
+    texture_assets: map[string]Texture,
 
     watch: Win32_Directory_Watch
 }
@@ -68,7 +69,7 @@ osu_section_headers := []string{
 }
 
 
-mapset_clear_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
+mapset_cleanup_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
     win32_close_directory_watch(&mapset.watch)
     mapset_path := strings.clone(mapset.folder_path, context.temp_allocator)
     
@@ -96,6 +97,8 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
     // note(isak): file contents cannot exit this function, don't leave strings
     files, io_err = os.read_dir(dir_handle, 1024, context.temp_allocator)
     defer mem.free_all(context.temp_allocator)
+
+    mapset.texture_assets = make(map[string]Texture, len(files) * 2, memory.mapset_allocator)
     
     for file in files {
         extension := filepath.ext(file.name)
@@ -106,8 +109,12 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
             }
             case ".osu": {
                 filedata, file_err := read_entire_file_to_string(file.fullpath, context.temp_allocator)
-                context.allocator = memory.mapset_allocator
                 mapset.osu_map = mapset_parse_osu(filedata)
+            }
+            case ".png", ".jpg": {
+                tex_key := strings.clone(file.name, memory.mapset_allocator)
+                tex, file_err := texture_from_file(file.fullpath)
+                mapset.texture_assets[tex_key] = tex
             }
         }
     }
@@ -163,6 +170,7 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, data: string) {
 
 mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
     result: Osu_Map
+    context.allocator = memory.mapset_allocator
     
     c: Consumer = {
         str = osu_file
@@ -239,6 +247,15 @@ mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
                             result.preempt_ms = convert_approach_rate_to_preempt_ms(result.diff_approach_rate)
                         case "SliderMultiplier": result.diff_slider_velocity, ok = strconv.parse_f64(value); assert(ok)
                         case "SliderTickRate": result.diff_slider_tickrate, ok = strconv.parse_int(value); assert(ok)
+                    }
+                }
+            case .EVENTS:
+                for i in 1..<len(lines) {
+                    if lines[i] == "//Background and Video events" {
+                        path_from := strings.index_byte(lines[i+1], '"')
+                        path_to := strings.last_index_byte(lines[i+1], '"')
+
+                        result.bg_filename = strings.clone(lines[i+1][path_from+1:path_to])
                     }
                 }
             case .HITOBJECTS:

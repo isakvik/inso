@@ -1,6 +1,6 @@
 package notosu
 
-import "core:container/queue"
+import q "core:container/queue"
 import "core:math/linalg"
 import "core:math/ease"
 import "core:slice"
@@ -61,8 +61,10 @@ Animation_Texture :: struct {
     texture_id: u32,
 }
 
+
 Element_Type :: enum {
-    NONE,
+    NULL,
+    MAP_ELEMENT,
 
     HIT_CIRCLE,
     HIT_CIRCLE_OVERLAY,
@@ -77,18 +79,30 @@ Element_Type :: enum {
     SLIDER_PATH,
 
     JUDGMENT,
-    OTHER // note(isak): may reserve this for some custom map stuff?
 }
 
-Element_Flags :: distinct bit_set[Element_Flag; u32]
-Element_Flag :: enum {
+Element_ID :: u32
+Element :: struct {
+    type: Element_Type,
+    tex: u32,
+    shader: Pipeline_ID,
+    animations: []Animation,
+}
+
+element_id :: proc(el_type: Element_Type) -> Element_ID {
+    return Element_ID(el_type)
+}
+
+
+Entity_Flags :: distinct bit_set[Entity_Flag; u32]
+Entity_Flag :: enum {
     ACTIVE,
 }
 
-Element :: struct {
+Entity :: struct {
     id: uint,
-    type: Element_Type,
-    flags: Element_Flags,
+    flags: Entity_Flags,
+    element: Element_ID,
 
     pos: vec2,
     size: vec2,
@@ -99,20 +113,10 @@ Element :: struct {
 }
 
 
-// note(isak): texture id lookup table for skin elements
-skin_element_for_type_table := #partial [Element_Type]Skin_Element_Type{
-    .HIT_CIRCLE = .HITCIRCLE,
-    .HIT_CIRCLE_OVERLAY = .HITCIRCLEOVERLAY,
-    .APPROACH_CIRCLE = .APPROACHCIRCLE,
-    .COMBO_NUMBER = .COMBO_1,
-    .JUDGMENT = .LIGHTING,
-}
-
-
 //////////////////////////////////////////////////////
 // note(isak): animation api
 
-write_animations :: proc(buf: ^queue.Queue(Animation), elems: ..Animation) -> []Animation {
+animation_push :: proc(buf: ^q.Queue(Animation), elems: ..Animation) -> []Animation {
     temp := buf.len
     for &e in elems {
         switch &v in e {
@@ -123,86 +127,114 @@ write_animations :: proc(buf: ^queue.Queue(Animation), elems: ..Animation) -> []
             case Animation_Texture:     v.variant = .TEXTURE
         }
     }
-    queue.append_elems(buf, ..elems)
+    q.append_elems(buf, ..elems)
 
     return buf.data[temp:buf.len]
 }
 
-write_default_animations :: proc(buf: ^queue.Queue(Animation), osu_map: ^Osu_Map) {
-    ar_ms := osu_map.preempt_ms
+//////////////////////////////////////////////////////
+// note(isak): animation api
 
-    game.bound_element_animations[.HIT_CIRCLE] = write_animations(buf, 
-        Animation_Scale{
-            start_time = -ar_ms, 
-            end_time = 0,
-            start_scale = {1, 1}, 
-            end_scale = {4, 1}
-        }, 
-        Animation_Scale{
-            start_time = -ar_ms, 
-            end_time = -ar_ms * 0.5,
-            start_scale = {1, 4}, 
-            end_scale = {0, 0}
-        }, 
-        Animation_Rotate{
-            start_time = -ar_ms * 0.5, 
-            end_time = 0,
-            start_angle = 0, 
-            end_angle = 60
-        }, 
-        Animation_Rotate{
-            start_time = -ar_ms, 
-            end_time = -ar_ms * 0.5,
-            start_angle = 360, 
-            end_angle = 300
-        }
-    )
-
-    game.bound_element_animations[.APPROACH_CIRCLE] = write_animations(buf, Animation_Scale{
-        start_time = 0, 
-        end_time = ar_ms,
-        start_scale = {3, 3}, 
-        end_scale = {1, 1}
+element_push :: proc(buf: ^q.Queue(Element), el: Element) -> Element_ID {
+    q.append(buf, Element{
+        tex = map_texture(0),
     })
-    
-    game.bound_element_animations[.JUDGMENT] = write_animations(buf, 
-        Animation_Scale{
-            start_time = 0, 
-            end_time = 600,
-            start_scale = {1, 1}, 
-            end_scale = {3, 3}
-        },
-        Animation_Color{
-            start_time = 0, 
-            end_time = 600,
-            start_color = color_white,
-            end_color = with_alpha(color_white, 0),
-        }
-    )
+    return Element_ID(buf.len) - 1
 }
 
+write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Animation), osu_map: ^Osu_Map) {
+    ar_ms := osu_map.preempt_ms
+
+    q.reserve(elements, len(Element_Type))
+    elements.len += len(Element_Type)
+    for el_type in Element_Type {
+        elements.data[el_type].tex = skin_texture(skin_element_for_type_table[el_type])
+    }
+
+    elements.data[element_id(.HIT_CIRCLE)] = {
+        type = .HIT_CIRCLE,
+        tex = skin_texture(.HITCIRCLE),
+
+        animations = animation_push(anims, 
+            Animation_Scale{
+                start_time = 0,
+                end_time = ar_ms * 0.5,
+                start_scale = {1, 1}, 
+                end_scale = {4, 1}
+            }, 
+            Animation_Scale{
+                start_time = ar_ms * 0.5, 
+                end_time = ar_ms,
+                start_scale = {1, 4}, 
+                end_scale = {0, 0}
+            }, 
+            Animation_Rotate{
+                start_time = 0,
+                end_time = ar_ms * 0.5, 
+                start_angle = 360, 
+                end_angle = 300
+            },
+            Animation_Rotate{
+                start_time = ar_ms * 0.5, 
+                end_time = ar_ms,
+                start_angle = 0, 
+                end_angle = 60
+            }, 
+        )
+    }
+    
+    elements.data[element_id(.APPROACH_CIRCLE)] = {
+        type = .HIT_CIRCLE,
+        tex = skin_texture(.APPROACHCIRCLE),
+
+        animations = animation_push(anims, Animation_Scale{
+            start_time = 0, 
+            end_time = ar_ms,
+            start_scale = {3, 3}, 
+            end_scale = {0.9, 0.9}
+        })
+    }
+    
+    elements.data[element_id(.JUDGMENT)] = {
+        type = .HIT_CIRCLE,
+        tex = skin_texture(.LIGHTING),
+
+        animations = animation_push(anims, 
+            Animation_Scale{
+                start_time = 0, 
+                end_time = 600,
+                start_scale = {1, 1}, 
+                end_scale = {3, 3}
+            },
+            Animation_Color{
+                start_time = 0, 
+                end_time = 600,
+                start_color = color_white,
+                end_color = with_alpha(color_white, 0),
+            }
+        )
+    }
+
+}
 
 //////////////////////////////////////////////////////
-// note(isak): element api
+// note(isak): entity api
 
-clear_hitobject_elements :: proc(buf: ^rb.Ring_Buffer(Element), hobj: Hit_Object) {
-    for i in 0..<hobj.num_elements {
-        e := rb.at(&game.elements, hobj.first_element_at + i)
+entity_push :: proc(buf: ^rb.Ring_Buffer(Entity), el: Entity) {
+    el := el
+    el.id = game.last_added_entity
+    rb.at(&game.entities, buf.cursor)^ = el
+    buf.cursor += 1
+}
+
+clear_hitobject_entities :: proc(buf: ^rb.Ring_Buffer(Entity), hobj: Hit_Object) {
+    for i in 0..<hobj.num_entities {
+        e := rb.at(&game.entities, hobj.first_element_at + i)
         e.flags &= ~{.ACTIVE}
     }
 }
 
-
-push_element :: proc(buf: ^rb.Ring_Buffer(Element), el: Element) {
-    el := el
-    game.last_added_element += 1
-    el.id = game.last_added_element
-    rb.at(&game.elements, buf.cursor)^ = el
-    buf.cursor += 1
-}
-
-// todo(isak): needs eviction strategy in case of gameplay elements (use another element flag for this)
-reserve_elements :: proc(buf: ^rb.Ring_Buffer(Element), #any_int n: int) -> (int, int) {
+reserve_entities :: proc(buf: ^rb.Ring_Buffer(Entity), #any_int n: int) -> (int, int) {
     at: int 
     has_contiguous_space: bool
     for !has_contiguous_space && at < cap(buf.data) {
@@ -217,6 +249,8 @@ reserve_elements :: proc(buf: ^rb.Ring_Buffer(Element), #any_int n: int) -> (int
         }
         has_contiguous_space = !found_active_el
     }
+    // todo(isak): needs eviction strategy in case of important elements (use another element flag for this)
+    assert(has_contiguous_space)
     
     if has_contiguous_space {
         return buf.cursor + at, n
@@ -224,7 +258,7 @@ reserve_elements :: proc(buf: ^rb.Ring_Buffer(Element), #any_int n: int) -> (int
     return buf.cursor, 0
 }
 
-write_default_elements_from_map :: proc(buf: ^rb.Ring_Buffer(Element), osu_map: ^Osu_Map) {
+write_default_entities_from_map :: proc(buf: ^rb.Ring_Buffer(Entity), osu_map: ^Osu_Map) {
     preempt: f64 = convert_approach_rate_to_preempt_ms(osu_map.diff_approach_rate)
 
     final_hobj_time_ms: f64
@@ -233,13 +267,13 @@ write_default_elements_from_map :: proc(buf: ^rb.Ring_Buffer(Element), osu_map: 
         final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
 
         hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
-        hobj.first_element_at, hobj.num_elements = reserve_elements(buf, 4)
-        assert(hobj.num_elements > 0)
+        hobj.first_element_at, hobj.num_entities = reserve_entities(buf, 4)
+        assert(hobj.num_entities > 0)
 
         #reverse for el_type in hit_circle_el_types {
-            e := Element{
+            e := Entity{
                 flags = {.ACTIVE},
-                type = el_type,
+                element = element_id(el_type),
                 pos = hobj.pos,
                 size = osu_map.circle_radius_osupx * 2,
                 anchor = .CENTER,
@@ -254,7 +288,7 @@ write_default_elements_from_map :: proc(buf: ^rb.Ring_Buffer(Element), osu_map: 
             if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE {
                 e.color = color_purple
             }
-            push_element(buf, e)
+            entity_push(buf, e)
         }
     }
 
@@ -262,27 +296,29 @@ write_default_elements_from_map :: proc(buf: ^rb.Ring_Buffer(Element), osu_map: 
 }
 
 
-// note(isak): uses relative time in ms (as with game.play_timer_ms)
-render_element :: proc(e: ^Element, at_time: f64) {
+render_entity :: proc(e: ^Entity, at_time: f64) {
     if at_time < e.start_time_ms || e.end_time_ms < at_time {
         return
     }
     rel_time := at_time - e.start_time_ms
 
+    element := &game.elements.data[e.element]
+    tex := element.tex
+
     rect := Rect{e.pos.x, e.pos.y, e.size.x, e.size.y}
     angle := f32(0)
     color := e.color
-    tex: u32
     texture_override: bool
     seen_animation_of_type: [Animation_Variant]bool
 
-    #reverse for &anim in game.bound_element_animations[e.type] {
+    #reverse for &anim in game.elements.data[e.element].animations {
         base := transmute(^Base_Animation)&anim
         if rel_time < base.start_time || seen_animation_of_type[base.variant] {
             continue
         }
 
-        t := min(f32((rel_time - base.start_time) / (base.end_time - base.start_time)), 1)
+        t := f32((rel_time - base.start_time) / (base.end_time - base.start_time))
+        t = min(t, 1)
 
         switch a in anim {
             case Animation_Translate:
@@ -309,58 +345,9 @@ render_element :: proc(e: ^Element, at_time: f64) {
         seen_animation_of_type[base.variant] = true
     }
 
-    if !texture_override {
-        skin_element := skin_element_for_type_table[e.type]
-        if skin_element == .NONE {
-            tex = reserved_texture(.WHITE)
-        } else {
-            tex = skin_texture(skin_element)
-        }
-    }
+    r_check_and_bind_pipeline({element.shader})
     r_draw_layout_rect(&window.renderer.quad_geometry, rect, e.anchor, color, tex, angle)
 }
-
-
-
-make_test_slider :: proc(slider: ^Slider_Path, x_shift: f32) {
-    circle_radius_osupx := convert_circle_size_to_radius_osupx(game.active_map.diff_circle_size)
-    
-    nodes := new([4]Slider_Node, memory.mapset_allocator)
-    nodes^ = {
-        Slider_Node{0/circle_radius_osupx, 0/circle_radius_osupx},
-        Slider_Node{100/circle_radius_osupx, 0/circle_radius_osupx},
-        Slider_Node{100/circle_radius_osupx, 100/circle_radius_osupx},
-        Slider_Node{200/circle_radius_osupx, 100/circle_radius_osupx},
-    }
-
-    slider^ = {
-        pos = {0 + x_shift, 0},
-        nodes = slice.from_ptr(&nodes[0], len(nodes)),
-        distance_osupx = 999,
-
-        first_instance_at = window.renderer.slider_instances.count,
-        instance_count = len(nodes),
-    }
-    
-    instance_buf := &window.renderer.slider_instances
-    write_instances_from_path(instance_buf, slider, memory.mapset_allocator)
-    
-    //num_instances_written := int(window.renderer.slider_instances.count)
-    //slider.instances = window.renderer.slider_instances.data[slider.first_instance_at:num_instances_written]
-}
-
-make_test_instances :: proc(slider: ^Slider_Path) {
-    instance_buf := &window.renderer.slider_instances
-
-    ct := instance_buf.count
-    slider.first_instance_at = ct
-    slider.instance_count = i32(len(slider.nodes))
-    //slider.instances = instance_buf.data[ct:ct + i32(len(slider.nodes))]
-    for i in 0..<len(slider.nodes) {
-        buffer_push(instance_buf, slider.nodes[i])
-    }
-}
-
 
 
 render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
@@ -389,7 +376,7 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
 }
 
-render_timeline :: proc(renderer: ^Renderer, ui: ^UI_Timeline) {
+render_timeline :: proc(ui: ^UI_Timeline) {
     using game
     preempt := active_map.preempt_ms
     map_len_with_preempt := active_map.length_ms + preempt
@@ -399,33 +386,26 @@ render_timeline :: proc(renderer: ^Renderer, ui: ^UI_Timeline) {
     
     r_push_transform(window_get_clipspace_transform())
     
-    r_draw_layout_rect(&renderer.quad_geometry, {0, 1, 1, ui.display_h_px / window.rect.h}, 
+    r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, 1, ui.display_h_px / window.rect.h}, 
                      .BOTTOM_LEFT, with_alpha(color_white, 0.1))
-    r_draw_layout_rect(&renderer.quad_geometry, {0, 1, active_map_finish_fract, ui.display_h_px / window.rect.h}, 
+    r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, active_map_finish_fract, ui.display_h_px / window.rect.h}, 
                      .BOTTOM_LEFT, with_alpha(color_white, 0.4))
     if active_map_leadin_fract > 0 {
-        r_draw_layout_rect(&renderer.quad_geometry, {0, 1, active_map_leadin_fract, ui.display_h_px / window.rect.h}, 
+        r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, active_map_leadin_fract, ui.display_h_px / window.rect.h}, 
                          .BOTTOM_LEFT, with_alpha(color_lime_green, 0.2))
     }
 }
 
-render_input_display :: proc(geometry: ^Buffer(Quad)) {
-    render_input_key :: proc(key: Button_State, rect: Rect, anchor: Layout_Anchor, color: Color, tex_index: u32 = 0) {
-        if is_pressed(key) {
-            r_draw_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
-        } else if is_held(key) {
-            r_draw_layout_rect(&window.renderer.quad_geometry, rect, anchor, color, tex_index)
-        } else if is_released(key) {
-            r_draw_layout_rect(&window.renderer.quad_geometry, rect, anchor, color_dark_gray, tex_index)
-        } else {
-            r_draw_layout_rect(&window.renderer.quad_geometry, rect, anchor, color_dark_gray, tex_index)
-        }
+render_input_display :: proc() {
+    render_input_key :: proc(key: Button_State, rect: Rect) {
+        display_color := key.is_down ? color_light_gray : color_dark_gray
+        r_draw_layout_rect(&window.renderer.quad_geometry, rect, .BOTTOM_RIGHT, display_color, reserved_texture(.WHITE))
     }
 
-    render_input_key(osu_controller.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 }, .BOTTOM_RIGHT, color_light_gray)
-    render_input_key(osu_controller.k2, { window.rect.w, window.rect.h / 2,      30, 30 }, .BOTTOM_RIGHT, color_light_gray)
-    render_input_key(osu_controller.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 }, .BOTTOM_RIGHT, color_light_gray)
-    render_input_key(osu_controller.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 }, .BOTTOM_RIGHT, color_light_gray)
+    render_input_key(osu_controller.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 })
+    render_input_key(osu_controller.k2, { window.rect.w, window.rect.h / 2,      30, 30 })
+    render_input_key(osu_controller.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 })
+    render_input_key(osu_controller.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 })
 }
 
 

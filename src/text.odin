@@ -117,6 +117,8 @@ text_update_callback :: proc(ctx: rawptr, dirty_rect: [4]f32, texture_data: rawp
     }
 }
 
+// todo(isak): this is actually pretty slow since it has to push a bunch of stuff for every call.
+// string and state caching would help, but that might not be so useful during play mode?
 push_text :: proc(
     renderer: ^Renderer,
     text: string,
@@ -170,12 +172,13 @@ push_text :: proc(
 }
 
 text_submit_geometry :: proc(renderer: ^Renderer) {
-    // note(isak): bad api - the state management isn't needed, but this checks if texture updates
+    // note(isak): the state management isn't needed, but this checks if texture updates
     // is necessary and calls the callback with the dirty rect
     fs.EndState(&text_engine.ctx)
     
     // note(isak): since we do vertex picking and our vertex data composes a whole glyph, 
     // i've written the shader to draw a glyph quad by invoking a quad 6 times
+    r_push_layer(.DEBUG)
     r_bind_pipeline({ .TEXT })
     r_bind_ssbo(&window.text_store, .VERTEX_BUFFER)
     r_draw(

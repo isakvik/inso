@@ -79,8 +79,10 @@ Renderer :: struct {
     current_layer: Layer,
     current_global_data: Shader_Globals,
     current_scissor: Command_Scissor_Mode,
-    current_pipeline: Command_Bind_Pipeline,
     current_framebuffer: Command_Bind_Framebuffer,
+    current_pipeline: Command_Bind_Pipeline,
+
+    current_pipeline_for_layer: [Layer]Command_Bind_Pipeline,
     current_ssbo_binds: [Shader_SSBO_Bind_Slot]Command_Bind_SSBO,
 
     trace_frame: bool
@@ -431,9 +433,16 @@ r_bind_framebuffer :: proc(cmd: Command_Bind_Framebuffer) {
     command_push_bind_framebuffer(cmd)
 }
 
+r_check_and_bind_pipeline :: proc(cmd: Command_Bind_Pipeline) {
+    if cmd.pipeline != window.renderer.current_pipeline_for_layer[window.renderer.current_layer].pipeline {
+        r_bind_pipeline(cmd)
+    }
+}
+
 r_bind_pipeline :: proc(cmd: Command_Bind_Pipeline) {
     window.renderer.new_draw_on_next_push = true
     window.renderer.current_pipeline = cmd
+    window.renderer.current_pipeline_for_layer[window.renderer.current_layer] = cmd
     command_push_bind_pipeline(cmd)
 }
 

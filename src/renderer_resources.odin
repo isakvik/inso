@@ -45,8 +45,13 @@ Reserved_Texture_Slot :: enum u32 {
     SLIDER_FRAMEBUFFER
 }
 
+// note(isak): returns index into bindless texture buffer
+
 reserved_texture :: proc(slot: Reserved_Texture_Slot) -> u32 { return u32(slot) }
 
+skin_texture :: proc(skin_el: Skin_Element_Type) -> u32 { return u32(skin_el) + len(Reserved_Texture_Slot) }
+
+map_texture :: proc(tex_id: u32) -> u32 { return tex_id + len(Reserved_Texture_Slot) + len(Skin_Element_Type) }
 
 
 //////////////////////////////////////////////////////
@@ -114,16 +119,18 @@ text_pipeline :: proc() -> sg.Pipeline_Desc {
     },
 }
 
-// note(isak): i didn't get these to work... might not be better than ssbos anyway
-quad_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block { return {} }
-slider_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block { return {} }
-text_uniform_desc :: proc() -> [8]sg.Shader_Uniform_Block { return {} }
-
 
 //////////////////////////////////////////////////////
 // note(isak): texture api
 
 /*
+    note(isak): textures are initialized with bindless handles and written to a SSBO-based array. 
+    this array is indexed with three kinds of IDs:
+    - reserved slots
+    - skin slots
+    - map slots
+    only map slots are dynamic since the rest depends on what we handle in code, so we write those in during map load
+
     todo(isak): i don't actually know the texture resource limits; every resource being active at the same time
     may break horrifically down the line, but at that point we should have a decent amount of test scenes for me 
     to write a packing system or another way of handling multi-texture draws that doesn't hit the limit
@@ -138,10 +145,13 @@ prepare_textures_for_rendering :: proc() {
     textures[Reserved_Texture_Slot.SLIDER_FRAMEBUFFER] = window.framebuffers[.SLIDERS].color_texture_handles[0]
     num_elements := len(Reserved_Texture_Slot)
 
-    for element in Skin_Element_Type {
-        textures[num_elements] = window.skin_textures[element].tex_handle
+    for skin_el in Skin_Element_Type {
+        textures[num_elements] = window.skin_textures[skin_el].tex_handle
         num_elements += 1
     }
+
+    textures[num_elements] = game.active_mapset.texture_assets[game.active_map.bg_filename].tex_handle
+    num_elements += 1
 
     for i in 0..<num_elements {
         if textures[i] > 0 {
@@ -153,7 +163,7 @@ prepare_textures_for_rendering :: proc() {
 cleanup_textures_for_rendering :: proc() {
     textures := &window.texture_buffer.data
     
-    num_elements := len(Reserved_Texture_Slot) + len(Skin_Element_Type)
+    num_elements := len(Reserved_Texture_Slot) + len(Skin_Element_Type) + 1
     for i in 0..<num_elements {
         if textures[i] > 0 {
             gl.MakeTextureHandleNonResidentARB(textures[i])

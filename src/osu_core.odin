@@ -3,10 +3,10 @@ package notosu
 import "rb"
 
 import "core:fmt"
-import "core:math/ease"
 import "base:intrinsics"
 import "base:runtime"
 import "core:math/linalg"
+import "core:mem/virtual"
 import q "core:container/queue"
 
 import sdl "vendor:sdl3"
@@ -15,26 +15,37 @@ import sdl "vendor:sdl3"
 osu_playfield_size_osupx :: 512
 playfield_rect :: Rect{ 0, 0, osu_playfield_size_osupx, osu_playfield_size_osupx }
 
+osu_slider_curve_points_separation :: f32(2.5)
+
 // note(isak): state struct. keep it lean, put large data fields in arenas
 
 game: struct {
+    // note(isak): game logic fields
     mode: Game_Mode,
     play_timer_ms: f64,
     play_paused: bool,
     time_rate: f64,
+    dt: f64,
 
     active_mapset: ^Mapset,
     active_map: ^Osu_Map,
     active_skin: [Skin_Element_Type]Skin_Element,
     
-    elements: rb.Ring_Buffer(Element),
-    last_added_element: uint,
+    // note(isak): game view fields
+    entities: rb.Ring_Buffer(Entity),
+    last_added_entity: uint,
 
+    /*
+        note(isak): entities refer to an element, which in turn refer to a set of animations that determine 
+        the final transform. the given element of an entity can be overridden mid-map by scripts for effects
+    */
+    elements: q.Queue(Element),    
     animations: q.Queue(Animation),
-    bound_element_animations: [Element_Type][]Animation,
 
     ui_timeline: UI_Timeline,
 }
+
+null_element := Element{}
 
 // note(isak): core types
 
@@ -54,7 +65,7 @@ Hit_Object :: struct {
     start_time_ms, end_time_ms: f64,
     pos: vec2,
     type: Hit_Object_Type,
-    first_element_at, num_elements: int,
+    first_element_at, num_entities: int,
     
     type_flags: int,
     hitsound_flags: byte,
@@ -82,7 +93,7 @@ Slider_Path :: struct {
     nodes: []Slider_Node, // note(isak): slice into our array of all nodes
     curves: []Slider_Curve, // note(isak): slice into mapset arena
     
-    instance_count, first_instance_at: i32, // todo(isak): this could be a slice, but data reads are probs unnecessary...
+    instance_count, first_instance_at: i32, // note(isak): this could be a slice, but data reads are probs unnecessary
 }
 
 
@@ -107,7 +118,7 @@ Osu_Sample_Set :: enum {
 }
 
 Osu_Map :: struct {
-    using Osu_File_Data: struct {
+    using Osu_Map_File_Data: struct {
         audio_filename: string,
         audio_lead_in: f64,
         sample_set: Osu_Sample_Set,
@@ -125,9 +136,9 @@ Osu_Map :: struct {
         diff_approach_rate: f64,
         diff_slider_velocity: f64,
         diff_slider_tickrate: int,
+        
+        bg_filename: string,
     },
-
-    // map 
 
     hit_objects: []Hit_Object,
     visible_hit_object_state: Visibility_State,
@@ -138,15 +149,26 @@ Osu_Map :: struct {
 
     preempt_ms: f64,
     circle_radius_osupx: f32,
+
+    bg_element: int,
 }
 
 /*
-    game todos(isak)
+    todo(isak): game todos
 
+    hittesting
+    notelock
+    slider mechanics
+    scripting
+    music, sounds and sound sync
     
+
+    Entity to framebuffer binding
+    osu_on_resize potentially relevant for FrameElement or something fbo-related
 */
 
 osu_on_init :: proc() {
+    game.last_added_entity = 1
     game.time_rate = 1.0
     game.play_timer_ms = -500
     game.mode = .PLAY
@@ -156,20 +178,39 @@ osu_on_init :: proc() {
     osu_controller.k1_key = sdl.Scancode.Z
     osu_controller.k2_key = sdl.Scancode.X
 
-    osu_on_map_load()
+    osu_on_map_init()
 }
 
-osu_on_map_load :: proc() {
+osu_on_map_init :: proc() {
+    q.init(&game.elements, 1024, memory.mapset_allocator)
+    q.append(&game.elements, null_element)
     q.init(&game.animations, 1024, memory.mapset_allocator)
-    write_default_animations(&game.animations, game.active_map)
 
-    rb.init(&game.elements, 8192, memory.element_allocator)
-    game.elements.length = cap(game.elements.data)
-    write_default_elements_from_map(&game.elements, game.active_map)
+    write_default_elements(&game.elements, &game.animations, game.active_map)
+
+    rb.init(&game.entities, 8192, memory.element_allocator)
+    game.entities.length = cap(game.entities.data)
+    
+    // todo(isak): opinionated entity pushing; needs to be rewritten to take scripting (and skin metrics) into account
+    write_default_entities_from_map(&game.entities, game.active_map)
+
+    game.active_map.bg_element, _ = reserve_entities(&game.entities, 1)
+    entity_push(&game.entities, Entity{
+        element = element_push(&game.elements, Element{
+            type = .MAP_ELEMENT, tex = map_texture(0)
+        }),
+        flags = {.ACTIVE},
+
+        pos = {0.5, 0.5},
+        size = {1, 1},
+        anchor = .CENTER,
+        color = {30,30,30,255}
+    })
 }
 
 osu_on_map_unload :: proc() {
-    for &e in game.elements.data {
+    // note(isak): unused
+    for &e in game.entities.data {
         e.flags &= ~{.ACTIVE}
     }
 }
@@ -180,25 +221,32 @@ osu_restart_map :: proc(osu_map: ^Osu_Map) {
     
     osu_map.visible_hit_object_state = {}
     
-    osu_on_map_unload()
-    write_default_elements_from_map(&game.elements, game.active_map)
+    game.active_mapset = mapset_cleanup_and_reload(game.active_mapset)
+    game.active_map = &game.active_mapset.osu_map
+    osu_on_map_init()
 }
 
-osu_on_update :: proc(dt: f64) {
-    game_dt := dt * game.time_rate * (game.play_paused ? 0 : 1)
+
+osu_on_update :: proc() {
+    map_dt := game.dt * game.time_rate * (game.play_paused ? 0 : 1)
 
     updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
     if updated_systems[.OSU_FILE] {
-        game.active_mapset = mapset_clear_and_reload(game.active_mapset)
-        game.active_map = &game.active_mapset.osu_map
-        osu_on_map_load()
     }
     
-    game.play_timer_ms += game_dt * 1000
+    game.play_timer_ms += map_dt * 1000
     game.active_map.total_lead_in_ms = game.active_map.preempt_ms + game.active_map.audio_lead_in
     if game.play_timer_ms > game.active_map.length_ms {
         osu_restart_map(game.active_map)
     }
+
+    #partial switch game.mode {
+        case .PLAY: osu_handle_play_input()
+    }
+    
+    r_push_transform(fullscreen_transform)
+    bg := rb.at(&game.entities, game.active_map.bg_element)
+    render_entity(bg, 0)
 
     time := game.play_timer_ms
     hobj_it := get_visible_hobj_iterator(&game.active_map.visible_hit_object_state, game.play_timer_ms)
@@ -211,21 +259,18 @@ osu_on_update :: proc(dt: f64) {
         }
     }
 
-    if is_pressed(osu_controller.k1) {
-        debug_simulate_press = true
-    }
-
+    debug_simulate_press := is_pressed(osu_controller.k1)
     if debug_simulate_press {
         for &hobj, i in hobj_it {
-            if hobj.num_elements == 1 {
+            if hobj.num_entities == 1 {
                 continue
             }
-            clear_hitobject_elements(&game.elements, hobj)
-            hobj.first_element_at, hobj.num_elements = reserve_elements(&game.elements, 1)
+            clear_hitobject_entities(&game.entities, hobj)
+            hobj.first_element_at, hobj.num_entities = reserve_entities(&game.entities, 1)
 
-            push_element(&game.elements, Element{
+            entity_push(&game.entities, Entity{
                 flags = {.ACTIVE},
-                type = .JUDGMENT,
+                element = element_id(.JUDGMENT),
                 pos = hobj.pos,
                 size = game.active_map.circle_radius_osupx * 2,
                 anchor = .CENTER,
@@ -234,98 +279,40 @@ osu_on_update :: proc(dt: f64) {
                 end_time_ms = time + 600
             })
         }
-        debug_simulate_press = false
     }
 
     r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
 
+
+
     // note(isak): we render elements back to front for correct blending
+    // todo(isak): no culling
     #reverse for &hobj in game.active_map.hit_objects {
         t := time
 
-        for i in 0..<hobj.num_elements {
-            e := rb.at(&game.elements, hobj.first_element_at + i)
-            render_element(e, t)
+        for i in 0..<hobj.num_entities {
+            e := rb.at(&game.entities, hobj.first_element_at + i)
+            render_entity(e, t)
         }
     }
 
-    ui_update_timeline(&game.ui_timeline, dt)
-    render_timeline(&window.renderer, &game.ui_timeline)
+    ui_update_timeline(&game.ui_timeline)
+    render_timeline(&game.ui_timeline)
+    
+    render_input_display()
 }
 
-debug_simulate_press: bool
-
-
-UI_Timeline :: struct {
-    h_px: f32,
-    hitbox_h_px: f32,
-    display_h_px: f32,
-
-    ease: ease.Ease,
-    animation_time: f64,
-    hovered: bool,
-    hover_state_change_timer: f64,
-    done_on_stage_change: f64,
-
-    dragging: bool,
-    pause_on_release: bool,
-}
-
-ui_init_timeline :: proc(ui: ^UI_Timeline) {
-    ui^ = {
-        h_px = 4,
-        display_h_px = ui.h_px,
-        hitbox_h_px = 32,
-
-        done_on_stage_change = 0,
-        animation_time = 0.3,
-        ease = .Cubic_Out,
+osu_handle_play_input :: proc() {
+    if is_key_pressed(.ESCAPE) {
+        game.play_paused = !game.play_paused
     }
-}
-
-ui_update_timeline :: proc(ui: ^UI_Timeline, dt: f64) {
-    timeline_hitbox := rect_from_points({0, window.rect.h - ui.hitbox_h_px}, {window.rect.w, window.rect.h})
-
-    if !window.ui_hovered && is_pressed(mouse.buttons[.LEFT]) && point_in_rect(mouse.last_click_position[.LEFT], timeline_hitbox) {
-        ui.dragging = true
-        ui.pause_on_release = game.play_paused
-    }
-
-    if ui.dragging {
-        game.play_paused = true
-        timeline_new_x := f64(clamp((mouse.pos.x + timeline_hitbox.x) / timeline_hitbox.w, 0, 1))
-
-        cur_map := game.active_map
-        map_len_with_preempt := cur_map.length_ms + cur_map.preempt_ms
-
-        game.play_timer_ms = linalg.mix(0.0, map_len_with_preempt, timeline_new_x) - cur_map.preempt_ms
-        cur_map.visible_hit_object_state = {}
-
-        if !is_held(mouse.buttons[.LEFT]) {
-            game.play_paused = ui.pause_on_release
-            ui.dragging = false
-        }
-    } else {
-        ui.hover_state_change_timer += dt
-        ui.hover_state_change_timer = min(ui.hover_state_change_timer, ui.animation_time)
-
-        was_hovered := ui.hovered
-        ui.hovered = point_in_rect(mouse.pos, timeline_hitbox)
-        if ui.hovered != was_hovered {
-            ui.done_on_stage_change = ui.hover_state_change_timer / ui.animation_time
-            ui.hover_state_change_timer = 0
-        }
-        
-        t := clamp(f32(ui.hover_state_change_timer), 0, f32(ui.animation_time))
-        if ui.hovered {
-            h_at_state_change := linalg.mix(ui.hitbox_h_px, ui.h_px, ease.ease(ui.ease, f32(ui.done_on_stage_change)))
-            ui.display_h_px = linalg.mix(h_at_state_change, ui.hitbox_h_px, ease.ease(ui.ease, t / f32(ui.animation_time)))
-        } else {
-            h_at_state_change := linalg.mix(ui.h_px, ui.hitbox_h_px, ease.ease(ui.ease, f32(ui.done_on_stage_change)))
-            ui.display_h_px = linalg.mix(h_at_state_change, ui.h_px, ease.ease(ui.ease, t / f32(ui.animation_time)))
-        }
-
-    }
+    
+    osu_controller.k1.is_down = keyboard.buttons[osu_controller.k1_key]
+    osu_controller.k1.was_down = keyboard.buttons_prev_frame[osu_controller.k1_key]
+    osu_controller.k2.is_down = keyboard.buttons[osu_controller.k2_key]
+    osu_controller.k2.was_down = keyboard.buttons_prev_frame[osu_controller.k2_key]
+    osu_controller.m1 = mouse.buttons[.LEFT]
+    osu_controller.m2 = mouse.buttons[.RIGHT]
 }
 
 
@@ -363,8 +350,6 @@ get_visible_hobj_iterator :: proc(state: ^Visibility_State, time: f64) -> []Hit_
     return result
 }
 
-
-osu_slider_curve_points_separation :: f32(2.5)
 
 split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> []Slider_Curve {
     // todo(isak): we just make a curve for each node here for testing, but we have to read nodes to figure out 
@@ -421,41 +406,6 @@ write_instances_from_path :: proc(
 }
 
 
-check_game_input :: proc(event: sdl.Event) {
-    if (event.type == sdl.EventType.KEY_DOWN) { //TODO(yokes): make this code shorter
-        if (event.key.scancode == osu_controller.k1_key) {
-            osu_controller.k1.is_down = true
-        }
-        if (event.key.scancode == osu_controller.k2_key) {
-            osu_controller.k2.is_down = true
-        }
-    }
-    if (event.type == sdl.EventType.KEY_UP) {
-        if (event.key.scancode == osu_controller.k1_key) {
-            osu_controller.k1.is_down = false
-        }
-        if (event.key.scancode == osu_controller.k2_key) {
-            osu_controller.k2.is_down = false
-        }
-    }
-    if (event.type == sdl.EventType.MOUSE_BUTTON_DOWN) {
-        if (event.button.button == sdl.BUTTON_LEFT) {
-            osu_controller.m1.is_down = true
-        }
-        if (event.button.button == sdl.BUTTON_RIGHT) {
-            osu_controller.m2.is_down = true
-        }
-    }
-    if (event.type == sdl.EventType.MOUSE_BUTTON_UP) {
-        if (event.button.button == sdl.BUTTON_LEFT) {
-            osu_controller.m1.is_down = false
-        }
-        if (event.button.button == sdl.BUTTON_RIGHT) {
-            osu_controller.m2.is_down = false
-        }
-    }
-}
-
 //NOTE(yokes): API for in-game button input
 
 is_held :: proc(button: Button_State) -> bool {
@@ -468,4 +418,16 @@ is_pressed :: proc(button: Button_State) -> bool {
 
 is_released :: proc(button: Button_State) -> bool {
     return !button.is_down && button.was_down
+}
+
+is_key_down :: proc(code: sdl.Scancode) -> bool {
+    return keyboard.buttons[code]
+}
+
+is_key_pressed :: proc(code: sdl.Scancode) -> bool {
+    return keyboard.buttons[code] && !keyboard.buttons_prev_frame[code]
+}
+
+is_key_released :: proc(code: sdl.Scancode) -> bool {
+    return !keyboard.buttons[code] && keyboard.buttons_prev_frame[code]
 }

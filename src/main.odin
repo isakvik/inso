@@ -5,6 +5,7 @@ import "core:container/queue"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
+import "core:mem"
 import "core:mem/virtual"
 import os "core:os/os2"
 import "core:path/filepath"
@@ -43,13 +44,9 @@ play mode:
 audio play (miniaudio)
     desync proofing (always wait for sound to be able to be played, like osu (so device errors will just freeze the game))
     multiple channels, sound effects
-input handling
-
-figure out if we need some graphical core of a playfield (i'm thinking we have some default implementation; optionally hide it and let people render whatever based on mapset data)
 
 editor mode:
 (viewer mode only? edit functionality is probably low priority, osu can be used for the map)
-scrubbing support (jump to arbitrary time, display content)
 
 eventual YEAST on-scene features:
 local networking
@@ -72,13 +69,15 @@ memory_arena_names := [?]string {
 }
 
 memory: struct {
+    // note(isak): never cleared. used instead of odin's regular arena to keep track of our allocations
     global_allocator: runtime.Allocator,
     global_arena: virtual.Arena,
+
     // note(isak): this is to be used for mapset runtime data, such as timing state, judgements, etc. (fill in)
     // cleared on mapset reload/unload
     mapset_allocator: runtime.Allocator,
     mapset_arena: virtual.Arena,
-    
+
     // note(isak): this is to be used for graphical entity data, "unbounded" since it's written to by
     // game logic and scripts. cleared on mapset reload/unload
     element_allocator: runtime.Allocator,
@@ -87,7 +86,6 @@ memory: struct {
     // cleared on frame end
     frame_allocator: runtime.Allocator,
     frame_arena: virtual.Arena,
-
     command_buffer_allocators: [Layer]runtime.Allocator,
     command_buffer_arenas: [Layer]virtual.Arena,
 }
@@ -102,7 +100,6 @@ memory_init :: proc() -> runtime.Allocator_Error {
     for layer in Layer {
         _ = init_growing_arena(&memory.command_buffer_arenas[layer], &memory.command_buffer_allocators[layer])
     }
-
     return .None
 }
 
@@ -184,10 +181,6 @@ debug_info: struct {
     display_fontatlas: bool
 }
 
-lua_ctx: struct {
-    state: ^lua.State
-}
-
 window_init :: proc(rect: Rect) {
     window.rect = rect
     window.handle = sdl.CreateWindow("notosu!", i32(rect.w), i32(rect.h), sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
@@ -197,8 +190,8 @@ window_init :: proc(rect: Rect) {
     sdl.GL_SetAttribute(sdl.GL_CONTEXT_MINOR_VERSION, 6)
     sdl.SetHint(sdl.HINT_RENDER_DRIVER, "opengl")
 
-    sdl.GL_SetSwapInterval(0)
-    sdl.SetWindowSurfaceVSync(window.handle, 0)
+    sdl.GL_SetSwapInterval(1)
+    sdl.SetWindowSurfaceVSync(window.handle, 1)
 
     window.gl_context = sdl.GL_CreateContext(window.handle)
     gl.load_up_to(4, 6, sdl.gl_set_proc_address)
@@ -241,14 +234,39 @@ Mouse_Button :: enum {
     MIDDLE,
 }
 
+Button_State :: struct {
+    is_down, was_down: bool
+}
+
 mouse: struct {
     pos: vec2,
     buttons: [Mouse_Button]Button_State,
     last_click_position: [Mouse_Button]vec2,
 }
 
-Button_State :: struct {
-    is_down, was_down: bool
+
+Keyboard_State :: #sparse [sdl.Scancode]bool
+
+keyboard: struct {
+    buttons: ^Keyboard_State,
+    buttons_prev_frame: ^Keyboard_State,
+
+    state: [2]Keyboard_State,
+    // note(isak): if there's a reason to add text input (that's not microui related), we might wanna add some locale
+    // info or state related to character translation messages
+}
+
+keyboard_init :: proc() {
+    keyboard.buttons = &keyboard.state[0]
+    keyboard.buttons_prev_frame = &keyboard.state[1]
+}
+
+keyboard_next_frame :: proc() {
+    keyboard.buttons, keyboard.buttons_prev_frame = keyboard.buttons_prev_frame, keyboard.buttons
+
+    num_keys: i32
+    sdl_state := sdl.GetKeyboardState(&num_keys)
+    mem.copy(keyboard.buttons, sdl_state, len(Keyboard_State))
 }
 
 osu_controller: struct {
@@ -285,6 +303,11 @@ miniaudio_data_callback :: proc "c" (pUserData: rawptr, pStream: ^sdl.AudioStrea
     }
 
     sdl.PutAudioStreamData(pStream, raw_data(&samples), i32(numFramesRead * size_of(f32) * 2))
+}
+
+
+lua_ctx: struct {
+    state: ^lua.State
 }
 
 main :: proc() {
@@ -374,9 +397,9 @@ main :: proc() {
 
     mu_init()
     text_init()
+    keyboard_init()
     
     load_skin_textures("skins/gn/")
-    prepare_textures_for_rendering()
 
     builtin_shaders_watch := win32_init_directory_watch("shaders/")
 
@@ -389,24 +412,30 @@ main :: proc() {
             fmt.println("tried to open mapset, but failed:", test_mapset_path)
         }
     }
+    
+    prepare_textures_for_rendering()
 
     osu_on_init()
 
     /*
-        todo(isak): some research on timestep (consistent deltatime) would be prudent
-        https://jakubtomsu.github.io/posts/fixed_timestep_without_interpolation/
+        note(isak): basic timestep handling is ALMOST sufficient as we run the game and its
+        physics(!) at a very high rate, and always assume failure in the case of not being able to
+        hit the time windows.
+
+        however, we do have to watch out for audio sync issues; audio output runs concurrently with
+        game stepping, so we cannot advance the time if there are issues with sound. the sound
+        system should therefore manage its "currently playing" state more carefully than in other
+        games, where playing a sound is more or less fire and forget, at least most of the time.
     */
     time_current_frame := current_time()
-    time_last_frame := time_current_frame
-    dt := 0.0
-
-    frame_count: u64
     time_first_frame := time_current_frame
+    time_last_frame := time_current_frame
+    frame_count: u64
 
-    active := true
+    running := true
     event: sdl.Event
 
-    for active {
+    for running {
         profiler_begin()
         defer profiler_end()
 
@@ -416,10 +445,6 @@ main :: proc() {
             // message handling, time handling
             for &button in mouse.buttons {
                 button.was_down = button.is_down
-            }
-            kb_buttons := [?]^Button_State{&osu_controller.k1, &osu_controller.k2, &osu_controller.m1, &osu_controller.m2}
-            for &kb_button in kb_buttons {
-                kb_button.was_down = kb_button.is_down
             }
 
             for sdl.PollEvent(&event) {
@@ -452,28 +477,6 @@ main :: proc() {
                             mouse.buttons[.RIGHT].is_down = false
                             mu.input_mouse_up(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .RIGHT)
                     }
-
-                case sdl.EventType.KEY_DOWN:
-                    #partial switch (event.key.scancode) {
-                        case sdl.Scancode.R:
-                            osu_restart_map(game.active_map)
-                        case sdl.Scancode.SPACE:
-                            game.play_paused = !game.play_paused
-                        case sdl.Scancode.HOME:
-                            game.time_rate = 1
-                        case sdl.Scancode.PAGEUP:
-                            game.time_rate *= 2
-                        case sdl.Scancode.PAGEDOWN:
-                            game.time_rate /= 2
-                        case sdl.Scancode.F1:
-                            renderer.trace_frame = !renderer.trace_frame
-                        case sdl.Scancode.F2:
-                            debug_info.display_fontatlas = !debug_info.display_fontatlas
-                        case sdl.Scancode.F3:
-                            debug_info.display_memory_profiler = !debug_info.display_memory_profiler
-                        case sdl.Scancode.F10:
-                            debug_info.display_frame_profiler = !debug_info.display_frame_profiler
-                    }
                     
                 case sdl.EventType.WINDOW_RESIZED:
                     cleanup_textures_for_rendering()
@@ -484,11 +487,7 @@ main :: proc() {
                     window.ui_dragging = false
                     
                 case sdl.EventType.QUIT:
-                    active = false
-                }
-                
-                if (game.mode == .PLAY) {
-                    check_game_input(event)
+                    running = false
                 }
 
                 if is_held(osu_controller.m1) {
@@ -499,6 +498,8 @@ main :: proc() {
                     rebind_input(event, &osu_controller.k2_key)
                 }
             }
+
+            keyboard_next_frame()
             
             xi, yi: i32
             mouse_flags := sdl.GetGlobalMouseState(&mouse.pos.x, &mouse.pos.y)
@@ -515,7 +516,6 @@ main :: proc() {
             
             time_last_frame = time_current_frame
             time_current_frame = current_time()
-            dt = time_current_frame - time_last_frame
 
             // prepare drawing
             begin_frame(renderer)
@@ -534,15 +534,18 @@ main :: proc() {
                 handle_debug_ui_events(&window.ui_ctx)
                 render_debug_ui(renderer, &window.ui_ctx)
             }
+
+            /* note(isak): need to update sound here. deltatime should be dependent on how much sound we are able to
+               play, which in regular circumstances shouldn't matter, but in case of device errors we cannot advance 
+            */
             
+            game.dt = time_current_frame - time_last_frame
+
             r_push_layer(.BACKGROUND, transform = window.screenspace_transform)
-            osu_on_update(dt)
+            osu_on_update()
 
             r_push_layer(.UI)
             r_push_transform(window.screenspace_transform)
-            
-            // game update
-            render_input_display(&renderer.quad_geometry)            
             
             cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 80, 80 }
             r_draw_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture(.CURSOR),
@@ -556,8 +559,6 @@ main :: proc() {
             /*
                 todo(isak): state of the renderer:
                 usage:
-                - the rect pushing in the draw section is artificial; only end_frame() needs to happen here
-                    and maybe also profiler calls
                 - batch overrun has not been tested but won't work; it should run end_frame().. probably
                 - transforms should be a dynamic stack that we just write as we process the frame; can save a bunch
                     of draw calls
@@ -644,6 +645,31 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
 }
 
 handle_debug_ui_events :: proc(ctx: ^mu.Context) {
+    if is_key_pressed(.R) {
+        osu_restart_map(game.active_map)
+    }
+    if is_key_pressed(.HOME) {
+        game.time_rate = 1
+    }
+    if is_key_pressed(.PAGEUP) {
+        game.time_rate *= 2
+    }
+    if is_key_pressed(.PAGEDOWN) {
+        game.time_rate /= 2
+    }
+    if is_key_pressed(.F1) {
+        window.renderer.trace_frame = !window.renderer.trace_frame
+    }
+    if is_key_pressed(.F2) {
+        debug_info.display_fontatlas = !debug_info.display_fontatlas
+    }
+    if is_key_pressed(.F3) {
+        debug_info.display_frame_profiler = !debug_info.display_frame_profiler
+    }
+    if is_key_pressed(.F4) {
+        debug_info.display_memory_profiler = !debug_info.display_memory_profiler
+    }
+
     // note(isak): handle offscreen windows
     if ctx.focus_id > 0 && is_held(mouse.buttons[.LEFT]) {
         window.ui_dragging = true

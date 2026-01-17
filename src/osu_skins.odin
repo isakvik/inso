@@ -4,8 +4,7 @@ import os "core:os/os2"
 import "core:strings"
 
 
-Skin_Element_Type :: enum {
-    NONE,
+Skin_Element_Type :: enum u32 {
     CURSOR,
     APPROACHCIRCLE,
     HITCIRCLE,
@@ -30,21 +29,24 @@ Skin_Element_Path := #partial [Skin_Element_Type]string {
     .COMBO_1            = "default-1",
 }
 
+// note(isak): texture id lookup table for skin elements
+skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
+    .HIT_CIRCLE = .HITCIRCLE,
+    .HIT_CIRCLE_OVERLAY = .HITCIRCLEOVERLAY,
+    .APPROACH_CIRCLE = .APPROACHCIRCLE,
+    .COMBO_NUMBER = .COMBO_1,
+    .JUDGMENT = .LIGHTING,
+}
+
 
 supported_image_extensions :: []string{".png", ".jpg"}
 
-// note(isak): returns index into bindless texture buffer
-skin_texture :: proc(tex_id: Skin_Element_Type) -> u32 { 
-    return u32(tex_id) + len(Reserved_Texture_Slot) 
-}
 
 // todo(isak): @leak: since we allocate strings here, reloading the skin results in path strings that are never freed
 // make a skin arena for unloading is probably easiest
 load_skin_textures :: proc(skin_path: string) {
 
     for element in Skin_Element_Type {
-        if element == .NONE { continue }
-        
         tex_err: os.Error
         for extension in supported_image_extensions {
             element_path := strings.concatenate({skin_path, Skin_Element_Path[element], "@2x", extension})

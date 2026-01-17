@@ -139,7 +139,8 @@ split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> 
 }
 
 write_instances_from_curve :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, type: Slider_Path_Type, curve_distance: f64) -> f64 {
-        if type == .ARC {
+    remaining_distance := curve_distance    
+    if type == .ARC {
         is_parallel: bool
 
         base_dist : f32 = 2.5
@@ -152,22 +153,22 @@ write_instances_from_curve :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Cu
             iterations := abs((end_pos.x - start_pos.x) / x)
             xy_vector : [2]f32 = {x, y}
             for i in 0..<iterations {
-                buffer_push(slider_instances, start_pos + i * xy_vector)
+                buffer_push(instance_buf, start_pos + i * xy_vector)
             }
 
             travelled_distance := math.pow(math.pow(end_pos.y - start_pos.y, 2) + math.pow(end_pos.x - start_pos.x, 2), 0.5)
-            buffer_push(slider_instances, start_pos + iterations * xy_vector)
-            remaining_distance := curve_distance - travelled_distance
+            buffer_push(instance_buf, start_pos + iterations * xy_vector)
+            remaining_distance = curve_distance - f64(travelled_distance)
         } else {
-            //todo(yokes): buffer_push points between nodes (arc)
+            //todo(yokes): instance_buf points between nodes (arc)
         }
     } else if type == .LINEAR || len(curve) < 3 {
-        //todo(yokes): buffer_push points between nodes (linear)
+        //todo(yokes): instance_buf points between nodes (linear) copy "is_parrallel" code or something
     } else {
-        //todo(yokes): buffer_push points inbetween nodes (bezier)
+        //todo(yokes): instance_buf points inbetween nodes (bezier) https://en.wikipedia.org/wiki/B%C3%A9zier_curve
     }
 
-    return curve_distance
+    return remaining_distance
 }
 
 write_instances_from_path :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, alloc: runtime.Allocator) {

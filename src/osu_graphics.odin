@@ -471,5 +471,3 @@ render_input_display :: proc() {
             push_element
 
 */
-
-

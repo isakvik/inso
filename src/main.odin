@@ -312,7 +312,7 @@ lua_ctx: struct {
 
 main :: proc() {
     _program_start_time = current_time()
-
+    
     if memory_init() != .None {
         panic("memory init error")
     }

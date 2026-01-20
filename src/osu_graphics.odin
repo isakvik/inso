@@ -165,20 +165,14 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
             Animation_Scale{
                 start_time = ar_ms * 0.5, 
                 end_time = ar_ms,
-                start_scale = {1, 4}, 
+                start_scale = {4, 1}, 
                 end_scale = {0, 0}
             }, 
             Animation_Rotate{
-                start_time = 0,
-                end_time = ar_ms * 0.5, 
-                start_angle = 360, 
-                end_angle = 300
-            },
-            Animation_Rotate{
-                start_time = ar_ms * 0.5, 
+                start_time = 0, 
                 end_time = ar_ms,
                 start_angle = 0, 
-                end_angle = 60
+                end_angle = 180
             }, 
         )
     }

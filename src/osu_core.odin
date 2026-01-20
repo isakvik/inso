@@ -117,6 +117,11 @@ Osu_Sample_Set :: enum {
     DRUM
 }
 
+Notosu_Map :: struct {
+    lua_entry_point: string,
+    shaders: []Shader,
+}
+
 Osu_Map :: struct {
     using Osu_Map_File_Data: struct {
         audio_filename: string,
@@ -282,8 +287,6 @@ osu_on_update :: proc() {
     }
 
     r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
-
-
 
     // note(isak): we render elements back to front for correct blending
     // todo(isak): no culling

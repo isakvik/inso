@@ -18,7 +18,7 @@ import mu "vendor:microui"
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
-
+import "core:sys/windows"
 
 /*
 note(isak):
@@ -145,8 +145,8 @@ window: struct {
     pass_action: sg.Pass_Action,
     swapchain: sg.Swapchain,
 
-    shaders: [Pipeline_ID]Shader,
-    pipelines: [Pipeline_ID]sg.Pipeline,
+    builtin_shaders: [Pipeline_ID]Shader,
+    builtin_pipelines: [Pipeline_ID]sg.Pipeline,
     framebuffers: [Framebuffer_ID]GL_Framebuffer,
     
     // note(isak): we make a distinction between static and dynamic geometry; dynamic can be streamed
@@ -182,6 +182,7 @@ debug_info: struct {
 }
 
 window_init :: proc(rect: Rect) {
+    windows.SetProcessDPIAware()
     window.rect = rect
     window.handle = sdl.CreateWindow("notosu!", i32(rect.w), i32(rect.h), sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
     window.aspect_ratio = f32(rect.h) / f32(rect.w)
@@ -190,8 +191,8 @@ window_init :: proc(rect: Rect) {
     sdl.GL_SetAttribute(sdl.GL_CONTEXT_MINOR_VERSION, 6)
     sdl.SetHint(sdl.HINT_RENDER_DRIVER, "opengl")
 
-    sdl.GL_SetSwapInterval(1)
-    sdl.SetWindowSurfaceVSync(window.handle, 1)
+    sdl.GL_SetSwapInterval(0)
+    sdl.SetWindowSurfaceVSync(window.handle, 0)
 
     window.gl_context = sdl.GL_CreateContext(window.handle)
     gl.load_up_to(4, 6, sdl.gl_set_proc_address)
@@ -585,7 +586,7 @@ main :: proc() {
         }
 
         {
-            profiler_block_begin(.SWAP_FRAME); defer profiler_block_end() 
+            profiler_block_begin(.SWAP_FRAME); defer profiler_block_end()
             sdl.GL_SwapWindow(window.handle)
         }
         
@@ -791,13 +792,13 @@ end_frame :: proc(renderer: ^Renderer) {
 process_builtin_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
     updated_systems := mapset_check_system_file_watch(watch)
     if updated_systems[.SHADERS] {
-        for &shader in window.shaders {
+        for &shader in window.builtin_shaders {
             shader_reinit(&shader)
         }
         fmt.println("reloaded builtin shaders")
 
-        pipeline_reinit(&window.pipelines[.QUAD], quad_pipeline())
-        pipeline_reinit(&window.pipelines[.SLIDER], slider_pipeline())
-        pipeline_reinit(&window.pipelines[.TEXT], text_pipeline())
+        pipeline_reinit(&window.builtin_pipelines[.QUAD], quad_pipeline())
+        pipeline_reinit(&window.builtin_pipelines[.SLIDER], slider_pipeline())
+        pipeline_reinit(&window.builtin_pipelines[.TEXT], text_pipeline())
     }
 }

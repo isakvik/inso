@@ -21,9 +21,6 @@ mapset definition:
 
 todo(isak): missing functionality:
     - mapset index; should enable quick lookup for song select stuff
-    - osu parsing
-        slider parsing
-        combocolors?
 
     - notosu definition and script running
 
@@ -32,7 +29,10 @@ Mapset :: struct {
     open: bool,
     folder_path: string,
     osu_map: Osu_Map,
+    notosu_map: Notosu_Map,
+    
     texture_assets: map[string]Texture,
+    shader_assets: map[string]Shader,
 
     watch: Win32_Directory_Watch
 }
@@ -40,8 +40,19 @@ Mapset :: struct {
 Notosu_Map_System :: enum {
     OSU_FILE,
     NOTOSU_FILES, // note(isak): this also includes scripts
+    SHADERS
+}
+
+Notosu_Section_Header_Types :: enum {
+    HEADER,
+    GENERAL,
     SHADERS,
-    Count
+}
+
+notosu_section_headers := []string{
+    "",
+    "[General]",
+    "[Shaders]",
 }
 
 Osu_Section_Header_Types :: enum {
@@ -71,10 +82,20 @@ osu_section_headers := []string{
 
 mapset_cleanup_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
     win32_close_directory_watch(&mapset.watch)
+    
+    for asset in mapset.texture_assets {
+        texture := &mapset.texture_assets[asset]
+        texture_delete({texture.tex_id})
+    }
+    for asset in mapset.shader_assets {
+        shader_delete(&mapset.shader_assets[asset])
+    }
+    
     mapset_path := strings.clone(mapset.folder_path, context.temp_allocator)
     
     virtual.arena_free_all(&memory.element_arena)
     virtual.arena_free_all(&memory.mapset_arena)
+    
     reloaded_mapset, ok := mapset_open_for_editing(mapset_path)
     assert(ok)
     return reloaded_mapset
@@ -98,14 +119,15 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
     files, io_err = os.read_dir(dir_handle, 1024, context.temp_allocator)
     defer mem.free_all(context.temp_allocator)
 
-    mapset.texture_assets = make(map[string]Texture, len(files) * 2, memory.mapset_allocator)
+    min_map_size :: 16
+    mapset.texture_assets = make(map[string]Texture, max(len(files), min_map_size), memory.mapset_allocator)
     
     for file in files {
         extension := filepath.ext(file.name)
         switch extension {
             case ".notosu": {
                 filedata, file_err := read_entire_file_to_string(file.fullpath, context.temp_allocator)
-                mapset_parse_notosu(mapset, filedata)
+                mapset.notosu_map = mapset_parse_notosu(filedata)
             }
             case ".osu": {
                 filedata, file_err := read_entire_file_to_string(file.fullpath, context.temp_allocator)
@@ -163,8 +185,59 @@ mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu
 }
 
 
-mapset_parse_notosu :: proc(mapset: ^Mapset, data: string) {
-    fmt.println(data)
+mapset_parse_notosu :: proc(notosu_file: string) -> Notosu_Map {
+    result: Notosu_Map
+    context.allocator = memory.mapset_allocator
+    
+    c: Consumer = {
+        str = notosu_file
+    }
+    
+    section_index := 0
+    section_loop: for {
+        if c.at >= len(c.str) {
+            break
+        }
+        
+        lines := consume_section(&c)
+        defer section_index += 1
+        
+        if len(lines) == 0 {
+            fmt.println(notosu_section_headers[section_index], ":: section was blank")
+            continue
+        }
+        
+        if section_index == 0 {
+            fmt.println("::", lines[0])
+            continue
+        }
+        
+        expected_happy_case := section_index
+        for lines[0] != notosu_section_headers[section_index] {
+            section_index = (section_index + 1) % int(max(Notosu_Section_Header_Types))
+            if section_index == expected_happy_case {
+                fmt.println(notosu_section_headers[expected_happy_case], ":: unhandled section")
+                continue section_loop
+            }
+        }
+        
+        #partial switch Notosu_Section_Header_Types(section_index) {
+        case .GENERAL:
+            for i in 1..<len(lines) {
+                key, value := get_key_value(lines[i])
+                ok: bool
+                switch key {
+                    case "LuaEntryPoint": result.lua_entry_point = strings.clone(value)
+                }
+            }
+        case .SHADERS:
+        
+        case: 
+            unreachable()
+        }
+    }
+    
+    return result
 }
 
 

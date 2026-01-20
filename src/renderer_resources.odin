@@ -16,6 +16,16 @@ text_vs_path :: "shaders/text.vs.glsl"
 text_fs_path :: "shaders/text.fs.glsl"
 
 
+Pipeline_Kind :: enum u8 {
+    RESERVED,
+    SKIN,
+    MAP,
+}
+Pipeline_Index :: struct {
+    kind: Pipeline_Kind,
+    index: u8,
+}
+
 Pipeline_ID :: enum {
     QUAD,
     SLIDER,
@@ -45,8 +55,20 @@ Reserved_Texture_Slot :: enum u32 {
     SLIDER_FRAMEBUFFER
 }
 
-// note(isak): returns index into bindless texture buffer
 
+// todo(isak): unused, but it might be better to index with this just for invariant purposes
+Texture_Kind :: enum u32 {
+    RESERVED,
+    SKIN,
+    MAP,
+}
+
+Texture_Index :: struct {
+    kind: Texture_Kind,
+    index: u32
+}
+
+// note(isak): returns index into bindless texture buffer
 reserved_texture :: proc(slot: Reserved_Texture_Slot) -> u32 { return u32(slot) }
 
 skin_texture :: proc(skin_el: Skin_Element_Type) -> u32 { return u32(skin_el) + len(Reserved_Texture_Slot) }
@@ -60,7 +82,7 @@ map_texture :: proc(tex_id: u32) -> u32 { return tex_id + len(Reserved_Texture_S
 quad_pipeline :: proc() -> sg.Pipeline_Desc {
     return {
         label = "builtin.quad",
-        shader = window.shaders[.QUAD].shader,
+        shader = window.builtin_shaders[.QUAD].shader,
         //index_type = .UINT16,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
@@ -81,7 +103,7 @@ quad_pipeline :: proc() -> sg.Pipeline_Desc {
 slider_pipeline :: proc() -> sg.Pipeline_Desc {
     return {
         label = "builtin.slider",
-        shader = window.shaders[.SLIDER].shader,
+        shader = window.builtin_shaders[.SLIDER].shader,
         //index_type = .UINT16,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
@@ -102,7 +124,7 @@ slider_pipeline :: proc() -> sg.Pipeline_Desc {
 text_pipeline :: proc() -> sg.Pipeline_Desc {
     return {
         label = "builtin.text",
-        shader = window.shaders[.TEXT].shader,
+        shader = window.builtin_shaders[.TEXT].shader,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
         colors = {

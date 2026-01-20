@@ -138,17 +138,17 @@ renderer_init :: proc() {
     })
 
     err: Shader_Error
-    window.shaders[.QUAD], err = shader_init(quad_vs_path, quad_fs_path, context.temp_allocator)
+    window.builtin_shaders[.QUAD], err = shader_init(quad_vs_path, quad_fs_path, context.temp_allocator)
     assert(err == .NONE)
-    window.pipelines[.QUAD] = sg.make_pipeline(quad_pipeline())
+    window.builtin_pipelines[.QUAD] = sg.make_pipeline(quad_pipeline())
 
-    window.shaders[.SLIDER], err = shader_init(slider_vs_path, slider_fs_path, context.temp_allocator)
+    window.builtin_shaders[.SLIDER], err = shader_init(slider_vs_path, slider_fs_path, context.temp_allocator)
     assert(err == .NONE)
-    window.pipelines[.SLIDER] = sg.make_pipeline(slider_pipeline())
+    window.builtin_pipelines[.SLIDER] = sg.make_pipeline(slider_pipeline())
     
-    window.shaders[.TEXT], err = shader_init(text_vs_path, text_fs_path, context.temp_allocator)
+    window.builtin_shaders[.TEXT], err = shader_init(text_vs_path, text_fs_path, context.temp_allocator)
     assert(err == .NONE)
-    window.pipelines[.TEXT] = sg.make_pipeline(text_pipeline())
+    window.builtin_pipelines[.TEXT] = sg.make_pipeline(text_pipeline())
 
     window.framebuffers[.SLIDERS] = fbo_init(1, 1, i32(window.rect.w), i32(window.rect.h), gl.RGBA8)
     
@@ -243,8 +243,7 @@ Shader_Error :: enum {
 
 Shader :: struct {
     shader: sg.Shader,
-    vs_path, fs_path: string,
-    uniform_desc: [8]sg.Shader_Uniform_Block
+    vs_path, fs_path: string
 }
 
 shader_init :: proc(vs_path, fs_path: string, alloc: runtime.Allocator = context.temp_allocator) -> (Shader, Shader_Error) {
@@ -291,6 +290,11 @@ shader_reinit :: proc(shader: ^Shader, alloc: runtime.Allocator = context.temp_a
     sg.destroy_shader(shader.shader)
     shader^ = new_shader
     return err
+}
+
+shader_delete :: proc(shader: ^Shader) {
+    sg.destroy_shader(shader.shader)
+    shader.shader = sg.Shader{}
 }
 
 pipeline_reinit :: proc(pipeline: ^sg.Pipeline, pipeline_desc: sg.Pipeline_Desc) {
@@ -646,7 +650,7 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 case .BIND_PIPELINE: {
                     cmd := _command_consume(&command_queue, Command_Bind_Pipeline)
 
-                    sg.apply_pipeline(window.pipelines[cmd.pipeline])
+                    sg.apply_pipeline(window.builtin_pipelines[cmd.pipeline])
                     
                     if (trace) { fmt.println("  pipeline", cmd.pipeline) }
                 }
@@ -826,4 +830,3 @@ rect_translate_to_inner :: proc(inner, outer: Rect) -> Rect {
         h = inner.h * outer.h
     }
 }
-

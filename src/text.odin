@@ -187,4 +187,3 @@ text_submit_geometry :: proc(renderer: ^Renderer) {
         instance_count = 1
     )
 }
-

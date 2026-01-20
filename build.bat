@@ -10,7 +10,7 @@ if %ERRORLEVEL% equ 0 (
     taskkill /IM %exec_name% /F /T > nul
 )
 
-odin build ./src -debug -out:build/%exec_name% -define:SOKOL_USE_GL=true
+odin build ./src -linker:radlink -debug -out:build/%exec_name% -define:SOKOL_USE_GL=true -o:minimal
 if %ERRORLEVEL% equ 1 goto stop 
 python debug.py
 if %ERRORLEVEL% equ 1 goto stop

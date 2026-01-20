@@ -136,9 +136,7 @@ animation_push :: proc(buf: ^q.Queue(Animation), elems: ..Animation) -> []Animat
 // note(isak): animation api
 
 element_push :: proc(buf: ^q.Queue(Element), el: Element) -> Element_ID {
-    q.append(buf, Element{
-        tex = map_texture(0),
-    })
+    q.append(buf, el)
     return Element_ID(buf.len) - 1
 }
 
@@ -347,7 +345,7 @@ render_entity :: proc(e: ^Entity, at_time: f64) {
 render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     // todo(isak): generate partial instance draws (snaking) and the bounding quads like the smart cookie you are
 
-    r_bind_pipeline({.SLIDER})
+    r_bind_pipeline({builtin_pipeline(.SLIDER)})
     r_bind_framebuffer({ write = .SLIDERS })    
     r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
     r_clear()
@@ -363,7 +361,7 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     
     r_bind_framebuffer({ read = .SLIDERS })
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
-    r_bind_pipeline({.QUAD})
+    r_bind_pipeline({builtin_pipeline(.QUAD)})
     
     r_push_transform(fullscreen_transform)
     r_draw_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.4), reserved_texture(.SLIDER_FRAMEBUFFER))

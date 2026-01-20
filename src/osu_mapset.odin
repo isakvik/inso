@@ -1,16 +1,19 @@
 package notosu
 
-import "core:slice"
-import "core:container/queue"
+import "base:intrinsics"
+import "base:runtime"
+
+import q "core:container/queue"
+import "core:fmt"
 import "core:mem"
 import "core:mem/virtual"
-import "core:fmt"
 import os "core:os/os2"
 import "core:path/filepath"
-import "core:sys/windows"
+import "core:slice"
 import "core:strings"
 import "core:strconv"
-import "base:runtime"
+
+import sg "vendor:sokol/gfx"
 
 /*
 mapset definition:
@@ -31,15 +34,18 @@ Mapset :: struct {
     osu_map: Osu_Map,
     notosu_map: Notosu_Map,
     
-    texture_assets: map[string]Texture,
-    shader_assets: map[string]Shader,
+    num_shaders: int,
+    textures: q.Queue(Texture),
+    texture_slot_by_name: map[string]u32,
+    shader_slot_by_name: map[string]u32,
 
     watch: Win32_Directory_Watch
 }
 
 Notosu_Map_System :: enum {
     OSU_FILE,
-    NOTOSU_FILES, // note(isak): this also includes scripts
+    NOTOSU_FILES,
+    SCRIPTS,
     SHADERS
 }
 
@@ -79,16 +85,15 @@ osu_section_headers := []string{
     "[HitObjects]",
 }
 
-
-mapset_cleanup_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
+mapset_free_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
     win32_close_directory_watch(&mapset.watch)
     
-    for asset in mapset.texture_assets {
-        texture := &mapset.texture_assets[asset]
-        texture_delete({texture.tex_id})
+    for &texture in mapset.textures.data {
+        texture_delete(&texture)
     }
-    for asset in mapset.shader_assets {
-        shader_delete(&mapset.shader_assets[asset])
+    for i in len(Builtin_Pipeline_Slot)..<window.pipelines.len {
+        sg.destroy_pipeline(window.pipelines.data[i])
+        shader_delete(&window.shaders.data[i])
     }
     
     mapset_path := strings.clone(mapset.folder_path, context.temp_allocator)
@@ -102,8 +107,10 @@ mapset_cleanup_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
 }
 
 mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
-    mapset_path := strings.clone(path, memory.mapset_allocator)
-    mapset, alloc_err := new(Mapset, memory.mapset_allocator)
+    context.allocator = memory.mapset_allocator
+    
+    mapset_path := strings.clone(path)
+    mapset, alloc_err := new(Mapset)
     assert(alloc_err == .None)
 
     if !os.exists(path) {
@@ -119,15 +126,16 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
     files, io_err = os.read_dir(dir_handle, 1024, context.temp_allocator)
     defer mem.free_all(context.temp_allocator)
 
-    min_map_size :: 16
-    mapset.texture_assets = make(map[string]Texture, max(len(files), min_map_size), memory.mapset_allocator)
+    q.init(&mapset.textures)
+    mapset.texture_slot_by_name = make(map[string]u32, max(len(files), 16))
+    mapset.shader_slot_by_name = make(map[string]u32, max(len(files), 16))
     
     for file in files {
         extension := filepath.ext(file.name)
         switch extension {
             case ".notosu": {
                 filedata, file_err := read_entire_file_to_string(file.fullpath, context.temp_allocator)
-                mapset.notosu_map = mapset_parse_notosu(filedata)
+                mapset.notosu_map = mapset_parse_notosu(mapset, filedata)
             }
             case ".osu": {
                 filedata, file_err := read_entire_file_to_string(file.fullpath, context.temp_allocator)
@@ -136,7 +144,8 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
             case ".png", ".jpg": {
                 tex_key := strings.clone(file.name, memory.mapset_allocator)
                 tex, file_err := texture_from_file(file.fullpath)
-                mapset.texture_assets[tex_key] = tex
+                mapset.texture_slot_by_name[tex_key] = u32(mapset.textures.len)
+                q.push_back(&mapset.textures, tex)
             }
         }
     }
@@ -151,11 +160,11 @@ mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu
     win32_get_directory_changes(watch)
     if watch.notify_bytes_written > 0 {
         
-        wfilename_buf: [windows.MAX_PATH]u16
+        wfilename_buf: [MAX_PATH]u16
         for true {
             notify, wfilename_len := win32_watch_get_next_notify(watch, &wfilename_buf)
             if wfilename_len > 0 {
-                filename_buf: [windows.MAX_PATH]u8
+                filename_buf: [MAX_PATH]u8
                 for i in 0..<wfilename_len {
                     filename_buf[i] = u8(wfilename_buf[i])
                 }
@@ -164,7 +173,7 @@ mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu
                 switch extension {
                     case ".osu": updated_systems[.OSU_FILE] = true
                     case ".glsl": updated_systems[.SHADERS] = true
-                    case ".lua": fallthrough
+                    case ".lua": updated_systems[.SCRIPTS] = true
                     case ".notosu": updated_systems[.NOTOSU_FILES] = true
                     // todo(isak) asset files... eventually
                 }
@@ -185,9 +194,20 @@ mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu
 }
 
 
-mapset_parse_notosu :: proc(notosu_file: string) -> Notosu_Map {
+mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map {
     result: Notosu_Map
     context.allocator = memory.mapset_allocator
+    
+    // todo(isak): test code that should be replaced with notosu shader section reads
+    shader, err := shader_init(quad_vs_path, "songs/test/quad_wave.fs.glsl", context.temp_allocator)
+    assert(err == .NONE)
+    
+    mapset.shader_slot_by_name["wave"] = u32(mapset.num_shaders)
+    q.push(&window.shaders, shader)
+    
+    custom_desc := quad_pipeline_desc()
+    custom_desc.shader = shader.shader
+    q.push(&window.pipelines, sg.make_pipeline(custom_desc))
     
     c: Consumer = {
         str = notosu_file
@@ -334,8 +354,8 @@ mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
             case .HITOBJECTS:
                 result.hit_objects = make_slice([]Hit_Object, len(lines) - 1)
 
-                slider_temp_queue: queue.Queue(Slider_Path)
-                queue.init(&slider_temp_queue, 1024, context.temp_allocator)
+                slider_temp_queue: q.Queue(Slider_Path)
+                q.init(&slider_temp_queue, 1024, context.temp_allocator)
                 
                 for i in 1..<len(lines) {
                     hobj := &result.hit_objects[i - 1]
@@ -392,7 +412,7 @@ mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
                             write_instances_from_path(&window.renderer.slider_instances, &slider)
                                                       
                         hobj.slider_path_index = int(slider_temp_queue.len)
-                        queue.append(&slider_temp_queue, slider)
+                        q.append(&slider_temp_queue, slider)
                         
 
                         // todo(isak) slider time calculation... requires redline & greenline handling. formula:

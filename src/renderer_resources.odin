@@ -26,10 +26,20 @@ Pipeline_Index :: struct {
     index: u8,
 }
 
-Pipeline_ID :: enum {
+Pipeline_ID :: u32
+
+Builtin_Pipeline_Slot :: enum {
     QUAD,
     SLIDER,
     TEXT
+}
+
+builtin_pipeline :: proc(s: Builtin_Pipeline_Slot) -> u32 {
+    return u32(s)
+}
+
+map_pipeline :: proc(s: u32) -> u32 {
+    return len(Builtin_Pipeline_Slot) + s
 }
 
 Framebuffer_ID :: enum {
@@ -79,10 +89,10 @@ map_texture :: proc(tex_id: u32) -> u32 { return tex_id + len(Reserved_Texture_S
 //////////////////////////////////////////////////////
 // note(isak): pipeline definitions
 
-quad_pipeline :: proc() -> sg.Pipeline_Desc {
+quad_pipeline_desc :: proc() -> sg.Pipeline_Desc {
     return {
         label = "builtin.quad",
-        shader = window.builtin_shaders[.QUAD].shader,
+        shader = window.shaders.data[builtin_pipeline(.QUAD)].shader,
         //index_type = .UINT16,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
@@ -100,10 +110,10 @@ quad_pipeline :: proc() -> sg.Pipeline_Desc {
     },
 }
 
-slider_pipeline :: proc() -> sg.Pipeline_Desc {
+slider_pipeline_desc :: proc() -> sg.Pipeline_Desc {
     return {
         label = "builtin.slider",
-        shader = window.builtin_shaders[.SLIDER].shader,
+        shader = window.shaders.data[builtin_pipeline(.SLIDER)].shader,
         //index_type = .UINT16,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
@@ -121,10 +131,10 @@ slider_pipeline :: proc() -> sg.Pipeline_Desc {
     }
 }
 
-text_pipeline :: proc() -> sg.Pipeline_Desc {
+text_pipeline_desc :: proc() -> sg.Pipeline_Desc {
     return {
         label = "builtin.text",
-        shader = window.builtin_shaders[.TEXT].shader,
+        shader = window.shaders.data[builtin_pipeline(.TEXT)].shader,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
         colors = {
@@ -172,8 +182,10 @@ prepare_textures_for_rendering :: proc() {
         num_elements += 1
     }
 
-    textures[num_elements] = game.active_mapset.texture_assets[game.active_map.bg_filename].tex_handle
-    num_elements += 1
+    for map_texture in game.active_mapset.textures.data {
+        textures[num_elements] = map_texture.tex_handle
+        num_elements += 1
+    }
 
     for i in 0..<num_elements {
         if textures[i] > 0 {
@@ -185,7 +197,7 @@ prepare_textures_for_rendering :: proc() {
 cleanup_textures_for_rendering :: proc() {
     textures := &window.texture_buffer.data
     
-    num_elements := len(Reserved_Texture_Slot) + len(Skin_Element_Type) + 1
+    num_elements := len(Reserved_Texture_Slot) + len(Skin_Element_Type) + game.active_mapset.textures.len
     for i in 0..<num_elements {
         if textures[i] > 0 {
             gl.MakeTextureHandleNonResidentARB(textures[i])

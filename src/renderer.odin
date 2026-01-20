@@ -136,20 +136,29 @@ renderer_init :: proc() {
         },
         logger = {func = slog.func},
     })
-
-    err: Shader_Error
-    window.builtin_shaders[.QUAD], err = shader_init(quad_vs_path, quad_fs_path, context.temp_allocator)
-    assert(err == .NONE)
-    window.builtin_pipelines[.QUAD] = sg.make_pipeline(quad_pipeline())
-
-    window.builtin_shaders[.SLIDER], err = shader_init(slider_vs_path, slider_fs_path, context.temp_allocator)
-    assert(err == .NONE)
-    window.builtin_pipelines[.SLIDER] = sg.make_pipeline(slider_pipeline())
     
-    window.builtin_shaders[.TEXT], err = shader_init(text_vs_path, text_fs_path, context.temp_allocator)
-    assert(err == .NONE)
-    window.builtin_pipelines[.TEXT] = sg.make_pipeline(text_pipeline())
+    queue.init(&window.shaders, 128)
+    queue.init(&window.pipelines, 128)
 
+    {
+        quad_shader, err := shader_init(quad_vs_path, quad_fs_path, context.temp_allocator)
+        assert(err == .NONE)
+        queue.push(&window.shaders, quad_shader)
+        queue.push(&window.pipelines, sg.make_pipeline(quad_pipeline_desc()))
+    }
+    {
+        slider_shader, err := shader_init(slider_vs_path, slider_fs_path, context.temp_allocator)
+        assert(err == .NONE)
+        queue.push(&window.shaders, slider_shader)
+        queue.push(&window.pipelines, sg.make_pipeline(slider_pipeline_desc()))
+    }
+    {
+        text_shader, err := shader_init(text_vs_path, text_fs_path, context.temp_allocator)
+        assert(err == .NONE)
+        queue.push(&window.shaders, text_shader)
+        queue.push(&window.pipelines, sg.make_pipeline(text_pipeline_desc()))
+    }
+    
     window.framebuffers[.SLIDERS] = fbo_init(1, 1, i32(window.rect.w), i32(window.rect.h), gl.RGBA8)
     
 
@@ -512,13 +521,13 @@ _r_bind_layer :: proc(layer: Layer) {
 }
 
 r_push_layer :: proc(layer: Layer,    
-    cmd_framebuffer: Command_Bind_Framebuffer = window.renderer.current_framebuffer,
-    cmd_pipeline: Command_Bind_Pipeline = window.renderer.current_pipeline,
+    framebuffer: Command_Bind_Framebuffer = window.renderer.current_framebuffer,
+    pipeline: Command_Bind_Pipeline = window.renderer.current_pipeline,
     transform: Transform = window.renderer.current_global_data.transform,
     scissor_region: Command_Scissor_Mode = window.renderer.current_scissor
 ) {
     _r_bind_layer(layer)
-    r_push_current_state(cmd_framebuffer, cmd_pipeline, transform, scissor_region)
+    r_push_current_state(framebuffer, pipeline, transform, scissor_region)
 }
 
 r_push_current_state :: proc(
@@ -650,7 +659,7 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 case .BIND_PIPELINE: {
                     cmd := _command_consume(&command_queue, Command_Bind_Pipeline)
 
-                    sg.apply_pipeline(window.builtin_pipelines[cmd.pipeline])
+                    sg.apply_pipeline(window.pipelines.data[cmd.pipeline])
                     
                     if (trace) { fmt.println("  pipeline", cmd.pipeline) }
                 }

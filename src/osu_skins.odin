@@ -80,5 +80,5 @@ unload_skin_textures :: proc() {
     for element in Skin_Element_Type {
         texture_ids[element] = window.skin_textures[element].tex_id
     }
-    texture_delete(texture_ids[:])
+    texture_free(texture_ids[:])
 }

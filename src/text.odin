@@ -179,7 +179,7 @@ text_submit_geometry :: proc(renderer: ^Renderer) {
     // note(isak): since we do vertex picking and our vertex data composes a whole glyph, 
     // i've written the shader to draw a glyph quad by invoking a quad 6 times
     r_push_layer(.DEBUG)
-    r_bind_pipeline({ .TEXT })
+    r_bind_pipeline({ builtin_pipeline(.TEXT) })
     r_bind_ssbo(&window.text_store, .VERTEX_BUFFER)
     r_draw(
         index_offset = 0,

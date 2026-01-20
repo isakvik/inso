@@ -200,9 +200,12 @@ osu_on_map_init :: proc() {
     write_default_entities_from_map(&game.entities, game.active_map)
 
     game.active_map.bg_element, _ = reserve_entities(&game.entities, 1)
-    entity_push(&game.entities, Entity{
+    
+    bg_entity := Entity{
         element = element_push(&game.elements, Element{
-            type = .MAP_ELEMENT, tex = map_texture(0)
+            type = .MAP_ELEMENT, 
+            tex = mapset_texture("kawayabughorou.jpg"),
+            shader = mapset_shader("wave")
         }),
         flags = {.ACTIVE},
 
@@ -210,7 +213,8 @@ osu_on_map_init :: proc() {
         size = {1, 1},
         anchor = .CENTER,
         color = {30,30,30,255}
-    })
+    }
+    entity_push(&game.entities, bg_entity)
 }
 
 osu_on_map_unload :: proc() {
@@ -226,7 +230,7 @@ osu_restart_map :: proc(osu_map: ^Osu_Map) {
     
     osu_map.visible_hit_object_state = {}
     
-    game.active_mapset = mapset_cleanup_and_reload(game.active_mapset)
+    game.active_mapset = mapset_free_and_reload(game.active_mapset)
     game.active_map = &game.active_mapset.osu_map
     osu_on_map_init()
 }
@@ -318,6 +322,15 @@ osu_handle_play_input :: proc() {
     osu_controller.m2 = mouse.buttons[.RIGHT]
 }
 
+mapset_texture :: proc(name: string) -> u32 {
+    assert(game.active_mapset != nil)
+    return map_texture(game.active_mapset.texture_slot_by_name[name])
+}
+
+mapset_shader :: proc(name: string) -> u32 {
+    assert(game.active_mapset != nil)
+    return map_pipeline(game.active_mapset.shader_slot_by_name[name])
+}
 
 // note(isak): this function assumes the start times of objects are sorted, but doesn't require end times to be.
 // a pathological case might be a 2B element that stretches from the beginning of the map to the end

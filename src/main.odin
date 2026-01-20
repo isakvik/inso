@@ -145,8 +145,8 @@ window: struct {
     pass_action: sg.Pass_Action,
     swapchain: sg.Swapchain,
 
-    builtin_shaders: [Pipeline_ID]Shader,
-    builtin_pipelines: [Pipeline_ID]sg.Pipeline,
+    shaders: queue.Queue(Shader),
+    pipelines: queue.Queue(sg.Pipeline),
     framebuffers: [Framebuffer_ID]GL_Framebuffer,
     
     // note(isak): we make a distinction between static and dynamic geometry; dynamic can be streamed
@@ -402,7 +402,7 @@ main :: proc() {
     
     load_skin_textures("skins/gn/")
 
-    builtin_shaders_watch := win32_init_directory_watch("shaders/")
+    shaders_watch := win32_init_directory_watch("shaders/")
 
     {
         ok: bool
@@ -414,6 +414,7 @@ main :: proc() {
         }
     }
     
+    // note(isak): dependent on map load... maybe obviously so?
     prepare_textures_for_rendering()
 
     osu_on_init()
@@ -520,7 +521,6 @@ main :: proc() {
 
             // prepare drawing
             begin_frame(renderer)
-            
         }
         
         {   
@@ -545,7 +545,7 @@ main :: proc() {
             r_push_layer(.BACKGROUND, transform = window.screenspace_transform)
             osu_on_update()
 
-            r_push_layer(.UI)
+            r_push_layer(.UI, pipeline = {builtin_pipeline(.QUAD)})
             r_push_transform(window.screenspace_transform)
             
             cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 80, 80 }
@@ -593,7 +593,7 @@ main :: proc() {
         {
             profiler_block_begin(.BETWEEN_FRAMES); defer profiler_block_end() 
 
-            process_builtin_shader_changes(&builtin_shaders_watch)
+            process_builtin_shader_changes(&shaders_watch)
 
             if debug_info.display_frame_profiler {
                 profiler_write_texture_column(frame_count, window.profiler_texture)
@@ -775,7 +775,7 @@ begin_frame :: proc(renderer: ^Renderer) {
     })
 
     _r_bind_layer(.BACKGROUND)
-    r_bind_pipeline({.QUAD})
+    r_bind_pipeline({builtin_pipeline(.QUAD)})
     r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
     r_push_transform(identity_transform)
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
@@ -792,13 +792,13 @@ end_frame :: proc(renderer: ^Renderer) {
 process_builtin_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
     updated_systems := mapset_check_system_file_watch(watch)
     if updated_systems[.SHADERS] {
-        for &shader in window.builtin_shaders {
+        for &shader in window.shaders.data {
             shader_reinit(&shader)
         }
         fmt.println("reloaded builtin shaders")
 
-        pipeline_reinit(&window.builtin_pipelines[.QUAD], quad_pipeline())
-        pipeline_reinit(&window.builtin_pipelines[.SLIDER], slider_pipeline())
-        pipeline_reinit(&window.builtin_pipelines[.TEXT], text_pipeline())
+        pipeline_reinit(&window.pipelines.data[builtin_pipeline(.QUAD)], quad_pipeline_desc())
+        pipeline_reinit(&window.pipelines.data[builtin_pipeline(.SLIDER)], slider_pipeline_desc())
+        pipeline_reinit(&window.pipelines.data[builtin_pipeline(.TEXT)], text_pipeline_desc())
     }
 }

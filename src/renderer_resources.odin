@@ -16,10 +16,10 @@ text_vs_path :: "shaders/text.vs.glsl"
 text_fs_path :: "shaders/text.fs.glsl"
 
 
+// todo(isak): unused indexer, see texture_kind
 Pipeline_Kind :: enum u8 {
-    RESERVED,
-    SKIN,
-    MAP,
+    BUILTIN,
+    MAP_SPECIFIC,
 }
 Pipeline_Index :: struct {
     kind: Pipeline_Kind,

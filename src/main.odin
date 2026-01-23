@@ -21,7 +21,7 @@ import sg "vendor:sokol/gfx"
 import "core:sys/windows"
 
 /*
-note(isak):
+todo(isak):
 
 communication layer:
 core runtime info such as map time and objects
@@ -30,7 +30,6 @@ core runtime info such as map time and objects
     are these just defined as lua metatables?
 - expose rendering and resource api
 
--- todos
 
 general:
 ui core 

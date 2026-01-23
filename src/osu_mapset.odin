@@ -13,6 +13,7 @@ import "core:slice"
 import "core:strings"
 import "core:strconv"
 
+import "vendor:cgltf"
 import sg "vendor:sokol/gfx"
 
 /*
@@ -38,6 +39,9 @@ Mapset :: struct {
     textures: q.Queue(Texture),
     texture_slot_by_name: map[string]u32,
     shader_slot_by_name: map[string]u32,
+    
+    model_store: ^GL_Buffer(Mesh_Vertex),
+    gfx_objects: q.Queue(Graphics_Object),
 
     watch: Win32_Directory_Watch
 }
@@ -85,7 +89,7 @@ osu_section_headers := []string{
     "[HitObjects]",
 }
 
-mapset_free_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
+mapset_free :: proc(mapset: ^Mapset) -> string {
     win32_close_directory_watch(&mapset.watch)
     
     for &texture in mapset.textures.data {
@@ -95,12 +99,19 @@ mapset_free_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
         sg.destroy_pipeline(window.pipelines.data[i])
         shader_delete(&window.shaders.data[i])
     }
+    window.pipelines.len = len(Builtin_Pipeline_Slot)
+    window.shaders.len = len(Builtin_Pipeline_Slot)
     
     mapset_path := strings.clone(mapset.folder_path, context.temp_allocator)
     
     virtual.arena_free_all(&memory.element_arena)
     virtual.arena_free_all(&memory.mapset_arena)
     
+    return mapset_path
+}
+
+mapset_free_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
+    mapset_path := mapset_free(mapset)
     reloaded_mapset, ok := mapset_open_for_editing(mapset_path)
     assert(ok)
     return reloaded_mapset
@@ -146,12 +157,62 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
                 tex, file_err := texture_from_file(file.fullpath)
                 mapset.texture_slot_by_name[tex_key] = u32(mapset.textures.len)
                 q.push_back(&mapset.textures, tex)
+            } 
+            case ".gltf": {
+                model_store := load_model(file.fullpath)
             }
         }
     }
 
     mapset.watch = win32_init_directory_watch(path)
     return mapset, true
+}
+
+load_model :: proc(path: string) -> ^GL_Buffer(Mesh_Vertex) {
+    cgltf_alloc :: proc "c" (user: rawptr, size: uint) -> rawptr {
+        alloc := memory.frame_allocator
+        context = runtime.default_context()
+        buf, err := alloc.procedure(alloc.data, .Alloc, int(size), align_of(f32), nil, 0)
+        return raw_data(buf)
+    }
+    cgltf_free :: proc "c" (user, ptr: rawptr) {}
+    
+    options := cgltf.options{
+        memory = {
+            alloc_func = cgltf_alloc,
+            free_func = cgltf_free
+        }
+    }
+    
+    path_cstr := strings.clone_to_cstring(path)
+    data, result := cgltf.parse_file(options, path_cstr)
+    assert(result == .success)
+    result = cgltf.load_buffers(options, data, path_cstr)
+    assert(result == .success)
+    
+    store := r_create_static_store(Mesh_Vertex, 36, memory.mapset_allocator)
+    
+    for primitive in data.meshes[0].primitives[:] {
+        for attrib in primitive.attributes {
+            attr_bufview := attrib.data.buffer_view
+            #partial switch attrib.type {
+            case .position:
+                for pos, i in slice.from_ptr(transmute(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
+                    store.data[i].pos = pos
+                }
+            case .normal:
+                for norm, i in slice.from_ptr(transmute(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
+                    store.data[i].norm = norm
+                }
+            case .texcoord:
+                for uv, i in slice.from_ptr(transmute(^vec2)attr_bufview.buffer.data, int(attrib.data.count)) {
+                    store.data[i].uv = uv
+                }
+            }
+        }
+    }
+    
+    return store
 }
 
 mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu_Map_System]bool {
@@ -208,6 +269,26 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
     custom_desc := quad_pipeline_desc()
     custom_desc.shader = shader.shader
     q.push(&window.pipelines, sg.make_pipeline(custom_desc))
+    
+    
+    mesh_desc := sg.Pipeline_Desc{
+        label = "builtin.quad",
+        shader = window.shaders.data[builtin_pipeline(.QUAD)].shader,
+        //index_type = .UINT16,
+        cull_mode = .NONE,
+        blend_color = {1.0, 1.0, 1.0, 1.0},
+        colors = {
+            0 = { blend = {
+                enabled = true,
+                op_alpha = .SUBTRACT,
+                src_factor_rgb = .SRC_ALPHA,
+                src_factor_alpha = .SRC_ALPHA,
+                dst_factor_rgb = .ONE_MINUS_SRC_ALPHA,
+                dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
+            }}
+        },
+        depth = {compare = .LESS_EQUAL, write_enabled = true},
+    }
     
     c: Consumer = {
         str = notosu_file

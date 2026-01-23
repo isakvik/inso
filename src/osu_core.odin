@@ -107,6 +107,7 @@ Layer :: enum {
     BACKGROUND,
     FOREGROUND,
     OVERLAY,
+    HIT_OBJECTS,
     UI,
     DEBUG
 }
@@ -154,8 +155,6 @@ Osu_Map :: struct {
 
     preempt_ms: f64,
     circle_radius_osupx: f32,
-
-    bg_element: int,
 }
 
 /*
@@ -196,25 +195,12 @@ osu_on_map_init :: proc() {
     rb.init(&game.entities, 8192, memory.element_allocator)
     game.entities.length = cap(game.entities.data)
     
-    // todo(isak): opinionated entity pushing; needs to be rewritten to take scripting (and skin metrics) into account
+    // todo(isak): opinionated entity pushing; needs to be rewritten to take scripting (and skin metrics)
+    // and 
+    // into account
     write_default_entities_from_map(&game.entities, game.active_map)
-
-    game.active_map.bg_element, _ = reserve_entities(&game.entities, 1)
     
-    bg_entity := Entity{
-        element = element_push(&game.elements, Element{
-            type = .MAP_ELEMENT, 
-            tex = mapset_texture("kawayabughorou.jpg"),
-            shader = mapset_shader("wave")
-        }),
-        flags = {.ACTIVE},
-
-        pos = {0.5, 0.5},
-        size = {1, 1},
-        anchor = .CENTER,
-        color = {30,30,30,255}
-    }
-    entity_push(&game.entities, bg_entity)
+    test_bg_push(game.active_mapset, "kawayabughorou.jpg")
 }
 
 osu_on_map_unload :: proc() {
@@ -253,10 +239,12 @@ osu_on_update :: proc() {
         case .PLAY: osu_handle_play_input()
     }
     
+    /*
     r_push_transform(fullscreen_transform)
     bg := rb.at(&game.entities, game.active_map.bg_element)
     render_entity(bg, 0)
-
+    */
+    
     time := game.play_timer_ms
     hobj_it := get_visible_hobj_iterator(&game.active_map.visible_hit_object_state, game.play_timer_ms)
     for hobj, i in hobj_it {      
@@ -276,7 +264,7 @@ osu_on_update :: proc() {
             }
             clear_hitobject_entities(&game.entities, hobj)
             hobj.first_element_at, hobj.num_entities = reserve_entities(&game.entities, 1)
-
+            
             entity_push(&game.entities, Entity{
                 flags = {.ACTIVE},
                 element = element_id(.JUDGMENT),
@@ -290,18 +278,30 @@ osu_on_update :: proc() {
         }
     }
 
-    r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
-
+    r_push_layer(
+        .HIT_OBJECTS, 
+        transform = transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
+    )
+    
     // note(isak): we render elements back to front for correct blending
-    // todo(isak): no culling
-    #reverse for &hobj in game.active_map.hit_objects {
-        t := time
-
+    #reverse for &hobj in hobj_it {
         for i in 0..<hobj.num_entities {
             e := rb.at(&game.entities, hobj.first_element_at + i)
-            render_entity(e, t)
+            render_entity(e, time)
         }
     }
+    
+    // render map elements
+    r_push_layer(.BACKGROUND, transform = fullscreen_transform)
+    #reverse for &gfx in game.active_mapset.gfx_objects.data[:q.len(game.active_mapset.gfx_objects)] {
+        for i in 0..<gfx.num_entities {
+            e := rb.at(&game.entities, gfx.first_entity_at + i)
+            render_entity(e, 0)
+        }
+    }
+    
+    
+    // render script elements
 
     ui_update_timeline(&game.ui_timeline)
     render_timeline(&game.ui_timeline)
@@ -310,7 +310,7 @@ osu_on_update :: proc() {
 }
 
 osu_handle_play_input :: proc() {
-    if is_key_pressed(.ESCAPE) {
+    if is_key_pressed(.ESCAPE) || is_key_pressed(.SPACE) {
         game.play_paused = !game.play_paused
     }
     

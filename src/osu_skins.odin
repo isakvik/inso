@@ -29,15 +29,6 @@ Skin_Element_Path := #partial [Skin_Element_Type]string {
     .COMBO_1            = "default-1",
 }
 
-// note(isak): texture id lookup table for skin elements
-skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
-    .HIT_CIRCLE = .HITCIRCLE,
-    .HIT_CIRCLE_OVERLAY = .HITCIRCLEOVERLAY,
-    .APPROACH_CIRCLE = .APPROACHCIRCLE,
-    .COMBO_NUMBER = .COMBO_1,
-    .JUDGMENT = .LIGHTING,
-}
-
 
 supported_image_extensions :: []string{".png", ".jpg"}
 

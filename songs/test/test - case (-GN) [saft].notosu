@@ -7,3 +7,4 @@ LuaEntryPoint: test.lua
 wave
  VertexShader: builtin.quad
  FragmentShader: quad_wave.fs.glsl
+ SSBO: builtin.quad

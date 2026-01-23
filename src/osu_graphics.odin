@@ -2,13 +2,25 @@ package notosu
 
 import q "core:container/queue"
 import "core:math/linalg"
-import "core:math/ease"
-import "core:slice"
 
 import "rb"
 
+
+// note(isak): texture id lookup table for skin elements
+skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
+    .HIT_CIRCLE = .HITCIRCLE,
+    .HIT_CIRCLE_OVERLAY = .HITCIRCLEOVERLAY,
+    .APPROACH_CIRCLE = .APPROACHCIRCLE,
+    .COMBO_NUMBER = .COMBO_1,
+    .JUDGMENT = .LIGHTING,
+}
+
 //////////////////////////////////////////////////////
 // note(isak): core types
+
+Graphics_Object :: struct {
+    num_entities, first_entity_at: int
+}
 
 Tween :: enum {
     LINEAR,
@@ -84,8 +96,12 @@ Element_Type :: enum {
 Element_ID :: u32
 Element :: struct {
     type: Element_Type,
-    tex: u32,
     shader: Pipeline_ID,
+    static_geometry: bool,
+    ssbo: u32,
+    index_count: u32,
+    
+    tex: u32,
     animations: []Animation,
 }
 
@@ -95,7 +111,7 @@ element_id :: proc(el_type: Element_Type) -> Element_ID {
 
 
 Entity_Flags :: distinct bit_set[Entity_Flag; u32]
-Entity_Flag :: enum {
+Entity_Flag :: enum u32 {
     ACTIVE,
 }
 
@@ -104,6 +120,8 @@ Entity :: struct {
     flags: Entity_Flags,
     element: Element_ID,
 
+    // note(isak): quad params
+    // implicitly: 1 quad vertex, 6 indices that are appended to buffer every draw
     pos: vec2,
     size: vec2,
     anchor: Layout_Anchor,
@@ -245,7 +263,8 @@ reserve_entities :: proc(buf: ^rb.Ring_Buffer(Entity), #any_int n: int) -> (int,
     assert(has_contiguous_space)
     
     if has_contiguous_space {
-        return buf.cursor + at, n
+        buf.cursor += at
+        return buf.cursor, n
     }
     return buf.cursor, 0
 }
@@ -400,6 +419,26 @@ render_input_display :: proc() {
     render_input_key(osu_controller.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 })
 }
 
+test_bg_push :: proc(mapset: ^Mapset, bg_path: string) {
+    gfx: Graphics_Object
+    gfx.first_entity_at, gfx.num_entities = reserve_entities(&game.entities, 1)
+    q.push_back(&mapset.gfx_objects, gfx)
+    
+    bg_entity := Entity{
+        element = element_push(&game.elements, Element{
+            type = .MAP_ELEMENT, 
+            tex = mapset_texture(bg_path),
+            shader = mapset_shader("wave")
+        }),
+        flags = {.ACTIVE},
+
+        pos = {0.5, 0.5},
+        size = {1, 1},
+        anchor = .CENTER,
+        color = {30,30,30,255}
+    }
+    entity_push(&game.entities, bg_entity)
+}
 
 /*
     animation plans

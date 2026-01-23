@@ -181,7 +181,7 @@ text_submit_geometry :: proc(renderer: ^Renderer) {
     r_push_layer(.DEBUG)
     r_bind_pipeline({ builtin_pipeline(.TEXT) })
     r_bind_ssbo(&window.text_store, .VERTEX_BUFFER)
-    r_draw(
+    r_push_draw(
         index_offset = 0,
         index_count = renderer.text_geometry.count * 6,
         instance_count = 1

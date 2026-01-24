@@ -54,7 +54,7 @@ ui_update_timeline :: proc(ui: ^UI_Timeline) {
         game.play_timer_ms = linalg.mix(0.0, map_len_with_preempt, timeline_new_x) - cur_map.preempt_ms
         cur_map.visible_hit_object_state = {}
 
-        if !is_held(mouse.buttons[.LEFT]) {
+        if !is_down(mouse.buttons[.LEFT]) {
             game.play_paused = ui.pause_on_release
             ui.dragging = false
             change_state_on_release = true

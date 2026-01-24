@@ -2,6 +2,7 @@ package notosu
 
 import "base:runtime"
 import "core:fmt"
+import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:mem/virtual"
@@ -139,19 +140,16 @@ init_static_arena :: proc(arena: ^virtual.Arena, alloc: ^runtime.Allocator, size
 }
 
 //////////////////////////////////////////////////////
-// note(isak): math utils
+// note(isak): collision utils
 
-vec2 :: linalg.Vector2f32
-vec3 :: linalg.Vector3f32
-vec4 :: linalg.Vector4f32
+point_in_rect :: proc(p: vec2, r: Rect) -> bool {
+    is_within_x := p.x >= (r.x) && p.x <= (r.x + r.w);
+    is_within_y := p.y >= (r.y) && p.y <= (r.y + r.h);
+    return is_within_x && is_within_y;
+}
 
-mat3 :: linalg.Matrix3x3f32
-mat4 :: linalg.Matrix4x4f32
-
-Transform :: linalg.Matrix4x3f32
-
-line_normal :: proc "contextless" (from_to: vec2) -> vec2 {
-    return linalg.normalize(linalg.vector2_orthogonal(from_to))
+point_in_circle :: proc(p, c: vec2, r: f32) -> bool {
+    return linalg.distance(p, c) <= r
 }
 
 rect_from_points :: proc "contextless" (from, to: vec2) -> Rect {
@@ -163,6 +161,41 @@ rect_from_points :: proc "contextless" (from, to: vec2) -> Rect {
     }
 }
 
+//////////////////////////////////////////////////////
+// note(isak): math utils
+
+vec2 :: linalg.Vector2f32
+vec3 :: linalg.Vector3f32
+vec4 :: linalg.Vector4f32
+
+mat3 :: linalg.Matrix3x3f32
+mat4 :: linalg.Matrix4x4f32
+
+// note(isak): GPU transforms, not particularly useful for cpu operations before they're
+// converted to mat3
+Transform :: linalg.Matrix4x3f32
+
+transform_to_mat3 :: proc "contextless" (t: Transform) -> mat3 {
+    return {
+        t[0][0], t[1][0], t[2][0],
+        t[0][1], t[1][1], t[2][1],
+        t[0][2], t[1][2], t[2][2]
+    }
+}
+
+mat3_rotation :: proc "contextless" (th: f32) -> mat3 {
+    return {
+        math.cos(th), -math.sin(th), 0,
+        math.sin(th), math.cos(th), 0,
+        0, 0, 1
+    }
+}
+
+line_normal :: proc "contextless" (from_to: vec2) -> vec2 {
+    return linalg.normalize(linalg.vector2_orthogonal(from_to))
+}
+
+
 transform_from_bounds :: proc "contextless" (r: vec4, aspect_ratio: f32) -> Transform {
     center: vec2 = { r.x + r.z * 0.5, r.y + r.w * 0.5 }
     sx: f32 = 2.0 * aspect_ratio / r.z
@@ -173,12 +206,6 @@ transform_from_bounds :: proc "contextless" (r: vec4, aspect_ratio: f32) -> Tran
         0.0, 0.0, 1.0,
         0.0, 0.0, 0.0,
     }
-}
-
-point_in_rect :: proc(p: vec2, r: Rect) -> bool {
-    is_within_x := p.x >= (r.x) && p.x <= (r.x + r.w);
-    is_within_y := p.y >= (r.y) && p.y <= (r.y + r.h);
-    return is_within_x && is_within_y;
 }
 
 identity_transform :: Transform {
@@ -193,4 +220,4 @@ fullscreen_transform :: Transform {
     0, 2, -1,
     0, 0, 1,
     0, 0, 0,
-} 
+}

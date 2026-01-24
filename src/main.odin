@@ -271,11 +271,6 @@ keyboard_next_frame :: proc() {
     mem.copy(keyboard.buttons, sdl_state, len(Keyboard_State))
 }
 
-osu_controller: struct {
-    k1, k2, m1, m2: Button_State,
-    k1_key, k2_key: sdl.Scancode, //TODO(yokes): add keybinding menu
-}
-
 rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
     if (event.type == sdl.EventType.KEY_DOWN) {
         rebind^ = event.key.scancode //TODO(yokes): this doesn't work, osu_controller.k1_key = event.key.scancode works
@@ -318,7 +313,7 @@ main :: proc() {
 
     sound_enabled := false
 
-    window_init({w = 1280, h = 720})
+    window_init({w = 1024, h = 512})
     window.ui_enabled = true
     defer window_cleanup()
     
@@ -326,7 +321,7 @@ main :: proc() {
     assert(audio.ready)
     defer audio_cleanup()
     
-    audio_set_volume(0.2)
+    audio_set_volume(0.0)
     
     bgm := sound_init("songs/test/test.mp3")
     sound_play(&bgm)
@@ -433,13 +428,13 @@ main :: proc() {
                     running = false
                 }
 
-                if is_held(osu_controller.m1) {
+                /*if is_down(osu_controller.m1) {
                     rebind_input(event, &osu_controller.k1_key)
                 }
 
-                if is_held(osu_controller.m2) {
+                if is_down(osu_controller.m2) {
                     rebind_input(event, &osu_controller.k2_key)
-                }
+                }*/
             }
 
             keyboard_next_frame()
@@ -450,11 +445,20 @@ main :: proc() {
 
             mouse.pos.x = mouse.pos.x - f32(xi)
             mouse.pos.y = mouse.pos.y - f32(yi)
-
+            
+            rect := rect_to_array(playfield_rect)
+            playfield_transform := transform_to_mat3(transform_from_bounds(rect, window.aspect_ratio))
+            
+            mouse_pt := vec3{mouse.pos.x, mouse.pos.y, 1.0}
+            mouse_pt.x -= (window.rect.w - window.rect.h) / 2
+            mouse_pt *= linalg.matrix3_inverse(playfield_transform) * transform_to_mat3(window.screenspace_transform)
+            
+            osu_controller.mouse_pos = mouse_pt.xy
+            
             mu.input_mouse_move(&window.ui_ctx, i32(mouse.pos.x), i32(mouse.pos.y))
         }
 
-        {   
+        {
             profiler_block_begin(.PREPARE_FRAME); defer profiler_block_end() 
             
             time_last_frame = time_current_frame
@@ -487,13 +491,18 @@ main :: proc() {
             osu_on_update()
 
             r_push_layer(.UI, pipeline = {builtin_pipeline(.QUAD)})
+            
             r_push_transform(window.screenspace_transform)
             
             cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 80, 80 }
             r_draw_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture(.CURSOR),
                 f32(time_since_beginning_of_program()*20))
-
+            
             r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
+            
+            pf_cur_rect: Rect = { osu_controller.mouse_pos.x, osu_controller.mouse_pos.y, 20, 20 }
+            r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, reserved_texture(.WHITE),
+                f32(time_since_beginning_of_program()*20))
             r_draw_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
         }
         
@@ -554,10 +563,14 @@ main :: proc() {
     }
 }
 
+_debug_ui_initialized: int
+
 write_debug_ui :: proc(ctx: ^mu.Context) {
     @static opts := mu.Options{.NO_CLOSE}
-
-    if mu.window(ctx, "饕餮尤魔 :3", {40, 40, 160, 110}, opts) {
+    init_opts := _debug_ui_initialized < 2 ? mu.Options{.AUTO_SIZE} : {}
+    _debug_ui_initialized += 1
+    
+    if mu.window(ctx, "饕餮尤魔 :3", {}, opts + init_opts) {
         win := mu.get_current_container(ctx)
 
         mu.layout_row(ctx, {54, -1}, 0)
@@ -579,10 +592,14 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
         mu.label(ctx, "Time rate:")
         mu.label(ctx, fmt.tprintf("%f%s", game.time_rate * (game.play_paused ? 0 : 1), game.play_paused ? " (paused)": ""))
         
-        mu.layout_row(ctx, {90, -1}, 0)
+        mu.layout_row(ctx, {100, 10, -1}, 0)
         mu.label(ctx, "Visible hitobjects:")
         hobj_visibility := game.active_map.visible_hit_object_state
         mu.label(ctx, fmt.tprintf("%i", hobj_visibility.latest_i - hobj_visibility.earliest_i - 1))
+        
+        mu.layout_row(ctx, {80, 10, -1}, 0)
+        mu.label(ctx, "Mouse keys:")
+        mu.label(ctx, osu_controller.mouse_keys_enabled ? "on" : "off")
     }
 }
 
@@ -613,7 +630,7 @@ handle_debug_ui_events :: proc(ctx: ^mu.Context) {
     }
 
     // note(isak): handle offscreen windows
-    if ctx.focus_id > 0 && is_held(mouse.buttons[.LEFT]) {
+    if ctx.focus_id > 0 && is_down(mouse.buttons[.LEFT]) {
         window.ui_dragging = true
     }
     if is_released(mouse.buttons[.LEFT]) {

@@ -1,5 +1,6 @@
 package notosu
 
+import "base:sanitizer"
 import "rb"
 
 import "core:fmt"
@@ -12,7 +13,7 @@ import q "core:container/queue"
 import sdl "vendor:sdl3"
 
 
-osu_playfield_size_osupx :: 512
+osu_playfield_size_osupx :: f32(512)
 playfield_rect :: Rect{ 0, 0, osu_playfield_size_osupx, osu_playfield_size_osupx }
 
 osu_slider_curve_points_separation :: f32(2.5)
@@ -46,6 +47,14 @@ game: struct {
 }
 
 null_element := Element{}
+
+osu_controller: struct {
+    k1, k2, m1, m2: Button_State,
+    k1_key, k2_key: sdl.Scancode, //TODO(yokes): add keybinding menu
+    
+    mouse_keys_enabled: bool,
+    mouse_pos: vec2,
+}
 
 // note(isak): core types
 
@@ -234,34 +243,46 @@ osu_on_update :: proc() {
     if game.play_timer_ms > game.active_map.length_ms {
         osu_restart_map(game.active_map)
     }
+    
+    // game logic
 
     #partial switch game.mode {
         case .PLAY: osu_handle_play_input()
     }
     
-    /*
-    r_push_transform(fullscreen_transform)
-    bg := rb.at(&game.entities, game.active_map.bg_element)
-    render_entity(bg, 0)
-    */
-    
     time := game.play_timer_ms
     hobj_it := get_visible_hobj_iterator(&game.active_map.visible_hit_object_state, game.play_timer_ms)
-    for hobj, i in hobj_it {      
-        if time < hobj.start_time_ms - game.active_map.preempt_ms || hobj.end_time_ms < time {
-            continue
-        }
-        if hobj.type == .SLIDER {
-            render_slider(&window.renderer, &game.active_map.slider_paths[hobj.slider_path_index])
+
+    
+    valid_key_press :: proc() -> bool {
+        if osu_controller.mouse_keys_enabled {
+            if is_pressed(osu_controller.k1) && !is_down(osu_controller.m1) ||
+                is_pressed(osu_controller.k2) && !is_down(osu_controller.m2) {
+                return true
+            }
+            
+            return is_pressed(osu_controller.m1) && !is_down(osu_controller.k1) || 
+                is_pressed(osu_controller.m2) && !is_down(osu_controller.k2)
+        } else {
+            return is_pressed(osu_controller.k1) || is_pressed(osu_controller.k2)
         }
     }
-
-    debug_simulate_press := is_pressed(osu_controller.k1)
-    if debug_simulate_press {
+    
+    playfield_transform := transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
+    
+    if valid_key_press() {
+        osu_px_to_px := window.rect.h / f32(osu_playfield_size_osupx)
+        circle_radius_px := game.active_map.circle_radius_osupx * osu_px_to_px
+        
         for &hobj, i in hobj_it {
             if hobj.num_entities == 1 {
                 continue
             }
+            
+            if !point_in_circle(osu_controller.mouse_pos, hobj.pos, circle_radius_px) {
+                continue
+            }
+            
             clear_hitobject_entities(&game.entities, hobj)
             hobj.first_element_at, hobj.num_entities = reserve_entities(&game.entities, 1)
             
@@ -277,14 +298,27 @@ osu_on_update :: proc() {
             })
         }
     }
-
-    r_push_layer(
-        .HIT_OBJECTS, 
-        transform = transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
-    )
     
-    // note(isak): we render elements back to front for correct blending
-    #reverse for &hobj in hobj_it {
+    // game render
+    
+    r_push_layer(.HIT_OBJECTS)
+    
+    for hobj, i in hobj_it {
+        if time < hobj.start_time_ms - game.active_map.preempt_ms || hobj.end_time_ms < time {
+            continue
+        }
+        if hobj.type == .SLIDER {
+            render_slider(&window.renderer, &game.active_map.slider_paths[hobj.slider_path_index])
+        }
+    }
+    
+    r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
+    r_push_transform(playfield_transform)
+
+    // note(isak): we render hitobject elements back to front for correct blending
+    // todo(isak): @speed - long iteration, but seems necessary to not cull gfx objects outside an 
+    // object's given start/end time window 
+    #reverse for &hobj in game.active_map.hit_objects {
         for i in 0..<hobj.num_entities {
             e := rb.at(&game.entities, hobj.first_element_at + i)
             render_entity(e, time)
@@ -312,6 +346,9 @@ osu_on_update :: proc() {
 osu_handle_play_input :: proc() {
     if is_key_pressed(.ESCAPE) || is_key_pressed(.SPACE) {
         game.play_paused = !game.play_paused
+    }
+    if is_key_pressed(.F10) {
+        osu_controller.mouse_keys_enabled = !osu_controller.mouse_keys_enabled
     }
     
     osu_controller.k1.is_down = keyboard.buttons[osu_controller.k1_key]
@@ -421,10 +458,10 @@ write_instances_from_path :: proc(
     return 0, 0
 }
 
+//////////////////////////////////////////////////////
+// NOTE(yokes): in-game button input api 
 
-//NOTE(yokes): API for in-game button input
-
-is_held :: proc(button: Button_State) -> bool {
+is_down :: proc(button: Button_State) -> bool {
     return button.is_down
 }
 

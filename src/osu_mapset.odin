@@ -429,6 +429,9 @@ mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
                         path_from := strings.index_byte(lines[i+1], '"')
                         path_to := strings.last_index_byte(lines[i+1], '"')
 
+                        if path_from == -1 || path_to == -1 {
+                            continue
+                        }
                         result.bg_filename = strings.clone(lines[i+1][path_from+1:path_to])
                     }
                 }

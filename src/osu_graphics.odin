@@ -170,6 +170,7 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
     elements.data[element_id(.HIT_CIRCLE)] = {
         type = .HIT_CIRCLE,
         tex = skin_texture(.HITCIRCLE),
+        shader = mapset_shader("wave"),
 
         animations = animation_push(anims, 
             Animation_Scale{
@@ -196,6 +197,7 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
     elements.data[element_id(.APPROACH_CIRCLE)] = {
         type = .HIT_CIRCLE,
         tex = skin_texture(.APPROACHCIRCLE),
+        shader = mapset_shader("wave"),
 
         animations = animation_push(anims, Animation_Scale{
             start_time = 0, 
@@ -208,6 +210,7 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
     elements.data[element_id(.JUDGMENT)] = {
         type = .HIT_CIRCLE,
         tex = skin_texture(.LIGHTING),
+        shader = mapset_shader("wave"),
 
         animations = animation_push(anims, 
             Animation_Scale{
@@ -384,7 +387,6 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     
     r_push_transform(fullscreen_transform)
     r_draw_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.4), reserved_texture(.SLIDER_FRAMEBUFFER))
-    r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
 }
 
 render_timeline :: proc(ui: ^UI_Timeline) {

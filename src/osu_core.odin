@@ -219,11 +219,12 @@ osu_on_map_unload :: proc() {
     }
 }
 
-osu_restart_map :: proc(osu_map: ^Osu_Map) {
+osu_restart_map :: proc(reset_time: bool = true) {
     game.mode = .PLAY
-    game.play_timer_ms = clamp(-game.active_map.total_lead_in_ms, -1800, 0)
-    
-    osu_map.visible_hit_object_state = {}
+    if reset_time {
+        game.play_timer_ms = clamp(-game.active_map.total_lead_in_ms, -1800, 0)
+    }
+    game.active_mapset.osu_map.visible_hit_object_state = {}
     
     game.active_mapset = mapset_free_and_reload(game.active_mapset)
     game.active_map = &game.active_mapset.osu_map
@@ -236,12 +237,13 @@ osu_on_update :: proc() {
 
     updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
     if updated_systems[.OSU_FILE] {
+        osu_restart_map(false)
     }
     
     game.play_timer_ms += map_dt * 1000
     game.active_map.total_lead_in_ms = game.active_map.preempt_ms + game.active_map.audio_lead_in
     if game.play_timer_ms > game.active_map.length_ms {
-        osu_restart_map(game.active_map)
+        osu_restart_map()
     }
     
     // game logic

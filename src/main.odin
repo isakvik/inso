@@ -605,7 +605,7 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
 
 handle_debug_ui_events :: proc(ctx: ^mu.Context) {
     if is_key_pressed(.R) {
-        osu_restart_map(game.active_map)
+        osu_restart_map()
     }
     if is_key_pressed(.HOME) {
         game.time_rate = 1

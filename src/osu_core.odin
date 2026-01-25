@@ -277,7 +277,7 @@ osu_on_update :: proc() {
         circle_radius_px := game.active_map.circle_radius_osupx * osu_px_to_px
         
         for &hobj, i in hobj_it {
-            if hobj.num_entities == 1 {
+            if hobj.num_entities == 2 {
                 continue
             }
             
@@ -286,11 +286,21 @@ osu_on_update :: proc() {
             }
             
             clear_hitobject_entities(&game.entities, hobj)
-            hobj.first_element_at, hobj.num_entities = reserve_entities(&game.entities, 1)
+            hobj.first_element_at, hobj.num_entities = reserve_entities(&game.entities, 2)
             
             entity_push(&game.entities, Entity{
                 flags = {.ACTIVE},
-                element = element_id(.JUDGMENT),
+                element = element_id(.CLICKED_HIT_CIRCLE),
+                pos = hobj.pos,
+                size = game.active_map.circle_radius_osupx * 2,
+                anchor = .CENTER,
+                color = color_purple,
+                start_time_ms = time,
+                end_time_ms = time + 600
+            })
+            entity_push(&game.entities, Entity{
+                flags = {.ACTIVE},
+                element = element_id(.CLICKED_HIT_CIRCLE_OVERLAY),
                 pos = hobj.pos,
                 size = game.active_map.circle_radius_osupx * 2,
                 anchor = .CENTER,

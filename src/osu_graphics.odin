@@ -35,6 +35,7 @@ Animation_Variant :: enum {
     SCALE,
     ROTATE,
     COLOR,
+    ALPHA,
     TEXTURE,
 }
 
@@ -49,6 +50,7 @@ Animation :: union #align(4) {
     Animation_Scale,
     Animation_Rotate,
     Animation_Color,
+    Animation_Alpha,
     Animation_Texture,
 }
 
@@ -60,13 +62,17 @@ Animation_Scale :: struct {
     using base: Base_Animation,
     start_scale, end_scale: vec2,
 }
+Animation_Rotate :: struct {
+    using base: Base_Animation,
+    start_angle, end_angle: f32,
+}
 Animation_Color :: struct {
     using base: Base_Animation,
     start_color, end_color: Color,
 }
-Animation_Rotate :: struct {
+Animation_Alpha :: struct {
     using base: Base_Animation,
-    start_angle, end_angle: f32,
+    start_alpha, end_alpha: f32
 }
 Animation_Texture :: struct {
     using base: Base_Animation,
@@ -90,6 +96,8 @@ Element_Type :: enum {
     SLIDER_TICK,
     SLIDER_PATH,
 
+    CLICKED_HIT_CIRCLE,
+    CLICKED_HIT_CIRCLE_OVERLAY,
     JUDGMENT,
 }
 
@@ -140,8 +148,9 @@ animation_push :: proc(buf: ^q.Queue(Animation), elems: ..Animation) -> []Animat
         switch &v in e {
             case Animation_Translate:   v.variant = .TRANSLATE
             case Animation_Scale:       v.variant = .SCALE
-            case Animation_Rotate:      v.variant = .ROTATE
             case Animation_Color:       v.variant = .COLOR
+            case Animation_Alpha:       v.variant = .ALPHA
+            case Animation_Rotate:      v.variant = .ROTATE
             case Animation_Texture:     v.variant = .TEXTURE
         }
     }
@@ -168,9 +177,7 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
     }
 
     elements.data[element_id(.HIT_CIRCLE)] = {
-        type = .HIT_CIRCLE,
         tex = skin_texture(.HITCIRCLE),
-        shader = mapset_shader("wave"),
 
         animations = animation_push(anims, 
             Animation_Scale{
@@ -195,9 +202,7 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
     }
     
     elements.data[element_id(.APPROACH_CIRCLE)] = {
-        type = .HIT_CIRCLE,
         tex = skin_texture(.APPROACHCIRCLE),
-        shader = mapset_shader("wave"),
 
         animations = animation_push(anims, Animation_Scale{
             start_time = 0, 
@@ -208,9 +213,7 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
     }
     
     elements.data[element_id(.JUDGMENT)] = {
-        type = .HIT_CIRCLE,
         tex = skin_texture(.LIGHTING),
-        shader = mapset_shader("wave"),
 
         animations = animation_push(anims, 
             Animation_Scale{
@@ -226,6 +229,32 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
                 end_color = with_alpha(color_white, 0),
             }
         )
+    }
+    
+    
+    click_animation := animation_push(anims, 
+        Animation_Scale{
+            start_time = 0,
+            end_time = 250,
+            start_scale = {1, 1}, 
+            end_scale = {1.5, 1.5}
+        },
+        Animation_Alpha{
+            start_time = 0,
+            end_time = 250,
+            start_alpha = 1.0,
+            end_alpha = 0.0,
+        }
+    )
+    
+    elements.data[element_id(.CLICKED_HIT_CIRCLE)] = {
+        tex = skin_texture(.HITCIRCLE),
+        animations = click_animation
+    }
+    
+    elements.data[element_id(.CLICKED_HIT_CIRCLE_OVERLAY)] = {
+        tex = skin_texture(.HITCIRCLEOVERLAY),
+        animations = click_animation
     }
 
 }
@@ -351,6 +380,9 @@ render_entity :: proc(e: ^Entity, at_time: f64) {
                 color.g = u8(linalg.lerp(f32(a.start_color.g), f32(a.end_color.g), t))
                 color.b = u8(linalg.lerp(f32(a.start_color.b), f32(a.end_color.b), t))
                 color.a = u8(linalg.lerp(f32(a.start_color.a), f32(a.end_color.a), t))
+                
+            case Animation_Alpha:
+                color.a = u8(linalg.lerp(a.start_alpha, a.end_alpha, t) * 0xFF)
                 
             case Animation_Texture:
                 texture_override = true

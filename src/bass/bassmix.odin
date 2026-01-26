@@ -9,78 +9,78 @@ package bass
 MIX_LIB :: "lib/bassmix.lib" when ODIN_OS == .Windows else "lib/bassmix.a"
 foreign import lib { MIX_LIB }
 
-// Additional BASS_SetConfig options
-BASS_CONFIG_MIXER_BUFFER :: 0x10601
-BASS_CONFIG_MIXER_POSEX  :: 0x10602
-BASS_CONFIG_SPLIT_BUFFER :: 0x10610
+// Additional SetConfig options
+CONFIG_MIXER_BUFFER :: 0x10601
+CONFIG_MIXER_POSEX  :: 0x10602
+CONFIG_SPLIT_BUFFER :: 0x10610
 
-// BASS_Mixer_StreamCreate flags
-BASS_MIXER_RESUME    :: 0x1000  // resume stalled immediately upon new/unpaused source
-BASS_MIXER_POSEX     :: 0x2000  // enable BASS_Mixer_ChannelGetPositionEx support
-BASS_MIXER_NOSPEAKER  :: 0x4000 // ignore speaker arrangement
-BASS_MIXER_QUEUE     :: 0x8000  // queue sources
-BASS_MIXER_END       :: 0x10000 // end the stream when there are no sources
-BASS_MIXER_NONSTOP   :: 0x20000 // don't stall when there are no sources
+// Mixer_StreamCreate flags
+MIXER_RESUME    :: 0x1000  // resume stalled immediately upon new/unpaused source
+MIXER_POSEX     :: 0x2000  // enable Mixer_ChannelGetPositionEx support
+MIXER_NOSPEAKER  :: 0x4000 // ignore speaker arrangement
+MIXER_QUEUE     :: 0x8000  // queue sources
+MIXER_END       :: 0x10000 // end the stream when there are no sources
+MIXER_NONSTOP   :: 0x20000 // don't stall when there are no sources
 
-// BASS_Mixer_StreamAddChannel/Ex flags
-BASS_MIXER_CHAN_ABSOLUTE :: 0x1000   // start is an absolute position
-BASS_MIXER_CHAN_BUFFER   :: 0x2000   // buffer data for BASS_Mixer_ChannelGetData/Level
-BASS_MIXER_CHAN_LIMIT    :: 0x4000   // limit mixer processing to the amount available from this source
-BASS_MIXER_CHAN_MATRIX   :: 0x10000  // matrix mixing
-BASS_MIXER_CHAN_PAUSE    :: 0x20000  // don't process the source
-BASS_MIXER_CHAN_DOWNMIX  :: 0x400000 // downmix to stereo/mono
-BASS_MIXER_CHAN_NORAMPIN :: 0x800000 // don't ramp-in the start
-BASS_MIXER_BUFFER        :: BASS_MIXER_CHAN_BUFFER
-BASS_MIXER_LIMIT         :: BASS_MIXER_CHAN_LIMIT
-BASS_MIXER_MATRIX        :: BASS_MIXER_CHAN_MATRIX
-BASS_MIXER_PAUSE         :: BASS_MIXER_CHAN_PAUSE
-BASS_MIXER_DOWNMIX       :: BASS_MIXER_CHAN_DOWNMIX
-BASS_MIXER_NORAMPIN      :: BASS_MIXER_CHAN_NORAMPIN
+// Mixer_StreamAddChannel/Ex flags
+MIXER_CHAN_ABSOLUTE :: 0x1000   // start is an absolute position
+MIXER_CHAN_BUFFER   :: 0x2000   // buffer data for Mixer_ChannelGetData/Level
+MIXER_CHAN_LIMIT    :: 0x4000   // limit mixer processing to the amount available from this source
+MIXER_CHAN_MATRIX   :: 0x10000  // matrix mixing
+MIXER_CHAN_PAUSE    :: 0x20000  // don't process the source
+MIXER_CHAN_DOWNMIX  :: 0x400000 // downmix to stereo/mono
+MIXER_CHAN_NORAMPIN :: 0x800000 // don't ramp-in the start
+MIXER_BUFFER        :: MIXER_CHAN_BUFFER
+MIXER_LIMIT         :: MIXER_CHAN_LIMIT
+MIXER_MATRIX        :: MIXER_CHAN_MATRIX
+MIXER_PAUSE         :: MIXER_CHAN_PAUSE
+MIXER_DOWNMIX       :: MIXER_CHAN_DOWNMIX
+MIXER_NORAMPIN      :: MIXER_CHAN_NORAMPIN
 
 // Mixer attributes
-BASS_ATTRIB_MIXER_LATENCY :: 0x15000
-BASS_ATTRIB_MIXER_THREADS :: 0x15001
-BASS_ATTRIB_MIXER_VOL     :: 0x15002
+ATTRIB_MIXER_LATENCY :: 0x15000
+ATTRIB_MIXER_THREADS :: 0x15001
+ATTRIB_MIXER_VOL     :: 0x15002
 
-// Additional BASS_Mixer_ChannelIsActive return values
-BASS_ACTIVE_WAITING   :: 5
-BASS_ACTIVE_QUEUED   :: 6
+// Additional Mixer_ChannelIsActive return values
+ACTIVE_WAITING   :: 5
+ACTIVE_QUEUED   :: 6
 
-// BASS_Split_StreamCreate flags
-BASS_SPLIT_SLAVE  :: 0x1000 // only read buffered data
-BASS_SPLIT_POS   :: 0x2000
+// Split_StreamCreate flags
+SPLIT_SLAVE  :: 0x1000 // only read buffered data
+SPLIT_POS   :: 0x2000
 
 // Splitter attributes
-BASS_ATTRIB_SPLIT_ASYNCBUFFER  :: 0x15010
-BASS_ATTRIB_SPLIT_ASYNCPERIOD  :: 0x15011
+ATTRIB_SPLIT_ASYNCBUFFER  :: 0x15010
+ATTRIB_SPLIT_ASYNCPERIOD  :: 0x15011
 
 // Envelope node
-BASS_MIXER_NODE :: struct {
+MIXER_NODE :: struct {
 	pos:   QWORD,
 	value: f32,
 }
 
 // Envelope types
-BASS_MIXER_ENV_FREQ   :: 1
-BASS_MIXER_ENV_VOL    :: 2
-BASS_MIXER_ENV_PAN    :: 3
-BASS_MIXER_ENV_LOOP   :: 0x10000 // flag: loop
-BASS_MIXER_ENV_REMOVE :: 0x20000 // flag: remove at end
+MIXER_ENV_FREQ   :: 1
+MIXER_ENV_VOL    :: 2
+MIXER_ENV_PAN    :: 3
+MIXER_ENV_LOOP   :: 0x10000 // flag: loop
+MIXER_ENV_REMOVE :: 0x20000 // flag: remove at end
 
 // Additional sync types
-BASS_SYNC_MIXER_ENVELOPE      :: 0x10200
-BASS_SYNC_MIXER_ENVELOPE_NODE :: 0x10201
-BASS_SYNC_MIXER_QUEUE         :: 0x10202
+SYNC_MIXER_ENVELOPE      :: 0x10200
+SYNC_MIXER_ENVELOPE_NODE :: 0x10201
+SYNC_MIXER_QUEUE         :: 0x10202
 
-// Additional BASS_Mixer_ChannelSetPosition flag
-BASS_POS_MIXER_RESET :: 0x10000 // flag: clear mixer's playback buffer
+// Additional Mixer_ChannelSetPosition flag
+POS_MIXER_RESET :: 0x10000 // flag: clear mixer's playback buffer
 
-// Additional BASS_Mixer_ChannelGetPosition mode
-BASS_POS_MIXER_DELAY :: 5
+// Additional Mixer_ChannelGetPosition mode
+POS_MIXER_DELAY :: 5
 
-// BASS_CHANNELINFO types
-BASS_CTYPE_STREAM_MIXER :: 0x10800
-BASS_CTYPE_STREAM_SPLIT :: 0x10801
+// CHANNELINFO types
+CTYPE_STREAM_MIXER :: 0x10800
+CTYPE_STREAM_SPLIT :: 0x10801
 
 @(default_calling_convention="c",link_prefix="BASS_")
 foreign lib {
@@ -104,7 +104,7 @@ foreign lib {
 	Mixer_ChannelSetMatrix      :: proc(handle: DWORD, _matrix: rawptr) -> BOOL ---
 	Mixer_ChannelSetMatrixEx    :: proc(handle: DWORD, _matrix: rawptr, time: f32) -> BOOL ---
 	Mixer_ChannelGetMatrix      :: proc(handle: DWORD, _matrix: rawptr) -> BOOL ---
-	Mixer_ChannelSetEnvelope    :: proc(handle: DWORD, type: DWORD, nodes: ^BASS_MIXER_NODE, count: DWORD) -> BOOL ---
+	Mixer_ChannelSetEnvelope    :: proc(handle: DWORD, type: DWORD, nodes: ^MIXER_NODE, count: DWORD) -> BOOL ---
 	Mixer_ChannelSetEnvelopePos :: proc(handle: DWORD, type: DWORD, pos: QWORD) -> BOOL ---
 	Mixer_ChannelGetEnvelopePos :: proc(handle: DWORD, type: DWORD, value: ^f32) -> QWORD ---
 	Split_StreamCreate          :: proc(channel: DWORD, flags: DWORD, chanmap: ^i32) -> HSTREAM ---

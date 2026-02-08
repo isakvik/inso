@@ -124,7 +124,7 @@ Entity_Flag :: enum u32 {
 }
 
 Entity :: struct {
-    id: uint,
+    id: int,
     flags: Entity_Flags,
     element: Element_ID,
 
@@ -441,22 +441,10 @@ render_timeline :: proc(ui: ^UI_Timeline) {
     }
 }
 
-render_input_display :: proc() {
-    render_input_key :: proc(key: Button_State, rect: Rect) {
-        display_color := key.is_down ? color_light_gray : color_dark_gray
-        r_draw_layout_rect(&window.renderer.quad_geometry, rect, .BOTTOM_RIGHT, display_color, reserved_texture(.WHITE))
-    }
-
-    render_input_key(osu_controller.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 })
-    render_input_key(osu_controller.k2, { window.rect.w, window.rect.h / 2,      30, 30 })
-    render_input_key(osu_controller.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 })
-    render_input_key(osu_controller.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 })
-}
-
-test_bg_push :: proc(mapset: ^Mapset, bg_path: string) {
+test_bg_push :: proc(bg_path: string) {
     gfx: Graphics_Object
     gfx.first_entity_at, gfx.num_entities = reserve_entities(&game.entities, 1)
-    q.push_back(&mapset.gfx_objects, gfx)
+    q.push_back(&game.gfx_objects, gfx)
     
     bg_entity := Entity{
         element = element_push(&game.elements, Element{

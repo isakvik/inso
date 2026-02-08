@@ -81,3 +81,17 @@ ui_update_timeline :: proc(ui: ^UI_Timeline) {
     }
 
 }
+
+render_input_display :: proc() {
+    r_push_transform(window.screenspace_transform)
+    
+    render_input_key :: proc(key: Button_State, rect: Rect) {
+        display_color := key.is_down ? color_light_gray : color_dark_gray
+        r_draw_layout_rect(&window.renderer.quad_geometry, rect, .BOTTOM_RIGHT, display_color, reserved_texture(.WHITE))
+    }
+
+    render_input_key(osu_controller.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 })
+    render_input_key(osu_controller.k2, { window.rect.w, window.rect.h / 2,      30, 30 })
+    render_input_key(osu_controller.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 })
+    render_input_key(osu_controller.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 })
+}

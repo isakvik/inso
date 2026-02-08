@@ -41,7 +41,6 @@ Mapset :: struct {
     shader_slot_by_name: map[string]u32,
     
     model_store: ^GL_Buffer(Mesh_Vertex),
-    gfx_objects: q.Queue(Graphics_Object),
 
     watch: Win32_Directory_Watch
 }
@@ -104,7 +103,7 @@ mapset_free :: proc(mapset: ^Mapset) -> string {
     
     mapset_path := strings.clone(mapset.folder_path, context.temp_allocator)
     
-    virtual.arena_free_all(&memory.element_arena)
+    virtual.arena_free_all(&memory.entity_arena)
     virtual.arena_free_all(&memory.mapset_arena)
     
     return mapset_path

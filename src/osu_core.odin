@@ -1,13 +1,10 @@
 package notosu
 
-import "base:sanitizer"
 import "rb"
 
-import "core:fmt"
 import "base:intrinsics"
 import "base:runtime"
 import "core:math/linalg"
-import "core:mem/virtual"
 import q "core:container/queue"
 
 import sdl "vendor:sdl3"
@@ -34,14 +31,18 @@ game: struct {
     
     // note(isak): game view fields
     entities: rb.Ring_Buffer(Entity),
-    last_added_entity: uint,
+    last_added_entity: int, // note(isak): rolling entity id sequence
+    
+    gfx_objects: q.Queue(Graphics_Object),
 
     /*
         note(isak): entities refer to an element, which in turn refer to a set of animations that determine 
         the final transform. the given element of an entity can be overridden mid-map by scripts for effects
     */
-    elements: q.Queue(Element),    
+    elements: q.Queue(Element),
     animations: q.Queue(Animation),
+    
+    script_gfx_objects: q.Queue(Graphics_Object),
 
     ui_timeline: UI_Timeline,
 }
@@ -166,20 +167,6 @@ Osu_Map :: struct {
     circle_radius_osupx: f32,
 }
 
-/*
-    todo(isak): game todos
-
-    hittesting
-    notelock
-    slider mechanics
-    scripting
-    music, sounds and sound sync
-    
-
-    Entity to framebuffer binding
-    osu_on_resize potentially relevant for FrameElement or something fbo-related
-*/
-
 osu_on_init :: proc() {
     game.last_added_entity = 1
     game.time_rate = 1.0
@@ -201,29 +188,27 @@ osu_on_map_init :: proc() {
 
     write_default_elements(&game.elements, &game.animations, game.active_map)
 
-    rb.init(&game.entities, 8192, memory.element_allocator)
+    rb.init(&game.entities, 16384, memory.entity_allocator)
     game.entities.length = cap(game.entities.data)
     
-    // todo(isak): opinionated entity pushing; needs to be rewritten to take scripting (and skin metrics)
-    // and 
+    q.init(&game.script_gfx_objects, 1024, memory.entity_allocator)
+    
+    // todo(isak): opinionated entity pushing; needs to be rewritten to take scriptable objects and skin metrics
     // into account
     write_default_entities_from_map(&game.entities, game.active_map)
     
-    test_bg_push(game.active_mapset, "kawayabughorou.jpg")
+    test_bg_push("kawayabughorou.jpg")
 }
 
+// note(isak): unused
 osu_on_map_unload :: proc() {
-    // note(isak): unused
     for &e in game.entities.data {
         e.flags &= ~{.ACTIVE}
     }
 }
 
-osu_restart_map :: proc(reset_time: bool = true) {
+osu_reload_map :: proc() {
     game.mode = .PLAY
-    if reset_time {
-        game.play_timer_ms = clamp(-game.active_map.total_lead_in_ms, -1800, 0)
-    }
     game.active_mapset.osu_map.visible_hit_object_state = {}
     
     game.active_mapset = mapset_free_and_reload(game.active_mapset)
@@ -237,13 +222,14 @@ osu_on_update :: proc() {
 
     updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
     if updated_systems[.OSU_FILE] {
-        osu_restart_map(false)
+        osu_reload_map()
     }
     
     game.play_timer_ms += map_dt * 1000
     game.active_map.total_lead_in_ms = game.active_map.preempt_ms + game.active_map.audio_lead_in
     if game.play_timer_ms > game.active_map.length_ms {
-        osu_restart_map()
+        game.play_timer_ms = clamp(-game.active_map.total_lead_in_ms, -1800, 0)
+        osu_reload_map()
     }
     
     // game logic
@@ -337,17 +323,19 @@ osu_on_update :: proc() {
         }
     }
     
+    // render gameplay elements
+    
     // render map elements
     r_push_layer(.BACKGROUND, transform = fullscreen_transform)
-    #reverse for &gfx in game.active_mapset.gfx_objects.data[:q.len(game.active_mapset.gfx_objects)] {
+    #reverse for &gfx in game.gfx_objects.data[:q.len(game.gfx_objects)] {
         for i in 0..<gfx.num_entities {
             e := rb.at(&game.entities, gfx.first_entity_at + i)
             render_entity(e, 0)
         }
     }
     
-    
-    // render script elements
+    // render ui
+    // todo(isak): "screens" implementation for determining relevant UI components?
 
     ui_update_timeline(&game.ui_timeline)
     render_timeline(&game.ui_timeline)

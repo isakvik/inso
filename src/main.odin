@@ -1,5 +1,7 @@
 package notosu
 
+import sm "slotmap"
+
 import "base:runtime"
 import "core:container/queue"
 import "core:fmt"
@@ -14,13 +16,10 @@ import "core:sys/windows"
 import "core:time"
 
 import lua "vendor:lua/5.4"
-import miniaudio "vendor:miniaudio"
 import mu "vendor:microui"
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
-
-import "bass"
 
 /*
 todo(isak):
@@ -81,8 +80,8 @@ memory: struct {
 
     // note(isak): this is to be used for graphical entity data, "unbounded" since it's written to by
     // game logic and scripts. cleared on mapset reload/unload
-    element_allocator: runtime.Allocator,
-    element_arena: virtual.Arena,
+    entity_allocator: runtime.Allocator,
+    entity_arena: virtual.Arena,
     
     // cleared on frame end
     frame_allocator: runtime.Allocator,
@@ -96,7 +95,7 @@ memory_init :: proc() -> runtime.Allocator_Error {
     _ = init_growing_arena(&memory.global_arena, &memory.global_allocator)
     _ = init_growing_arena(&memory.mapset_arena, &memory.mapset_allocator)
     _ = init_growing_arena(&memory.frame_arena, &memory.frame_allocator)
-    _ = init_growing_arena(&memory.element_arena, &memory.element_allocator)
+    _ = init_growing_arena(&memory.entity_arena, &memory.entity_allocator)
 
     for layer in Layer {
         _ = init_growing_arena(&memory.command_buffer_arenas[layer], &memory.command_buffer_allocators[layer])
@@ -295,7 +294,7 @@ main :: proc() {
     if strings.compare("build", filepath.base(current_dir)) == 0 {
         os.set_working_directory(filepath.dir(current_dir))
     }
-
+    
     /*
     lua_ctx.state = lua.L_newstate()
     defer lua.close(lua_ctx.state)
@@ -350,7 +349,7 @@ main :: proc() {
         }
     }
     
-    // note(isak): dependent on map load... maybe obviously so?
+    // note(isak): dependent on map load... make a more granular api for map load purposes
     prepare_textures_for_rendering()
 
     osu_on_init()
@@ -384,6 +383,8 @@ main :: proc() {
             for &button in mouse.buttons {
                 button.was_down = button.is_down
             }
+            
+            // todo(isak): game input should happen in a separate thread for input resolution purposes
 
             for sdl.PollEvent(&event) {
                 #partial switch event.type {
@@ -605,7 +606,7 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
 
 handle_debug_ui_events :: proc(ctx: ^mu.Context) {
     if is_key_pressed(.R) {
-        osu_restart_map()
+        osu_reload_map()
     }
     if is_key_pressed(.HOME) {
         game.time_rate = 1

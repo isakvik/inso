@@ -10,6 +10,8 @@ import "base:runtime"
 import "core:math/linalg"
 import q "core:container/queue"
 
+import "core:fmt"
+
 import sdl "vendor:sdl3"
 
 
@@ -38,7 +40,7 @@ game: struct {
     temp_gfx_refs: sb.Swap_Buffer(slotmap.Handle),
     
     entities: slotmap.Slotmap(Entity),
-    last_added_entity: int, // note(isak): rolling entity id sequence
+    next_entity_id: int, // note(isak): rolling entity id sequence
     
     /*
         note(isak): entities refer to an element, which in turn refer to a set of animations that determine 
@@ -174,7 +176,7 @@ Osu_Map :: struct {
 }
 
 osu_on_init :: proc() {
-    game.last_added_entity = 1
+    game.next_entity_id = 1
     game.time_rate = 1.0
     game.play_timer_ms = -500
     game.mode = .PLAY
@@ -210,7 +212,6 @@ osu_on_map_init :: proc() {
     // into account
     write_default_entities_from_map(game.active_map)
     
-    sb.append(&game.temp_gfx_refs, test_bg("kawayabughorou.jpg"))
 }
 
 // note(isak): unused
@@ -291,7 +292,7 @@ osu_on_update :: proc() {
             clear_hitobject_entities(&hobj)
             
             hobj.gfx_handles = reserve_handles(&game.gfx_handles, 2) or_continue
-            hobj.gfx_handles[0] = slotmap.insert(&game.entities, Entity{
+            hobj.gfx_handles[0] = push_entity({
                 flags = {.ACTIVE},
                 element = element_id(.CLICKED_HIT_CIRCLE),
                 pos = hobj.pos,
@@ -301,13 +302,27 @@ osu_on_update :: proc() {
                 start_time_ms = map_time,
                 end_time_ms = map_time + 600
             })
-            hobj.gfx_handles[1] = slotmap.insert(&game.entities, Entity{
+            hobj.gfx_handles[1] = push_entity({
                 flags = {.ACTIVE},
                 element = element_id(.CLICKED_HIT_CIRCLE_OVERLAY),
                 pos = hobj.pos,
                 size = game.active_map.circle_radius_osupx * 2,
                 anchor = .CENTER,
                 color = color_white,
+                start_time_ms = map_time,
+                end_time_ms = map_time + 600
+            })
+            
+            push_entity_temp({
+                flags = {.ACTIVE},
+                element = element_id(.JUDGMENT),
+                pos = hobj.pos,
+                size = [2]f32{0.5, 1} * game.active_map.circle_radius_osupx,
+                anchor = .CENTER,
+                color = color_sky_blue,
+                
+                angle_vel = 360.0,
+                
                 start_time_ms = map_time,
                 end_time_ms = map_time + 600
             })
@@ -332,15 +347,16 @@ osu_on_update :: proc() {
 
     // note(isak): we render hitobject elements back to front for correct blending
     // todo(isak): @speed - long iteration, but seems necessary to not cull gfx objects outside an 
-    // object's given start/end time window 
+    // object's given start/end time window
     #reverse for &hobj in game.active_map.hit_objects {
         #reverse for handle in hobj.gfx_handles {
             e := slotmap.get(&game.entities, handle) or_continue
-            render_entity(e, map_time)
+            if .ACTIVE in e.flags {
+                render_entity(e, map_time)
+            }
         }
     }
     
-    r_push_layer(.BACKGROUND, transform = fullscreen_transform)
     process_and_draw_temp_gfx_handles()
     
     // render ui
@@ -355,9 +371,15 @@ osu_on_update :: proc() {
 process_and_draw_temp_gfx_handles :: proc() {
     for handle in game.temp_gfx_refs.current {
         e := slotmap.get(&game.entities, handle) or_continue
-        active := render_entity(e, game.play_timer_ms)
-        if active {
-            append(game.temp_gfx_refs.next, handle)
+        if .ACTIVE in e.flags {
+            in_time := render_entity(e, game.play_timer_ms)
+            if in_time {
+                append(game.temp_gfx_refs.next, handle)
+            } else {
+                fmt.println("temp entity expired", e.id)
+            }
+        } else {
+            fmt.println("inactive entity", e.id)
         }
     }
     sb.swap(&game.temp_gfx_refs)

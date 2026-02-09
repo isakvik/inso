@@ -1,10 +1,12 @@
 package notosu
 
+import "base:intrinsics"
 import q "core:container/queue"
 import "core:math/linalg"
 import "core:slice"
 
 import rb "ring_buffer"
+import sb "swap_buffer"
 import "slotmap"
 
 
@@ -134,8 +136,13 @@ Entity :: struct {
     // implicitly: 1 quad vertex, 6 indices that are appended to buffer every draw
     pos: vec2,
     size: vec2,
+    angle: f32,
     anchor: Layout_Anchor,
     color: Color,
+    
+    vel: vec2,
+    accel: vec2,
+    angle_vel: f32,
     
     start_time_ms, end_time_ms: f64,
 }
@@ -174,6 +181,7 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
 
     q.reserve(elements, len(Element_Type))
     elements.len += len(Element_Type)
+    
     for el_type in Element_Type {
         elements.data[el_type].tex = skin_texture(skin_element_for_type_table[el_type])
     }
@@ -221,14 +229,14 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
             Animation_Scale{
                 start_time = 0, 
                 end_time = 600,
-                start_scale = {1, 1}, 
-                end_scale = {3, 3}
+                start_scale = {0.5, 0.5}, 
+                end_scale = {1.5, 1.5}
             },
-            Animation_Color{
-                start_time = 0, 
+            Animation_Alpha{
+                start_time = 300, 
                 end_time = 600,
-                start_color = color_white,
-                end_color = with_alpha(color_white, 0),
+                start_alpha = 1.0,
+                end_alpha = 0.0,
             }
         )
     }
@@ -258,11 +266,26 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
         tex = skin_texture(.HITCIRCLEOVERLAY),
         animations = click_animation
     }
-
+    
+    for el_type in Element_Type {
+        elements.data[el_type].type = el_type
+    }
 }
 
 //////////////////////////////////////////////////////
 // note(isak): entity api
+
+push_entity :: proc(e: Entity) -> slotmap.Handle {
+    e := e
+    e.id = game.next_entity_id
+    game.next_entity_id += 1
+    
+    return slotmap.insert(&game.entities, e)
+}
+
+push_entity_temp :: proc(e: Entity) {
+    sb.append(&game.temp_gfx_refs, push_entity(e))
+}
 
 clear_hitobject_entities :: proc(hobj: ^Hit_Object) {
     for handle in hobj.gfx_handles {
@@ -327,13 +350,12 @@ write_default_entities_from_map :: proc(osu_map: ^Osu_Map) {
                 e.color = color_purple
             }
             
-            hobj.gfx_handles[i] = slotmap.insert(&game.entities, e)
+            hobj.gfx_handles[i] = push_entity(e)
         }
     }
 
     osu_map.length_ms = final_hobj_time_ms + 1000
 }
-
 
 render_entity :: proc(e: ^Entity, at_time: f64) -> bool {
     if at_time < e.start_time_ms || e.end_time_ms < at_time {
@@ -345,7 +367,7 @@ render_entity :: proc(e: ^Entity, at_time: f64) -> bool {
     tex := element.tex
 
     rect := Rect{e.pos.x, e.pos.y, e.size.x, e.size.y}
-    angle := f32(0)
+    angle := e.angle + e.angle_vel * f32(rel_time / 1000)
     color := e.color
     texture_override: bool
     seen_animation_of_type: [Animation_Variant]bool

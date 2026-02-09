@@ -25,7 +25,7 @@ Skin_Element_Path := #partial [Skin_Element_Type]string {
     .APPROACHCIRCLE     = "approachcircle",
     .HITCIRCLE          = "hitcircle",
     .HITCIRCLEOVERLAY   = "hitcircleoverlay",
-    .LIGHTING           = "lighting",
+    .LIGHTING           = "default-1",
     .COMBO_1            = "default-1",
 }
 

@@ -127,6 +127,7 @@ Entity_Flag :: enum u32 {
     ACTIVE,
 }
 
+// note(isak): 
 Entity :: struct {
     id: int,
     flags: Entity_Flags,
@@ -136,7 +137,7 @@ Entity :: struct {
     // implicitly: 1 quad vertex, 6 indices that are appended to buffer every draw
     pos: vec2,
     size: vec2,
-    angle: f32,
+    angle_deg: f32,
     anchor: Layout_Anchor,
     color: Color,
     
@@ -367,7 +368,7 @@ render_entity :: proc(e: ^Entity, at_time: f64) -> bool {
     tex := element.tex
 
     rect := Rect{e.pos.x, e.pos.y, e.size.x, e.size.y}
-    angle := e.angle + e.angle_vel * f32(rel_time / 1000)
+    angle := e.angle_deg + e.angle_vel * f32(rel_time / 1000)
     color := e.color
     texture_override: bool
     seen_animation_of_type: [Animation_Variant]bool

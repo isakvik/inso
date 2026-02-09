@@ -1,19 +1,16 @@
 package notosu
 
-import sb "swap_buffer"
-
 import "base:runtime"
 import "core:container/queue"
 import "core:fmt"
+import "core:log"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
-import "core:mem/virtual"
 import os "core:os/os2"
-import "core:path/filepath"
-import "core:strings"
 import "core:sys/windows"
 import "core:time"
+import vmem "core:mem/virtual"
 
 import lua "vendor:lua/5.4"
 import mu "vendor:microui"
@@ -71,34 +68,34 @@ memory_arena_names := [?]string {
 memory: struct {
     // note(isak): never cleared. used instead of odin's regular arena to keep track of our allocations
     global_allocator: runtime.Allocator,
-    global_arena: virtual.Arena,
+    global_arena: vmem.Arena,
 
     // note(isak): this is to be used for mapset runtime data, such as timing state, judgements, etc. (fill in)
     // cleared on mapset reload/unload
     mapset_allocator: runtime.Allocator,
-    mapset_arena: virtual.Arena,
+    mapset_arena: vmem.Arena,
 
     // note(isak): this is to be used for graphical entity data, "unbounded" since it's written to by
     // game logic and scripts. cleared on mapset reload/unload
     entity_allocator: runtime.Allocator,
-    entity_arena: virtual.Arena,
+    entity_arena: vmem.Arena,
     
     // cleared on frame end
     frame_allocator: runtime.Allocator,
-    frame_arena: virtual.Arena,
+    frame_arena: vmem.Arena,
     command_buffer_allocators: [Layer]runtime.Allocator,
-    command_buffer_arenas: [Layer]virtual.Arena,
+    command_buffer_arenas: [Layer]vmem.Arena,
 }
 
 // note(isak): this should take care of error printing
 memory_init :: proc() -> runtime.Allocator_Error {
-    _ = init_growing_arena(&memory.global_arena, &memory.global_allocator)
-    _ = init_growing_arena(&memory.mapset_arena, &memory.mapset_allocator)
-    _ = init_growing_arena(&memory.frame_arena, &memory.frame_allocator)
-    _ = init_growing_arena(&memory.entity_arena, &memory.entity_allocator)
+    init_growing_arena(&memory.global_arena, &memory.global_allocator) or_return
+    init_growing_arena(&memory.mapset_arena, &memory.mapset_allocator) or_return
+    init_growing_arena(&memory.frame_arena, &memory.frame_allocator) or_return
+    init_growing_arena(&memory.entity_arena, &memory.entity_allocator) or_return
 
     for layer in Layer {
-        _ = init_growing_arena(&memory.command_buffer_arenas[layer], &memory.command_buffer_allocators[layer])
+        init_growing_arena(&memory.command_buffer_arenas[layer], &memory.command_buffer_allocators[layer]) or_return
     }
     return .None
 }
@@ -285,15 +282,14 @@ main :: proc() {
     _program_start_time = current_time()
     
     if memory_init() != .None {
-        panic("memory init error")
+        panic("memory_init :: error")
     }
     context.allocator = memory.global_allocator
     context.temp_allocator = memory.frame_allocator
-
-    current_dir, dir_error := os.get_working_directory(context.allocator)
-    if strings.compare("build", filepath.base(current_dir)) == 0 {
-        os.set_working_directory(filepath.dir(current_dir))
-    }
+    
+    app_init()
+   	context.logger = app.logger
+    defer app_cleanup()
     
     /*
     lua_ctx.state = lua.L_newstate()
@@ -306,8 +302,7 @@ main :: proc() {
     */
 
     if (!sdl.Init({.VIDEO})) {
-        fmt.printfln("SDL init error: {}", sdl.GetError())
-        return
+        log.panic("SDL video init error:", sdl.GetError())
     }
 
     sound_enabled := false
@@ -316,14 +311,11 @@ main :: proc() {
     window.ui_enabled = true
     defer window_cleanup()
     
-    audio.ready = audio_init()
+    audio_init()
     assert(audio.ready)
     defer audio_cleanup()
     
-    audio_set_volume(0.0)
-    
-    bgm := sound_init("songs/test/test.mp3")
-    sound_play(&bgm)
+    audio_set_volume(0.05)
 
     renderer_init()
     renderer := &window.renderer
@@ -342,12 +334,26 @@ main :: proc() {
     {
         ok: bool
         test_mapset_path := "songs/test/"
-        game.active_mapset, ok = mapset_open_for_editing(test_mapset_path)
+        os.change_directory(test_mapset_path)
+        defer os.change_directory(app.base_dir)
+        
+        cur_path, err := os.get_working_directory(context.temp_allocator)
+        game.active_mapset, ok = mapset_open_for_editing(cur_path)
         game.active_map = &game.active_mapset.osu_map
         if !ok {
-            fmt.println("tried to open mapset, but failed:", test_mapset_path)
+            log.error("tried to open mapset, but failed:", test_mapset_path)
         }
+        
+        game.map_bgm = sound_stream_init(game.active_map.audio_filename)
+        sound_play(&game.map_bgm)
+        if !ok {
+            log.error("tried to open map sound file, but failed:", test_mapset_path)
+        }
+        
+        log.info(game.active_map.audio_filename, "length in ms:", sound_get_length_ms(&game.map_bgm))
     }
+    
+    
     
     // note(isak): dependent on map load... make a more granular api for map load purposes
     prepare_textures_for_rendering()
@@ -556,7 +562,7 @@ main :: proc() {
             
             frame_count += 1
             
-            virtual.arena_free_all(&memory.frame_arena)
+            vmem.arena_free_all(&memory.frame_arena)
             for layer in Layer {
                 queue.clear(&window.renderer.layer_command_queues[layer])
             }

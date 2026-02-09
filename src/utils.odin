@@ -1,13 +1,9 @@
 package notosu
 
 import "base:runtime"
-import "core:fmt"
 import "core:math"
 import "core:math/linalg"
-import "core:mem"
 import "core:mem/virtual"
-import os "core:os/os2"
-import "core:strings"
 
 import sdl "vendor:sdl3"
 
@@ -90,25 +86,6 @@ color_from_vec :: proc "contextless" (v: vec4) -> Color {
     result[3] = u8(v.a * 0xFF)
     return result
 }
-
-//////////////////////////////////////////////////////
-// note(isak): io api
-
-read_entire_file :: proc(path: string, allocator := context.allocator) -> ([]u8, os.Error) {
-    result: []u8
-    err: os.Error = os.General_Error.None
-    for len(result) == 0 && err == os.General_Error.None {
-        result, err = os.read_entire_file_from_path(path, allocator)
-    }
-    null_guard := new(u8, allocator)
-    return result, err
-}
-
-read_entire_file_to_string :: proc(path: string, allocator := context.allocator) -> (string, os.Error) {
-    data, err := read_entire_file(path, allocator)
-    return string(data), err
-}
-
 
 //////////////////////////////////////////////////////
 // note(isak): memory utils

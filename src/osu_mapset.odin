@@ -116,6 +116,7 @@ mapset_free_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
     return reloaded_mapset
 }
 
+// note(isak): clones given path into mapset allocator
 mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
     context.allocator = memory.mapset_allocator
     
@@ -259,7 +260,9 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
     context.allocator = memory.mapset_allocator
     
     // todo(isak): test code that should be replaced with notosu shader section reads
-    shader, err := shader_init(quad_vs_path, "songs/test/quad_wave.fs.glsl", context.temp_allocator)
+    
+    builtin_quad_vs_path := strings.concatenate({app.base_dir, "/", quad_vs_path}, context.allocator)
+    shader, err := shader_init(builtin_quad_vs_path, "quad_wave.fs.glsl")
     assert(err == .NONE)
     
     mapset.shader_slot_by_name["wave"] = u32(mapset.num_shaders)

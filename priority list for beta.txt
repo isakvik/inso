@@ -1,0 +1,25 @@
+priority list for beta
+
+entity storage, gameplay rendering order
+
+scripting
+	api
+	versioning (version capabilities?)
+
+game mechanics (not score, replays, etc)
+	hittesting
+	notelock
+	judgments
+	slider rendering
+	hitsounds
+	game music sync
+	slider bounds
+
+rendering
+	locking bugfix
+	render to FBO
+
+platform
+	input thread
+	transform stack
+	

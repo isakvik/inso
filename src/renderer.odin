@@ -180,7 +180,7 @@ renderer_init :: proc() {
 
     window.pass_action = { 
         colors = {
-            0 = { load_action = .DONTCARE, clear_value = { 0.15, 0.10, 0.23, 1 } }, 
+            0 = { load_action = .CLEAR, clear_value = { 0.15, 0.10, 0.23, 1 } }, 
         }
     }
 

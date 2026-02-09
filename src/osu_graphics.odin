@@ -2,8 +2,10 @@ package notosu
 
 import q "core:container/queue"
 import "core:math/linalg"
+import "core:slice"
 
-import "rb"
+import rb "ring_buffer"
+import "slotmap"
 
 
 // note(isak): texture id lookup table for skin elements
@@ -262,28 +264,22 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
 //////////////////////////////////////////////////////
 // note(isak): entity api
 
-entity_push :: proc(buf: ^rb.Ring_Buffer(Entity), el: Entity) {
-    el := el
-    el.id = game.last_added_entity
-    rb.at(&game.entities, buf.cursor)^ = el
-    buf.cursor += 1
-}
-
-clear_hitobject_entities :: proc(buf: ^rb.Ring_Buffer(Entity), hobj: Hit_Object) {
-    for i in 0..<hobj.num_entities {
-        e := rb.at(&game.entities, hobj.first_element_at + i)
-        e.flags &= ~{.ACTIVE}
+clear_hitobject_entities :: proc(hobj: ^Hit_Object) {
+    for handle in hobj.gfx_handles {
+        slotmap.remove(&game.entities, handle)
     }
+    hobj.gfx_handles = {}
 }
 
-reserve_entities :: proc(buf: ^rb.Ring_Buffer(Entity), #any_int n: int) -> (int, int) {
+// note(isak): seeks the entirety of the ring buffer until a contiguous run of n unoccupied handles are found
+reserve_handles :: proc(buf: ^rb.Ring_Buffer(slotmap.Handle), #any_int n: int) -> ([]slotmap.Handle, bool) {
     at: int 
     has_contiguous_space: bool
     for !has_contiguous_space && at < cap(buf.data) {
         found_active_el: bool
         for i in 0..<n {
-            e := rb.at(buf, buf.cursor + at + i)
-            if .ACTIVE in e.flags {
+            handle := rb.at(buf, buf.cursor + at + i)
+            if handle.index > 0 {
                 at += i + 1
                 found_active_el = true
                 break
@@ -296,24 +292,23 @@ reserve_entities :: proc(buf: ^rb.Ring_Buffer(Entity), #any_int n: int) -> (int,
     
     if has_contiguous_space {
         buf.cursor += at
-        return buf.cursor, n
+        return slice.from_ptr(rb.at(buf, buf.cursor), n), true
     }
-    return buf.cursor, 0
+    return slice.from_ptr(rb.at(buf, buf.cursor), 0), false
 }
 
-write_default_entities_from_map :: proc(buf: ^rb.Ring_Buffer(Entity), osu_map: ^Osu_Map) {
+write_default_entities_from_map :: proc(osu_map: ^Osu_Map) {
     preempt: f64 = convert_approach_rate_to_preempt_ms(osu_map.diff_approach_rate)
 
     final_hobj_time_ms: f64
     i: int
     for &hobj in osu_map.hit_objects {
         final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
-
+        
+        hobj.gfx_handles = reserve_handles(&game.gfx_handles, 4) or_continue
+        
         hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
-        hobj.first_element_at, hobj.num_entities = reserve_entities(buf, 4)
-        assert(hobj.num_entities > 0)
-
-        #reverse for el_type in hit_circle_el_types {
+        #reverse for el_type, i in hit_circle_el_types {
             e := Entity{
                 flags = {.ACTIVE},
                 element = element_id(el_type),
@@ -331,7 +326,8 @@ write_default_entities_from_map :: proc(buf: ^rb.Ring_Buffer(Entity), osu_map: ^
             if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE {
                 e.color = color_purple
             }
-            entity_push(buf, e)
+            
+            hobj.gfx_handles[i] = slotmap.insert(&game.entities, e)
         }
     }
 
@@ -339,9 +335,9 @@ write_default_entities_from_map :: proc(buf: ^rb.Ring_Buffer(Entity), osu_map: ^
 }
 
 
-render_entity :: proc(e: ^Entity, at_time: f64) {
+render_entity :: proc(e: ^Entity, at_time: f64) -> bool {
     if at_time < e.start_time_ms || e.end_time_ms < at_time {
-        return
+        return false
     }
     rel_time := at_time - e.start_time_ms
 
@@ -393,6 +389,8 @@ render_entity :: proc(e: ^Entity, at_time: f64) {
 
     r_check_and_bind_pipeline({element.shader})
     r_draw_layout_rect(&window.renderer.quad_geometry, rect, e.anchor, color, tex, angle)
+    
+    return true
 }
 
 
@@ -441,11 +439,7 @@ render_timeline :: proc(ui: ^UI_Timeline) {
     }
 }
 
-test_bg_push :: proc(bg_path: string) {
-    gfx: Graphics_Object
-    gfx.first_entity_at, gfx.num_entities = reserve_entities(&game.entities, 1)
-    q.push_back(&game.gfx_objects, gfx)
-    
+test_bg :: proc(bg_path: string) -> slotmap.Handle {
     bg_entity := Entity{
         element = element_push(&game.elements, Element{
             type = .MAP_ELEMENT, 
@@ -457,9 +451,12 @@ test_bg_push :: proc(bg_path: string) {
         pos = {0.5, 0.5},
         size = {1, 1},
         anchor = .CENTER,
-        color = {30,30,30,255}
+        color = {30,30,30,255},
+        
+        start_time_ms = -game.active_map.total_lead_in_ms,
+        end_time_ms = game.active_map.length_ms
     }
-    entity_push(&game.entities, bg_entity)
+    return slotmap.insert(&game.entities, bg_entity)
 }
 
 /*

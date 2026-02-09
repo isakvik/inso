@@ -1,6 +1,6 @@
 package notosu
 
-import sm "slotmap"
+import sb "swap_buffer"
 
 import "base:runtime"
 import "core:container/queue"
@@ -151,7 +151,7 @@ window: struct {
     
     // note(isak): we make a distinction between static and dynamic geometry; dynamic can be streamed
     // data into efficiently by using a triple buffer setup, while static is single-buffered and is fit
-    // for bigger data that isn't updated as often (such as in a loading screen)
+    // for bigger data that isn't updated as often (such as during a loading screen)
 
     // note(isak): single quad buffer for deferred rendering quad store, unused
     fullscreen_store: GL_Buffer(Quad),

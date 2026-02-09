@@ -1,6 +1,9 @@
 package notosu
 
-import "rb"
+import "core:image/netpbm"
+import sb "swap_buffer"
+import "slotmap"
+import rb "ring_buffer"
 
 import "base:intrinsics"
 import "base:runtime"
@@ -18,23 +21,25 @@ osu_slider_curve_points_separation :: f32(2.5)
 // note(isak): state struct. keep it lean, put large data fields in arenas
 
 game: struct {
-    // note(isak): game logic fields
+    active_mapset: ^Mapset,
+    active_map: ^Osu_Map,
+    active_skin: [Skin_Element_Type]Skin_Element,
+    
+    // note(isak): map game logic fields
     mode: Game_Mode,
     play_timer_ms: f64,
     play_paused: bool,
     time_rate: f64,
     dt: f64,
-
-    active_mapset: ^Mapset,
-    active_map: ^Osu_Map,
-    active_skin: [Skin_Element_Type]Skin_Element,
     
-    // note(isak): game view fields
-    entities: rb.Ring_Buffer(Entity),
+    // note(isak): map game view fields
+
+    gfx_handles: rb.Ring_Buffer(slotmap.Handle),
+    temp_gfx_refs: sb.Swap_Buffer(slotmap.Handle),
+    
+    entities: slotmap.Slotmap(Entity),
     last_added_entity: int, // note(isak): rolling entity id sequence
     
-    gfx_objects: q.Queue(Graphics_Object),
-
     /*
         note(isak): entities refer to an element, which in turn refer to a set of animations that determine 
         the final transform. the given element of an entity can be overridden mid-map by scripts for effects
@@ -75,13 +80,14 @@ Hit_Object :: struct {
     start_time_ms, end_time_ms: f64,
     pos: vec2,
     type: Hit_Object_Type,
-    first_element_at, num_entities: int,
     
     type_flags: int,
     hitsound_flags: byte,
 
     slider_path_index: int,
     slider_repeats: int,
+    
+    gfx_handles: []slotmap.Handle,
 }
 
 Slider_Path_Type :: enum {
@@ -182,29 +188,40 @@ osu_on_init :: proc() {
 }
 
 osu_on_map_init :: proc() {
+    // map logic init
+    
+    game.active_map.total_lead_in_ms = game.active_map.preempt_ms + game.active_map.audio_lead_in
+    
+    // map graphics init
+    
     q.init(&game.elements, 1024, memory.mapset_allocator)
     q.append(&game.elements, null_element)
     q.init(&game.animations, 1024, memory.mapset_allocator)
 
     write_default_elements(&game.elements, &game.animations, game.active_map)
-
-    rb.init(&game.entities, 16384, memory.entity_allocator)
-    game.entities.length = cap(game.entities.data)
     
-    q.init(&game.script_gfx_objects, 1024, memory.entity_allocator)
+    rb.init(&game.gfx_handles, 8192, memory.entity_allocator)
+    game.gfx_handles.length = cap(game.gfx_handles.data)
+    
+    sb.init(&game.temp_gfx_refs, 8192)
+    slotmap.init(&game.entities, 8192)
     
     // todo(isak): opinionated entity pushing; needs to be rewritten to take scriptable objects and skin metrics
     // into account
-    write_default_entities_from_map(&game.entities, game.active_map)
+    write_default_entities_from_map(game.active_map)
     
-    test_bg_push("kawayabughorou.jpg")
+    sb.append(&game.temp_gfx_refs, test_bg("kawayabughorou.jpg"))
 }
 
 // note(isak): unused
-osu_on_map_unload :: proc() {
-    for &e in game.entities.data {
-        e.flags &= ~{.ACTIVE}
+osu_on_map_destroy :: proc() {
+    for &hobj in game.active_map.hit_objects {
+        hobj.gfx_handles = {}
     }
+    
+    rb.destroy(&game.gfx_handles)
+    sb.destroy(&game.temp_gfx_refs)
+    slotmap.destroy(&game.entities)
 }
 
 osu_reload_map :: proc() {
@@ -226,7 +243,6 @@ osu_on_update :: proc() {
     }
     
     game.play_timer_ms += map_dt * 1000
-    game.active_map.total_lead_in_ms = game.active_map.preempt_ms + game.active_map.audio_lead_in
     if game.play_timer_ms > game.active_map.length_ms {
         game.play_timer_ms = clamp(-game.active_map.total_lead_in_ms, -1800, 0)
         osu_reload_map()
@@ -234,13 +250,13 @@ osu_on_update :: proc() {
     
     // game logic
 
+    map_time := game.play_timer_ms
+    
     #partial switch game.mode {
         case .PLAY: osu_handle_play_input()
     }
     
-    time := game.play_timer_ms
     hobj_it := get_visible_hobj_iterator(&game.active_map.visible_hit_object_state, game.play_timer_ms)
-
     
     valid_key_press :: proc() -> bool {
         if osu_controller.mouse_keys_enabled {
@@ -259,11 +275,12 @@ osu_on_update :: proc() {
     playfield_transform := transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
     
     if valid_key_press() {
+        // todo(isak): detection radius is off with different window sizes
         osu_px_to_px := window.rect.h / f32(osu_playfield_size_osupx)
         circle_radius_px := game.active_map.circle_radius_osupx * osu_px_to_px
         
         for &hobj, i in hobj_it {
-            if hobj.num_entities == 2 {
+            if len(hobj.gfx_handles) == 2 {
                 continue
             }
             
@@ -271,28 +288,28 @@ osu_on_update :: proc() {
                 continue
             }
             
-            clear_hitobject_entities(&game.entities, hobj)
-            hobj.first_element_at, hobj.num_entities = reserve_entities(&game.entities, 2)
+            clear_hitobject_entities(&hobj)
             
-            entity_push(&game.entities, Entity{
+            hobj.gfx_handles = reserve_handles(&game.gfx_handles, 2) or_continue
+            hobj.gfx_handles[0] = slotmap.insert(&game.entities, Entity{
                 flags = {.ACTIVE},
                 element = element_id(.CLICKED_HIT_CIRCLE),
                 pos = hobj.pos,
                 size = game.active_map.circle_radius_osupx * 2,
                 anchor = .CENTER,
                 color = color_purple,
-                start_time_ms = time,
-                end_time_ms = time + 600
+                start_time_ms = map_time,
+                end_time_ms = map_time + 600
             })
-            entity_push(&game.entities, Entity{
+            hobj.gfx_handles[1] = slotmap.insert(&game.entities, Entity{
                 flags = {.ACTIVE},
                 element = element_id(.CLICKED_HIT_CIRCLE_OVERLAY),
                 pos = hobj.pos,
                 size = game.active_map.circle_radius_osupx * 2,
                 anchor = .CENTER,
                 color = color_white,
-                start_time_ms = time,
-                end_time_ms = time + 600
+                start_time_ms = map_time,
+                end_time_ms = map_time + 600
             })
         }
     }
@@ -302,7 +319,7 @@ osu_on_update :: proc() {
     r_push_layer(.HIT_OBJECTS)
     
     for hobj, i in hobj_it {
-        if time < hobj.start_time_ms - game.active_map.preempt_ms || hobj.end_time_ms < time {
+        if map_time < hobj.start_time_ms - game.active_map.preempt_ms || hobj.end_time_ms < map_time {
             continue
         }
         if hobj.type == .SLIDER {
@@ -317,22 +334,14 @@ osu_on_update :: proc() {
     // todo(isak): @speed - long iteration, but seems necessary to not cull gfx objects outside an 
     // object's given start/end time window 
     #reverse for &hobj in game.active_map.hit_objects {
-        for i in 0..<hobj.num_entities {
-            e := rb.at(&game.entities, hobj.first_element_at + i)
-            render_entity(e, time)
+        #reverse for handle in hobj.gfx_handles {
+            e := slotmap.get(&game.entities, handle) or_continue
+            render_entity(e, map_time)
         }
     }
     
-    // render gameplay elements
-    
-    // render map elements
     r_push_layer(.BACKGROUND, transform = fullscreen_transform)
-    #reverse for &gfx in game.gfx_objects.data[:q.len(game.gfx_objects)] {
-        for i in 0..<gfx.num_entities {
-            e := rb.at(&game.entities, gfx.first_entity_at + i)
-            render_entity(e, 0)
-        }
-    }
+    process_and_draw_temp_gfx_handles()
     
     // render ui
     // todo(isak): "screens" implementation for determining relevant UI components?
@@ -341,6 +350,17 @@ osu_on_update :: proc() {
     render_timeline(&game.ui_timeline)
     
     render_input_display()
+}
+
+process_and_draw_temp_gfx_handles :: proc() {
+    for handle in game.temp_gfx_refs.current {
+        e := slotmap.get(&game.entities, handle) or_continue
+        active := render_entity(e, game.play_timer_ms)
+        if active {
+            append(game.temp_gfx_refs.next, handle)
+        }
+    }
+    sb.swap(&game.temp_gfx_refs)
 }
 
 osu_handle_play_input :: proc() {

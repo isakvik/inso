@@ -322,16 +322,13 @@ reserve_handles :: proc(buf: ^rb.Ring_Buffer(slotmap.Handle), #any_int n: int) -
 }
 
 write_default_entities_from_map :: proc(osu_map: ^Osu_Map) {
-    preempt: f64 = convert_approach_rate_to_preempt_ms(osu_map.diff_approach_rate)
-
     final_hobj_time_ms: f64
     i: int
     for &hobj in game.beatmap.hit_objects {
         final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
         
-        hobj.gfx_handles = reserve_handles(&game.gfx_handles, 4) or_continue
-        
         hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
+        hobj.gfx_handles = reserve_handles(&game.gfx_handles, len(hit_circle_el_types)) or_continue
         #reverse for el_type, i in hit_circle_el_types {
             e := Entity{
                 flags = {.ACTIVE},
@@ -340,7 +337,7 @@ write_default_entities_from_map :: proc(osu_map: ^Osu_Map) {
                 size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
                 color = with_alpha(color_white, 1),
-                start_time_ms = hobj.start_time_ms - preempt,
+                start_time_ms = hobj.start_time_ms - game.beatmap.preempt_ms,
                 end_time_ms = hobj.start_time_ms,
             }
             if el_type == .COMBO_NUMBER {

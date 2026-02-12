@@ -57,6 +57,7 @@ game: struct {
     ui_timeline: UI_Timeline,
 }
 
+null_entity := Entity{}
 null_element := Element{}
 
 osu_controller: struct {
@@ -185,19 +186,6 @@ osu_on_init :: proc() {
 }
 
 osu_on_beatmap_init :: proc() {
-    // map graphics init
-    
-    q.init(&game.elements, 1024, memory.allocs[.MAPSET])
-    q.append(&game.elements, null_element)
-    q.init(&game.animations, 1024, memory.allocs[.MAPSET])
-
-    write_default_elements(&game.elements, &game.animations)
-    
-    rb.init(&game.gfx_handles, 8192, memory.allocs[.ENTITIES])
-    game.gfx_handles.length = cap(game.gfx_handles.data)
-    
-    sb.init(&game.temp_gfx_refs, 8192)
-    slotmap.init(&game.entities, 8192)
     
     // map logic init
     
@@ -211,6 +199,21 @@ osu_on_beatmap_init :: proc() {
     game.beatmap.slider_paths = game.active_map.slider_paths
     
     sound_set_position_ms(&game.beatmap.music, 1800)
+    
+    // map graphics init
+    
+    q.init(&game.elements, 1024, memory.allocs[.MAPSET])
+    q.append(&game.elements, null_element)
+    q.init(&game.animations, 1024, memory.allocs[.MAPSET])
+
+    write_default_elements(&game.elements, &game.animations)
+    
+    rb.init(&game.gfx_handles, 8192, memory.allocs[.ENTITIES])
+    game.gfx_handles.length = cap(game.gfx_handles.data)
+    
+    sb.init(&game.temp_gfx_refs, 8192)
+    slotmap.init(&game.entities, 8192)
+    _ = slotmap.insert(&game.entities, null_entity)
     
     // todo(isak): opinionated entity pushing; needs to be rewritten to take scriptable objects and skin metrics
     // into account

@@ -427,20 +427,37 @@ calculate_bezier_point_from_time :: proc(t: f64, curve: Slider_Curve) {
 }
 
 bezier_to_piecewise_linear :: proc(curve: Slider_Curve, degree: int) {
-    assert(degree < 1, fmt.tprintfln("curve degree error: lower than 1 ::", degree))
+    
     
 }
+/*
+b_spline_to_piecewise_linear :: proc(curve: Slider_Curve, degree: int) {
+    assert(degree < 1, fmt.tprintfln("curve degree error: lower than 1 ::", degree))
+
+    if len(curve) < 2 {
+        return
+    }
+
+    point_count : int = len(curve) - 1
+    degree = min(degree, point_count)
+
+    output : vec2
+    
+    to_flatten : q.Queue(vec2)
+    q.init(&to_flatten) //todo(yokes): check capaticy, default for now
+    free_buffers : q.Queue(vec2)
+    q.init(&free_buffers) //todo(yokes): check capaticy, default for now
+
+    subdivision_buffer_1 : [degree + 1]vec2
+}*/
 
 base_dist : f32 = 2.5
-write_instances_from_straight :: proc(instance_buf: ^Buffer(vec2), start_pos: [2]f32, end_pos: [2]f32, curve_distance: f64) -> f64 {
+write_instances_from_straight :: proc(instance_buf: ^Buffer(vec2), start_pos: vec2, end_pos: vec2, curve_distance: f64) -> f64 {
     remaining_distance := curve_distance
-    h := (end_pos.y - start_pos.y) / (end_pos.x - start_pos.x)
-    y := base_dist / (math.pow(math.pow(h, 2) + 1, 0.5))
-    x := base_dist * h / (math.pow(math.pow(h, 2) + 1, 0.5))
-    iterations := abs((end_pos.x - start_pos.x) / x)
-    xy_vector : [2]f32 = {x, y}
+    xy_vector : vec2 = end_pos - start_pos
+    iterations := linalg.length(xy_vector) / base_dist
     for i in 0..<iterations {
-        buffer_push(instance_buf, start_pos + i * xy_vector)
+        buffer_push(instance_buf, start_pos + i * xy_vector / iterations)
     }
 
     travelled_distance := math.pow(math.pow(end_pos.y - start_pos.y, 2) + math.pow(end_pos.x - start_pos.x, 2), 0.5)
@@ -482,9 +499,10 @@ write_instances_from_path :: proc(
 
     // todo(isak): test code that just pushes a point for each node
     path.curves = split_path_into_curves(path, alloc)
+    /*
     for curve in path.curves {
         buffer_push(instance_buf, curve[0])
-    }
+    }*/
 
     // todo(yokes): test code with straight sliders (start- and endpoint)
     //buffer_push(instance_buf, [[100,100], [200, 200]])

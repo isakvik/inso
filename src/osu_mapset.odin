@@ -552,7 +552,7 @@ mapset_parse_osu_slider_params :: proc(hobj: ^Hit_Object, slider: ^Slider_Path, 
                 // edgesets
         }
     }
-    assert(slider.type != .NONE, fmt.tprintln("slider parse error: unknown slidertype ::", params))
+    assert(slider.type != .NONE, fmt.tprintln("slider parse error :: unknown slidertype:", params))
 }
 
 @(require_results)
@@ -570,9 +570,9 @@ mapset_parse_osu_slider_nodes :: proc(value: string, alloc: mem.Allocator = cont
         node := &result[sec_i]
 
         sep_at := strings.index_byte(section, ':')
-        assert(sep_at > 0, fmt.tprintfln("slider parse error: unsized node ::", value))
-        node.x, ok = strconv.parse_f32(section[:sep_at]); assert(ok, fmt.tprintfln("slider parse error: node.x is not a number ::", value))
-        node.y, ok = strconv.parse_f32(section[sep_at + 1:]); assert(ok, fmt.tprintfln("slider parse error: node.y is not a number ::", value))
+        assert(sep_at > 0, fmt.tprintfln("slider parse error :: unsized node:", value))
+        node.x, ok = strconv.parse_f32(section[:sep_at]); assert(ok, fmt.tprintfln("slider parse error :: node.x is not a number:", value))
+        node.y, ok = strconv.parse_f32(section[sep_at + 1:]); assert(ok, fmt.tprintfln("slider parse error :: node.y is not a number:", value))
     }
 
     return result

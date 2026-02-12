@@ -217,7 +217,6 @@ osu_on_beatmap_init :: proc() {
     write_default_entities_from_map(game.active_map)
 }
 
-// note(isak): unused
 osu_on_map_destroy :: proc() {
     for &hobj in game.beatmap.hit_objects {
         hobj.gfx_handles = {}

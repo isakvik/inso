@@ -14,7 +14,7 @@ import sdl "vendor:sdl3"
 // note(isak): time api
 
 _rdtsc_frequency := u64(sdl.GetPerformanceFrequency())
-_program_start_time: f64
+_program_start_tsc: u64
 
 
 tsc_to_ms :: proc(tsc: u64) -> f64 {
@@ -25,12 +25,12 @@ tsc_to_s :: proc(tsc: u64) -> f64 {
     return f64(tsc) / f64(_rdtsc_frequency)
 }
 
-current_time :: proc() -> f64 {
+current_time_s :: proc() -> f64 {
     return tsc_to_s(sdl.GetPerformanceCounter())
 }
 
-time_since_beginning_of_program :: proc() -> f64 {
-    return current_time() - _program_start_time
+time_s_since_beginning_of_program :: proc() -> f64 {
+    return tsc_to_s(sdl.GetPerformanceCounter() - _program_start_tsc)
 }
 
 time_ms_to_string :: proc(time: f64) -> (result: string) {

@@ -285,7 +285,7 @@ lua_ctx: struct {
 }
 
 main :: proc() {
-    _program_start_time = current_time()
+    _program_start_tsc = sdl.GetPerformanceCounter()
     
     if memory_init() != .None {
         panic("memory_init :: error")
@@ -376,7 +376,7 @@ main :: proc() {
         system should therefore manage its "currently playing" state more carefully than in other
         games, where playing a sound is more or less fire and forget, at least most of the time.
     */
-    time_current_frame := current_time()
+    time_current_frame := current_time_s()
     time_first_frame := time_current_frame
     time_last_frame := time_current_frame
     frame_count: u64
@@ -475,7 +475,7 @@ main :: proc() {
             profiler_block_begin(.PREPARE_FRAME); defer profiler_block_end() 
             
             time_last_frame = time_current_frame
-            time_current_frame = current_time()
+            time_current_frame = current_time_s()
 
             // prepare drawing
             begin_frame(renderer)
@@ -509,13 +509,13 @@ main :: proc() {
             
             cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 80, 80 }
             r_draw_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture(.CURSOR),
-                f32(time_since_beginning_of_program()*20))
+                f32(time_s_since_beginning_of_program()*20))
             
             r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
             
             pf_cur_rect: Rect = { osu_controller.mouse_pos.x, osu_controller.mouse_pos.y, 20, 20 }
             r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, reserved_texture(.WHITE),
-                f32(time_since_beginning_of_program()*20))
+                f32(time_s_since_beginning_of_program()*20))
             r_draw_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
         }
         

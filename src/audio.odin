@@ -60,6 +60,23 @@ bass_wasapi_proc :: proc "c" (buffer: rawptr, len: u32, user_data: rawptr) -> u3
 audio_init :: proc(device: Device = -1) -> bool {
     init := bass.Init(device, 44100, bass.DEVICE_NOSPEAKER, nil, nil);
 
+    /*
+    note(isak): we're using some flags that make BASS run very smoothly with WASAPI in windows' shared audio mode
+    courtesy of LastExceed: https://github.com/ppy/osu-framework/pull/6651
+    
+    the following is the old osu lazer init that makes BASS run like ass, which are useful for provoking large 
+    interpolation deltas (for handling the music buffer granularity/play time discrepancy):
+    
+        device = -1,
+        freq = 0,
+        chans = 0,
+        flags = 0,
+        buffer = 0.02,
+        period = 0,
+        _proc = bass_wasapi_proc,
+        user = nil
+    */
+    
     if !bass.WASAPI_Init(
         device = -1,
         freq = 0,

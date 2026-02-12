@@ -2,11 +2,10 @@ package notosu
 
 import "base:runtime"
 import "core:fmt"
+import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:mem/virtual"
-import os "core:os/os2"
-import "core:strings"
 
 import sdl "vendor:sdl3"
 
@@ -32,6 +31,20 @@ current_time :: proc() -> f64 {
 
 time_since_beginning_of_program :: proc() -> f64 {
     return current_time() - _program_start_time
+}
+
+time_ms_to_string :: proc(time: f64) -> (result: string) {
+    if time < 0 {
+        abs_time := abs(time)
+        min := math.floor(abs_time / 60000)
+        sec := math.mod(math.floor(abs_time / 1000), 60)
+        result = fmt.tprintf("-%.0f:%2.0f:%3.0f", min, sec, math.mod_f64(abs_time, 1000))
+    } else {
+        min := math.floor(time / 60000)
+        sec := math.mod(math.floor(time / 1000), 60)
+        result = fmt.tprintf("%.0f:%2.0f:%3.0f", min, sec, math.mod_f64(time, 1000))
+    }
+    return
 }
 
 
@@ -91,25 +104,6 @@ color_from_vec :: proc "contextless" (v: vec4) -> Color {
 }
 
 //////////////////////////////////////////////////////
-// note(isak): io api
-
-read_entire_file :: proc(path: string, allocator := context.allocator) -> ([]u8, os.Error) {
-    result: []u8
-    err: os.Error = os.General_Error.None
-    for len(result) == 0 && err == os.General_Error.None {
-        result, err = os.read_entire_file_from_path(path, allocator)
-    }
-    null_guard := new(u8, allocator)
-    return result, err
-}
-
-read_entire_file_to_string :: proc(path: string, allocator := context.allocator) -> (string, os.Error) {
-    data, err := read_entire_file(path, allocator)
-    return string(data), err
-}
-
-
-//////////////////////////////////////////////////////
 // note(isak): memory utils
 
 bytes     :: proc "contextless" (v: int) -> int {return v * 1}
@@ -128,6 +122,20 @@ init_growing_arena :: proc(arena: ^virtual.Arena, alloc: ^runtime.Allocator, siz
     alloc_err := virtual.arena_init_growing(arena, reserved = 1)
     assert(alloc_err == .None)
     alloc^ = virtual.arena_allocator(arena)
+    
+    return alloc_err
+}
+
+init_tracked_growing_arena :: proc(
+    arena: ^virtual.Arena, alloc: ^runtime.Allocator, backing: ^runtime.Allocator, track: ^mem.Tracking_Allocator, size_mb: int = 1
+) -> runtime.Allocator_Error {
+    alloc_err := virtual.arena_init_growing(arena, reserved = 1)
+    assert(alloc_err == .None)
+    
+    backing^ = virtual.arena_allocator(arena)
+    mem.tracking_allocator_init(track, backing^)
+    alloc^ = mem.tracking_allocator(track)
+    
     return alloc_err
 }
 
@@ -136,6 +144,28 @@ init_static_arena :: proc(arena: ^virtual.Arena, alloc: ^runtime.Allocator, size
     assert(alloc_err == .None)
     alloc^ = virtual.arena_allocator(arena)
     return alloc_err
+}
+
+//////////////////////////////////////////////////////
+// note(isak): collision utils
+
+point_in_rect :: proc(p: vec2, r: Rect) -> bool {
+    is_within_x := p.x >= (r.x) && p.x <= (r.x + r.w);
+    is_within_y := p.y >= (r.y) && p.y <= (r.y + r.h);
+    return is_within_x && is_within_y;
+}
+
+point_in_circle :: proc(p, c: vec2, r: f32) -> bool {
+    return linalg.distance(p, c) <= r
+}
+
+rect_from_points :: proc "contextless" (from, to: vec2) -> Rect {
+    return {
+        min(from.x, to.x),
+        min(from.y, to.y),
+        abs(from.x - to.x),
+        abs(from.y - to.y)
+    }
 }
 
 //////////////////////////////////////////////////////
@@ -148,20 +178,30 @@ vec4 :: linalg.Vector4f32
 mat3 :: linalg.Matrix3x3f32
 mat4 :: linalg.Matrix4x4f32
 
+// note(isak): GPU transforms, not particularly useful for cpu operations before they're
+// converted to mat3
 Transform :: linalg.Matrix4x3f32
+
+transform_to_mat3 :: proc "contextless" (t: Transform) -> mat3 {
+    return {
+        t[0][0], t[1][0], t[2][0],
+        t[0][1], t[1][1], t[2][1],
+        t[0][2], t[1][2], t[2][2]
+    }
+}
+
+mat3_rotation :: proc "contextless" (th: f32) -> mat3 {
+    return {
+        math.cos(th), -math.sin(th), 0,
+        math.sin(th), math.cos(th), 0,
+        0, 0, 1
+    }
+}
 
 line_normal :: proc "contextless" (from_to: vec2) -> vec2 {
     return linalg.normalize(linalg.vector2_orthogonal(from_to))
 }
 
-rect_from_points :: proc "contextless" (from, to: vec2) -> Rect {
-    return {
-        min(from.x, to.x),
-        min(from.y, to.y),
-        abs(from.x - to.x),
-        abs(from.y - to.y)
-    }
-}
 
 transform_from_bounds :: proc "contextless" (r: vec4, aspect_ratio: f32) -> Transform {
     center: vec2 = { r.x + r.z * 0.5, r.y + r.w * 0.5 }
@@ -173,12 +213,6 @@ transform_from_bounds :: proc "contextless" (r: vec4, aspect_ratio: f32) -> Tran
         0.0, 0.0, 1.0,
         0.0, 0.0, 0.0,
     }
-}
-
-point_in_rect :: proc(p: vec2, r: Rect) -> bool {
-    is_within_x := p.x >= (r.x) && p.x <= (r.x + r.w);
-    is_within_y := p.y >= (r.y) && p.y <= (r.y + r.h);
-    return is_within_x && is_within_y;
 }
 
 identity_transform :: Transform {
@@ -193,4 +227,4 @@ fullscreen_transform :: Transform {
     0, 2, -1,
     0, 0, 1,
     0, 0, 0,
-} 
+}

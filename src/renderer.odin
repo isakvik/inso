@@ -31,12 +31,18 @@ Quad :: struct {
     color:     u32,
     tex_index: u32,
     angle:     f32,
-    padding:   [1]u32
+    __padding:   [1]u32
 }
 
 Slider_Vertex :: struct {
     pos: vec3,
     __padding: u32,
+}
+
+Mesh_Vertex :: struct {
+    pos: vec3,
+    norm: vec3,
+    uv: vec2,
 }
 
 
@@ -136,20 +142,29 @@ renderer_init :: proc() {
         },
         logger = {func = slog.func},
     })
-
-    err: Shader_Error
-    window.shaders[.QUAD], err = shader_init(quad_vs_path, quad_fs_path, context.temp_allocator)
-    assert(err == .NONE)
-    window.pipelines[.QUAD] = sg.make_pipeline(quad_pipeline())
-
-    window.shaders[.SLIDER], err = shader_init(slider_vs_path, slider_fs_path, context.temp_allocator)
-    assert(err == .NONE)
-    window.pipelines[.SLIDER] = sg.make_pipeline(slider_pipeline())
     
-    window.shaders[.TEXT], err = shader_init(text_vs_path, text_fs_path, context.temp_allocator)
-    assert(err == .NONE)
-    window.pipelines[.TEXT] = sg.make_pipeline(text_pipeline())
+    queue.init(&window.shaders, 128)
+    queue.init(&window.pipelines, 128)
 
+    {
+        quad_shader, err := shader_init(quad_vs_path, quad_fs_path, context.temp_allocator)
+        assert(err == .NONE)
+        queue.push(&window.shaders, quad_shader)
+        queue.push(&window.pipelines, sg.make_pipeline(quad_pipeline_desc()))
+    }
+    {
+        slider_shader, err := shader_init(slider_vs_path, slider_fs_path, context.temp_allocator)
+        assert(err == .NONE)
+        queue.push(&window.shaders, slider_shader)
+        queue.push(&window.pipelines, sg.make_pipeline(slider_pipeline_desc()))
+    }
+    {
+        text_shader, err := shader_init(text_vs_path, text_fs_path, context.temp_allocator)
+        assert(err == .NONE)
+        queue.push(&window.shaders, text_shader)
+        queue.push(&window.pipelines, sg.make_pipeline(text_pipeline_desc()))
+    }
+    
     window.framebuffers[.SLIDERS] = fbo_init(1, 1, i32(window.rect.w), i32(window.rect.h), gl.RGBA8)
     
 
@@ -231,6 +246,19 @@ renderer_cleanup :: proc() {
 }
 
 
+r_create_static_store :: proc($T: typeid, count: int, alloc: runtime.Allocator) -> ^GL_Buffer(T) {
+    result := new(GL_Buffer(T))
+    sbo_init_ptr(result, count)
+    return result
+}
+
+r_create_dynamic_store :: proc($T: typeid, count: int, alloc: runtime.Allocator) -> ^GL_Triple_Buffer(T) {
+    result := new(GL_Triple_Buffer(T))
+    tbo_init_ptr(&result, count)
+    return result
+}
+
+
 //////////////////////////////////////////////////////
 // note(isak): shader api (program api)
 
@@ -243,8 +271,7 @@ Shader_Error :: enum {
 
 Shader :: struct {
     shader: sg.Shader,
-    vs_path, fs_path: string,
-    uniform_desc: [8]sg.Shader_Uniform_Block
+    vs_path, fs_path: string
 }
 
 shader_init :: proc(vs_path, fs_path: string, alloc: runtime.Allocator = context.temp_allocator) -> (Shader, Shader_Error) {
@@ -293,6 +320,11 @@ shader_reinit :: proc(shader: ^Shader, alloc: runtime.Allocator = context.temp_a
     return err
 }
 
+shader_delete :: proc(shader: ^Shader) {
+    sg.destroy_shader(shader.shader)
+    shader.shader = sg.Shader{}
+}
+
 pipeline_reinit :: proc(pipeline: ^sg.Pipeline, pipeline_desc: sg.Pipeline_Desc) {
     sg.destroy_pipeline(pipeline^)
     pipeline^ = sg.make_pipeline(pipeline_desc)
@@ -313,21 +345,12 @@ Command_Type :: enum(u8) {
     SCISSOR_MODE,
 }
 
-Command_Mode_Type :: enum(u8) {
-    QUAD_UV,
-    TEXT,
-}
-
 Command_Header :: struct {
     command_type: Command_Type
 }
 
 Command_Push_Transform :: struct {
     transform: Transform
-}
-
-Command_Set_Mode :: struct {
-    mode: Command_Mode_Type
 }
 
 Command_Draw :: struct {
@@ -401,20 +424,12 @@ _command_consume :: proc(cmd_queue: ^queue.Queue(u8), $T: typeid) -> ^T {
 //////////////////////////////////////////////////////
 // note(isak): core renderer api
 
-_r_push_ssbo :: proc(cmd: Command_Bind_SSBO) {
-    if cmd.slot != .NONE {
-        window.renderer.new_draw_on_next_push = true
-        window.renderer.current_ssbo_binds[cmd.slot] = cmd
-        command_push_bind_ssbo(cmd)
-    }
-}
-
-
 r_clear :: proc() {
+    window.renderer.new_draw_on_next_push = true
     command_push_clear()
 }
 
-r_draw :: proc(index_offset: u32, index_count: i32, instance_count: i32 = 1, base_instance: u32 = 0) {
+r_push_draw :: proc(index_offset: u32, index_count: i32, instance_count: i32 = 1, base_instance: u32 = 0) {
     command_push_draw({
         index_offset = index_offset,
         index_count = index_count,
@@ -452,6 +467,14 @@ _r_get_ssbo_cmd_from_sbo :: proc(sbo: ^GL_Buffer($T), bind_slot: Shader_SSBO_Bin
 }
 _r_get_ssbo_cmd_from_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_slot: Shader_SSBO_Bind_Slot) -> Command_Bind_SSBO {
     return Command_Bind_SSBO{ tbo.id, bind_slot, tbo.size, tbo.buffers[tbo.current_index].offset }
+}
+
+_r_push_ssbo :: proc(cmd: Command_Bind_SSBO) {
+    if cmd.slot != .NONE {
+        window.renderer.new_draw_on_next_push = true
+        window.renderer.current_ssbo_binds[cmd.slot] = cmd
+        command_push_bind_ssbo(cmd)
+    }
 }
 
 r_bind_sbo :: proc(sbo: ^GL_Buffer($T), bind_index: Shader_SSBO_Bind_Slot) {
@@ -508,13 +531,13 @@ _r_bind_layer :: proc(layer: Layer) {
 }
 
 r_push_layer :: proc(layer: Layer,    
-    cmd_framebuffer: Command_Bind_Framebuffer = window.renderer.current_framebuffer,
-    cmd_pipeline: Command_Bind_Pipeline = window.renderer.current_pipeline,
+    framebuffer: Command_Bind_Framebuffer = window.renderer.current_framebuffer,
+    pipeline: Command_Bind_Pipeline = window.renderer.current_pipeline,
     transform: Transform = window.renderer.current_global_data.transform,
     scissor_region: Command_Scissor_Mode = window.renderer.current_scissor
 ) {
     _r_bind_layer(layer)
-    r_push_current_state(cmd_framebuffer, cmd_pipeline, transform, scissor_region)
+    r_push_current_state(framebuffer, pipeline, transform, scissor_region)
 }
 
 r_push_current_state :: proc(
@@ -646,7 +669,7 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 case .BIND_PIPELINE: {
                     cmd := _command_consume(&command_queue, Command_Bind_Pipeline)
 
-                    sg.apply_pipeline(window.pipelines[cmd.pipeline])
+                    sg.apply_pipeline(window.pipelines.data[cmd.pipeline])
                     
                     if (trace) { fmt.println("  pipeline", cmd.pipeline) }
                 }
@@ -693,11 +716,11 @@ r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, u
                           color: Color, tex_index: u32, angle: f32 = 0) {
     assert(window.renderer.current_draw != nil)
 
-    if geometry.count + 4 > MAX_BATCH_VERTICES {
+    if geometry.count + 1 > MAX_BATCH_VERTICES {
         batch_flush(&window.renderer)
     }
     if window.renderer.new_draw_on_next_push {
-        r_draw(
+        r_push_draw(
             index_offset = u32(geometry.count) * 6, 
             index_count = 0
         )
@@ -826,4 +849,3 @@ rect_translate_to_inner :: proc(inner, outer: Rect) -> Rect {
         h = inner.h * outer.h
     }
 }
-

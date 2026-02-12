@@ -38,6 +38,10 @@ buffer_push_slice :: proc(buf: ^Buffer($T), t_slice: []T) {
     buf.count += len(t_slice)
 }
 
+buffer_clear :: proc(buf: ^Buffer($T)) {
+    buf.count = 0
+}
+
 //////////////////////////////////////////////////////
 // note(isak): uniform buffer object
 
@@ -83,20 +87,23 @@ GL_Buffer :: struct(T: typeid) {
     wait_count: u64 // note(isak): just unused debug info
 }
 
-sbo_init :: proc($T: typeid, count: int) -> GL_Buffer(T) {
-    result: GL_Buffer(T)
-    gl.CreateBuffers(1, &result.id)
+sbo_init_ptr :: proc(buf: ^GL_Buffer($T), count: int) {
+    gl.CreateBuffers(1, &buf.id)
     
-    result.count = count
-    result.size = count * size_of(T)
+    buf.count = count
+    buf.size = count * size_of(T)
     
     flags := u32(gl.MAP_WRITE_BIT | gl.MAP_PERSISTENT_BIT | gl.MAP_COHERENT_BIT)
     create_flags := flags | gl.DYNAMIC_STORAGE_BIT
 
-    gl.NamedBufferStorage(result.id, result.size, nil, create_flags)
-    mapped_ptr := gl.MapNamedBufferRange(result.id, 0, result.size, flags)
-    result.data = slice.from_ptr(cast(^T) mapped_ptr, count)
+    gl.NamedBufferStorage(buf.id, buf.size, nil, create_flags)
+    mapped_ptr := gl.MapNamedBufferRange(buf.id, 0, buf.size, flags)
+    buf.data = slice.from_ptr(cast(^T) mapped_ptr, count)
+}
 
+sbo_init :: proc($T: typeid, count: int) -> GL_Buffer(T) {
+    result: GL_Buffer(T)
+    sbo_init_ptr(&result, count)
     return result
 }
 
@@ -159,24 +166,28 @@ Synced_Buffer :: struct(T: typeid) {
 }
 
 
-tbo_init :: proc($T: typeid, count: int) -> GL_Triple_Buffer(T) {
-    result: GL_Triple_Buffer(T)
-    gl.CreateBuffers(1, &result.id)
+tbo_init_ptr :: proc(buf: ^GL_Triple_Buffer($T), count: int) {
+    gl.CreateBuffers(1, &buf.id)
     
-    result.count = 0
-    result.size = count * size_of(T)
+    buf.count = 0
+    buf.size = count * size_of(T)
     flags := u32(gl.MAP_WRITE_BIT | gl.MAP_PERSISTENT_BIT | gl.MAP_COHERENT_BIT)
-    gl.NamedBufferStorage(result.id, result.size * _pbo_multiple_count, nil, flags)
-    mapped_ptr := gl.MapNamedBufferRange(result.id, 0, result.size * _pbo_multiple_count, flags)
+    gl.NamedBufferStorage(buf.id, buf.size * _pbo_multiple_count, nil, flags)
+    mapped_ptr := gl.MapNamedBufferRange(buf.id, 0, buf.size * _pbo_multiple_count, flags)
 
     mapped_slices := slice.from_ptr(cast(^T) mapped_ptr, count * _pbo_multiple_count)
     for i in 0..<_pbo_multiple_count {
-        result.buffers[i] = { 
+        buf.buffers[i] = { 
             data = mapped_slices[count * i:], // might have some alignment issues on some types?
-            offset = result.size * i,
+            offset = buf.size * i,
             sync = nil
         }
     }
+}
+
+tbo_init :: proc($T: typeid, count: int) -> GL_Triple_Buffer(T) {
+    result: GL_Triple_Buffer(T)
+    tbo_init_ptr(&result, count)
     return result
 }
 

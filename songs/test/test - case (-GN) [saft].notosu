@@ -1,3 +1,10 @@
 notosu file format v1
 
-EntryPoint: test.lua
+[General]
+LuaEntryPoint: test.lua
+
+[Shaders]
+wave
+ VertexShader: builtin.quad
+ FragmentShader: quad_wave.fs.glsl
+ SSBO: builtin.quad

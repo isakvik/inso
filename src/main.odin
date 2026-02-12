@@ -3,25 +3,23 @@ package notosu
 import "base:runtime"
 import "core:container/queue"
 import "core:fmt"
+import "core:log"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
-import "core:mem/virtual"
 import os "core:os/os2"
-import "core:path/filepath"
-import "core:strings"
+import "core:sys/windows"
 import "core:time"
+import vmem "core:mem/virtual"
 
 import lua "vendor:lua/5.4"
-import miniaudio "vendor:miniaudio"
 import mu "vendor:microui"
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
 
-
 /*
-note(isak):
+todo(isak):
 
 communication layer:
 core runtime info such as map time and objects
@@ -30,7 +28,6 @@ core runtime info such as map time and objects
     are these just defined as lua metatables?
 - expose rendering and resource api
 
--- todos
 
 general:
 ui core 
@@ -68,37 +65,43 @@ memory_arena_names := [?]string {
     "Command buffer[DEBUG]",
 }
 
-memory: struct {
+Memory_Arenas :: enum {
     // note(isak): never cleared. used instead of odin's regular arena to keep track of our allocations
-    global_allocator: runtime.Allocator,
-    global_arena: virtual.Arena,
-
+    GLOBAL,
+    
     // note(isak): this is to be used for mapset runtime data, such as timing state, judgements, etc. (fill in)
     // cleared on mapset reload/unload
-    mapset_allocator: runtime.Allocator,
-    mapset_arena: virtual.Arena,
-
+    MAPSET,
+    
     // note(isak): this is to be used for graphical entity data, "unbounded" since it's written to by
     // game logic and scripts. cleared on mapset reload/unload
-    element_allocator: runtime.Allocator,
-    element_arena: virtual.Arena,
+    ENTITIES,
     
-    // cleared on frame end
-    frame_allocator: runtime.Allocator,
-    frame_arena: virtual.Arena,
+    // note(isak): temporary allocator. cleared on frame end
+    FRAME,
+}
+
+memory: struct {
+    allocs: [Memory_Arenas]runtime.Allocator,
+    arenas: [Memory_Arenas]vmem.Arena,
+    
+    global_backing_alloc: runtime.Allocator,
+    global_tracker: mem.Tracking_Allocator,
+    
     command_buffer_allocators: [Layer]runtime.Allocator,
-    command_buffer_arenas: [Layer]virtual.Arena,
+    command_buffer_arenas: [Layer]vmem.Arena,
 }
 
 // note(isak): this should take care of error printing
 memory_init :: proc() -> runtime.Allocator_Error {
-    _ = init_growing_arena(&memory.global_arena, &memory.global_allocator)
-    _ = init_growing_arena(&memory.mapset_arena, &memory.mapset_allocator)
-    _ = init_growing_arena(&memory.frame_arena, &memory.frame_allocator)
-    _ = init_growing_arena(&memory.element_arena, &memory.element_allocator)
+    using memory
+    init_tracked_growing_arena(&arenas[.GLOBAL], &allocs[.GLOBAL], &global_backing_alloc, &global_tracker) or_return
+    init_growing_arena(&arenas[.MAPSET], &allocs[.MAPSET]) or_return
+    init_growing_arena(&arenas[.ENTITIES], &allocs[.ENTITIES]) or_return
+    init_growing_arena(&arenas[.FRAME], &allocs[.FRAME]) or_return
 
     for layer in Layer {
-        _ = init_growing_arena(&memory.command_buffer_arenas[layer], &memory.command_buffer_allocators[layer])
+        init_growing_arena(&command_buffer_arenas[layer], &command_buffer_allocators[layer]) or_return
     }
     return .None
 }
@@ -145,13 +148,13 @@ window: struct {
     pass_action: sg.Pass_Action,
     swapchain: sg.Swapchain,
 
-    shaders: [Pipeline_ID]Shader,
-    pipelines: [Pipeline_ID]sg.Pipeline,
+    shaders: queue.Queue(Shader),
+    pipelines: queue.Queue(sg.Pipeline),
     framebuffers: [Framebuffer_ID]GL_Framebuffer,
     
     // note(isak): we make a distinction between static and dynamic geometry; dynamic can be streamed
     // data into efficiently by using a triple buffer setup, while static is single-buffered and is fit
-    // for bigger data that isn't updated as often (such as in a loading screen)
+    // for bigger data that isn't updated as often (such as during a loading screen)
 
     // note(isak): single quad buffer for deferred rendering quad store, unused
     fullscreen_store: GL_Buffer(Quad),
@@ -182,6 +185,7 @@ debug_info: struct {
 }
 
 window_init :: proc(rect: Rect) {
+    windows.SetProcessDPIAware()
     window.rect = rect
     window.handle = sdl.CreateWindow("notosu!", i32(rect.w), i32(rect.h), sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
     window.aspect_ratio = f32(rect.h) / f32(rect.w)
@@ -190,8 +194,8 @@ window_init :: proc(rect: Rect) {
     sdl.GL_SetAttribute(sdl.GL_CONTEXT_MINOR_VERSION, 6)
     sdl.SetHint(sdl.HINT_RENDER_DRIVER, "opengl")
 
-    sdl.GL_SetSwapInterval(1)
-    sdl.SetWindowSurfaceVSync(window.handle, 1)
+    sdl.GL_SetSwapInterval(0)
+    sdl.SetWindowSurfaceVSync(window.handle, 0)
 
     window.gl_context = sdl.GL_CreateContext(window.handle)
     gl.load_up_to(4, 6, sdl.gl_set_proc_address)
@@ -269,11 +273,6 @@ keyboard_next_frame :: proc() {
     mem.copy(keyboard.buttons, sdl_state, len(Keyboard_State))
 }
 
-osu_controller: struct {
-    k1, k2, m1, m2: Button_State,
-    k1_key, k2_key: sdl.Scancode, //TODO(yokes): add keybinding menu
-}
-
 rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
     if (event.type == sdl.EventType.KEY_DOWN) {
         rebind^ = event.key.scancode //TODO(yokes): this doesn't work, osu_controller.k1_key = event.key.scancode works
@@ -281,49 +280,23 @@ rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
     }
 }
 
-audio_ctx: struct {
-    engine: miniaudio.engine,
-    sound: miniaudio.sound,
-
-    device_id: sdl.AudioDeviceID,
-    obtained_spec: sdl.AudioSpec,
-    sample_frames: i32,
-}
-
-miniaudio_data_callback :: proc "c" (pUserData: rawptr, pStream: ^sdl.AudioStream, additional_amount, total_amount: i32) {
-    numSamples := additional_amount / size_of(f32)
-    numFrames := u64(numSamples / 2)
-    numFramesRead: u64
-    sound := transmute(^miniaudio.sound)pUserData
-    samples: [1024]f32
-    
-    miniaudio.data_source_read_pcm_frames(sound.pDataSource, raw_data(&samples), numFrames, &numFramesRead)
-    for &sample in samples {
-        sample *= 0.1
-    }
-
-    sdl.PutAudioStreamData(pStream, raw_data(&samples), i32(numFramesRead * size_of(f32) * 2))
-}
-
-
 lua_ctx: struct {
     state: ^lua.State
 }
 
 main :: proc() {
     _program_start_time = current_time()
-
+    
     if memory_init() != .None {
-        panic("memory init error")
+        panic("memory_init :: error")
     }
-    context.allocator = memory.global_allocator
-    context.temp_allocator = memory.frame_allocator
-
-    current_dir, dir_error := os.get_working_directory(context.allocator)
-    if strings.compare("build", filepath.base(current_dir)) == 0 {
-        os.set_working_directory(filepath.dir(current_dir))
-    }
-
+    context.allocator = memory.allocs[.GLOBAL]
+    context.temp_allocator = memory.allocs[.FRAME]
+    
+    app_init()
+   	context.logger = app.logger
+    defer app_cleanup()
+    
     /*
     lua_ctx.state = lua.L_newstate()
     defer lua.close(lua_ctx.state)
@@ -334,60 +307,21 @@ main :: proc() {
     lua.L_dostring(lua_ctx.state, script)
     */
 
-    if (!sdl.Init({.AUDIO, .VIDEO})) {
-        fmt.printfln("SDL init error: {}", sdl.GetError())
-        return
+    if (!sdl.Init({.VIDEO})) {
+        log.panic("SDL video init error:", sdl.GetError())
     }
 
     sound_enabled := false
-    if sound_enabled {
-        using audio_ctx
-        desiredSpec := sdl.AudioSpec{
-            freq = 48000,
-            format = .F32,
-            channels = 2
-        }
-    
-        device_id = sdl.OpenAudioDevice(sdl.AUDIO_DEVICE_DEFAULT_PLAYBACK, &desiredSpec)
-        if device_id == 0 {
-            fmt.printfln("SDL init error: {}", sdl.GetError())
-            return
-        }
-    
-        stream := sdl.CreateAudioStream(&desiredSpec, &desiredSpec); // Input and output specs can match initially
-    
-        sdl.GetAudioDeviceFormat(device_id, &obtained_spec, &sample_frames)
-    
-        engine_config := miniaudio.engine_config_init()
-        engine_config.channels = u32(obtained_spec.channels)
-        engine_config.sampleRate = u32(obtained_spec.freq)
-        engine_config.noDevice = true
-    
-        result := miniaudio.engine_init(&engine_config, &engine)
-        if (result != .SUCCESS) {
-            fmt.printf("Failed to initialize audio engine.")
-            return
-        }
-    
-        result = miniaudio.sound_init_from_file(&engine, "songs/test/test.mp3", {.STREAM}, nil, nil, &sound)
-        if (result != .SUCCESS) {
-            fmt.printf("Failed to initialize sound.")
-            return
-        }
-    
-        // Register the callback, passing a pointer to the sound object as user data
-        sdl.SetAudioStreamGetCallback(stream, miniaudio_data_callback, &sound);
-    
-        // Bind the stream to a logical audio device
-        sdl.BindAudioStreams(device_id, &stream, 1);
-        
-        sdl.ResumeAudioDevice(device_id)
-        miniaudio.sound_start(&sound)
-    }
 
-    window_init({w = 1280, h = 720})
+    window_init({w = 1024, h = 512})
     window.ui_enabled = true
     defer window_cleanup()
+    
+    audio_init()
+    assert(audio.ready)
+    defer audio_cleanup()
+    
+    audio_set_volume(0.05)
 
     renderer_init()
     renderer := &window.renderer
@@ -401,18 +335,33 @@ main :: proc() {
     
     load_skin_textures("skins/gn/")
 
-    builtin_shaders_watch := win32_init_directory_watch("shaders/")
+    shaders_watch := win32_init_directory_watch("shaders/")
 
     {
         ok: bool
         test_mapset_path := "songs/test/"
+        
         game.active_mapset, ok = mapset_open_for_editing(test_mapset_path)
         game.active_map = &game.active_mapset.osu_map
         if !ok {
-            fmt.println("tried to open mapset, but failed:", test_mapset_path)
+            log.error("tried to open mapset, but failed:", test_mapset_path)
         }
+        
+        os.change_directory(test_mapset_path)
+        defer os.change_directory(app.base_dir)
+        
+        game.beatmap.music = sound_stream_init(game.active_map.audio_filename)
+        sound_play(&game.beatmap.music)
+        if !ok {
+            log.error("tried to open map sound file, but failed:", test_mapset_path)
+        }
+        
+        log.info(game.active_map.audio_filename, "length in ms:", sound_get_length_ms(&game.beatmap.music))
     }
     
+    
+    
+    // note(isak): dependent on map load... make a more granular api for map load purposes
     prepare_textures_for_rendering()
 
     osu_on_init()
@@ -446,6 +395,8 @@ main :: proc() {
             for &button in mouse.buttons {
                 button.was_down = button.is_down
             }
+            
+            // todo(isak): game input should happen in a separate thread for input resolution purposes
 
             for sdl.PollEvent(&event) {
                 #partial switch event.type {
@@ -490,13 +441,13 @@ main :: proc() {
                     running = false
                 }
 
-                if is_held(osu_controller.m1) {
+                /*if is_down(osu_controller.m1) {
                     rebind_input(event, &osu_controller.k1_key)
                 }
 
-                if is_held(osu_controller.m2) {
+                if is_down(osu_controller.m2) {
                     rebind_input(event, &osu_controller.k2_key)
-                }
+                }*/
             }
 
             keyboard_next_frame()
@@ -507,11 +458,20 @@ main :: proc() {
 
             mouse.pos.x = mouse.pos.x - f32(xi)
             mouse.pos.y = mouse.pos.y - f32(yi)
-
+            
+            rect := rect_to_array(playfield_rect)
+            playfield_transform := transform_to_mat3(transform_from_bounds(rect, window.aspect_ratio))
+            
+            mouse_pt := vec3{mouse.pos.x, mouse.pos.y, 1.0}
+            mouse_pt.x -= (window.rect.w - window.rect.h) / 2
+            mouse_pt *= linalg.matrix3_inverse(playfield_transform) * transform_to_mat3(window.screenspace_transform)
+            
+            osu_controller.mouse_pos = mouse_pt.xy
+            
             mu.input_mouse_move(&window.ui_ctx, i32(mouse.pos.x), i32(mouse.pos.y))
         }
 
-        {   
+        {
             profiler_block_begin(.PREPARE_FRAME); defer profiler_block_end() 
             
             time_last_frame = time_current_frame
@@ -519,7 +479,6 @@ main :: proc() {
 
             // prepare drawing
             begin_frame(renderer)
-            
         }
         
         {   
@@ -539,19 +498,24 @@ main :: proc() {
                play, which in regular circumstances shouldn't matter, but in case of device errors we cannot advance 
             */
             
-            game.dt = time_current_frame - time_last_frame
+            dt := time_current_frame - time_last_frame
 
             r_push_layer(.BACKGROUND, transform = window.screenspace_transform)
-            osu_on_update()
+            osu_on_update(dt)
 
-            r_push_layer(.UI)
+            r_push_layer(.UI, pipeline = {builtin_pipeline(.QUAD)})
+            
             r_push_transform(window.screenspace_transform)
             
             cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 80, 80 }
             r_draw_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture(.CURSOR),
                 f32(time_since_beginning_of_program()*20))
-
+            
             r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
+            
+            pf_cur_rect: Rect = { osu_controller.mouse_pos.x, osu_controller.mouse_pos.y, 20, 20 }
+            r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, reserved_texture(.WHITE),
+                f32(time_since_beginning_of_program()*20))
             r_draw_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
         }
         
@@ -585,14 +549,14 @@ main :: proc() {
         }
 
         {
-            profiler_block_begin(.SWAP_FRAME); defer profiler_block_end() 
+            profiler_block_begin(.SWAP_FRAME); defer profiler_block_end()
             sdl.GL_SwapWindow(window.handle)
         }
         
         {
             profiler_block_begin(.BETWEEN_FRAMES); defer profiler_block_end() 
 
-            process_builtin_shader_changes(&builtin_shaders_watch)
+            process_builtin_shader_changes(&shaders_watch)
 
             if debug_info.display_frame_profiler {
                 profiler_write_texture_column(frame_count, window.profiler_texture)
@@ -604,7 +568,7 @@ main :: proc() {
             
             frame_count += 1
             
-            virtual.arena_free_all(&memory.frame_arena)
+            vmem.arena_free_all(&memory.arenas[.FRAME])
             for layer in Layer {
                 queue.clear(&window.renderer.layer_command_queues[layer])
             }
@@ -612,41 +576,40 @@ main :: proc() {
     }
 }
 
+_debug_ui_initialized: int
+
 write_debug_ui :: proc(ctx: ^mu.Context) {
     @static opts := mu.Options{.NO_CLOSE}
-
-    if mu.window(ctx, "饕餮尤魔 :3", {40, 40, 160, 110}, opts) {
+    init_opts := _debug_ui_initialized < 2 ? mu.Options{.AUTO_SIZE} : {}
+    _debug_ui_initialized += 1
+    
+    if mu.window(ctx, "饕餮尤魔 :3", {}, opts + init_opts) {
         win := mu.get_current_container(ctx)
 
         mu.layout_row(ctx, {54, -1}, 0)
         mu.label(ctx, "Time:")
-        timer_str: string
-        if game.play_timer_ms < 0 {
-            abs_time := abs(game.play_timer_ms)
-            min := math.floor(abs_time / 60000)
-            sec := math.mod(math.floor(abs_time / 1000), 60)
-            timer_str = fmt.tprintf("-%.0f:%2.0f:%3.0f", min, sec, math.mod_f64(abs_time, 1000))
-        } else {
-            min := math.floor(game.play_timer_ms / 60000)
-            sec := math.mod(math.floor(game.play_timer_ms / 1000), 60)
-            timer_str = fmt.tprintf("%.0f:%2.0f:%3.0f", min, sec, math.mod_f64(game.play_timer_ms, 1000))
-        }
+        
+        timer_str := time_ms_to_string(game.beatmap.music_time_ms)
         mu.label(ctx, timer_str)
         
         mu.layout_row(ctx, {54, -1}, 0)
         mu.label(ctx, "Time rate:")
-        mu.label(ctx, fmt.tprintf("%f%s", game.time_rate * (game.play_paused ? 0 : 1), game.play_paused ? " (paused)": ""))
+        mu.label(ctx, fmt.tprintf("%f%s", game.time_rate * (game.paused ? 0 : 1), game.paused ? " (paused)": ""))
         
-        mu.layout_row(ctx, {90, -1}, 0)
+        mu.layout_row(ctx, {100, 10, -1}, 0)
         mu.label(ctx, "Visible hitobjects:")
-        hobj_visibility := game.active_map.visible_hit_object_state
+        hobj_visibility := game.beatmap.visible_hit_object_state
         mu.label(ctx, fmt.tprintf("%i", hobj_visibility.latest_i - hobj_visibility.earliest_i - 1))
+        
+        mu.layout_row(ctx, {80, 10, -1}, 0)
+        mu.label(ctx, "Mouse keys:")
+        mu.label(ctx, osu_controller.mouse_keys_enabled ? "on" : "off")
     }
 }
 
 handle_debug_ui_events :: proc(ctx: ^mu.Context) {
     if is_key_pressed(.R) {
-        osu_restart_map(game.active_map)
+        osu_reload_map()
     }
     if is_key_pressed(.HOME) {
         game.time_rate = 1
@@ -668,10 +631,18 @@ handle_debug_ui_events :: proc(ctx: ^mu.Context) {
     }
     if is_key_pressed(.F4) {
         debug_info.display_memory_profiler = !debug_info.display_memory_profiler
+        
+        track := &memory.global_tracker
+        if len(track.allocation_map) > 0 {
+			fmt.eprintf("=== global allocator - %v allocations not freed: ===\n", len(track.allocation_map))
+			for _, entry in track.allocation_map {
+				fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
+			}
+		}
     }
 
     // note(isak): handle offscreen windows
-    if ctx.focus_id > 0 && is_held(mouse.buttons[.LEFT]) {
+    if ctx.focus_id > 0 && is_down(mouse.buttons[.LEFT]) {
         window.ui_dragging = true
     }
     if is_released(mouse.buttons[.LEFT]) {
@@ -769,12 +740,12 @@ begin_frame :: proc(renderer: ^Renderer) {
 
     r_set_shader_globals({
         transform = identity_transform,
-        circle_size_osupx = game.active_map.circle_radius_osupx,
-        time = f32(game.play_timer_ms)
+        circle_size_osupx = game.beatmap.circle_radius_osupx,
+        time = f32(game.beatmap.music_time_ms)
     })
 
     _r_bind_layer(.BACKGROUND)
-    r_bind_pipeline({.QUAD})
+    r_bind_pipeline({builtin_pipeline(.QUAD)})
     r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
     r_push_transform(identity_transform)
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
@@ -791,13 +762,13 @@ end_frame :: proc(renderer: ^Renderer) {
 process_builtin_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
     updated_systems := mapset_check_system_file_watch(watch)
     if updated_systems[.SHADERS] {
-        for &shader in window.shaders {
+        for &shader in window.shaders.data {
             shader_reinit(&shader)
         }
         fmt.println("reloaded builtin shaders")
 
-        pipeline_reinit(&window.pipelines[.QUAD], quad_pipeline())
-        pipeline_reinit(&window.pipelines[.SLIDER], slider_pipeline())
-        pipeline_reinit(&window.pipelines[.TEXT], text_pipeline())
+        pipeline_reinit(&window.pipelines.data[builtin_pipeline(.QUAD)], quad_pipeline_desc())
+        pipeline_reinit(&window.pipelines.data[builtin_pipeline(.SLIDER)], slider_pipeline_desc())
+        pipeline_reinit(&window.pipelines.data[builtin_pipeline(.TEXT)], text_pipeline_desc())
     }
 }

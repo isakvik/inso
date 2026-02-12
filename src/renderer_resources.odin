@@ -16,10 +16,30 @@ text_vs_path :: "shaders/text.vs.glsl"
 text_fs_path :: "shaders/text.fs.glsl"
 
 
-Pipeline_ID :: enum {
+// todo(isak): unused indexer, see texture_kind
+Pipeline_Kind :: enum u8 {
+    BUILTIN,
+    MAP_SPECIFIC,
+}
+Pipeline_Index :: struct {
+    kind: Pipeline_Kind,
+    index: u8,
+}
+
+Pipeline_ID :: u32
+
+Builtin_Pipeline_Slot :: enum {
     QUAD,
     SLIDER,
     TEXT
+}
+
+builtin_pipeline :: proc(s: Builtin_Pipeline_Slot) -> u32 {
+    return u32(s)
+}
+
+map_pipeline :: proc(s: u32) -> u32 {
+    return len(Builtin_Pipeline_Slot) + s
 }
 
 Framebuffer_ID :: enum {
@@ -45,8 +65,20 @@ Reserved_Texture_Slot :: enum u32 {
     SLIDER_FRAMEBUFFER
 }
 
-// note(isak): returns index into bindless texture buffer
 
+// todo(isak): unused, but it might be better to index with this just for invariant purposes
+Texture_Kind :: enum u32 {
+    RESERVED,
+    SKIN,
+    MAP,
+}
+
+Texture_Index :: struct {
+    kind: Texture_Kind,
+    index: u32
+}
+
+// note(isak): returns index into bindless texture buffer
 reserved_texture :: proc(slot: Reserved_Texture_Slot) -> u32 { return u32(slot) }
 
 skin_texture :: proc(skin_el: Skin_Element_Type) -> u32 { return u32(skin_el) + len(Reserved_Texture_Slot) }
@@ -57,10 +89,10 @@ map_texture :: proc(tex_id: u32) -> u32 { return tex_id + len(Reserved_Texture_S
 //////////////////////////////////////////////////////
 // note(isak): pipeline definitions
 
-quad_pipeline :: proc() -> sg.Pipeline_Desc {
+quad_pipeline_desc :: proc() -> sg.Pipeline_Desc {
     return {
         label = "builtin.quad",
-        shader = window.shaders[.QUAD].shader,
+        shader = window.shaders.data[builtin_pipeline(.QUAD)].shader,
         //index_type = .UINT16,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
@@ -78,10 +110,10 @@ quad_pipeline :: proc() -> sg.Pipeline_Desc {
     },
 }
 
-slider_pipeline :: proc() -> sg.Pipeline_Desc {
+slider_pipeline_desc :: proc() -> sg.Pipeline_Desc {
     return {
         label = "builtin.slider",
-        shader = window.shaders[.SLIDER].shader,
+        shader = window.shaders.data[builtin_pipeline(.SLIDER)].shader,
         //index_type = .UINT16,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
@@ -99,10 +131,10 @@ slider_pipeline :: proc() -> sg.Pipeline_Desc {
     }
 }
 
-text_pipeline :: proc() -> sg.Pipeline_Desc {
+text_pipeline_desc :: proc() -> sg.Pipeline_Desc {
     return {
         label = "builtin.text",
-        shader = window.shaders[.TEXT].shader,
+        shader = window.shaders.data[builtin_pipeline(.TEXT)].shader,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
         colors = {
@@ -150,8 +182,10 @@ prepare_textures_for_rendering :: proc() {
         num_elements += 1
     }
 
-    textures[num_elements] = game.active_mapset.texture_assets[game.active_map.bg_filename].tex_handle
-    num_elements += 1
+    for map_texture in game.active_mapset.textures.data {
+        textures[num_elements] = map_texture.tex_handle
+        num_elements += 1
+    }
 
     for i in 0..<num_elements {
         if textures[i] > 0 {
@@ -163,7 +197,7 @@ prepare_textures_for_rendering :: proc() {
 cleanup_textures_for_rendering :: proc() {
     textures := &window.texture_buffer.data
     
-    num_elements := len(Reserved_Texture_Slot) + len(Skin_Element_Type) + 1
+    num_elements := len(Reserved_Texture_Slot) + len(Skin_Element_Type) + game.active_mapset.textures.len
     for i in 0..<num_elements {
         if textures[i] > 0 {
             gl.MakeTextureHandleNonResidentARB(textures[i])

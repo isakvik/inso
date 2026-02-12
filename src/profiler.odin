@@ -147,24 +147,17 @@ profiler_push_memory_diag_text :: proc(renderer: ^Renderer) {
     x_inc_max: f32 = min(f32)
     
     // note(isak): arena section
-    arenas := [?]^virtual.Arena{ 
-        &memory.global_arena, 
-        &memory.mapset_arena, 
-        &memory.frame_arena,
-        &memory.element_arena,
-    }
-
-    for i in 0..<len(arenas) {
+    for arena, i in memory.arenas {
         unit_i: int
-        used_in_units := arenas[i].total_used
-        reserved_in_units := arenas[i].total_reserved
+        used_in_units := arena.total_used
+        reserved_in_units := arena.total_reserved
 
-        if arenas[i].total_reserved > mem.Kilobyte * 10 {
+        if arena.total_reserved > mem.Kilobyte * 10 {
             unit_i += 1
             used_in_units /= mem.Kilobyte
             reserved_in_units /= mem.Kilobyte
         }
-        if arenas[i].total_reserved > mem.Megabyte * 10 {
+        if arena.total_reserved > mem.Megabyte * 10 {
             unit_i += 1
             used_in_units /= mem.Kilobyte
             reserved_in_units /= mem.Kilobyte
@@ -181,8 +174,7 @@ profiler_push_memory_diag_text :: proc(renderer: ^Renderer) {
         x_inc = 0
     }
 
-    for i in 0..<len(arenas) {
-        arena := arenas[i]
+    for arena, i in memory.arenas {
         push_text(renderer, 
                   memory_arena_names[i],
                   pos_top_right + { -x_inc_max - 16 , y_spacing * f32(i)},
@@ -193,7 +185,7 @@ profiler_push_memory_diag_text :: proc(renderer: ^Renderer) {
     // note(isak): command buffer section
     x_inc = 0
     x_inc_max = min(f32)
-    pos_top_right.y += y_spacing * len(arenas)
+    pos_top_right.y += y_spacing * len(Memory_Arenas)
 
     for layer in Layer {
         unit_i: int

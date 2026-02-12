@@ -1,5 +1,6 @@
-package rb
+package ring_buffer
 
+import "base:builtin"
 import "base:runtime"
 import "core:math"
 _ :: runtime
@@ -22,11 +23,15 @@ init :: proc(using rb: ^$R/Ring_Buffer($T), capacity := DEFAULT_CAPACITY, alloca
     return err
 }
 
+destroy :: proc(using rb: ^$R/Ring_Buffer($T)) {
+    clear(rb)
+    delete(data)
+}
+
 clear :: proc(using rb: ^$R/Ring_Buffer($T)) {
     rb.cursor += rb.length
     rb.length = 0
 }
-
 
 
 // note(isak): beware the high precedence of the & operator

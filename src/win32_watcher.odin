@@ -10,7 +10,7 @@ win32_print_error :: proc() {
     }
 }
 
-
+MAX_PATH :: windows.MAX_PATH
 NOTIFY_BUFFER_SIZE :: 16 * 1024
 Win32_File_Notify_Info :: windows.FILE_NOTIFY_INFORMATION
 

@@ -1,16 +1,21 @@
 package notosu
 
-import "core:slice"
-import "core:container/queue"
+import "base:intrinsics"
+import "base:runtime"
+
+import q "core:container/queue"
+import "core:fmt"
+import "core:log"
 import "core:mem"
 import "core:mem/virtual"
-import "core:fmt"
 import os "core:os/os2"
 import "core:path/filepath"
-import "core:sys/windows"
+import "core:slice"
 import "core:strings"
 import "core:strconv"
-import "base:runtime"
+
+import "vendor:cgltf"
+import sg "vendor:sokol/gfx"
 
 /*
 mapset definition:
@@ -21,9 +26,6 @@ mapset definition:
 
 todo(isak): missing functionality:
     - mapset index; should enable quick lookup for song select stuff
-    - osu parsing
-        slider parsing
-        combocolors?
 
     - notosu definition and script running
 
@@ -32,16 +34,35 @@ Mapset :: struct {
     open: bool,
     folder_path: string,
     osu_map: Osu_Map,
-    texture_assets: map[string]Texture,
+    notosu_map: Notosu_Map,
+    
+    num_shaders: int,
+    textures: q.Queue(Texture),
+    texture_slot_by_name: map[string]u32,
+    shader_slot_by_name: map[string]u32,
+    
+    model_store: ^GL_Buffer(Mesh_Vertex),
 
     watch: Win32_Directory_Watch
 }
 
 Notosu_Map_System :: enum {
     OSU_FILE,
-    NOTOSU_FILES, // note(isak): this also includes scripts
+    NOTOSU_FILES,
+    SCRIPTS,
+    SHADERS
+}
+
+Notosu_Section_Header_Types :: enum {
+    HEADER,
+    GENERAL,
     SHADERS,
-    Count
+}
+
+notosu_section_headers := []string{
+    "",
+    "[General]",
+    "[Shaders]",
 }
 
 Osu_Section_Header_Types :: enum {
@@ -68,21 +89,41 @@ osu_section_headers := []string{
     "[HitObjects]",
 }
 
-
-mapset_cleanup_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
+mapset_free :: proc(mapset: ^Mapset) -> string {
     win32_close_directory_watch(&mapset.watch)
+    
+    for &texture in mapset.textures.data {
+        texture_delete(&texture)
+    }
+    for i in len(Builtin_Pipeline_Slot)..<window.pipelines.len {
+        sg.destroy_pipeline(window.pipelines.data[i])
+        shader_delete(&window.shaders.data[i])
+    }
+    window.pipelines.len = len(Builtin_Pipeline_Slot)
+    window.shaders.len = len(Builtin_Pipeline_Slot)
+    buffer_clear(&window.renderer.slider_instances)
+    
     mapset_path := strings.clone(mapset.folder_path, context.temp_allocator)
     
-    virtual.arena_free_all(&memory.element_arena)
-    virtual.arena_free_all(&memory.mapset_arena)
+    virtual.arena_free_all(&memory.arenas[.ENTITIES])
+    virtual.arena_free_all(&memory.arenas[.MAPSET])
+    
+    return mapset_path
+}
+
+mapset_free_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
+    mapset_path := mapset_free(mapset)
     reloaded_mapset, ok := mapset_open_for_editing(mapset_path)
     assert(ok)
     return reloaded_mapset
 }
 
+// note(isak): clones given path into mapset allocator
 mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
-    mapset_path := strings.clone(path, memory.mapset_allocator)
-    mapset, alloc_err := new(Mapset, memory.mapset_allocator)
+    context.allocator = memory.allocs[.MAPSET]
+    
+    mapset_path := strings.clone(path)
+    mapset, alloc_err := new(Mapset)
     assert(alloc_err == .None)
 
     if !os.exists(path) {
@@ -97,30 +138,89 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
     // note(isak): file contents cannot exit this function, don't leave strings
     files, io_err = os.read_dir(dir_handle, 1024, context.temp_allocator)
     defer mem.free_all(context.temp_allocator)
+    
+    os.change_directory(path)
+    defer os.change_directory(app.base_dir)
 
-    mapset.texture_assets = make(map[string]Texture, len(files) * 2, memory.mapset_allocator)
+    q.init(&mapset.textures)
+    mapset.texture_slot_by_name = make(map[string]u32, max(len(files), 16))
+    mapset.shader_slot_by_name = make(map[string]u32, max(len(files), 16))
     
     for file in files {
         extension := filepath.ext(file.name)
         switch extension {
             case ".notosu": {
-                filedata, file_err := read_entire_file_to_string(file.fullpath, context.temp_allocator)
-                mapset_parse_notosu(mapset, filedata)
+                filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
+                mapset.notosu_map = mapset_parse_notosu(mapset, filedata)
             }
             case ".osu": {
-                filedata, file_err := read_entire_file_to_string(file.fullpath, context.temp_allocator)
+                filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
                 mapset.osu_map = mapset_parse_osu(filedata)
             }
             case ".png", ".jpg": {
-                tex_key := strings.clone(file.name, memory.mapset_allocator)
-                tex, file_err := texture_from_file(file.fullpath)
-                mapset.texture_assets[tex_key] = tex
+                tex_key := strings.clone(file.name, memory.allocs[.MAPSET])
+                tex, file_err := texture_from_file(file.name)
+                mapset.texture_slot_by_name[tex_key] = u32(mapset.textures.len)
+                q.push_back(&mapset.textures, tex)
+            } 
+            case ".gltf": {
+                model_store := load_model(file.name)
             }
         }
     }
 
-    mapset.watch = win32_init_directory_watch(path)
+    cur_path, err := os.get_working_directory(context.temp_allocator)
+    mapset.watch = win32_init_directory_watch(cur_path)
+    log.info("initialized directory watch for path:", cur_path)
+    
     return mapset, true
+}
+
+load_model :: proc(path: string) -> ^GL_Buffer(Mesh_Vertex) {
+    cgltf_alloc :: proc "c" (user: rawptr, size: uint) -> rawptr {
+        alloc := memory.allocs[.FRAME]
+        context = runtime.default_context()
+        buf, err := alloc.procedure(alloc.data, .Alloc, int(size), align_of(f32), nil, 0)
+        return raw_data(buf)
+    }
+    cgltf_free :: proc "c" (user, ptr: rawptr) {}
+    
+    options := cgltf.options{
+        memory = {
+            alloc_func = cgltf_alloc,
+            free_func = cgltf_free
+        }
+    }
+    
+    path_cstr := strings.clone_to_cstring(path)
+    data, result := cgltf.parse_file(options, path_cstr)
+    assert(result == .success)
+    result = cgltf.load_buffers(options, data, path_cstr)
+    assert(result == .success)
+    
+    store := r_create_static_store(Mesh_Vertex, 36, memory.allocs[.MAPSET])
+    
+    for primitive in data.meshes[0].primitives[:] {
+        for attrib in primitive.attributes {
+            attr_bufview := attrib.data.buffer_view
+            #partial switch attrib.type {
+            case .position:
+                for pos, i in slice.from_ptr(transmute(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
+                    store.data[i].pos = pos
+                }
+            case .normal:
+                for norm, i in slice.from_ptr(transmute(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
+                    store.data[i].norm = norm
+                }
+            case .texcoord:
+                for uv, i in slice.from_ptr(transmute(^vec2)attr_bufview.buffer.data, int(attrib.data.count)) {
+                    store.data[i].uv = uv
+                }
+            }
+        }
+    }
+    
+    return store
 }
 
 mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu_Map_System]bool {
@@ -129,11 +229,11 @@ mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu
     win32_get_directory_changes(watch)
     if watch.notify_bytes_written > 0 {
         
-        wfilename_buf: [windows.MAX_PATH]u16
+        wfilename_buf: [MAX_PATH]u16
         for true {
             notify, wfilename_len := win32_watch_get_next_notify(watch, &wfilename_buf)
             if wfilename_len > 0 {
-                filename_buf: [windows.MAX_PATH]u8
+                filename_buf: [MAX_PATH]u8
                 for i in 0..<wfilename_len {
                     filename_buf[i] = u8(wfilename_buf[i])
                 }
@@ -142,7 +242,7 @@ mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu
                 switch extension {
                     case ".osu": updated_systems[.OSU_FILE] = true
                     case ".glsl": updated_systems[.SHADERS] = true
-                    case ".lua": fallthrough
+                    case ".lua": updated_systems[.SCRIPTS] = true
                     case ".notosu": updated_systems[.NOTOSU_FILES] = true
                     // todo(isak) asset files... eventually
                 }
@@ -163,14 +263,98 @@ mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu
 }
 
 
-mapset_parse_notosu :: proc(mapset: ^Mapset, data: string) {
-    fmt.println(data)
+mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map {
+    result: Notosu_Map
+    context.allocator = memory.allocs[.MAPSET]
+    
+    // todo(isak): test code that should be replaced with notosu shader section reads
+    
+    builtin_quad_vs_path := strings.concatenate({app.base_dir, "/", quad_vs_path}, context.allocator)
+    shader, err := shader_init(builtin_quad_vs_path, "quad_wave.fs.glsl")
+    assert(err == .NONE)
+    
+    mapset.shader_slot_by_name["wave"] = u32(mapset.num_shaders)
+    q.push(&window.shaders, shader)
+    
+    custom_desc := quad_pipeline_desc()
+    custom_desc.shader = shader.shader
+    q.push(&window.pipelines, sg.make_pipeline(custom_desc))
+    
+    
+    mesh_desc := sg.Pipeline_Desc{
+        label = "builtin.quad",
+        shader = window.shaders.data[builtin_pipeline(.QUAD)].shader,
+        //index_type = .UINT16,
+        cull_mode = .NONE,
+        blend_color = {1.0, 1.0, 1.0, 1.0},
+        colors = {
+            0 = { blend = {
+                enabled = true,
+                op_alpha = .SUBTRACT,
+                src_factor_rgb = .SRC_ALPHA,
+                src_factor_alpha = .SRC_ALPHA,
+                dst_factor_rgb = .ONE_MINUS_SRC_ALPHA,
+                dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
+            }}
+        },
+        depth = {compare = .LESS_EQUAL, write_enabled = true},
+    }
+    
+    c: Consumer = {
+        str = notosu_file
+    }
+    
+    section_index := 0
+    section_loop: for {
+        if c.at >= len(c.str) {
+            break
+        }
+        
+        lines := consume_section(&c)
+        defer section_index += 1
+        
+        if len(lines) == 0 {
+            fmt.println(notosu_section_headers[section_index], ":: section was blank")
+            continue
+        }
+        
+        if section_index == 0 {
+            fmt.println("::", lines[0])
+            continue
+        }
+        
+        expected_happy_case := section_index
+        for lines[0] != notosu_section_headers[section_index] {
+            section_index = (section_index + 1) % int(max(Notosu_Section_Header_Types))
+            if section_index == expected_happy_case {
+                fmt.println(notosu_section_headers[expected_happy_case], ":: unhandled section")
+                continue section_loop
+            }
+        }
+        
+        #partial switch Notosu_Section_Header_Types(section_index) {
+        case .GENERAL:
+            for i in 1..<len(lines) {
+                key, value := get_key_value(lines[i])
+                ok: bool
+                switch key {
+                    case "LuaEntryPoint": result.lua_entry_point = strings.clone(value)
+                }
+            }
+        case .SHADERS:
+        
+        case: 
+            unreachable()
+        }
+    }
+    
+    return result
 }
 
 
 mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
     result: Osu_Map
-    context.allocator = memory.mapset_allocator
+    context.allocator = memory.allocs[.MAPSET]
     
     c: Consumer = {
         str = osu_file
@@ -240,11 +424,8 @@ mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
                     switch key {
                         case "HPDrainRate": result.diff_hp_drain, ok = strconv.parse_f64(value); assert(ok)
                         case "CircleSize": result.diff_circle_size, ok = strconv.parse_f64(value); assert(ok)
-                            result.circle_radius_osupx = convert_circle_size_to_radius_osupx(result.diff_circle_size)
                         case "OverallDifficulty": result.diff_overall_difficulty, ok = strconv.parse_f64(value); assert(ok)
-                        case "ApproachRate": 
-                            result.diff_approach_rate, ok = strconv.parse_f64(value); assert(ok)
-                            result.preempt_ms = convert_approach_rate_to_preempt_ms(result.diff_approach_rate)
+                        case "ApproachRate": result.diff_approach_rate, ok = strconv.parse_f64(value); assert(ok)
                         case "SliderMultiplier": result.diff_slider_velocity, ok = strconv.parse_f64(value); assert(ok)
                         case "SliderTickRate": result.diff_slider_tickrate, ok = strconv.parse_int(value); assert(ok)
                     }
@@ -255,14 +436,17 @@ mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
                         path_from := strings.index_byte(lines[i+1], '"')
                         path_to := strings.last_index_byte(lines[i+1], '"')
 
+                        if path_from == -1 || path_to == -1 {
+                            continue
+                        }
                         result.bg_filename = strings.clone(lines[i+1][path_from+1:path_to])
                     }
                 }
             case .HITOBJECTS:
                 result.hit_objects = make_slice([]Hit_Object, len(lines) - 1)
 
-                slider_temp_queue: queue.Queue(Slider_Path)
-                queue.init(&slider_temp_queue, 1024, context.temp_allocator)
+                slider_temp_queue: q.Queue(Slider_Path)
+                q.init(&slider_temp_queue, 1024, context.temp_allocator)
                 
                 for i in 1..<len(lines) {
                     hobj := &result.hit_objects[i - 1]
@@ -308,7 +492,7 @@ mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
                         }
                     }
 
-                    if hobj.type == .CIRCLE {
+                    if hobj.type != .SLIDER {
                         hobj.end_time_ms = hobj.start_time_ms
                     }
                     
@@ -319,7 +503,7 @@ mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
                             write_instances_from_path(&window.renderer.slider_instances, &slider)
                                                       
                         hobj.slider_path_index = int(slider_temp_queue.len)
-                        queue.append(&slider_temp_queue, slider)
+                        q.append(&slider_temp_queue, slider)
                         
 
                         // todo(isak) slider time calculation... requires redline & greenline handling. formula:
@@ -368,12 +552,12 @@ mapset_parse_osu_slider_params :: proc(hobj: ^Hit_Object, slider: ^Slider_Path, 
                 // edgesets
         }
     }
-    assert(slider.type != .NONE, fmt.tprintln("slider parse error: unknown slidertype ::", params))
+    assert(slider.type != .NONE, fmt.tprintln("slider parse error :: unknown slidertype:", params))
 }
 
 @(require_results)
 mapset_parse_osu_slider_nodes :: proc(value: string, alloc: mem.Allocator = context.allocator) -> []Slider_Node {
-    temp := virtual.arena_temp_begin(&memory.frame_arena)
+    temp := virtual.arena_temp_begin(&memory.arenas[.FRAME])
     defer virtual.arena_temp_end(temp)
 
     sections := strings.split(value, "|", virtual.arena_allocator(temp.arena))
@@ -386,9 +570,9 @@ mapset_parse_osu_slider_nodes :: proc(value: string, alloc: mem.Allocator = cont
         node := &result[sec_i]
 
         sep_at := strings.index_byte(section, ':')
-        assert(sep_at > 0, fmt.tprintfln("slider parse error: unsized node ::", value))
-        node.x, ok = strconv.parse_f32(section[:sep_at]); assert(ok, fmt.tprintfln("slider parse error: node.x is not a number ::", value))
-        node.y, ok = strconv.parse_f32(section[sep_at + 1:]); assert(ok, fmt.tprintfln("slider parse error: node.y is not a number ::", value))
+        assert(sep_at > 0, fmt.tprintfln("slider parse error :: unsized node:", value))
+        node.x, ok = strconv.parse_f32(section[:sep_at]); assert(ok, fmt.tprintfln("slider parse error :: node.x is not a number:", value))
+        node.y, ok = strconv.parse_f32(section[sep_at + 1:]); assert(ok, fmt.tprintfln("slider parse error :: node.y is not a number:", value))
     }
 
     return result

@@ -355,11 +355,44 @@ get_visible_hobj_iterator :: proc(state: ^Visibility_State, time: f64) -> []Hit_
 split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> []Slider_Curve {
     // todo(isak): we just make a curve for each node here for testing, but we have to read nodes to figure out 
     // which ones are red nodes and split by those
-    result := make_slice([]Slider_Curve, len(path.nodes))
-    for i in 0..<len(path.nodes) {
-        result[i] = path.nodes[i:i+1]
-    }
+    result := make_slice([]Slider_Curve, 1)
+    result[0] = path.nodes[:]
     return result
+}
+
+// https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L878
+// note(yokes): "t" is for time which means we need to calculate the time it takes to get "d" distance beforehand
+calculate_bezier_point_from_time :: proc(t: f64, curve: Slider_Curve) {
+    
+    //int i := 0;
+    for point in curve {
+        
+    }
+
+
+}
+
+bezier_to_piecewise_linear :: proc(curve: Slider_Curve, degree: int) {
+    assert(degree < 1, fmt.tprintfln("curve degree error: lower than 1 ::", degree))
+    
+}
+
+base_dist : f32 = 2.5
+write_instances_from_straight :: proc(instance_buf: ^Buffer(vec2), start_pos: [2]f32, end_pos: [2]f32, curve_distance: f64) -> f64 {
+    remaining_distance := curve_distance
+    h := (end_pos.y - start_pos.y) / (end_pos.x - start_pos.x)
+    y := base_dist / (math.pow(math.pow(h, 2) + 1, 0.5))
+    x := base_dist * h / (math.pow(math.pow(h, 2) + 1, 0.5))
+    iterations := abs((end_pos.x - start_pos.x) / x)
+    xy_vector : [2]f32 = {x, y}
+    for i in 0..<iterations {
+        buffer_push(instance_buf, start_pos + i * xy_vector)
+    }
+
+    travelled_distance := math.pow(math.pow(end_pos.y - start_pos.y, 2) + math.pow(end_pos.x - start_pos.x, 2), 0.5)
+    buffer_push(instance_buf, start_pos + iterations * xy_vector)
+    remaining_distance = curve_distance - f64(travelled_distance)
+    return remaining_distance
 }
 
 write_instances_from_curve :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, type: Slider_Path_Type, curve_distance: f64) -> f64 {
@@ -367,29 +400,18 @@ write_instances_from_curve :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Cu
     if type == .ARC {
         is_parallel: bool
 
-        base_dist : f32 = 2.5
         if is_parallel {
-            start_pos := curve[0]
-            end_pos := curve[2]
-            h := (end_pos.y - start_pos.y) / (end_pos.x - start_pos.x)
-            y := base_dist / (math.pow(math.pow(h, 2) + 1, 0.5))
-            x := base_dist * h / (math.pow(math.pow(h, 2) + 1, 0.5))
-            iterations := abs((end_pos.x - start_pos.x) / x)
-            xy_vector : [2]f32 = {x, y}
-            for i in 0..<iterations {
-                buffer_push(instance_buf, start_pos + i * xy_vector)
-            }
-
-            travelled_distance := math.pow(math.pow(end_pos.y - start_pos.y, 2) + math.pow(end_pos.x - start_pos.x, 2), 0.5)
-            buffer_push(instance_buf, start_pos + iterations * xy_vector)
-            remaining_distance = curve_distance - f64(travelled_distance)
+            remaining_distance = write_instances_from_straight(instance_buf, curve[0], curve[2], curve_distance)
         } else {
             //todo(yokes): instance_buf points between nodes (arc)
+            remaining_distance = write_instances_from_straight(instance_buf, curve[0], curve[1], curve_distance)
         }
     } else if type == .LINEAR || len(curve) < 3 {
         //todo(yokes): instance_buf points between nodes (linear) copy "is_parrallel" code or something
+        remaining_distance = write_instances_from_straight(instance_buf, curve[0], curve[1], curve_distance)
     } else {
         //todo(yokes): instance_buf points inbetween nodes (bezier) https://en.wikipedia.org/wiki/B%C3%A9zier_curve
+        remaining_distance = write_instances_from_straight(instance_buf, curve[0], curve[1], curve_distance)
     }
 
     return remaining_distance
@@ -409,7 +431,10 @@ write_instances_from_path :: proc(
     for curve in path.curves {
         buffer_push(instance_buf, curve[0])
     }
-    if true {
+
+    // todo(yokes): test code with straight sliders (start- and endpoint)
+    //buffer_push(instance_buf, [[100,100], [200, 200]])
+    if false {
         return instance_buf.count - instance_offset, instance_offset
     }
 
@@ -424,6 +449,9 @@ write_instances_from_path :: proc(
             distance_to_cover -= distance_covered_by_curve
         }
     }
+    if true {
+        return instance_buf.count - instance_offset, instance_offset
+    }
     
 
     // todo(yokes): if we still have distance left over but zero curves, a linear path needs to cover
@@ -436,16 +464,15 @@ write_instances_from_path :: proc(
 }
 
 
-//NOTE(yokes): API for in-game button input
-
+//note(yokes): API for in-game button_held input
 is_held :: proc(button: Button_State) -> bool {
     return button.is_down
 }
-
+//note(yokes): API for in-game button_pressed input
 is_pressed :: proc(button: Button_State) -> bool {
     return button.is_down && !button.was_down
 }
-
+//note(yokes): API for in-game button_release input
 is_released :: proc(button: Button_State) -> bool {
     return !button.is_down && button.was_down
 }

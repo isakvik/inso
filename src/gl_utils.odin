@@ -38,6 +38,10 @@ buffer_push_slice :: proc(buf: ^Buffer($T), t_slice: []T) {
     buf.count += len(t_slice)
 }
 
+buffer_clear :: proc(buf: ^Buffer($T)) {
+    buf.count = 0
+}
+
 //////////////////////////////////////////////////////
 // note(isak): uniform buffer object
 

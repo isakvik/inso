@@ -5,6 +5,7 @@ import "base:runtime"
 
 import q "core:container/queue"
 import "core:fmt"
+import "core:log"
 import "core:mem"
 import "core:mem/virtual"
 import os "core:os/os2"
@@ -100,11 +101,12 @@ mapset_free :: proc(mapset: ^Mapset) -> string {
     }
     window.pipelines.len = len(Builtin_Pipeline_Slot)
     window.shaders.len = len(Builtin_Pipeline_Slot)
+    buffer_clear(&window.renderer.slider_instances)
     
     mapset_path := strings.clone(mapset.folder_path, context.temp_allocator)
     
-    virtual.arena_free_all(&memory.entity_arena)
-    virtual.arena_free_all(&memory.mapset_arena)
+    virtual.arena_free_all(&memory.arenas[.ENTITIES])
+    virtual.arena_free_all(&memory.arenas[.MAPSET])
     
     return mapset_path
 }
@@ -118,7 +120,7 @@ mapset_free_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
 
 // note(isak): clones given path into mapset allocator
 mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
-    context.allocator = memory.mapset_allocator
+    context.allocator = memory.allocs[.MAPSET]
     
     mapset_path := strings.clone(path)
     mapset, alloc_err := new(Mapset)
@@ -136,6 +138,9 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
     // note(isak): file contents cannot exit this function, don't leave strings
     files, io_err = os.read_dir(dir_handle, 1024, context.temp_allocator)
     defer mem.free_all(context.temp_allocator)
+    
+    os.change_directory(path)
+    defer os.change_directory(app.base_dir)
 
     q.init(&mapset.textures)
     mapset.texture_slot_by_name = make(map[string]u32, max(len(files), 16))
@@ -145,32 +150,35 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
         extension := filepath.ext(file.name)
         switch extension {
             case ".notosu": {
-                filedata, file_err := read_entire_file_to_string(file.fullpath, context.temp_allocator)
+                filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
                 mapset.notosu_map = mapset_parse_notosu(mapset, filedata)
             }
             case ".osu": {
-                filedata, file_err := read_entire_file_to_string(file.fullpath, context.temp_allocator)
+                filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
                 mapset.osu_map = mapset_parse_osu(filedata)
             }
             case ".png", ".jpg": {
-                tex_key := strings.clone(file.name, memory.mapset_allocator)
-                tex, file_err := texture_from_file(file.fullpath)
+                tex_key := strings.clone(file.name, memory.allocs[.MAPSET])
+                tex, file_err := texture_from_file(file.name)
                 mapset.texture_slot_by_name[tex_key] = u32(mapset.textures.len)
                 q.push_back(&mapset.textures, tex)
             } 
             case ".gltf": {
-                model_store := load_model(file.fullpath)
+                model_store := load_model(file.name)
             }
         }
     }
 
-    mapset.watch = win32_init_directory_watch(path)
+    cur_path, err := os.get_working_directory(context.temp_allocator)
+    mapset.watch = win32_init_directory_watch(cur_path)
+    log.info("initialized directory watch for path:", cur_path)
+    
     return mapset, true
 }
 
 load_model :: proc(path: string) -> ^GL_Buffer(Mesh_Vertex) {
     cgltf_alloc :: proc "c" (user: rawptr, size: uint) -> rawptr {
-        alloc := memory.frame_allocator
+        alloc := memory.allocs[.FRAME]
         context = runtime.default_context()
         buf, err := alloc.procedure(alloc.data, .Alloc, int(size), align_of(f32), nil, 0)
         return raw_data(buf)
@@ -190,7 +198,7 @@ load_model :: proc(path: string) -> ^GL_Buffer(Mesh_Vertex) {
     result = cgltf.load_buffers(options, data, path_cstr)
     assert(result == .success)
     
-    store := r_create_static_store(Mesh_Vertex, 36, memory.mapset_allocator)
+    store := r_create_static_store(Mesh_Vertex, 36, memory.allocs[.MAPSET])
     
     for primitive in data.meshes[0].primitives[:] {
         for attrib in primitive.attributes {
@@ -257,7 +265,7 @@ mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu
 
 mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map {
     result: Notosu_Map
-    context.allocator = memory.mapset_allocator
+    context.allocator = memory.allocs[.MAPSET]
     
     // todo(isak): test code that should be replaced with notosu shader section reads
     
@@ -346,7 +354,7 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
 
 mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
     result: Osu_Map
-    context.allocator = memory.mapset_allocator
+    context.allocator = memory.allocs[.MAPSET]
     
     c: Consumer = {
         str = osu_file
@@ -416,11 +424,8 @@ mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
                     switch key {
                         case "HPDrainRate": result.diff_hp_drain, ok = strconv.parse_f64(value); assert(ok)
                         case "CircleSize": result.diff_circle_size, ok = strconv.parse_f64(value); assert(ok)
-                            result.circle_radius_osupx = convert_circle_size_to_radius_osupx(result.diff_circle_size)
                         case "OverallDifficulty": result.diff_overall_difficulty, ok = strconv.parse_f64(value); assert(ok)
-                        case "ApproachRate": 
-                            result.diff_approach_rate, ok = strconv.parse_f64(value); assert(ok)
-                            result.preempt_ms = convert_approach_rate_to_preempt_ms(result.diff_approach_rate)
+                        case "ApproachRate": result.diff_approach_rate, ok = strconv.parse_f64(value); assert(ok)
                         case "SliderMultiplier": result.diff_slider_velocity, ok = strconv.parse_f64(value); assert(ok)
                         case "SliderTickRate": result.diff_slider_tickrate, ok = strconv.parse_int(value); assert(ok)
                     }
@@ -487,7 +492,7 @@ mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
                         }
                     }
 
-                    if hobj.type == .CIRCLE {
+                    if hobj.type != .SLIDER {
                         hobj.end_time_ms = hobj.start_time_ms
                     }
                     
@@ -552,7 +557,7 @@ mapset_parse_osu_slider_params :: proc(hobj: ^Hit_Object, slider: ^Slider_Path, 
 
 @(require_results)
 mapset_parse_osu_slider_nodes :: proc(value: string, alloc: mem.Allocator = context.allocator) -> []Slider_Node {
-    temp := virtual.arena_temp_begin(&memory.frame_arena)
+    temp := virtual.arena_temp_begin(&memory.arenas[.FRAME])
     defer virtual.arena_temp_end(temp)
 
     sections := strings.split(value, "|", virtual.arena_allocator(temp.arena))

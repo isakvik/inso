@@ -177,8 +177,8 @@ element_push :: proc(buf: ^q.Queue(Element), el: Element) -> Element_ID {
     return Element_ID(buf.len) - 1
 }
 
-write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Animation), osu_map: ^Osu_Map) {
-    ar_ms := osu_map.preempt_ms
+write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Animation)) {
+    ar_ms := game.beatmap.preempt_ms
 
     q.reserve(elements, len(Element_Type))
     elements.len += len(Element_Type)
@@ -326,7 +326,7 @@ write_default_entities_from_map :: proc(osu_map: ^Osu_Map) {
 
     final_hobj_time_ms: f64
     i: int
-    for &hobj in osu_map.hit_objects {
+    for &hobj in game.beatmap.hit_objects {
         final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
         
         hobj.gfx_handles = reserve_handles(&game.gfx_handles, 4) or_continue
@@ -337,7 +337,7 @@ write_default_entities_from_map :: proc(osu_map: ^Osu_Map) {
                 flags = {.ACTIVE},
                 element = element_id(el_type),
                 pos = hobj.pos,
-                size = osu_map.circle_radius_osupx * 2,
+                size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
                 color = with_alpha(color_white, 1),
                 start_time_ms = hobj.start_time_ms - preempt,
@@ -354,8 +354,6 @@ write_default_entities_from_map :: proc(osu_map: ^Osu_Map) {
             hobj.gfx_handles[i] = push_entity(e)
         }
     }
-
-    osu_map.length_ms = final_hobj_time_ms + 1000
 }
 
 render_entity :: proc(e: ^Entity, at_time: f64) -> bool {
@@ -416,6 +414,22 @@ render_entity :: proc(e: ^Entity, at_time: f64) -> bool {
     return true
 }
 
+process_and_draw_temp_gfx_handles :: proc() {
+    for handle in game.temp_gfx_refs.current {
+        e := slotmap.get(&game.entities, handle) or_continue
+        if .ACTIVE in e.flags {
+            was_in_time := render_entity(e, game.beatmap.music_time_ms)
+            if was_in_time {
+                append(game.temp_gfx_refs.next, handle)
+            } else {
+                //fmt.println("temp entity expired", e.id)
+            }
+        } else {
+            //fmt.println("inactive entity", e.id)
+        }
+    }
+    sb.swap(&game.temp_gfx_refs)
+}
 
 render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     // todo(isak): generate partial instance draws (snaking) and the bounding quads like the smart cookie you are
@@ -425,7 +439,7 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
     r_clear()
 
-    pf_size: f32 = osu_playfield_size_osupx / game.active_map.circle_radius_osupx
+    pf_size: f32 = osu_playfield_size_osupx / game.beatmap.circle_radius_osupx
 
     r_push_transform(transform_from_bounds({0,0,pf_size,pf_size}, window.aspect_ratio))
 
@@ -442,26 +456,6 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     r_draw_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.4), reserved_texture(.SLIDER_FRAMEBUFFER))
 }
 
-render_timeline :: proc(ui: ^UI_Timeline) {
-    using game
-    preempt := active_map.preempt_ms
-    map_len_with_preempt := active_map.length_ms + preempt
-
-    active_map_leadin_fract := f32(max(0, -play_timer_ms - preempt) / (active_map.total_lead_in_ms - preempt))
-    active_map_finish_fract := f32((play_timer_ms + active_map.total_lead_in_ms) / map_len_with_preempt)
-    
-    r_push_transform(window_get_clipspace_transform())
-    
-    r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, 1, ui.display_h_px / window.rect.h}, 
-                     .BOTTOM_LEFT, with_alpha(color_white, 0.1))
-    r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, active_map_finish_fract, ui.display_h_px / window.rect.h}, 
-                     .BOTTOM_LEFT, with_alpha(color_white, 0.4))
-    if active_map_leadin_fract > 0 {
-        r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, active_map_leadin_fract, ui.display_h_px / window.rect.h}, 
-                         .BOTTOM_LEFT, with_alpha(color_lime_green, 0.2))
-    }
-}
-
 test_bg :: proc(bg_path: string) -> slotmap.Handle {
     bg_entity := Entity{
         element = element_push(&game.elements, Element{
@@ -476,8 +470,8 @@ test_bg :: proc(bg_path: string) -> slotmap.Handle {
         anchor = .CENTER,
         color = {30,30,30,255},
         
-        start_time_ms = -game.active_map.total_lead_in_ms,
-        end_time_ms = game.active_map.length_ms
+        start_time_ms = game.beatmap.start_time_ms,
+        end_time_ms = game.beatmap.length_ms
     }
     return slotmap.insert(&game.entities, bg_entity)
 }

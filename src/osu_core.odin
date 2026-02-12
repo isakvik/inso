@@ -23,18 +23,19 @@ osu_slider_curve_points_separation :: f32(2.5)
 // note(isak): state struct. keep it lean, put large data fields in arenas
 
 game: struct {
+    dt: f64, 
     active_mapset: ^Mapset,
     active_map: ^Osu_Map,
     active_skin: [Skin_Element_Type]Skin_Element,
     
-    // note(isak): map game logic fields
     mode: Game_Mode,
-    play_timer_ms: f64,
-    play_paused: bool,
-    time_rate: f64,
-    dt: f64,
     
-    map_bgm: Sound,
+    // note(isak): map game logic fields
+    
+    beatmap: Beatmap,
+    
+    paused: bool,
+    time_rate: f64,
     
     // note(isak): map game view fields
 
@@ -165,24 +166,14 @@ Osu_Map :: struct {
         
         bg_filename: string,
     },
-
-    // todo(isak): this is game logic stuff; it should go in some game play state rather than here
-
+    
     hit_objects: []Hit_Object,
-    visible_hit_object_state: Visibility_State,
-
     slider_paths: []Slider_Path,
-    length_ms: f64,
-    total_lead_in_ms: f64,
-
-    preempt_ms: f64,
-    circle_radius_osupx: f32,
 }
 
 osu_on_init :: proc() {
     game.next_entity_id = 1
     game.time_rate = 1.0
-    game.play_timer_ms = -500
     game.mode = .PLAY
     
     ui_init_timeline(&game.ui_timeline)
@@ -190,30 +181,36 @@ osu_on_init :: proc() {
     osu_controller.k1_key = sdl.Scancode.Z
     osu_controller.k2_key = sdl.Scancode.X
 
-    osu_on_map_init()
+    osu_on_beatmap_init()
 }
 
-osu_on_map_init :: proc() {
-    // map logic init
-    
-    game.active_map.total_lead_in_ms = game.active_map.preempt_ms + game.active_map.audio_lead_in
-    
-    game.play_timer_ms = 1800
-    sound_set_position_ms(&game.map_bgm, 1800)
-    
+osu_on_beatmap_init :: proc() {
     // map graphics init
     
-    q.init(&game.elements, 1024, memory.mapset_allocator)
+    q.init(&game.elements, 1024, memory.allocs[.MAPSET])
     q.append(&game.elements, null_element)
-    q.init(&game.animations, 1024, memory.mapset_allocator)
+    q.init(&game.animations, 1024, memory.allocs[.MAPSET])
 
-    write_default_elements(&game.elements, &game.animations, game.active_map)
+    write_default_elements(&game.elements, &game.animations)
     
-    rb.init(&game.gfx_handles, 8192, memory.entity_allocator)
+    rb.init(&game.gfx_handles, 8192, memory.allocs[.ENTITIES])
     game.gfx_handles.length = cap(game.gfx_handles.data)
     
     sb.init(&game.temp_gfx_refs, 8192)
     slotmap.init(&game.entities, 8192)
+    
+    // map logic init
+    
+    game.beatmap.start_time_ms = -(game.beatmap.preempt_ms + game.active_map.audio_lead_in)
+    game.beatmap.circle_radius_osupx = convert_circle_size_to_radius_osupx(game.active_map.diff_circle_size)
+    game.beatmap.preempt_ms = convert_approach_rate_to_preempt_ms(game.active_map.diff_approach_rate)
+    
+    game.beatmap.length_ms = game.active_map.hit_objects[len(game.active_map.hit_objects) - 1].end_time_ms + 1000
+    
+    game.beatmap.hit_objects = game.active_map.hit_objects
+    game.beatmap.slider_paths = game.active_map.slider_paths
+    
+    sound_set_position_ms(&game.beatmap.music, 1800)
     
     // todo(isak): opinionated entity pushing; needs to be rewritten to take scriptable objects and skin metrics
     // into account
@@ -222,7 +219,7 @@ osu_on_map_init :: proc() {
 
 // note(isak): unused
 osu_on_map_destroy :: proc() {
-    for &hobj in game.active_map.hit_objects {
+    for &hobj in game.beatmap.hit_objects {
         hobj.gfx_handles = {}
     }
     
@@ -232,38 +229,43 @@ osu_on_map_destroy :: proc() {
 }
 
 osu_reload_map :: proc() {
+    osu_on_map_destroy()
+    
     game.mode = .PLAY
-    game.active_mapset.osu_map.visible_hit_object_state = {}
+    game.beatmap.visible_hit_object_state = {}
     
     game.active_mapset = mapset_free_and_reload(game.active_mapset)
     game.active_map = &game.active_mapset.osu_map
-    osu_on_map_init()
+    osu_on_beatmap_init()
 }
 
 
-osu_on_update :: proc() {
-    map_dt := game.dt * game.time_rate * (game.play_paused ? 0 : 1)
+osu_on_update :: proc(dt: f64) {
+    game.dt = dt
+    map_dt := dt * game.time_rate * (game.paused ? 0 : 1)
 
     updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
     if updated_systems[.OSU_FILE] {
         osu_reload_map()
     }
     
-    game.play_timer_ms += map_dt * 1000
-    if game.play_timer_ms > game.active_map.length_ms {
-        game.play_timer_ms = clamp(-game.active_map.total_lead_in_ms, -1800, 0)
+    if game.beatmap.music_time_ms > game.beatmap.length_ms {
+        game.beatmap.music_time_ms = clamp(game.beatmap.start_time_ms, -1800, 0)
         osu_reload_map()
     }
     
-    // game logic
+    // note(isak): game logic - map
 
-    map_time := game.play_timer_ms
+    // note(isak): map play time is determined by the sound library (and whether we were able to play music or not), 
+    // but song time interpolation is required because BASS reports play position in buffer size granularity
+    music_time := get_music_position_interpolated_ms()
+    game.beatmap.music_time_ms = music_time
     
     #partial switch game.mode {
-        case .PLAY: osu_handle_play_input_events()
+        case .PLAY: handle_play_input_events()
     }
     
-    hobj_it := get_visible_hobj_iterator(&game.active_map.visible_hit_object_state, game.play_timer_ms)
+    hobj_it := get_visible_hobj_iterator(&game.beatmap.visible_hit_object_state, music_time)
     
     playfield_transform := transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
     
@@ -273,7 +275,7 @@ osu_on_update :: proc() {
                 continue
             }
             
-            if !point_in_circle(osu_controller.mouse_pos, hobj.pos, game.active_map.circle_radius_osupx) {
+            if !point_in_circle(osu_controller.mouse_pos, hobj.pos, game.beatmap.circle_radius_osupx) {
                 continue
             }
             
@@ -284,35 +286,35 @@ osu_on_update :: proc() {
                 flags = {.ACTIVE},
                 element = element_id(.CLICKED_HIT_CIRCLE_OVERLAY),
                 pos = hobj.pos,
-                size = game.active_map.circle_radius_osupx * 2,
+                size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
                 color = color_white,
-                start_time_ms = map_time,
-                end_time_ms = map_time + 600
+                start_time_ms = music_time,
+                end_time_ms = music_time + 600
             })
             hobj.gfx_handles[1] = push_entity({
                 flags = {.ACTIVE},
                 element = element_id(.CLICKED_HIT_CIRCLE),
                 pos = hobj.pos,
-                size = game.active_map.circle_radius_osupx * 2,
+                size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
                 color = color_purple,
-                start_time_ms = map_time,
-                end_time_ms = map_time + 600
+                start_time_ms = music_time,
+                end_time_ms = music_time + 600
             })
             
             push_entity_temp({
                 flags = {.ACTIVE},
                 element = element_id(.JUDGMENT),
                 pos = hobj.pos,
-                size = [2]f32{0.5, 1} * game.active_map.circle_radius_osupx,
+                size = [2]f32{0.5, 1} * game.beatmap.circle_radius_osupx,
                 anchor = .CENTER,
                 color = color_sky_blue,
                 
                 angle_vel = 360.0,
                 
-                start_time_ms = map_time,
-                end_time_ms = map_time + 600
+                start_time_ms = music_time,
+                end_time_ms = music_time + 600
             })
         }
     }
@@ -322,11 +324,11 @@ osu_on_update :: proc() {
     r_push_layer(.HIT_OBJECTS)
     
     for hobj, i in hobj_it {
-        if map_time < hobj.start_time_ms - game.active_map.preempt_ms || hobj.end_time_ms < map_time {
+        if music_time < hobj.start_time_ms - game.beatmap.preempt_ms || hobj.end_time_ms < music_time {
             continue
         }
         if hobj.type == .SLIDER {
-            render_slider(&window.renderer, &game.active_map.slider_paths[hobj.slider_path_index])
+            render_slider(&window.renderer, &game.beatmap.slider_paths[hobj.slider_path_index])
         }
     }
     
@@ -336,11 +338,11 @@ osu_on_update :: proc() {
     // note(isak): we render hitobject elements back to front for correct blending
     // todo(isak): @speed - long iteration, but seems necessary to not cull gfx objects outside an 
     // object's given start/end time window
-    #reverse for &hobj in game.active_map.hit_objects {
+    #reverse for &hobj in game.beatmap.hit_objects {
         #reverse for handle in hobj.gfx_handles {
             e := slotmap.get(&game.entities, handle) or_continue
             if .ACTIVE in e.flags {
-                render_entity(e, map_time)
+                render_entity(e, music_time)
             }
         }
     }
@@ -350,45 +352,13 @@ osu_on_update :: proc() {
     // render ui
     // todo(isak): "screens" implementation for determining relevant UI components?
 
-    ui_update_timeline(&game.ui_timeline)
+    seek_to_ms: f64
+    if ui_update_timeline(&game.ui_timeline, &seek_to_ms) {
+        sound_set_position_ms(&game.beatmap.music, seek_to_ms)
+    }
     render_timeline(&game.ui_timeline)
     
     render_input_display()
-    
-    fmt.println(sound_get_position_ms(&game.map_bgm))
-}
-
-process_and_draw_temp_gfx_handles :: proc() {
-    for handle in game.temp_gfx_refs.current {
-        e := slotmap.get(&game.entities, handle) or_continue
-        if .ACTIVE in e.flags {
-            in_time := render_entity(e, game.play_timer_ms)
-            if in_time {
-                append(game.temp_gfx_refs.next, handle)
-            } else {
-                fmt.println("temp entity expired", e.id)
-            }
-        } else {
-            fmt.println("inactive entity", e.id)
-        }
-    }
-    sb.swap(&game.temp_gfx_refs)
-}
-
-osu_handle_play_input_events :: proc() {
-    if is_key_pressed(.ESCAPE) || is_key_pressed(.SPACE) {
-        game.play_paused = !game.play_paused
-    }
-    if is_key_pressed(.F10) {
-        osu_controller.mouse_keys_enabled = !osu_controller.mouse_keys_enabled
-    }
-    
-    osu_controller.k1.is_down = keyboard.buttons[osu_controller.k1_key]
-    osu_controller.k1.was_down = keyboard.buttons_prev_frame[osu_controller.k1_key]
-    osu_controller.k2.is_down = keyboard.buttons[osu_controller.k2_key]
-    osu_controller.k2.was_down = keyboard.buttons_prev_frame[osu_controller.k2_key]
-    osu_controller.m1 = mouse.buttons[.LEFT]
-    osu_controller.m2 = mouse.buttons[.RIGHT]
 }
 
 mapset_texture :: proc(name: string) -> u32 {
@@ -408,7 +378,7 @@ get_visible_hobj_iterator :: proc(state: ^Visibility_State, time: f64) -> []Hit_
     result: []Hit_Object
     updated_from_index := state.earliest_i
 
-    hit_objects := game.active_map.hit_objects
+    hit_objects := game.beatmap.hit_objects
     if len(hit_objects) > 0 {
         looking_for_finished_objects := true
         count_until_next_unstarted_hobj: int
@@ -416,7 +386,7 @@ get_visible_hobj_iterator :: proc(state: ^Visibility_State, time: f64) -> []Hit_
 
         for hobj, i in hit_objects[state.earliest_i:] {
             count_until_next_unstarted_hobj = i
-            if time < hobj.start_time_ms - game.active_map.preempt_ms {
+            if time < hobj.start_time_ms - game.beatmap.preempt_ms {
                 includes_final_index = 0
                 break
             }
@@ -494,21 +464,6 @@ write_instances_from_path :: proc(
 
 //////////////////////////////////////////////////////
 // NOTE(yokes): in-game button input api
-
-// todo(isak): needs testing
-valid_key_press :: proc() -> bool {
-    if osu_controller.mouse_keys_enabled {
-        if is_pressed(osu_controller.k1) && !is_down(osu_controller.m1) ||
-            is_pressed(osu_controller.k2) && !is_down(osu_controller.m2) {
-            return true
-        }
-        
-        return is_pressed(osu_controller.m1) && !is_down(osu_controller.k1) || 
-            is_pressed(osu_controller.m2) && !is_down(osu_controller.k2)
-    } else {
-        return is_pressed(osu_controller.k1) || is_pressed(osu_controller.k2)
-    }
-}
 
 is_down :: proc(button: Button_State) -> bool {
     return button.is_down

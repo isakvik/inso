@@ -65,37 +65,43 @@ memory_arena_names := [?]string {
     "Command buffer[DEBUG]",
 }
 
-memory: struct {
+Memory_Arenas :: enum {
     // note(isak): never cleared. used instead of odin's regular arena to keep track of our allocations
-    global_allocator: runtime.Allocator,
-    global_arena: vmem.Arena,
-
+    GLOBAL,
+    
     // note(isak): this is to be used for mapset runtime data, such as timing state, judgements, etc. (fill in)
     // cleared on mapset reload/unload
-    mapset_allocator: runtime.Allocator,
-    mapset_arena: vmem.Arena,
-
+    MAPSET,
+    
     // note(isak): this is to be used for graphical entity data, "unbounded" since it's written to by
     // game logic and scripts. cleared on mapset reload/unload
-    entity_allocator: runtime.Allocator,
-    entity_arena: vmem.Arena,
+    ENTITIES,
     
-    // cleared on frame end
-    frame_allocator: runtime.Allocator,
-    frame_arena: vmem.Arena,
+    // note(isak): temporary allocator. cleared on frame end
+    FRAME,
+}
+
+memory: struct {
+    allocs: [Memory_Arenas]runtime.Allocator,
+    arenas: [Memory_Arenas]vmem.Arena,
+    
+    global_backing_alloc: runtime.Allocator,
+    global_tracker: mem.Tracking_Allocator,
+    
     command_buffer_allocators: [Layer]runtime.Allocator,
     command_buffer_arenas: [Layer]vmem.Arena,
 }
 
 // note(isak): this should take care of error printing
 memory_init :: proc() -> runtime.Allocator_Error {
-    init_growing_arena(&memory.global_arena, &memory.global_allocator) or_return
-    init_growing_arena(&memory.mapset_arena, &memory.mapset_allocator) or_return
-    init_growing_arena(&memory.frame_arena, &memory.frame_allocator) or_return
-    init_growing_arena(&memory.entity_arena, &memory.entity_allocator) or_return
+    using memory
+    init_tracked_growing_arena(&arenas[.GLOBAL], &allocs[.GLOBAL], &global_backing_alloc, &global_tracker) or_return
+    init_growing_arena(&arenas[.MAPSET], &allocs[.MAPSET]) or_return
+    init_growing_arena(&arenas[.ENTITIES], &allocs[.ENTITIES]) or_return
+    init_growing_arena(&arenas[.FRAME], &allocs[.FRAME]) or_return
 
     for layer in Layer {
-        init_growing_arena(&memory.command_buffer_arenas[layer], &memory.command_buffer_allocators[layer]) or_return
+        init_growing_arena(&command_buffer_arenas[layer], &command_buffer_allocators[layer]) or_return
     }
     return .None
 }
@@ -284,8 +290,8 @@ main :: proc() {
     if memory_init() != .None {
         panic("memory_init :: error")
     }
-    context.allocator = memory.global_allocator
-    context.temp_allocator = memory.frame_allocator
+    context.allocator = memory.allocs[.GLOBAL]
+    context.temp_allocator = memory.allocs[.FRAME]
     
     app_init()
    	context.logger = app.logger
@@ -334,23 +340,23 @@ main :: proc() {
     {
         ok: bool
         test_mapset_path := "songs/test/"
-        os.change_directory(test_mapset_path)
-        defer os.change_directory(app.base_dir)
         
-        cur_path, err := os.get_working_directory(context.temp_allocator)
-        game.active_mapset, ok = mapset_open_for_editing(cur_path)
+        game.active_mapset, ok = mapset_open_for_editing(test_mapset_path)
         game.active_map = &game.active_mapset.osu_map
         if !ok {
             log.error("tried to open mapset, but failed:", test_mapset_path)
         }
         
-        game.map_bgm = sound_stream_init(game.active_map.audio_filename)
-        sound_play(&game.map_bgm)
+        os.change_directory(test_mapset_path)
+        defer os.change_directory(app.base_dir)
+        
+        game.beatmap.music = sound_stream_init(game.active_map.audio_filename)
+        sound_play(&game.beatmap.music)
         if !ok {
             log.error("tried to open map sound file, but failed:", test_mapset_path)
         }
         
-        log.info(game.active_map.audio_filename, "length in ms:", sound_get_length_ms(&game.map_bgm))
+        log.info(game.active_map.audio_filename, "length in ms:", sound_get_length_ms(&game.beatmap.music))
     }
     
     
@@ -492,10 +498,10 @@ main :: proc() {
                play, which in regular circumstances shouldn't matter, but in case of device errors we cannot advance 
             */
             
-            game.dt = time_current_frame - time_last_frame
+            dt := time_current_frame - time_last_frame
 
             r_push_layer(.BACKGROUND, transform = window.screenspace_transform)
-            osu_on_update()
+            osu_on_update(dt)
 
             r_push_layer(.UI, pipeline = {builtin_pipeline(.QUAD)})
             
@@ -562,7 +568,7 @@ main :: proc() {
             
             frame_count += 1
             
-            vmem.arena_free_all(&memory.frame_arena)
+            vmem.arena_free_all(&memory.arenas[.FRAME])
             for layer in Layer {
                 queue.clear(&window.renderer.layer_command_queues[layer])
             }
@@ -582,26 +588,17 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
 
         mu.layout_row(ctx, {54, -1}, 0)
         mu.label(ctx, "Time:")
-        timer_str: string
-        if game.play_timer_ms < 0 {
-            abs_time := abs(game.play_timer_ms)
-            min := math.floor(abs_time / 60000)
-            sec := math.mod(math.floor(abs_time / 1000), 60)
-            timer_str = fmt.tprintf("-%.0f:%2.0f:%3.0f", min, sec, math.mod_f64(abs_time, 1000))
-        } else {
-            min := math.floor(game.play_timer_ms / 60000)
-            sec := math.mod(math.floor(game.play_timer_ms / 1000), 60)
-            timer_str = fmt.tprintf("%.0f:%2.0f:%3.0f", min, sec, math.mod_f64(game.play_timer_ms, 1000))
-        }
+        
+        timer_str := time_ms_to_string(game.beatmap.music_time_ms)
         mu.label(ctx, timer_str)
         
         mu.layout_row(ctx, {54, -1}, 0)
         mu.label(ctx, "Time rate:")
-        mu.label(ctx, fmt.tprintf("%f%s", game.time_rate * (game.play_paused ? 0 : 1), game.play_paused ? " (paused)": ""))
+        mu.label(ctx, fmt.tprintf("%f%s", game.time_rate * (game.paused ? 0 : 1), game.paused ? " (paused)": ""))
         
         mu.layout_row(ctx, {100, 10, -1}, 0)
         mu.label(ctx, "Visible hitobjects:")
-        hobj_visibility := game.active_map.visible_hit_object_state
+        hobj_visibility := game.beatmap.visible_hit_object_state
         mu.label(ctx, fmt.tprintf("%i", hobj_visibility.latest_i - hobj_visibility.earliest_i - 1))
         
         mu.layout_row(ctx, {80, 10, -1}, 0)
@@ -634,6 +631,14 @@ handle_debug_ui_events :: proc(ctx: ^mu.Context) {
     }
     if is_key_pressed(.F4) {
         debug_info.display_memory_profiler = !debug_info.display_memory_profiler
+        
+        track := &memory.global_tracker
+        if len(track.allocation_map) > 0 {
+			fmt.eprintf("=== global allocator - %v allocations not freed: ===\n", len(track.allocation_map))
+			for _, entry in track.allocation_map {
+				fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
+			}
+		}
     }
 
     // note(isak): handle offscreen windows
@@ -735,8 +740,8 @@ begin_frame :: proc(renderer: ^Renderer) {
 
     r_set_shader_globals({
         transform = identity_transform,
-        circle_size_osupx = game.active_map.circle_radius_osupx,
-        time = f32(game.play_timer_ms)
+        circle_size_osupx = game.beatmap.circle_radius_osupx,
+        time = f32(game.beatmap.music_time_ms)
     })
 
     _r_bind_layer(.BACKGROUND)

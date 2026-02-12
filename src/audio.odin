@@ -164,7 +164,7 @@ sound_set_position_ms :: proc(sound: ^Sound, ms: f64) {
         
         pos_bytes := bass.ChannelSeconds2Bytes(handle, ms / 1000)
         err := bass.ChannelSetPosition(handle, pos_bytes, bass.POS_BYTE)
-        if err {
+        if err && bass.ErrorGetCode() > 0 {
             fmt.println("BASS ChannelSetPosition error:", bass.ErrorGetCode())
         }
     }

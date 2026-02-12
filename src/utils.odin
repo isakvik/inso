@@ -1,8 +1,10 @@
 package notosu
 
 import "base:runtime"
+import "core:fmt"
 import "core:math"
 import "core:math/linalg"
+import "core:mem"
 import "core:mem/virtual"
 
 import sdl "vendor:sdl3"
@@ -29,6 +31,20 @@ current_time :: proc() -> f64 {
 
 time_since_beginning_of_program :: proc() -> f64 {
     return current_time() - _program_start_time
+}
+
+time_ms_to_string :: proc(time: f64) -> (result: string) {
+    if time < 0 {
+        abs_time := abs(time)
+        min := math.floor(abs_time / 60000)
+        sec := math.mod(math.floor(abs_time / 1000), 60)
+        result = fmt.tprintf("-%.0f:%2.0f:%3.0f", min, sec, math.mod_f64(abs_time, 1000))
+    } else {
+        min := math.floor(time / 60000)
+        sec := math.mod(math.floor(time / 1000), 60)
+        result = fmt.tprintf("%.0f:%2.0f:%3.0f", min, sec, math.mod_f64(time, 1000))
+    }
+    return
 }
 
 
@@ -106,6 +122,20 @@ init_growing_arena :: proc(arena: ^virtual.Arena, alloc: ^runtime.Allocator, siz
     alloc_err := virtual.arena_init_growing(arena, reserved = 1)
     assert(alloc_err == .None)
     alloc^ = virtual.arena_allocator(arena)
+    
+    return alloc_err
+}
+
+init_tracked_growing_arena :: proc(
+    arena: ^virtual.Arena, alloc: ^runtime.Allocator, backing: ^runtime.Allocator, track: ^mem.Tracking_Allocator, size_mb: int = 1
+) -> runtime.Allocator_Error {
+    alloc_err := virtual.arena_init_growing(arena, reserved = 1)
+    assert(alloc_err == .None)
+    
+    backing^ = virtual.arena_allocator(arena)
+    mem.tracking_allocator_init(track, backing^)
+    alloc^ = mem.tracking_allocator(track)
+    
     return alloc_err
 }
 

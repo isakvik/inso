@@ -36,11 +36,14 @@ supported_image_extensions :: []string{".png", ".jpg"}
 // todo(isak): @leak: since we allocate strings here, reloading the skin results in path strings that are never freed
 // make a skin arena for unloading is probably easiest
 load_skin_textures :: proc(skin_path: string) {
+    
+    os.change_directory(skin_path)
+    defer os.change_directory(app.base_dir)
 
     for element in Skin_Element_Type {
         tex_err: os.Error
         for extension in supported_image_extensions {
-            element_path := strings.concatenate({skin_path, Skin_Element_Path[element], "@2x", extension})
+            element_path := strings.concatenate({Skin_Element_Path[element], "@2x", extension})
             tex_store := &window.skin_textures[element]
             tex := &game.active_skin[element]
             
@@ -51,7 +54,7 @@ load_skin_textures :: proc(skin_path: string) {
             }
     
             if tex_err == os.General_Error.Not_Exist {
-                element_path = strings.concatenate({skin_path, Skin_Element_Path[element], extension})
+                element_path = strings.concatenate({Skin_Element_Path[element], extension})
                 tex_store^, tex_err = texture_from_file(element_path)
             }
 

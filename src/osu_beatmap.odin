@@ -1,6 +1,13 @@
 package notosu
 
-import "core:fmt"
+import sb "swap_buffer"
+import "slotmap"
+import rb "ring_buffer"
+
+import q "core:container/queue"
+import "core:log"
+import "core:strings"
+
 
 Beatmap :: struct {
     music: Sound,
@@ -19,6 +26,75 @@ Beatmap :: struct {
 
     preempt_ms: f64,
     circle_radius_osupx: f32,
+}
+
+beatmap_on_init :: proc() {
+    // map logic init
+    
+    game.beatmap.circle_radius_osupx = convert_circle_size_to_radius_osupx(game.active_map.diff_circle_size)
+    game.beatmap.preempt_ms = convert_approach_rate_to_preempt_ms(game.active_map.diff_approach_rate)
+    
+    game.beatmap.length_ms = sound_get_length_ms(&game.beatmap.music)
+    game.beatmap.start_time_ms = -game.beatmap.preempt_ms
+    game.beatmap.music_time_ms = game.beatmap.start_time_ms
+    
+    game.beatmap.hit_objects = game.active_map.hit_objects
+    game.beatmap.slider_paths = game.active_map.slider_paths
+    
+    // map graphics init
+    
+    q.init(&game.elements, 1024, memory.allocs[.MAPSET])
+    q.append(&game.elements, null_element)
+    q.init(&game.animations, 1024, memory.allocs[.MAPSET])
+
+    write_default_elements(&game.elements, &game.animations)
+    
+    rb.init(&game.gfx_handles, 8192, memory.allocs[.ENTITIES])
+    game.gfx_handles.length = cap(game.gfx_handles.data)
+    
+    sb.init(&game.temp_gfx_refs, 8192)
+    slotmap.init(&game.entities, 8192)
+    _ = slotmap.insert(&game.entities, null_entity)
+    
+    // todo(isak): opinionated entity pushing; needs to be rewritten to take scriptable objects and skin metrics
+    // into account
+    write_default_entities_from_map(game.active_map)
+}
+
+beatmap_on_destroy :: proc() {
+    sound_destroy(&game.beatmap.music)
+    
+    for &hobj in game.beatmap.hit_objects {
+        hobj.gfx_handles = {}
+    }
+    
+    rb.destroy(&game.gfx_handles)
+    sb.destroy(&game.temp_gfx_refs)
+    slotmap.destroy(&game.entities)
+}
+
+beatmap_load :: proc() {
+    music_path := strings.concatenate({game.active_mapset.folder_path, "/", game.active_map.audio_filename}, context.temp_allocator)
+    
+    ok: bool
+    game.beatmap.music, ok = sound_stream_init(music_path)
+    if ok {
+        sound_play(&game.beatmap.music, start_paused = true, loop = true)
+    } else {
+        log.error("tried to open map sound file, but failed:", music_path)
+    }
+}
+
+beatmap_reload :: proc() {
+    beatmap_on_destroy()
+    
+    game.mode = .PLAY
+    game.beatmap.visible_hit_object_state = {}
+    
+    game.active_mapset = mapset_free_and_reload(game.active_mapset)
+    game.active_map = &game.active_mapset.osu_map
+    beatmap_load()
+    beatmap_on_init()
 }
 
 
@@ -75,9 +151,18 @@ get_music_position_interpolated_ms :: proc() -> (result: f64) {
     return result
 }
 
+beatmap_pause :: proc(pause: bool) {
+    if pause {
+        sound_pause(&game.beatmap.music)
+    } else {
+        sound_resume(&game.beatmap.music)
+    }
+    game.paused = pause
+}
+
 handle_play_input_events :: proc() {
     if is_key_pressed(.ESCAPE) || is_key_pressed(.SPACE) {
-        game.paused = !game.paused
+        beatmap_pause(!game.paused)
     }
     if is_key_pressed(.F10) {
         osu_controller.mouse_keys_enabled = !osu_controller.mouse_keys_enabled

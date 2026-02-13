@@ -294,7 +294,7 @@ main :: proc() {
     context.temp_allocator = memory.allocs[.FRAME]
     
     app_init()
-   	context.logger = app.logger
+       context.logger = app.logger
     defer app_cleanup()
     
     /*
@@ -346,36 +346,13 @@ main :: proc() {
         if !ok {
             log.error("tried to open mapset, but failed:", test_mapset_path)
         }
-        
-        os.change_directory(test_mapset_path)
-        defer os.change_directory(app.base_dir)
-        
-        game.beatmap.music = sound_stream_init(game.active_map.audio_filename)
-        sound_play(&game.beatmap.music)
-        if !ok {
-            log.error("tried to open map sound file, but failed:", test_mapset_path)
-        }
-        
-        log.info(game.active_map.audio_filename, "length in ms:", sound_get_length_ms(&game.beatmap.music))
     }
-    
-    
     
     // note(isak): dependent on map load... make a more granular api for map load purposes
     prepare_textures_for_rendering()
 
     osu_on_init()
 
-    /*
-        note(isak): basic timestep handling is ALMOST sufficient as we run the game and its
-        physics(!) at a very high rate, and always assume failure in the case of not being able to
-        hit the time windows.
-
-        however, we do have to watch out for audio sync issues; audio output runs concurrently with
-        game stepping, so we cannot advance the time if there are issues with sound. the sound
-        system should therefore manage its "currently playing" state more carefully than in other
-        games, where playing a sound is more or less fire and forget, at least most of the time.
-    */
     time_current_frame := current_time_s()
     time_first_frame := time_current_frame
     time_last_frame := time_current_frame
@@ -493,15 +470,11 @@ main :: proc() {
                 handle_debug_ui_events(&window.ui_ctx)
                 render_debug_ui(renderer, &window.ui_ctx)
             }
-
-            /* note(isak): need to update sound here. deltatime should be dependent on how much sound we are able to
-               play, which in regular circumstances shouldn't matter, but in case of device errors we cannot advance 
-            */
             
-            dt := time_current_frame - time_last_frame
+            dt_ms := (time_current_frame - time_last_frame) * 1000
 
             r_push_layer(.BACKGROUND, transform = window.screenspace_transform)
-            osu_on_update(dt)
+            osu_on_update(dt_ms)
 
             r_push_layer(.UI, pipeline = {builtin_pipeline(.QUAD)})
             
@@ -523,7 +496,7 @@ main :: proc() {
             /*
                 todo(isak): state of the renderer:
                 usage:
-                - batch overrun has not been tested but won't work; it should run end_frame().. probably
+                - batch overrun has not been tested
                 - transforms should be a dynamic stack that we just write as we process the frame; can save a bunch
                     of draw calls
             */
@@ -609,7 +582,7 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
 
 handle_debug_ui_events :: proc(ctx: ^mu.Context) {
     if is_key_pressed(.R) {
-        osu_reload_map()
+        beatmap_reload()
     }
     if is_key_pressed(.HOME) {
         game.time_rate = 1
@@ -634,11 +607,11 @@ handle_debug_ui_events :: proc(ctx: ^mu.Context) {
         
         track := &memory.global_tracker
         if len(track.allocation_map) > 0 {
-			fmt.eprintf("=== global allocator - %v allocations not freed: ===\n", len(track.allocation_map))
-			for _, entry in track.allocation_map {
-				fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
-			}
-		}
+            fmt.eprintf("=== global allocator - %v allocations not freed: ===\n", len(track.allocation_map))
+            for _, entry in track.allocation_map {
+                fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
+            }
+        }
     }
 
     // note(isak): handle offscreen windows

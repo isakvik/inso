@@ -1,6 +1,5 @@
 package notosu
 
-import "core:image/netpbm"
 import sb "swap_buffer"
 import "slotmap"
 import rb "ring_buffer"
@@ -9,8 +8,6 @@ import "base:intrinsics"
 import "base:runtime"
 import "core:math/linalg"
 import q "core:container/queue"
-
-import "core:fmt"
 
 import sdl "vendor:sdl3"
 
@@ -182,92 +179,49 @@ osu_on_init :: proc() {
     osu_controller.k1_key = sdl.Scancode.Z
     osu_controller.k2_key = sdl.Scancode.X
 
-    osu_on_beatmap_init()
-}
-
-osu_on_beatmap_init :: proc() {
-    
-    // map logic init
-    
-    game.beatmap.start_time_ms = -(game.beatmap.preempt_ms + game.active_map.audio_lead_in)
-    game.beatmap.circle_radius_osupx = convert_circle_size_to_radius_osupx(game.active_map.diff_circle_size)
-    game.beatmap.preempt_ms = convert_approach_rate_to_preempt_ms(game.active_map.diff_approach_rate)
-    
-    game.beatmap.length_ms = game.active_map.hit_objects[len(game.active_map.hit_objects) - 1].end_time_ms + 1000
-    
-    game.beatmap.hit_objects = game.active_map.hit_objects
-    game.beatmap.slider_paths = game.active_map.slider_paths
-    
-    sound_set_position_ms(&game.beatmap.music, 1800)
-    
-    // map graphics init
-    
-    q.init(&game.elements, 1024, memory.allocs[.MAPSET])
-    q.append(&game.elements, null_element)
-    q.init(&game.animations, 1024, memory.allocs[.MAPSET])
-
-    write_default_elements(&game.elements, &game.animations)
-    
-    rb.init(&game.gfx_handles, 8192, memory.allocs[.ENTITIES])
-    game.gfx_handles.length = cap(game.gfx_handles.data)
-    
-    sb.init(&game.temp_gfx_refs, 8192)
-    slotmap.init(&game.entities, 8192)
-    _ = slotmap.insert(&game.entities, null_entity)
-    
-    // todo(isak): opinionated entity pushing; needs to be rewritten to take scriptable objects and skin metrics
-    // into account
-    write_default_entities_from_map(game.active_map)
-}
-
-osu_on_map_destroy :: proc() {
-    for &hobj in game.beatmap.hit_objects {
-        hobj.gfx_handles = {}
-    }
-    
-    rb.destroy(&game.gfx_handles)
-    sb.destroy(&game.temp_gfx_refs)
-    slotmap.destroy(&game.entities)
-}
-
-osu_reload_map :: proc() {
-    osu_on_map_destroy()
-    
-    game.mode = .PLAY
-    game.beatmap.visible_hit_object_state = {}
-    
-    game.active_mapset = mapset_free_and_reload(game.active_mapset)
-    game.active_map = &game.active_mapset.osu_map
-    osu_on_beatmap_init()
+    beatmap_on_init()
 }
 
 
 osu_on_update :: proc(dt: f64) {
     game.dt = dt
-    map_dt := dt * game.time_rate * (game.paused ? 0 : 1)
 
     updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
     if updated_systems[.OSU_FILE] {
-        osu_reload_map()
-    }
-    
-    if game.beatmap.music_time_ms > game.beatmap.length_ms {
-        game.beatmap.music_time_ms = clamp(game.beatmap.start_time_ms, -1800, 0)
-        osu_reload_map()
+        beatmap_reload()
     }
     
     // note(isak): game logic - map
+    
+    if sound_is_finished(&game.beatmap.music) {
+        beatmap_reload()
+        sound_set_position_ms(&game.beatmap.music, 0)
+    }
 
-    // note(isak): map play time is determined by the sound library (and whether we were able to play music or not), 
-    // but song time interpolation is required because BASS reports play position in buffer size granularity
-    music_time := get_music_position_interpolated_ms()
-    game.beatmap.music_time_ms = music_time
+    map_time: f64
+    if game.beatmap.music_time_ms < 0 {
+        game.beatmap.music_time_ms += game.dt * (game.paused ? 0 : game.time_rate)
+        map_time = game.beatmap.music_time_ms
+        
+        if game.beatmap.music_time_ms >= 0 {
+            sound_resume(&game.beatmap.music)
+            sound_set_position_ms(&game.beatmap.music, 0)
+            
+            map_time = get_music_position_interpolated_ms()
+            game.beatmap.music_time_ms = map_time
+        }
+    } else {
+        // note(isak): map play time is determined by the sound library (and whether we were able to play music or not), 
+        // but song time interpolation is required because BASS reports play position in buffer size granularity
+        map_time = get_music_position_interpolated_ms()
+        game.beatmap.music_time_ms = map_time
+    }
     
     #partial switch game.mode {
         case .PLAY: handle_play_input_events()
     }
     
-    hobj_it := get_visible_hobj_iterator(&game.beatmap.visible_hit_object_state, music_time)
+    hobj_it := get_visible_hobj_iterator(&game.beatmap.visible_hit_object_state, game.beatmap.music_time_ms)
     
     playfield_transform := transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
     
@@ -291,8 +245,8 @@ osu_on_update :: proc(dt: f64) {
                 size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
                 color = color_white,
-                start_time_ms = music_time,
-                end_time_ms = music_time + 600
+                start_time_ms = map_time,
+                end_time_ms = map_time + 600
             })
             hobj.gfx_handles[1] = push_entity({
                 flags = {.ACTIVE},
@@ -301,8 +255,8 @@ osu_on_update :: proc(dt: f64) {
                 size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
                 color = color_purple,
-                start_time_ms = music_time,
-                end_time_ms = music_time + 600
+                start_time_ms = map_time,
+                end_time_ms = map_time + 600
             })
             
             push_entity_temp({
@@ -315,8 +269,8 @@ osu_on_update :: proc(dt: f64) {
                 
                 angle_vel = 360.0,
                 
-                start_time_ms = music_time,
-                end_time_ms = music_time + 600
+                start_time_ms = map_time,
+                end_time_ms = map_time + 600
             })
         }
     }
@@ -326,7 +280,7 @@ osu_on_update :: proc(dt: f64) {
     r_push_layer(.HIT_OBJECTS)
     
     for hobj, i in hobj_it {
-        if music_time < hobj.start_time_ms - game.beatmap.preempt_ms || hobj.end_time_ms < music_time {
+        if map_time < hobj.start_time_ms - game.beatmap.preempt_ms || hobj.end_time_ms < map_time {
             continue
         }
         if hobj.type == .SLIDER {
@@ -344,7 +298,7 @@ osu_on_update :: proc(dt: f64) {
         #reverse for handle in hobj.gfx_handles {
             e := slotmap.get(&game.entities, handle) or_continue
             if .ACTIVE in e.flags {
-                render_entity(e, music_time)
+                render_entity(e, map_time)
             }
         }
     }
@@ -354,11 +308,38 @@ osu_on_update :: proc(dt: f64) {
     // render ui
     // todo(isak): "screens" implementation for determining relevant UI components?
 
-    seek_to_ms: f64
-    if ui_update_timeline(&game.ui_timeline, &seek_to_ms) {
-        sound_set_position_ms(&game.beatmap.music, seek_to_ms)
+    seek_to_fract: f64
+    if ui_update_timeline(&game.ui_timeline, &seek_to_fract) {
+        map_len_with_preempt := game.beatmap.length_ms + (-game.beatmap.start_time_ms)
+        leadin_fract := -game.beatmap.start_time_ms / map_len_with_preempt
+        
+        if seek_to_fract < leadin_fract {
+            game.beatmap.music_time_ms = game.beatmap.start_time_ms + seek_to_fract * map_len_with_preempt
+        } else {
+            seek_to_music_fract := (seek_to_fract - leadin_fract) * (1 / (1.0 - leadin_fract))
+            sound_set_position_fract(&game.beatmap.music, seek_to_music_fract)
+            game.beatmap.music_time_ms = get_music_position_interpolated_ms()
+        }
+        
+        if game.ui_timeline.clicked {
+            sound_pause(&game.beatmap.music)
+        }
     }
-    render_timeline(&game.ui_timeline)
+    if game.beatmap.music_time_ms > 0 && game.ui_timeline.released && !game.ui_timeline.pause_on_release {
+        if sound_is_paused(&game.beatmap.music) {
+            sound_resume(&game.beatmap.music)
+        }
+    }
+    
+    {
+        map_len_with_preempt := game.beatmap.length_ms + (-game.beatmap.start_time_ms)
+        map_time_with_preempt := game.beatmap.music_time_ms + (-game.beatmap.start_time_ms)
+        
+        beatmap_leadin_fract := f32((-game.beatmap.preempt_ms - game.beatmap.music_time_ms) / -game.beatmap.start_time_ms)
+        beatmap_finish_fract := f32(map_time_with_preempt / map_len_with_preempt)
+        
+        render_timeline(&game.ui_timeline, beatmap_leadin_fract, beatmap_finish_fract)
+    }
     
     render_input_display()
 }

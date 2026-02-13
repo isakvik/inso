@@ -1,8 +1,8 @@
 /*
-	BASSWASAPI 2.4 C/C++ header file
-	Copyright (c) 2009-2020 Un4seen Developments Ltd.
+    BASSWASAPI 2.4 C/C++ header file
+    Copyright (c) 2009-2020 Un4seen Developments Ltd.
 
-	See the BASSWASAPI.CHM file for more detailed documentation
+    See the BASSWASAPI.CHM file for more detailed documentation
 */
 package bass
 
@@ -17,25 +17,25 @@ ERROR_WASAPI_DENIED   :: 5003 // access denied
 
 // Device info structure
 WASAPI_DEVICEINFO :: struct {
-	name:      cstring,
-	id:        cstring,
-	type:      DWORD,
-	flags:     DWORD,
-	minperiod: f32,
-	defperiod: f32,
-	mixfreq:   DWORD,
-	mixchans:  DWORD,
+    name:      cstring,
+    id:        cstring,
+    type:      DWORD,
+    flags:     DWORD,
+    minperiod: f32,
+    defperiod: f32,
+    mixfreq:   DWORD,
+    mixchans:  DWORD,
 }
 
 WASAPI_INFO :: struct {
-	initflags: DWORD,
-	freq:      DWORD,
-	chans:     DWORD,
-	format:    DWORD,
-	buflen:    DWORD,
-	volmax:    f32,
-	volmin:    f32,
-	volstep:   f32,
+    initflags: DWORD,
+    freq:      DWORD,
+    chans:     DWORD,
+    format:    DWORD,
+    buflen:    DWORD,
+    volmax:    f32,
+    volmin:    f32,
+    volstep:   f32,
 }
 
 // WASAPI_DEVICEINFO "type"
@@ -106,7 +106,7 @@ WASAPIPROC_BASS  :: -1 // BASS channel
 
 @(default_calling_convention="c")
 foreign lib {
-	WASAPINOTIFYPROC :: proc(DWORD, DWORD, rawptr) ---
+    WASAPINOTIFYPROC :: proc(DWORD, DWORD, rawptr) ---
 }
 
 /* WASAPI device notification callback function.
@@ -123,27 +123,27 @@ WASAPI_NOTIFY_FAIL      :: 0x100
 
 @(default_calling_convention="c",link_prefix="BASS_")
 foreign lib {
-	WASAPI_GetVersion     :: proc() -> DWORD ---
-	WASAPI_SetNotify      :: proc(_proc: proc "c" (), user: rawptr) -> BOOL ---
-	WASAPI_GetDeviceInfo  :: proc(device: DWORD, info: ^WASAPI_DEVICEINFO) -> BOOL ---
-	WASAPI_GetDeviceLevel :: proc(device: DWORD, chan: i32) -> f32 ---
-	WASAPI_SetDevice      :: proc(device: DWORD) -> BOOL ---
-	WASAPI_GetDevice      :: proc() -> DWORD ---
-	WASAPI_CheckFormat    :: proc(device: DWORD, freq: DWORD, chans: DWORD, flags: DWORD) -> DWORD ---
-	WASAPI_Init           :: proc(device: i32, freq: DWORD, chans: DWORD, flags: DWORD, buffer: f32, period: f32, _proc: WASAPIPROC, user: rawptr) -> BOOL ---
-	WASAPI_Free           :: proc() -> BOOL ---
-	WASAPI_GetInfo        :: proc(info: ^WASAPI_INFO) -> BOOL ---
-	WASAPI_GetCPU         :: proc() -> f32 ---
-	WASAPI_Lock           :: proc(lock: BOOL) -> BOOL ---
-	WASAPI_Start          :: proc() -> BOOL ---
-	WASAPI_Stop           :: proc(reset: BOOL) -> BOOL ---
-	WASAPI_IsStarted      :: proc() -> BOOL ---
-	WASAPI_SetVolume      :: proc(mode: DWORD, volume: f32) -> BOOL ---
-	WASAPI_GetVolume      :: proc(mode: DWORD) -> f32 ---
-	WASAPI_SetMute        :: proc(mode: DWORD, mute: BOOL) -> BOOL ---
-	WASAPI_GetMute        :: proc(mode: DWORD) -> BOOL ---
-	WASAPI_PutData        :: proc(buffer: rawptr, length: DWORD) -> DWORD ---
-	WASAPI_GetData        :: proc(buffer: rawptr, length: DWORD) -> DWORD ---
-	WASAPI_GetLevel       :: proc() -> DWORD ---
-	WASAPI_GetLevelEx     :: proc(levels: ^f32, length: f32, flags: DWORD) -> BOOL ---
+    WASAPI_GetVersion     :: proc() -> DWORD ---
+    WASAPI_SetNotify      :: proc(_proc: proc "c" (), user: rawptr) -> BOOL ---
+    WASAPI_GetDeviceInfo  :: proc(device: DWORD, info: ^WASAPI_DEVICEINFO) -> BOOL ---
+    WASAPI_GetDeviceLevel :: proc(device: DWORD, chan: i32) -> f32 ---
+    WASAPI_SetDevice      :: proc(device: DWORD) -> BOOL ---
+    WASAPI_GetDevice      :: proc() -> DWORD ---
+    WASAPI_CheckFormat    :: proc(device: DWORD, freq: DWORD, chans: DWORD, flags: DWORD) -> DWORD ---
+    WASAPI_Init           :: proc(device: i32, freq: DWORD, chans: DWORD, flags: DWORD, buffer: f32, period: f32, _proc: WASAPIPROC, user: rawptr) -> BOOL ---
+    WASAPI_Free           :: proc() -> BOOL ---
+    WASAPI_GetInfo        :: proc(info: ^WASAPI_INFO) -> BOOL ---
+    WASAPI_GetCPU         :: proc() -> f32 ---
+    WASAPI_Lock           :: proc(lock: BOOL) -> BOOL ---
+    WASAPI_Start          :: proc() -> BOOL ---
+    WASAPI_Stop           :: proc(reset: BOOL) -> BOOL ---
+    WASAPI_IsStarted      :: proc() -> BOOL ---
+    WASAPI_SetVolume      :: proc(mode: DWORD, volume: f32) -> BOOL ---
+    WASAPI_GetVolume      :: proc(mode: DWORD) -> f32 ---
+    WASAPI_SetMute        :: proc(mode: DWORD, mute: BOOL) -> BOOL ---
+    WASAPI_GetMute        :: proc(mode: DWORD) -> BOOL ---
+    WASAPI_PutData        :: proc(buffer: rawptr, length: DWORD) -> DWORD ---
+    WASAPI_GetData        :: proc(buffer: rawptr, length: DWORD) -> DWORD ---
+    WASAPI_GetLevel       :: proc() -> DWORD ---
+    WASAPI_GetLevelEx     :: proc(levels: ^f32, length: f32, flags: DWORD) -> BOOL ---
 }

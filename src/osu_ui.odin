@@ -99,6 +99,39 @@ render_timeline :: proc(ui: ^UI_Timeline, beatmap_leadin_fract, beatmap_finish_f
     }
 }
 
+handle_and_render_timeline :: proc() {
+    seek_to_fract: f64
+    if ui_update_timeline(&game.ui_timeline, &seek_to_fract) {
+        map_len_with_preempt := game.beatmap.length_ms + (-game.beatmap.start_time_ms)
+        leadin_fract := -game.beatmap.start_time_ms / map_len_with_preempt
+        
+        if seek_to_fract < leadin_fract {
+            game.beatmap.music_time_ms = game.beatmap.start_time_ms + seek_to_fract * map_len_with_preempt
+        } else {
+            seek_to_music_fract := (seek_to_fract - leadin_fract) * (1 / (1.0 - leadin_fract))
+            sound_set_position_fract(&game.beatmap.music, seek_to_music_fract)
+            game.beatmap.music_time_ms = beatmap_music_position_interpolated_ms(&game.beatmap)
+        }
+        
+        if game.ui_timeline.clicked {
+            sound_pause(&game.beatmap.music)
+        }
+    }
+    if game.beatmap.music_time_ms > 0 && game.ui_timeline.released && !game.ui_timeline.pause_on_release {
+        if sound_is_paused(&game.beatmap.music) {
+            sound_resume(&game.beatmap.music)
+        }
+    }
+    
+    map_len_with_preempt := game.beatmap.length_ms + (-game.beatmap.start_time_ms)
+    map_time_with_preempt := game.beatmap.music_time_ms + (-game.beatmap.start_time_ms)
+    
+    beatmap_leadin_fract := f32((-game.beatmap.preempt_ms - game.beatmap.music_time_ms) / -game.beatmap.start_time_ms)
+    beatmap_finish_fract := f32(map_time_with_preempt / map_len_with_preempt)
+    
+    render_timeline(&game.ui_timeline, beatmap_leadin_fract, beatmap_finish_fract)
+}
+
 render_input_display :: proc() {
     r_push_transform(window.screenspace_transform)
     

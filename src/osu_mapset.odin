@@ -46,6 +46,27 @@ Mapset :: struct {
     watch: Win32_Directory_Watch
 }
 
+mapset_texture :: proc(name: string) -> (result: ^Texture, ok: bool) {
+    assert(game.active_mapset != nil)
+    index: u32
+    index, ok = game.active_mapset.texture_slot_by_name[name]
+    if ok {
+        result = q.get_ptr(&game.active_mapset.textures, index)
+    }
+    return result, ok
+}
+
+mapset_texture_slot :: proc(name: string) -> u32 {
+    assert(game.active_mapset != nil)
+    return user_texture(game.active_mapset.texture_slot_by_name[name])
+}
+
+mapset_shader_slot :: proc(name: string) -> u32 {
+    assert(game.active_mapset != nil)
+    return user_pipeline_slot(game.active_mapset.shader_slot_by_name[name])
+}
+
+
 Notosu_Map_System :: enum {
     OSU_FILE,
     NOTOSU_FILES,
@@ -283,7 +304,7 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
     
     mesh_desc := sg.Pipeline_Desc{
         label = "builtin.quad",
-        shader = window.shaders.data[builtin_pipeline(.QUAD)].shader,
+        shader = window.shaders.data[builtin_pipeline_slot(.QUAD)].shader,
         //index_type = .UINT16,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},

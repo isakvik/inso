@@ -132,6 +132,7 @@ Entity :: struct {
     id: int,
     flags: Entity_Flags,
     element: Element_ID,
+    layer: Layer,
 
     // note(isak): quad params
     // implicitly: 1 quad vertex, 6 indices that are appended to buffer every draw
@@ -333,6 +334,7 @@ write_default_entities_from_map :: proc(osu_map: ^Osu_Map) {
             e := Entity{
                 flags = {.ACTIVE},
                 element = element_id(el_type),
+                layer = .HIT_OBJECTS,
                 pos = hobj.pos,
                 size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
@@ -406,6 +408,7 @@ render_entity :: proc(e: ^Entity, at_time: f64) -> bool {
     }
 
     r_check_and_bind_pipeline({element.shader})
+    r_check_and_bind_layer(e.layer)
     r_draw_layout_rect(&window.renderer.quad_geometry, rect, e.anchor, color, tex, angle)
     
     return true
@@ -419,7 +422,7 @@ process_and_draw_temp_gfx_handles :: proc() {
             if was_in_time {
                 append(game.temp_gfx_refs.next, handle)
             } else {
-                //fmt.println("temp entity expired", e.id)
+                
             }
         } else {
             //fmt.println("inactive entity", e.id)
@@ -431,7 +434,7 @@ process_and_draw_temp_gfx_handles :: proc() {
 render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     // todo(isak): generate partial instance draws (snaking) and the bounding quads like the smart cookie you are
 
-    r_bind_pipeline({builtin_pipeline(.SLIDER)})
+    r_bind_pipeline({builtin_pipeline_slot(.SLIDER)})
     r_bind_framebuffer({ write = .SLIDERS })    
     r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
     r_clear()
@@ -447,91 +450,42 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     
     r_bind_framebuffer({ read = .SLIDERS })
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
-    r_bind_pipeline({builtin_pipeline(.QUAD)})
+    r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
     
     r_push_transform(fullscreen_transform)
     r_draw_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.4), reserved_texture(.SLIDER_FRAMEBUFFER))
 }
 
-test_bg :: proc(bg_path: string) -> slotmap.Handle {
-    bg_entity := Entity{
-        element = element_push(&game.elements, Element{
-            type = .MAP_ELEMENT, 
-            tex = mapset_texture(bg_path),
-            shader = mapset_shader("wave")
-        }),
-        flags = {.ACTIVE},
-
-        pos = {0.5, 0.5},
-        size = {1, 1},
-        anchor = .CENTER,
-        color = {30,30,30,255},
+test_bg_entity :: proc(bg_path: string) -> (result: slotmap.Handle) {
+    tex, ok := mapset_texture(bg_path)
+    if ok {
+        bg_aspect_ratio := f32(tex.h) / f32(tex.w)
+        bg_size := vec2{osu_playfield_size_osupx, osu_playfield_size_osupx} / {(bg_aspect_ratio), 1}
         
-        start_time_ms = game.beatmap.start_time_ms,
-        end_time_ms = game.beatmap.length_ms
+        if window.aspect_ratio <= bg_aspect_ratio {
+            bg_size *= (window.rect.w / bg_size.x)
+        } else {
+            bg_size *= (window.rect.h / bg_size.y)
+        }
+        bg_size *= osu_playfield_size_osupx / window.rect.h
+        
+        return push_entity({
+            flags = {.ACTIVE},
+            element = element_push(&game.elements, Element{
+                type = .MAP_ELEMENT, 
+                tex = mapset_texture_slot(bg_path),
+                shader = mapset_shader_slot("wave")
+            }),
+            layer = .BACKGROUND,
+    
+            pos = {256, 256},
+            size = bg_size,
+            anchor = .CENTER,
+            color = {30,30,30,255},
+            
+            start_time_ms = game.beatmap.start_time_ms,
+            end_time_ms = game.beatmap.length_ms
+        })
     }
-    return slotmap.insert(&game.entities, bg_entity)
+    return result
 }
-
-/*
-    animation plans
-
-    animation memory use:
-    we don't really need unbounded dynamic arrays (i figured the exception might be if a script system would
-        add elements with separate animations, but if you're planning on doing something like that you could
-        probably just say to reserve 1000 slots for a particle-ish buffer)
-    so we just allocate a queue upfront in mapset_arena
-
-    init graphical entities that are drawn in time on the playfield
-    both game elements and graphical features animate with the same system
-    
-    we want several entities from the same game object, since they all use a bunch of different sprites
-    approachcircle,
-    hitcircle,
-    hitcircleoverlay,
-    combonumber
-
-    sliderball,
-    sliderfollowcircle,
-
-    these are read by some rendering system that reads the animation states for each entity animation
-    and pushes the appropriate rect
-        this job is parallelizable (subdivision and calculation, writing quad must lock and copy)
-    holy
-
-    this is pretty much standard storyboarding; but we can let a map override the pushed elements with
-    animations for every element type (one section at a time)
-        this only determines the data that's used to generate draws in time, it's just config
-
-    map side api use:
-
-    r_bind_pipeline determines shader used
-    before a procedure (pushed draws) runs, bind a shader
-
-    so associate a shader with a group of elements
-
-    setup:
-    begin_animation_entity_type(type)
-    a_fade(0, 500, 0, 1)
-    a_fade(3500, 4000, 1, 0)
-    end_animation()
-    
-    update:
-        at time 0, bind_animation(type, animation)
-        at time 10000, bind_animation(type, animation2)
-    
-    we got several groups of what goes into the command queue eventually
-        layer delineation - in the script we require blocks of picked layers - easiest option
-
-        shader delineation - we write arbitrary element commands with some bound shader
-
-    we have to somehow sort element draws in a frame by shader
-        
-    on_update:
-
-    for every shader in a layer:
-        bind shader
-        determine visible objects and iterate:
-            push_element
-
-*/

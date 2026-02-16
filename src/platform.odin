@@ -8,6 +8,10 @@ import "core:path/filepath"
 app: struct {
     base_dir: string,
     logger: log.Logger,
+    
+    debug_display_frame_profiler: bool,
+    debug_display_memory_profiler: bool,
+    debug_display_fontatlas: bool
 }
 
 app_init :: proc() {

@@ -526,17 +526,23 @@ r_end_scissor_mode :: proc() {
     
     (maybe just keeping state per layer is better? this may require some discipline though.)
 */
-_r_bind_layer :: proc(layer: Layer) {
+r_bind_layer :: proc(layer: Layer) {
     window.renderer.current_layer = layer
 }
 
-r_push_layer :: proc(layer: Layer,    
+r_check_and_bind_layer :: proc(layer: Layer) {
+    if layer != window.renderer.current_layer {
+        r_bind_layer(layer)
+    }
+}
+
+r_bind_layer_and_push_current_state :: proc(layer: Layer,    
     framebuffer: Command_Bind_Framebuffer = window.renderer.current_framebuffer,
     pipeline: Command_Bind_Pipeline = window.renderer.current_pipeline,
     transform: Transform = window.renderer.current_global_data.transform,
     scissor_region: Command_Scissor_Mode = window.renderer.current_scissor
 ) {
-    _r_bind_layer(layer)
+    r_bind_layer(layer)
     r_push_current_state(framebuffer, pipeline, transform, scissor_region)
 }
 

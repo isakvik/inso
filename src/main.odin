@@ -52,19 +52,6 @@ local networking
 
 */
 
-memory_arena_names := [?]string {
-    "Global",
-    "Mapset",
-    "Frame",
-    "Element",
-    "Command buffer[BACKGROUND]",
-    "Command buffer[FOREGROUND]",
-    "Command buffer[HIT_OBJECT]",
-    "Command buffer[OVERLAY]",
-    "Command buffer[UI]",
-    "Command buffer[DEBUG]",
-}
-
 Memory_Arenas :: enum {
     // note(isak): never cleared. used instead of odin's regular arena to keep track of our allocations
     GLOBAL,
@@ -79,6 +66,19 @@ Memory_Arenas :: enum {
     
     // note(isak): temporary allocator. cleared on frame end
     FRAME,
+}
+
+memory_arena_names := [?]string {
+    "Global",
+    "Mapset",
+    "Entities",
+    "Frame",
+    "Command buffer[BACKGROUND]",
+    "Command buffer[FOREGROUND]",
+    "Command buffer[HIT_OBJECT]",
+    "Command buffer[OVERLAY]",
+    "Command buffer[UI]",
+    "Command buffer[DEBUG]",
 }
 
 memory: struct {
@@ -106,7 +106,7 @@ memory_init :: proc() -> runtime.Allocator_Error {
     return .None
 }
 
-mu_init :: proc() {
+debug_ui_init :: proc() {
     mu.init(&window.ui_ctx)
     window.ui_ctx.text_width = mu.default_atlas_text_width
     window.ui_ctx.text_height = mu.default_atlas_text_height
@@ -176,12 +176,6 @@ window: struct {
 
     skin_textures: [Skin_Element_Type]Texture,
     is_high_resolution: [Skin_Element_Type]bool
-}
-
-debug_info: struct {
-    display_frame_profiler: bool,
-    display_memory_profiler: bool,
-    display_fontatlas: bool
 }
 
 window_init :: proc(rect: Rect) {
@@ -329,7 +323,7 @@ main :: proc() {
 
     window_resize(i32(window.rect.w), i32(window.rect.h))
 
-    mu_init()
+    debug_ui_init()
     text_init()
     keyboard_init()
     
@@ -461,7 +455,7 @@ main :: proc() {
         {   
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
             
-            r_push_layer(.DEBUG, transform = window.screenspace_transform)
+            r_bind_layer_and_push_current_state(.DEBUG, transform = window.screenspace_transform)
             if window.ui_enabled {
                 r_push_transform(window.screenspace_transform)
                 mu.begin(&window.ui_ctx)
@@ -473,10 +467,10 @@ main :: proc() {
             
             dt_ms := (time_current_frame - time_last_frame) * 1000
 
-            r_push_layer(.BACKGROUND, transform = window.screenspace_transform)
+            r_bind_layer_and_push_current_state(.BACKGROUND, transform = window.screenspace_transform)
             osu_on_update(dt_ms)
 
-            r_push_layer(.UI, pipeline = {builtin_pipeline(.QUAD)})
+            r_bind_layer_and_push_current_state(.UI, pipeline = {builtin_pipeline_slot(.QUAD)})
             
             r_push_transform(window.screenspace_transform)
             
@@ -502,20 +496,20 @@ main :: proc() {
             */
             profiler_block_begin(.GAME_DRAW); defer profiler_block_end()
             
-            r_push_layer(.DEBUG, transform = window.screenspace_transform)
+            r_bind_layer_and_push_current_state(.DEBUG, transform = window.screenspace_transform)
 
-            if debug_info.display_fontatlas {
+            if app.debug_display_fontatlas {
                 r_draw_rect(&renderer.quad_geometry,
                     {0, 0, f32(text_engine.ctx.width), f32(text_engine.ctx.height)},
                     color_white,
                     reserved_texture(.FONT_ATLAS))
             }
 
-            if debug_info.display_frame_profiler {
+            if app.debug_display_frame_profiler {
                 profiler_push_blocks_as_text(renderer, frame_count)
                 profiler_push_quad(&renderer.quad_geometry, frame_count)
             }
-            if debug_info.display_memory_profiler {
+            if app.debug_display_memory_profiler {
                 profiler_push_memory_diag_text(renderer)
             }
             end_frame(renderer)
@@ -531,7 +525,7 @@ main :: proc() {
 
             process_builtin_shader_changes(&shaders_watch)
 
-            if debug_info.display_frame_profiler {
+            if app.debug_display_frame_profiler {
                 profiler_write_texture_column(frame_count, window.profiler_texture)
 
                 if frame_count % 100 == 0 {
@@ -581,29 +575,17 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
 }
 
 handle_debug_ui_events :: proc(ctx: ^mu.Context) {
-    if is_key_pressed(.R) {
-        beatmap_reload()
-    }
-    if is_key_pressed(.HOME) {
-        game.time_rate = 1
-    }
-    if is_key_pressed(.PAGEUP) {
-        game.time_rate *= 2
-    }
-    if is_key_pressed(.PAGEDOWN) {
-        game.time_rate /= 2
-    }
     if is_key_pressed(.F1) {
         window.renderer.trace_frame = !window.renderer.trace_frame
     }
     if is_key_pressed(.F2) {
-        debug_info.display_fontatlas = !debug_info.display_fontatlas
+        app.debug_display_fontatlas = !app.debug_display_fontatlas
     }
     if is_key_pressed(.F3) {
-        debug_info.display_frame_profiler = !debug_info.display_frame_profiler
+        app.debug_display_frame_profiler = !app.debug_display_frame_profiler
     }
     if is_key_pressed(.F4) {
-        debug_info.display_memory_profiler = !debug_info.display_memory_profiler
+        app.debug_display_memory_profiler = !app.debug_display_memory_profiler
         
         track := &memory.global_tracker
         if len(track.allocation_map) > 0 {
@@ -696,8 +678,9 @@ render_debug_ui :: proc(renderer: ^Renderer, ctx: ^mu.Context) {
             case ^mu.Command_Clip:
                 r_begin_scissor_mode(cmd.rect.x, cmd.rect.y, cmd.rect.w, i32(window.rect.h) - cmd.rect.h)
             case ^mu.Command_Rect:
-                r_draw_rect(&renderer.quad_geometry, {f32(cmd.rect.x), f32(cmd.rect.y), f32(cmd.rect.w), f32(cmd.rect.h)}, 
-                          transmute(Color)cmd.color)
+                r_draw_rect(&renderer.quad_geometry, 
+                    {f32(cmd.rect.x), f32(cmd.rect.y), f32(cmd.rect.w), f32(cmd.rect.h)}, 
+                    transmute(Color)cmd.color)
             case ^mu.Command_Icon:
                 icon_rect := mu.default_atlas[cmd.id]
                 push_icon(renderer, cmd.rect, icon_rect, transmute(Color)cmd.color)
@@ -717,8 +700,8 @@ begin_frame :: proc(renderer: ^Renderer) {
         time = f32(game.beatmap.music_time_ms)
     })
 
-    _r_bind_layer(.BACKGROUND)
-    r_bind_pipeline({builtin_pipeline(.QUAD)})
+    r_bind_layer(.BACKGROUND)
+    r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
     r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
     r_push_transform(identity_transform)
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
@@ -740,8 +723,8 @@ process_builtin_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
         }
         fmt.println("reloaded builtin shaders")
 
-        pipeline_reinit(&window.pipelines.data[builtin_pipeline(.QUAD)], quad_pipeline_desc())
-        pipeline_reinit(&window.pipelines.data[builtin_pipeline(.SLIDER)], slider_pipeline_desc())
-        pipeline_reinit(&window.pipelines.data[builtin_pipeline(.TEXT)], text_pipeline_desc())
+        pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.QUAD)], quad_pipeline_desc())
+        pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.SLIDER)], slider_pipeline_desc())
+        pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.TEXT)], text_pipeline_desc())
     }
 }

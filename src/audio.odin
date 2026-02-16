@@ -180,6 +180,15 @@ sound_is_finished :: proc(sound: ^Sound) -> (result: bool) {
     return result
 }
 
+sound_get_length_ms :: proc(sound: ^Sound) -> (result: f64) {
+    if audio.ready { 
+        handle := _sound_get_handle(sound)
+        length := bass.ChannelGetLength(handle, bass.POS_BYTE)
+        result = bass.ChannelBytes2Seconds(handle, length) * 1000
+    }
+    return result
+}
+
 sound_get_position_ms :: proc(sound: ^Sound) -> (result: f64) {
     if audio.ready { 
         handle := _sound_get_handle(sound)
@@ -216,13 +225,22 @@ sound_set_position_fract :: proc(sound: ^Sound, fract: f64) {
     }
 }
 
-sound_get_length_ms :: proc(sound: ^Sound) -> (result: f64) {
+sound_set_speed :: proc(sound: ^Sound, rate: f32) {
     if audio.ready { 
         handle := _sound_get_handle(sound)
-        length := bass.ChannelGetLength(handle, bass.POS_BYTE)
-        result = bass.ChannelBytes2Seconds(handle, length) * 1000
+        rate := clamp(rate, 1/50, 50)
+        compensate_pitch := true
+        
+        freq: f32
+        if !bass.ChannelGetAttribute(handle, bass.ATTRIB_FREQ, &freq) {
+            log.error("BASS channel get freq error:", bass.ErrorGetCode())
+        }
+        
+        freq_target := (compensate_pitch ? (rate-1.0) * 100.0 : rate * freq)
+       	if !bass.ChannelSetAttribute(handle, (compensate_pitch ? bass.ATTRIB_TEMPO : bass.ATTRIB_TEMPO_FREQ), freq_target) {
+            log.error("BASS channel set tempo error:", bass.ErrorGetCode(), compensate_pitch)
+        }
     }
-    return result
 }
 
 sound_play :: proc(sound: ^Sound, start_paused: bool = false, loop: bool = false) {

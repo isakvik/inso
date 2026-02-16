@@ -32,12 +32,13 @@ game: struct {
     beatmap: Beatmap,
     
     paused: bool,
-    time_rate: f64,
+    time_rate: f32,
     
     // note(isak): map game view fields
 
     gfx_handles: rb.Ring_Buffer(slotmap.Handle),
     temp_gfx_refs: sb.Swap_Buffer(slotmap.Handle),
+    map_gfx_refs: q.Queue(slotmap.Handle),
     
     entities: slotmap.Slotmap(Entity),
     next_entity_id: int, // note(isak): rolling entity id sequence
@@ -179,7 +180,7 @@ osu_on_init :: proc() {
     osu_controller.k1_key = sdl.Scancode.Z
     osu_controller.k2_key = sdl.Scancode.X
 
-    beatmap_on_init()
+    beatmap_on_init(&game.beatmap)
 }
 
 
@@ -188,32 +189,34 @@ osu_on_update :: proc(dt: f64) {
 
     updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
     if updated_systems[.OSU_FILE] {
-        beatmap_reload()
+        beatmap_reload(&game.beatmap)
     }
     
     // note(isak): game logic - map
     
     if sound_is_finished(&game.beatmap.music) {
-        beatmap_reload()
+        beatmap_reload(&game.beatmap)
         sound_set_position_ms(&game.beatmap.music, 0)
     }
+    
+    beatmap_on_update(&game.beatmap)
 
     map_time: f64
     if game.beatmap.music_time_ms < 0 {
-        game.beatmap.music_time_ms += game.dt * (game.paused ? 0 : game.time_rate)
+        game.beatmap.music_time_ms += game.dt * f64(game.paused ? 0 : game.time_rate)
         map_time = game.beatmap.music_time_ms
         
         if game.beatmap.music_time_ms >= 0 {
             sound_resume(&game.beatmap.music)
             sound_set_position_ms(&game.beatmap.music, 0)
             
-            map_time = get_music_position_interpolated_ms()
+            map_time = beatmap_music_position_interpolated_ms(&game.beatmap)
             game.beatmap.music_time_ms = map_time
         }
     } else {
         // note(isak): map play time is determined by the sound library (and whether we were able to play music or not), 
         // but song time interpolation is required because BASS reports play position in buffer size granularity
-        map_time = get_music_position_interpolated_ms()
+        map_time = beatmap_music_position_interpolated_ms(&game.beatmap)
         game.beatmap.music_time_ms = map_time
     }
     
@@ -238,9 +241,11 @@ osu_on_update :: proc(dt: f64) {
             clear_hitobject_entities(&hobj)
             
             hobj.gfx_handles = reserve_handles(&game.gfx_handles, 2) or_continue
+            
             hobj.gfx_handles[0] = push_entity({
                 flags = {.ACTIVE},
                 element = element_id(.CLICKED_HIT_CIRCLE_OVERLAY),
+                layer = .HIT_OBJECTS,
                 pos = hobj.pos,
                 size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
@@ -251,6 +256,7 @@ osu_on_update :: proc(dt: f64) {
             hobj.gfx_handles[1] = push_entity({
                 flags = {.ACTIVE},
                 element = element_id(.CLICKED_HIT_CIRCLE),
+                layer = .HIT_OBJECTS,
                 pos = hobj.pos,
                 size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
@@ -262,6 +268,7 @@ osu_on_update :: proc(dt: f64) {
             push_entity_temp({
                 flags = {.ACTIVE},
                 element = element_id(.JUDGMENT),
+                layer = .HIT_OBJECTS,
                 pos = hobj.pos,
                 size = [2]f32{0.5, 1} * game.beatmap.circle_radius_osupx,
                 anchor = .CENTER,
@@ -277,7 +284,7 @@ osu_on_update :: proc(dt: f64) {
     
     // game render
     
-    r_push_layer(.HIT_OBJECTS)
+    r_bind_layer_and_push_current_state(.HIT_OBJECTS)
     
     for hobj, i in hobj_it {
         if map_time < hobj.start_time_ms - game.beatmap.preempt_ms || hobj.end_time_ms < map_time {
@@ -304,54 +311,19 @@ osu_on_update :: proc(dt: f64) {
     }
     
     process_and_draw_temp_gfx_handles()
+    r_bind_layer_and_push_current_state(.BACKGROUND, transform = playfield_transform)
+    
+    for handle in game.beatmap.map_gfx_refs {
+        e := slotmap.get(&game.entities, handle) or_continue
+        if .ACTIVE in e.flags {
+            render_entity(e, map_time)
+        }
+    }
     
     // render ui
     // todo(isak): "screens" implementation for determining relevant UI components?
-
-    seek_to_fract: f64
-    if ui_update_timeline(&game.ui_timeline, &seek_to_fract) {
-        map_len_with_preempt := game.beatmap.length_ms + (-game.beatmap.start_time_ms)
-        leadin_fract := -game.beatmap.start_time_ms / map_len_with_preempt
-        
-        if seek_to_fract < leadin_fract {
-            game.beatmap.music_time_ms = game.beatmap.start_time_ms + seek_to_fract * map_len_with_preempt
-        } else {
-            seek_to_music_fract := (seek_to_fract - leadin_fract) * (1 / (1.0 - leadin_fract))
-            sound_set_position_fract(&game.beatmap.music, seek_to_music_fract)
-            game.beatmap.music_time_ms = get_music_position_interpolated_ms()
-        }
-        
-        if game.ui_timeline.clicked {
-            sound_pause(&game.beatmap.music)
-        }
-    }
-    if game.beatmap.music_time_ms > 0 && game.ui_timeline.released && !game.ui_timeline.pause_on_release {
-        if sound_is_paused(&game.beatmap.music) {
-            sound_resume(&game.beatmap.music)
-        }
-    }
-    
-    {
-        map_len_with_preempt := game.beatmap.length_ms + (-game.beatmap.start_time_ms)
-        map_time_with_preempt := game.beatmap.music_time_ms + (-game.beatmap.start_time_ms)
-        
-        beatmap_leadin_fract := f32((-game.beatmap.preempt_ms - game.beatmap.music_time_ms) / -game.beatmap.start_time_ms)
-        beatmap_finish_fract := f32(map_time_with_preempt / map_len_with_preempt)
-        
-        render_timeline(&game.ui_timeline, beatmap_leadin_fract, beatmap_finish_fract)
-    }
-    
+    handle_and_render_timeline()
     render_input_display()
-}
-
-mapset_texture :: proc(name: string) -> u32 {
-    assert(game.active_mapset != nil)
-    return map_texture(game.active_mapset.texture_slot_by_name[name])
-}
-
-mapset_shader :: proc(name: string) -> u32 {
-    assert(game.active_mapset != nil)
-    return map_pipeline(game.active_mapset.shader_slot_by_name[name])
 }
 
 // note(isak): this function assumes the start times of objects are sorted, but doesn't require end times to be.
@@ -386,6 +358,52 @@ get_visible_hobj_iterator :: proc(state: ^Visibility_State, time: f64) -> []Hit_
         result = hit_objects[state.earliest_i:min(state.latest_i, len(hit_objects))]
     }
     return result
+}
+
+handle_play_input_events :: proc() {
+    if is_key_pressed(.ESCAPE) || is_key_pressed(.SPACE) {
+        beatmap_pause(&game.beatmap, !game.paused)
+    }
+    if is_key_pressed(.R) {
+        beatmap_reload(&game.beatmap)
+    }
+    if is_key_pressed(.HOME) {
+        game.time_rate = 1
+    }
+    if is_key_pressed(.PAGEUP) {
+        game.time_rate *= 2
+        sound_set_speed(&game.beatmap.music, game.time_rate)
+    }
+    if is_key_pressed(.PAGEDOWN) {
+        game.time_rate /= 2
+        sound_set_speed(&game.beatmap.music, game.time_rate)
+    }
+    
+    if is_key_pressed(.F10) {
+        osu_controller.mouse_keys_enabled = !osu_controller.mouse_keys_enabled
+    }
+    
+    osu_controller.k1.is_down = keyboard.buttons[osu_controller.k1_key]
+    osu_controller.k1.was_down = keyboard.buttons_prev_frame[osu_controller.k1_key]
+    osu_controller.k2.is_down = keyboard.buttons[osu_controller.k2_key]
+    osu_controller.k2.was_down = keyboard.buttons_prev_frame[osu_controller.k2_key]
+    osu_controller.m1 = mouse.buttons[.LEFT]
+    osu_controller.m2 = mouse.buttons[.RIGHT]
+}
+
+// todo(isak): game logic. needs testing
+valid_key_press :: proc() -> bool {
+    if osu_controller.mouse_keys_enabled {
+        if is_pressed(osu_controller.k1) && !is_down(osu_controller.m1) ||
+            is_pressed(osu_controller.k2) && !is_down(osu_controller.m2) {
+            return true
+        }
+        
+        return is_pressed(osu_controller.m1) && !is_down(osu_controller.k1) || 
+            is_pressed(osu_controller.m2) && !is_down(osu_controller.k2)
+    } else {
+        return is_pressed(osu_controller.k1) || is_pressed(osu_controller.k2)
+    }
 }
 
 

@@ -34,11 +34,11 @@ Builtin_Pipeline_Slot :: enum {
     TEXT
 }
 
-builtin_pipeline :: proc(s: Builtin_Pipeline_Slot) -> u32 {
+builtin_pipeline_slot :: proc(s: Builtin_Pipeline_Slot) -> u32 {
     return u32(s)
 }
 
-map_pipeline :: proc(s: u32) -> u32 {
+user_pipeline_slot :: proc(s: u32) -> u32 {
     return len(Builtin_Pipeline_Slot) + s
 }
 
@@ -78,12 +78,10 @@ Texture_Index :: struct {
     index: u32
 }
 
-// note(isak): returns index into bindless texture buffer
+// note(isak): these return indices into the bindless texture buffer
 reserved_texture :: proc(slot: Reserved_Texture_Slot) -> u32 { return u32(slot) }
-
 skin_texture :: proc(skin_el: Skin_Element_Type) -> u32 { return u32(skin_el) + len(Reserved_Texture_Slot) }
-
-map_texture :: proc(tex_id: u32) -> u32 { return tex_id + len(Reserved_Texture_Slot) + len(Skin_Element_Type) }
+user_texture :: proc(tex_id: u32) -> u32 { return tex_id + len(Reserved_Texture_Slot) + len(Skin_Element_Type) }
 
 
 //////////////////////////////////////////////////////
@@ -92,7 +90,7 @@ map_texture :: proc(tex_id: u32) -> u32 { return tex_id + len(Reserved_Texture_S
 quad_pipeline_desc :: proc() -> sg.Pipeline_Desc {
     return {
         label = "builtin.quad",
-        shader = window.shaders.data[builtin_pipeline(.QUAD)].shader,
+        shader = window.shaders.data[builtin_pipeline_slot(.QUAD)].shader,
         //index_type = .UINT16,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
@@ -113,7 +111,7 @@ quad_pipeline_desc :: proc() -> sg.Pipeline_Desc {
 slider_pipeline_desc :: proc() -> sg.Pipeline_Desc {
     return {
         label = "builtin.slider",
-        shader = window.shaders.data[builtin_pipeline(.SLIDER)].shader,
+        shader = window.shaders.data[builtin_pipeline_slot(.SLIDER)].shader,
         //index_type = .UINT16,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
@@ -134,7 +132,7 @@ slider_pipeline_desc :: proc() -> sg.Pipeline_Desc {
 text_pipeline_desc :: proc() -> sg.Pipeline_Desc {
     return {
         label = "builtin.text",
-        shader = window.shaders.data[builtin_pipeline(.TEXT)].shader,
+        shader = window.shaders.data[builtin_pipeline_slot(.TEXT)].shader,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
         colors = {

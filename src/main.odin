@@ -12,7 +12,6 @@ import "core:sys/windows"
 import "core:time"
 import vmem "core:mem/virtual"
 
-import lua "vendor:lua/5.4"
 import mu "vendor:microui"
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
@@ -82,7 +81,7 @@ memory_arena_names := [?]string {
 }
 
 memory: struct {
-    allocs: [Memory_Arenas]runtime.Allocator,
+    allocators: [Memory_Arenas]runtime.Allocator,
     arenas: [Memory_Arenas]vmem.Arena,
     
     global_backing_alloc: runtime.Allocator,
@@ -95,10 +94,10 @@ memory: struct {
 // note(isak): this should take care of error printing
 memory_init :: proc() -> runtime.Allocator_Error {
     using memory
-    init_tracked_growing_arena(&arenas[.GLOBAL], &allocs[.GLOBAL], &global_backing_alloc, &global_tracker) or_return
-    init_growing_arena(&arenas[.MAPSET], &allocs[.MAPSET]) or_return
-    init_growing_arena(&arenas[.ENTITIES], &allocs[.ENTITIES]) or_return
-    init_growing_arena(&arenas[.FRAME], &allocs[.FRAME]) or_return
+    init_tracked_growing_arena(&arenas[.GLOBAL], &allocators[.GLOBAL], &global_backing_alloc, &global_tracker) or_return
+    init_growing_arena(&arenas[.MAPSET], &allocators[.MAPSET]) or_return
+    init_growing_arena(&arenas[.ENTITIES], &allocators[.ENTITIES]) or_return
+    init_growing_arena(&arenas[.FRAME], &allocators[.FRAME]) or_return
 
     for layer in Layer {
         init_growing_arena(&command_buffer_arenas[layer], &command_buffer_allocators[layer]) or_return
@@ -274,32 +273,20 @@ rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
     }
 }
 
-lua_ctx: struct {
-    state: ^lua.State
-}
-
 main :: proc() {
     _program_start_tsc = sdl.GetPerformanceCounter()
     
     if memory_init() != .None {
         panic("memory_init :: error")
     }
-    context.allocator = memory.allocs[.GLOBAL]
-    context.temp_allocator = memory.allocs[.FRAME]
+    
+    // note(isak): context stuff must be set in main scope
+    context.allocator = memory.allocators[.GLOBAL]
+    context.temp_allocator = memory.allocators[.FRAME]
     
     app_init()
-       context.logger = app.logger
+    context.logger = app.logger 
     defer app_cleanup()
-    
-    /*
-    lua_ctx.state = lua.L_newstate()
-    defer lua.close(lua_ctx.state)
-    
-    lua.L_openlibs(lua_ctx.state)
-    
-    script: cstring = "print('Hello from Lua!')"
-    lua.L_dostring(lua_ctx.state, script)
-    */
 
     if (!sdl.Init({.VIDEO})) {
         log.panic("SDL video init error:", sdl.GetError())
@@ -336,14 +323,16 @@ main :: proc() {
         test_mapset_path := "songs/test/"
         
         game.active_mapset, ok = mapset_open_for_editing(test_mapset_path)
+        game.active_notosu_map = &game.active_mapset.notosu_map
         game.active_map = &game.active_mapset.osu_map
         if !ok {
             log.error("tried to open mapset, but failed:", test_mapset_path)
         }
+        
+        // todo(isak): dependent on map load... make a more granular api for map load purposes
+        prepare_textures_for_rendering()
     }
     
-    // note(isak): dependent on map load... make a more granular api for map load purposes
-    prepare_textures_for_rendering()
 
     osu_on_init()
 

@@ -323,11 +323,7 @@ reserve_handles :: proc(buf: ^rb.Ring_Buffer(slotmap.Handle), #any_int n: int) -
 }
 
 write_default_entities_from_map :: proc(osu_map: ^Osu_Map) {
-    final_hobj_time_ms: f64
-    i: int
     for &hobj in game.beatmap.hit_objects {
-        final_hobj_time_ms = max(final_hobj_time_ms, hobj.end_time_ms)
-        
         hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
         hobj.gfx_handles = reserve_handles(&game.gfx_handles, len(hit_circle_el_types)) or_continue
         #reverse for el_type, i in hit_circle_el_types {
@@ -422,10 +418,10 @@ process_and_draw_temp_gfx_handles :: proc() {
             if was_in_time {
                 append(game.temp_gfx_refs.next, handle)
             } else {
-                
+                slotmap.remove(&game.entities, handle)
             }
         } else {
-            //fmt.println("inactive entity", e.id)
+            slotmap.remove(&game.entities, handle)
         }
     }
     sb.swap(&game.temp_gfx_refs)
@@ -439,7 +435,7 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
     r_clear()
 
-    pf_size: f32 = osu_playfield_size_osupx / game.beatmap.circle_radius_osupx
+    pf_size: f32 = playfield_size_osupx / game.beatmap.circle_radius_osupx
 
     r_push_transform(transform_from_bounds({0,0,pf_size,pf_size}, window.aspect_ratio))
 
@@ -460,14 +456,14 @@ test_bg_entity :: proc(bg_path: string) -> (result: slotmap.Handle) {
     tex, ok := mapset_texture(bg_path)
     if ok {
         bg_aspect_ratio := f32(tex.h) / f32(tex.w)
-        bg_size := vec2{osu_playfield_size_osupx, osu_playfield_size_osupx} / {(bg_aspect_ratio), 1}
+        bg_size := vec2{playfield_size_osupx, playfield_size_osupx} / {(bg_aspect_ratio), 1}
         
         if window.aspect_ratio <= bg_aspect_ratio {
             bg_size *= (window.rect.w / bg_size.x)
         } else {
             bg_size *= (window.rect.h / bg_size.y)
         }
-        bg_size *= osu_playfield_size_osupx / window.rect.h
+        bg_size *= playfield_size_osupx / window.rect.h
         
         return push_entity({
             flags = {.ACTIVE},

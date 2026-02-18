@@ -12,8 +12,8 @@ import q "core:container/queue"
 import sdl "vendor:sdl3"
 
 
-osu_playfield_size_osupx :: f32(512)
-playfield_rect :: Rect{ 0, 0, osu_playfield_size_osupx, osu_playfield_size_osupx }
+playfield_size_osupx :: f32(512)
+playfield_rect :: Rect{ 0, 0, playfield_size_osupx, playfield_size_osupx }
 
 osu_slider_curve_points_separation :: f32(2.5)
 
@@ -22,6 +22,7 @@ osu_slider_curve_points_separation :: f32(2.5)
 game: struct {
     dt: f64, 
     active_mapset: ^Mapset,
+    active_notosu_map: ^Notosu_Map,
     active_map: ^Osu_Map,
     active_skin: [Skin_Element_Type]Skin_Element,
     
@@ -166,6 +167,7 @@ Osu_Map :: struct {
         bg_filename: string,
     },
     
+    audio_filepath: string,
     hit_objects: []Hit_Object,
     slider_paths: []Slider_Path,
 }

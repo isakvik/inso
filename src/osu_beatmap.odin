@@ -46,16 +46,16 @@ beatmap_on_init :: proc(beatmap: ^Beatmap) {
     
     // map graphics init
     
-    q.init(&game.elements, 1024, memory.allocs[.MAPSET])
+    q.init(&game.elements, 1024, memory.allocators[.MAPSET])
     q.append(&game.elements, null_element)
-    q.init(&game.animations, 1024, memory.allocs[.MAPSET])
+    q.init(&game.animations, 1024, memory.allocators[.MAPSET])
 
     write_default_elements(&game.elements, &game.animations)
     
-    rb.init(&game.gfx_handles, 8192, memory.allocs[.ENTITIES])
+    rb.init(&game.gfx_handles, 8192, memory.allocators[.ENTITIES])
     game.gfx_handles.length = cap(game.gfx_handles.data)
     
-    q.init(&game.map_gfx_refs, 1024, memory.allocs[.ENTITIES])
+    q.init(&game.map_gfx_refs, 1024, memory.allocators[.ENTITIES])
     
     sb.init(&game.temp_gfx_refs, 8192)
     slotmap.init(&game.entities, 8192)
@@ -75,6 +75,7 @@ beatmap_on_update :: proc(beatmap: ^Beatmap) {
 }
 
 beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
+    lua_cleanup()
     sound_destroy(&beatmap.music)
     
     for &hobj in beatmap.hit_objects {
@@ -88,15 +89,15 @@ beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
 }
 
 beatmap_load :: proc(beatmap: ^Beatmap) {
-    music_path := strings.concatenate({game.active_mapset.folder_path, "/", game.active_map.audio_filename}, context.temp_allocator)
-    
     ok: bool
-    beatmap.music, ok = sound_stream_init(music_path)
+    beatmap.music, ok = sound_stream_init(game.active_map.audio_filepath)
     if ok {
         sound_play(&beatmap.music, start_paused = true, loop = true)
     } else {
-        log.error("tried to open map sound file, but failed:", music_path)
+        log.error("tried to open map sound file, but failed:", game.active_map.audio_filepath)
     }
+    
+    lua_init(game.active_notosu_map.lua_entry_point)
 }
 
 beatmap_reload :: proc(beatmap: ^Beatmap) {

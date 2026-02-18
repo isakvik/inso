@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:math"
 import "core:math/linalg"
 import "core:fmt"
+import "core:log"
 import os "core:os/os2"
 import "core:slice"
 import "core:strings"
@@ -275,14 +276,14 @@ Shader :: struct {
 }
 
 shader_init :: proc(vs_path, fs_path: string, alloc: runtime.Allocator = context.temp_allocator) -> (Shader, Shader_Error) {
-    vs_filedata, vs_err := read_entire_file(vs_path, alloc)
-    if vs_err != os.ERROR_NONE {
-        fmt.printfln("loading vert shader file '{}' failed: {}", vs_path, vs_err)
+    vs_filedata, vs_filelen, vs_err := read_entire_file_to_cstring(vs_path, alloc)
+    if vs_err != os.ERROR_NONE || vs_filelen == 0 {
+        log.errorf("loading vert shader file '{}' failed: {}", vs_path, vs_err)
         return {}, .READ_ERROR
     }
-    fs_filedata, fs_err := read_entire_file(fs_path, alloc)
-    if fs_err != os.ERROR_NONE {
-        fmt.printfln("loading frag shader file '{}' failed: {}", fs_path, fs_err)
+    fs_filedata, fs_filelen, fs_err := read_entire_file_to_cstring(fs_path, alloc)
+    if fs_err != os.ERROR_NONE || fs_filelen == 0 {
+        log.errorf("loading frag shader file '{}' failed: {}", fs_path, fs_err)
         return {}, .READ_ERROR
     }
 
@@ -292,8 +293,8 @@ shader_init :: proc(vs_path, fs_path: string, alloc: runtime.Allocator = context
 
     temp_shader := sg.make_shader(
         sg.Shader_Desc {
-            vertex_func = {source = strings.clone_to_cstring(string(vs_filedata))},
-            fragment_func = {source = strings.clone_to_cstring(string(fs_filedata))}
+            vertex_func = {source = vs_filedata},
+            fragment_func = {source = fs_filedata}
         },
     )
 
@@ -312,7 +313,7 @@ shader_reinit :: proc(shader: ^Shader, alloc: runtime.Allocator = context.temp_a
     new_shader, err := shader_init(shader.vs_path, shader.fs_path, alloc)
     if err != .NONE {
         assert(err == .COMPILE_ERROR)
-        fmt.println("Shader compile errors found. Paths:", shader.vs_path, shader.fs_path)
+        log.errorf("Shader compile errors found. Paths:", shader.vs_path, shader.fs_path)
         return err
     }
     sg.destroy_shader(shader.shader)

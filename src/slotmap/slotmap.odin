@@ -22,9 +22,9 @@ Sparse_Index :: struct {
 }
 
 init :: proc(m: ^$M/Slotmap($T), capacity: int = DEFAULT_CAPACITY, allocator := context.allocator) {
-    m.handles.allocator        = allocator
-    m.values.allocator         = allocator
-    m.sparse_indices.allocator = allocator
+    m.handles        = make_dynamic_array_len_cap([dynamic]Handle, 0, capacity, allocator)
+    m.values         = make_dynamic_array_len_cap([dynamic]T, 0, capacity, allocator)
+    m.sparse_indices = make_dynamic_array_len_cap([dynamic]Sparse_Index, 0, capacity, allocator)
     m.next = 0
 }
 

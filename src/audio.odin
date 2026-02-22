@@ -60,7 +60,7 @@ bass_wasapi_proc :: proc "c" (buffer: rawptr, len: u32, user_data: rawptr) -> u3
 
 // todo(isak): should probably call this device_init() or something
 audio_init :: proc(device: Device = -1) -> bool {
-    init := bass.Init(device, 44100, bass.DEVICE_NOSPEAKER, nil, nil);
+    init := bass.Init(device, 44100, bass.DEVICE_NOSPEAKER, nil, nil)
 
     /*
     note(isak): we're using some flags that make BASS run very smoothly with WASAPI in windows' shared audio mode
@@ -167,7 +167,7 @@ sound_is_playing :: proc(sound: ^Sound) -> (result: bool) {
 }
 
 sound_is_paused :: proc(sound: ^Sound) -> bool {
-    base := transmute(^Base_Sound)sound
+    base := cast(^Base_Sound)sound
     return .PAUSED in base.flags
 }
 
@@ -245,7 +245,7 @@ sound_set_speed :: proc(sound: ^Sound, rate: f32) {
 
 sound_play :: proc(sound: ^Sound, start_paused: bool = false, loop: bool = false) {
     if audio.ready { 
-        base := transmute(^Base_Sound)sound
+        base := cast(^Base_Sound)sound
         handle := _sound_get_handle(sound)
         
         bass.ChannelSetAttribute(handle, bass.ATTRIB_NORAMP, 1.0) // see https://github.com/ppy/osu-framework/pull/3146
@@ -277,7 +277,7 @@ sound_play :: proc(sound: ^Sound, start_paused: bool = false, loop: bool = false
 
 sound_resume :: proc(sound: ^Sound) {
     if audio.ready { 
-        base := transmute(^Base_Sound)sound
+        base := cast(^Base_Sound)sound
         handle := _sound_get_handle(sound)
         bass.Mixer_ChannelFlags(handle, 0, bass.MIXER_CHAN_PAUSE)
         base.flags &= ~{.PAUSED}
@@ -286,7 +286,7 @@ sound_resume :: proc(sound: ^Sound) {
 
 sound_pause :: proc(sound: ^Sound) {
     if audio.ready { 
-        base := transmute(^Base_Sound)sound
+        base := cast(^Base_Sound)sound
         handle := _sound_get_handle(sound)
         bass.Mixer_ChannelFlags(handle, bass.MIXER_CHAN_PAUSE, bass.MIXER_CHAN_PAUSE)
         base.flags |= {.PAUSED}

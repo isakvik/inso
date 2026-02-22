@@ -137,7 +137,7 @@ render_input_display :: proc() {
     
     render_input_key :: proc(key: Button_State, rect: Rect) {
         display_color := key.is_down ? color_light_gray : color_dark_gray
-        r_draw_layout_rect(&window.renderer.quad_geometry, rect, .BOTTOM_RIGHT, display_color, reserved_texture(.WHITE))
+        r_draw_layout_rect(&window.renderer.quad_geometry, rect, .BOTTOM_RIGHT, display_color, builtin_texture(.WHITE))
     }
 
     render_input_key(osu_controller.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 })

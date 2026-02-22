@@ -57,7 +57,7 @@ Shader_SSBO_Bind_Slot :: enum u32 {
 }
 
 
-Reserved_Texture_Slot :: enum u32 {
+Builtin_Texture_Slot :: enum u32 {
     WHITE,
     PROFILER,
     FONT_ATLAS,
@@ -79,9 +79,9 @@ Texture_Index :: struct {
 }
 
 // note(isak): these return indices into the bindless texture buffer
-reserved_texture :: proc(slot: Reserved_Texture_Slot) -> u32 { return u32(slot) }
-skin_texture :: proc(skin_el: Skin_Element_Type) -> u32 { return u32(skin_el) + len(Reserved_Texture_Slot) }
-user_texture :: proc(tex_id: u32) -> u32 { return tex_id + len(Reserved_Texture_Slot) + len(Skin_Element_Type) }
+builtin_texture :: proc(slot: Builtin_Texture_Slot) -> u32 { return u32(slot) }
+skin_texture :: proc(skin_el: Skin_Element_Type) -> u32 { return u32(skin_el) + len(Builtin_Texture_Slot) }
+user_texture :: proc(tex_id: u32) -> u32 { return tex_id + len(Builtin_Texture_Slot) + len(Skin_Element_Type) }
 
 
 //////////////////////////////////////////////////////
@@ -168,12 +168,12 @@ text_pipeline_desc :: proc() -> sg.Pipeline_Desc {
 prepare_textures_for_rendering :: proc() {
     textures := &window.texture_buffer.data
 
-    textures[Reserved_Texture_Slot.WHITE] = window.white_texture.tex_handle
-    textures[Reserved_Texture_Slot.PROFILER] = window.profiler_texture.tex_handle
-    textures[Reserved_Texture_Slot.FONT_ATLAS] = window.font_atlas_texture.tex_handle
-    textures[Reserved_Texture_Slot.UI_ATLAS] = window.ui_atlas_texture.tex_handle
-    textures[Reserved_Texture_Slot.SLIDER_FRAMEBUFFER] = window.framebuffers[.SLIDERS].color_texture_handles[0]
-    num_elements := len(Reserved_Texture_Slot)
+    textures[Builtin_Texture_Slot.WHITE] = window.white_texture.tex_handle
+    textures[Builtin_Texture_Slot.PROFILER] = window.profiler_texture.tex_handle
+    textures[Builtin_Texture_Slot.FONT_ATLAS] = window.font_atlas_texture.tex_handle
+    textures[Builtin_Texture_Slot.UI_ATLAS] = window.ui_atlas_texture.tex_handle
+    textures[Builtin_Texture_Slot.SLIDER_FRAMEBUFFER] = window.framebuffers[.SLIDERS].color_texture_handles[0]
+    num_elements := len(Builtin_Texture_Slot)
 
     for skin_el in Skin_Element_Type {
         textures[num_elements] = window.skin_textures[skin_el].tex_handle
@@ -195,7 +195,7 @@ prepare_textures_for_rendering :: proc() {
 cleanup_textures_for_rendering :: proc() {
     textures := &window.texture_buffer.data
     
-    num_elements := len(Reserved_Texture_Slot) + len(Skin_Element_Type) + game.active_mapset.textures.len
+    num_elements := len(Builtin_Texture_Slot) + len(Skin_Element_Type) + game.active_mapset.textures.len
     for i in 0..<num_elements {
         if textures[i] > 0 {
             gl.MakeTextureHandleNonResidentARB(textures[i])

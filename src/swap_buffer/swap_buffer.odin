@@ -12,8 +12,8 @@ Swap_Buffer :: struct($T: typeid) {
 }
 
 init :: proc(m: ^$M/Swap_Buffer($T), capacity: int = DEFAULT_CAPACITY, allocator := context.allocator) {
-    m.buffers[0].allocator = allocator
-    m.buffers[1].allocator = allocator
+    m.buffers[0] = make_dynamic_array_len_cap([dynamic]T, 0, capacity, allocator)
+    m.buffers[1] = make_dynamic_array_len_cap([dynamic]T, 0, capacity, allocator)
     
     m.current = &m.buffers[0]
     m.next = &m.buffers[1]

@@ -39,39 +39,51 @@ Mapset :: struct {
     num_shaders: int,
     textures: q.Queue(Texture),
     texture_slot_by_name: map[string]u32,
-    shader_slot_by_name: map[string]u32,
+    pipeline_slot_by_name: map[string]u32,
     
     model_store: ^GL_Buffer(Mesh_Vertex),
 
     watch: Win32_Directory_Watch
 }
 
-mapset_texture :: proc(name: string) -> (result: ^Texture, ok: bool) {
+mapset_texture :: proc(name: string) -> (result: ^Texture, found: bool) {
     assert(game.active_mapset != nil)
     index: u32
-    index, ok = game.active_mapset.texture_slot_by_name[name]
-    if ok {
-        result = q.get_ptr(&game.active_mapset.textures, index)
-    }
-    return result, ok
+    index, found = game.active_mapset.texture_slot_by_name[name]
+    if found do result = q.get_ptr(&game.active_mapset.textures, index)
+    else do result = &game.active_mapset.textures.data[0]
+    return result, found
 }
 
-mapset_texture_slot :: proc(name: string) -> u32 {
+mapset_texture_slot :: proc(name: string) -> (result: u32, found: bool) {
     assert(game.active_mapset != nil)
-    return user_texture(game.active_mapset.texture_slot_by_name[name])
+    index: u32
+    index, found = game.active_mapset.texture_slot_by_name[name]
+    if found do result = user_texture(index)
+    return result, found
+}
+mapset_texture_slot_or_else :: proc(name: string, default: u32) -> u32 {
+    return mapset_texture_slot(name) or_else default
 }
 
-mapset_shader_slot :: proc(name: string) -> u32 {
+mapset_pipeline_slot :: proc(name: string) -> (result: u32, found: bool) {
     assert(game.active_mapset != nil)
-    return user_pipeline_slot(game.active_mapset.shader_slot_by_name[name])
+    index: u32
+    index, found = game.active_mapset.pipeline_slot_by_name[name]
+    if found do result = user_pipeline_slot(index)
+    return result, found
+}
+mapset_pipeline_slot_or_else :: proc(name: string, default: u32) -> u32 {
+    return mapset_pipeline_slot(name) or_else default
 }
 
 
 Notosu_Map_System :: enum {
     OSU_FILE,
-    NOTOSU_FILES,
+    NOTOSU_FILE,
     SCRIPTS,
-    SHADERS
+    SHADERS,
+    ASSETS,
 }
 
 Notosu_Section_Header_Types :: enum {
@@ -165,7 +177,7 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
 
     q.init(&mapset.textures)
     mapset.texture_slot_by_name = make(map[string]u32, max(len(files), 16))
-    mapset.shader_slot_by_name = make(map[string]u32, max(len(files), 16))
+    mapset.pipeline_slot_by_name = make(map[string]u32, max(len(files), 16))
     
     for file in files {
         extension := filepath.ext(file.name)
@@ -226,15 +238,15 @@ load_model :: proc(path: string) -> ^GL_Buffer(Mesh_Vertex) {
             attr_bufview := attrib.data.buffer_view
             #partial switch attrib.type {
             case .position:
-                for pos, i in slice.from_ptr(transmute(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
+                for pos, i in slice.from_ptr(cast(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
                     store.data[i].pos = pos
                 }
             case .normal:
-                for norm, i in slice.from_ptr(transmute(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
+                for norm, i in slice.from_ptr(cast(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
                     store.data[i].norm = norm
                 }
             case .texcoord:
-                for uv, i in slice.from_ptr(transmute(^vec2)attr_bufview.buffer.data, int(attrib.data.count)) {
+                for uv, i in slice.from_ptr(cast(^vec2)attr_bufview.buffer.data, int(attrib.data.count)) {
                     store.data[i].uv = uv
                 }
             }
@@ -255,7 +267,7 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
         shader, err := shader_init(builtin_quad_vs_path, "quad_wave.fs.glsl")
         assert(err == .NONE)
         
-        mapset.shader_slot_by_name["wave"] = u32(mapset.num_shaders)
+        mapset.pipeline_slot_by_name["wave"] = u32(mapset.num_shaders)
         q.push(&window.shaders, shader)
         
         custom_desc := quad_pipeline_desc()
@@ -318,10 +330,9 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
         case .GENERAL:
             for i in 1..<len(lines) {
                 key, value := get_key_value(lines[i])
-                ok: bool
                 switch key {
                     case "LuaEntryPoint": 
-                        result.lua_entry_point = strings.concatenate({mapset.folder_path, value}, context.allocator)
+                        result.lua_entry_point = strings.concatenate({mapset.folder_path, value}, memory.allocators[.GLOBAL])
                 }
             }
         case .SHADERS:
@@ -501,7 +512,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                 temp_slider_size := int(slider_temp_queue.len) * size_of(Slider_Path)
                 slider_array_ptr, err := mem.alloc(temp_slider_size); assert(err == .None)
                 mem.copy(slider_array_ptr, raw_data(slider_temp_queue.data), temp_slider_size)
-                result.slider_paths = slice.from_ptr(transmute(^Slider_Path)slider_array_ptr, int(slider_temp_queue.len))
+                result.slider_paths = slice.from_ptr(cast(^Slider_Path)slider_array_ptr, int(slider_temp_queue.len))
         }
     }
 
@@ -593,8 +604,13 @@ mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu
                     case ".osu": updated_systems[.OSU_FILE] = true
                     case ".glsl": updated_systems[.SHADERS] = true
                     case ".lua": updated_systems[.SCRIPTS] = true
-                    case ".notosu": updated_systems[.NOTOSU_FILES] = true
-                    // todo(isak) asset files... eventually
+                    case ".notosu": updated_systems[.NOTOSU_FILE] = true
+                }
+                for img_ext in supported_image_extensions {
+                    if extension == img_ext {
+                        updated_systems[.ASSETS] = true
+                        break
+                    }
                 }
 
                 if notify.next_entry_offset == 0 {

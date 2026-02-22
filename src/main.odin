@@ -292,8 +292,6 @@ main :: proc() {
         log.panic("SDL video init error:", sdl.GetError())
     }
 
-    sound_enabled := false
-
     window_init({w = 1024, h = 512})
     window.ui_enabled = true
     defer window_cleanup()
@@ -470,7 +468,7 @@ main :: proc() {
             r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
             
             pf_cur_rect: Rect = { osu_controller.mouse_pos.x, osu_controller.mouse_pos.y, 20, 20 }
-            r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, reserved_texture(.WHITE),
+            r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, builtin_texture(.WHITE),
                 f32(time_s_since_beginning_of_program()*20))
             r_draw_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
         }
@@ -491,7 +489,7 @@ main :: proc() {
                 r_draw_rect(&renderer.quad_geometry,
                     {0, 0, f32(text_engine.ctx.width), f32(text_engine.ctx.height)},
                     color_white,
-                    reserved_texture(.FONT_ATLAS))
+                    builtin_texture(.FONT_ATLAS))
             }
 
             if app.debug_display_frame_profiler {
@@ -540,8 +538,6 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
     _debug_ui_initialized += 1
     
     if mu.window(ctx, "饕餮尤魔 :3", {}, opts + init_opts) {
-        win := mu.get_current_container(ctx)
-
         mu.layout_row(ctx, {54, -1}, 0)
         mu.label(ctx, "Time:")
         
@@ -656,7 +652,7 @@ render_debug_ui :: proc(renderer: ^Renderer, ctx: ^mu.Context) {
             f32(icon_rect.w) / f32(window.ui_atlas_texture.w), 
             f32(icon_rect.h) / f32(window.ui_atlas_texture.h)
         }
-        r_draw_rect_with_uv(&renderer.quad_geometry, pos, uv, color, reserved_texture(.UI_ATLAS))
+        r_draw_rect_with_uv(&renderer.quad_geometry, pos, uv, color, builtin_texture(.UI_ATLAS))
     }
 
     command_backing: ^mu.Command

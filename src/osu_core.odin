@@ -1,5 +1,5 @@
-package notosu
 
+package notosu
 import sb "swap_buffer"
 import "slotmap"
 import rb "ring_buffer"
@@ -37,9 +37,10 @@ game: struct {
     
     // note(isak): map game view fields
 
-    gfx_handles: rb.Ring_Buffer(slotmap.Handle),
-    temp_gfx_refs: sb.Swap_Buffer(slotmap.Handle),
-    map_gfx_refs: q.Queue(slotmap.Handle),
+    persistent_gfx: rb.Ring_Buffer(Entity_Handle), // note(isak): 
+    
+    gameplay_expiring_gfx: sb.Swap_Buffer(Entity_Handle),
+    map_expiring_gfx: sb.Swap_Buffer(Entity_Handle),
     
     entities: slotmap.Slotmap(Entity),
     next_entity_id: int, // note(isak): rolling entity id sequence
@@ -92,7 +93,7 @@ Hit_Object :: struct {
     slider_path_index: int,
     slider_repeats: int,
     
-    gfx_handles: []slotmap.Handle,
+    gfx_handles: []Entity_Handle,
 }
 
 Slider_Path_Type :: enum {
@@ -192,41 +193,21 @@ osu_on_update :: proc(dt: f64) {
     updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
     if updated_systems[.OSU_FILE] {
         beatmap_reload(&game.beatmap)
+    } else if updated_systems[.SCRIPTS] {
+        lua_reload(game.active_notosu_map.lua_entry_point)
+        lua_beatmap_on_init()
     }
     
     // note(isak): game logic - map
     
-    if sound_is_finished(&game.beatmap.music) {
-        beatmap_reload(&game.beatmap)
-        sound_set_position_ms(&game.beatmap.music, 0)
-    }
-    
     beatmap_on_update(&game.beatmap)
-
-    map_time: f64
-    if game.beatmap.music_time_ms < 0 {
-        game.beatmap.music_time_ms += game.dt * f64(game.paused ? 0 : game.time_rate)
-        map_time = game.beatmap.music_time_ms
-        
-        if game.beatmap.music_time_ms >= 0 {
-            sound_resume(&game.beatmap.music)
-            sound_set_position_ms(&game.beatmap.music, 0)
-            
-            map_time = beatmap_music_position_interpolated_ms(&game.beatmap)
-            game.beatmap.music_time_ms = map_time
-        }
-    } else {
-        // note(isak): map play time is determined by the sound library (and whether we were able to play music or not), 
-        // but song time interpolation is required because BASS reports play position in buffer size granularity
-        map_time = beatmap_music_position_interpolated_ms(&game.beatmap)
-        game.beatmap.music_time_ms = map_time
-    }
     
     #partial switch game.mode {
         case .PLAY: handle_play_input_events()
     }
     
-    hobj_it := get_visible_hobj_iterator(&game.beatmap.visible_hit_object_state, game.beatmap.music_time_ms)
+    map_time := game.beatmap.music_time_ms
+    hobj_it := get_visible_hobj_iterator(&game.beatmap.visible_hit_object_state, map_time)
     
     playfield_transform := transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
     
@@ -242,11 +223,11 @@ osu_on_update :: proc(dt: f64) {
             
             clear_hitobject_entities(&hobj)
             
-            hobj.gfx_handles = reserve_handles(&game.gfx_handles, 2) or_continue
+            hobj.gfx_handles = reserve_handles(&game.persistent_gfx, 2) or_continue
             
-            hobj.gfx_handles[0] = push_entity({
+            hobj.gfx_handles[0] = entity_new({
                 flags = {.ACTIVE},
-                element = element_id(.CLICKED_HIT_CIRCLE_OVERLAY),
+                element = builtin_element_slot(.CLICKED_HIT_CIRCLE_OVERLAY),
                 layer = .HIT_OBJECTS,
                 pos = hobj.pos,
                 size = game.beatmap.circle_radius_osupx * 2,
@@ -255,9 +236,9 @@ osu_on_update :: proc(dt: f64) {
                 start_time_ms = map_time,
                 end_time_ms = map_time + 600
             })
-            hobj.gfx_handles[1] = push_entity({
+            hobj.gfx_handles[1] = entity_new({
                 flags = {.ACTIVE},
-                element = element_id(.CLICKED_HIT_CIRCLE),
+                element = builtin_element_slot(.CLICKED_HIT_CIRCLE),
                 layer = .HIT_OBJECTS,
                 pos = hobj.pos,
                 size = game.beatmap.circle_radius_osupx * 2,
@@ -267,9 +248,9 @@ osu_on_update :: proc(dt: f64) {
                 end_time_ms = map_time + 600
             })
             
-            push_entity_temp({
+            entity_new_expiring(&game.gameplay_expiring_gfx, {
                 flags = {.ACTIVE},
-                element = element_id(.JUDGMENT),
+                element = builtin_element_slot(.JUDGMENT),
                 layer = .HIT_OBJECTS,
                 pos = hobj.pos,
                 size = [2]f32{0.5, 1} * game.beatmap.circle_radius_osupx,
@@ -288,7 +269,7 @@ osu_on_update :: proc(dt: f64) {
     
     r_bind_layer_and_push_current_state(.HIT_OBJECTS)
     
-    for hobj, i in hobj_it {
+    for hobj in hobj_it {
         if map_time < hobj.start_time_ms - game.beatmap.preempt_ms || hobj.end_time_ms < map_time {
             continue
         }
@@ -312,15 +293,11 @@ osu_on_update :: proc(dt: f64) {
         }
     }
     
-    process_and_draw_temp_gfx_handles()
+    process_and_draw_expiring_gfx_refs(&game.gameplay_expiring_gfx)
+    
     r_bind_layer_and_push_current_state(.BACKGROUND, transform = playfield_transform)
     
-    for handle in game.beatmap.map_gfx_refs {
-        e := slotmap.get(&game.entities, handle) or_continue
-        if .ACTIVE in e.flags {
-            render_entity(e, map_time)
-        }
-    }
+    process_and_draw_expiring_gfx_refs(&game.map_expiring_gfx)
     
     // render ui
     // todo(isak): "screens" implementation for determining relevant UI components?

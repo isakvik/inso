@@ -84,9 +84,9 @@ Animation_Texture :: struct {
 }
 
 
+// note(isak): builtin element types
 Element_Type :: enum {
     NULL,
-    MAP_ELEMENT,
 
     HIT_CIRCLE,
     HIT_CIRCLE_OVERLAY,
@@ -103,11 +103,14 @@ Element_Type :: enum {
     CLICKED_HIT_CIRCLE,
     CLICKED_HIT_CIRCLE_OVERLAY,
     JUDGMENT,
+    
+    CUSTOM_ELEMENT
 }
 
 Element_ID :: u32
 Element :: struct {
-    type: Element_Type,
+    type: Element_Type, // note(isak): this is just for debug purposes
+    
     shader: Pipeline_ID,
     static_geometry: bool,
     ssbo: u32,
@@ -117,8 +120,12 @@ Element :: struct {
     animations: []Animation,
 }
 
-element_id :: proc(el_type: Element_Type) -> Element_ID {
+builtin_element_slot :: proc(el_type: Element_Type) -> Element_ID {
     return Element_ID(el_type)
+}
+
+user_element_slot :: proc(slot: u32) -> Element_ID {
+    return Element_ID(len(Element_Type) + slot)
 }
 
 
@@ -127,7 +134,7 @@ Entity_Flag :: enum u32 {
     ACTIVE,
 }
 
-// note(isak): 
+// note(isak): graphical entity that is pushed to the renderer
 Entity :: struct {
     id: int,
     flags: Entity_Flags,
@@ -153,7 +160,7 @@ Entity :: struct {
 //////////////////////////////////////////////////////
 // note(isak): animation api
 
-animation_push :: proc(buf: ^q.Queue(Animation), elems: ..Animation) -> []Animation {
+animation_new :: proc(buf: ^q.Queue(Animation), elems: ..Animation) -> []Animation {
     temp := buf.len
     for &e in elems {
         switch &v in e {
@@ -173,9 +180,12 @@ animation_push :: proc(buf: ^q.Queue(Animation), elems: ..Animation) -> []Animat
 //////////////////////////////////////////////////////
 // note(isak): animation api
 
-element_push :: proc(buf: ^q.Queue(Element), el: Element) -> Element_ID {
-    q.append(buf, el)
-    return Element_ID(buf.len) - 1
+element_new :: proc(el: Element) -> (result: Element_ID) {
+    result = Element_ID(game.elements.len)
+    el := el
+    el.type = .CUSTOM_ELEMENT
+    q.append(&game.elements, el)
+    return result
 }
 
 write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Animation)) {
@@ -188,10 +198,10 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
         elements.data[el_type].tex = skin_texture(skin_element_for_type_table[el_type])
     }
 
-    elements.data[element_id(.HIT_CIRCLE)] = {
+    elements.data[builtin_element_slot(.HIT_CIRCLE)] = {
         tex = skin_texture(.HITCIRCLE),
 
-        animations = animation_push(anims, 
+        animations = animation_new(anims, 
             Animation_Scale{
                 start_time = 0,
                 end_time = ar_ms * 0.5,
@@ -213,10 +223,10 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
         )
     }
     
-    elements.data[element_id(.APPROACH_CIRCLE)] = {
+    elements.data[builtin_element_slot(.APPROACH_CIRCLE)] = {
         tex = skin_texture(.APPROACHCIRCLE),
 
-        animations = animation_push(anims, Animation_Scale{
+        animations = animation_new(anims, Animation_Scale{
             start_time = 0, 
             end_time = ar_ms,
             start_scale = {3, 3}, 
@@ -224,10 +234,10 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
         })
     }
     
-    elements.data[element_id(.JUDGMENT)] = {
+    elements.data[builtin_element_slot(.JUDGMENT)] = {
         tex = skin_texture(.LIGHTING),
 
-        animations = animation_push(anims, 
+        animations = animation_new(anims, 
             Animation_Scale{
                 start_time = 0, 
                 end_time = 600,
@@ -244,7 +254,7 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
     }
     
     
-    click_animation := animation_push(anims, 
+    click_animation := animation_new(anims, 
         Animation_Scale{
             start_time = 0,
             end_time = 250,
@@ -259,12 +269,12 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
         }
     )
     
-    elements.data[element_id(.CLICKED_HIT_CIRCLE)] = {
+    elements.data[builtin_element_slot(.CLICKED_HIT_CIRCLE)] = {
         tex = skin_texture(.HITCIRCLE),
         animations = click_animation
     }
     
-    elements.data[element_id(.CLICKED_HIT_CIRCLE_OVERLAY)] = {
+    elements.data[builtin_element_slot(.CLICKED_HIT_CIRCLE_OVERLAY)] = {
         tex = skin_texture(.HITCIRCLEOVERLAY),
         animations = click_animation
     }
@@ -277,7 +287,9 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
 //////////////////////////////////////////////////////
 // note(isak): entity api
 
-push_entity :: proc(e: Entity) -> slotmap.Handle {
+Entity_Handle :: slotmap.Handle
+
+entity_new :: proc(e: Entity) -> Entity_Handle {
     e := e
     e.id = game.next_entity_id
     game.next_entity_id += 1
@@ -285,8 +297,10 @@ push_entity :: proc(e: Entity) -> slotmap.Handle {
     return slotmap.insert(&game.entities, e)
 }
 
-push_entity_temp :: proc(e: Entity) {
-    sb.append(&game.temp_gfx_refs, push_entity(e))
+entity_new_expiring :: proc(buf: ^sb.Swap_Buffer(Entity_Handle), e: Entity) -> (result: Entity_Handle) {
+    result = entity_new(e)
+    sb.append(buf, result)
+    return result
 }
 
 clear_hitobject_entities :: proc(hobj: ^Hit_Object) {
@@ -297,7 +311,7 @@ clear_hitobject_entities :: proc(hobj: ^Hit_Object) {
 }
 
 // note(isak): seeks the entirety of the ring buffer until a contiguous run of n unoccupied handles are found
-reserve_handles :: proc(buf: ^rb.Ring_Buffer(slotmap.Handle), #any_int n: int) -> ([]slotmap.Handle, bool) {
+reserve_handles :: proc(buf: ^rb.Ring_Buffer(Entity_Handle), #any_int n: int) -> ([]Entity_Handle, bool) {
     at: int 
     has_contiguous_space: bool
     for !has_contiguous_space && at < cap(buf.data) {
@@ -325,11 +339,11 @@ reserve_handles :: proc(buf: ^rb.Ring_Buffer(slotmap.Handle), #any_int n: int) -
 write_default_entities_from_map :: proc(osu_map: ^Osu_Map) {
     for &hobj in game.beatmap.hit_objects {
         hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
-        hobj.gfx_handles = reserve_handles(&game.gfx_handles, len(hit_circle_el_types)) or_continue
+        hobj.gfx_handles = reserve_handles(&game.persistent_gfx, len(hit_circle_el_types)) or_continue
         #reverse for el_type, i in hit_circle_el_types {
             e := Entity{
                 flags = {.ACTIVE},
-                element = element_id(el_type),
+                element = builtin_element_slot(el_type),
                 layer = .HIT_OBJECTS,
                 pos = hobj.pos,
                 size = game.beatmap.circle_radius_osupx * 2,
@@ -346,7 +360,7 @@ write_default_entities_from_map :: proc(osu_map: ^Osu_Map) {
                 e.color = color_purple
             }
             
-            hobj.gfx_handles[i] = push_entity(e)
+            hobj.gfx_handles[i] = entity_new(e)
         }
     }
 }
@@ -367,7 +381,7 @@ render_entity :: proc(e: ^Entity, at_time: f64) -> bool {
     seen_animation_of_type: [Animation_Variant]bool
 
     #reverse for &anim in game.elements.data[e.element].animations {
-        base := transmute(^Base_Animation)&anim
+        base := cast(^Base_Animation)&anim
         if rel_time < base.start_time || seen_animation_of_type[base.variant] {
             continue
         }
@@ -410,13 +424,13 @@ render_entity :: proc(e: ^Entity, at_time: f64) -> bool {
     return true
 }
 
-process_and_draw_temp_gfx_handles :: proc() {
-    for handle in game.temp_gfx_refs.current {
+process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Entity_Handle)) {
+    for handle in expiring_gfx_refs.current {
         e := slotmap.get(&game.entities, handle) or_continue
         if .ACTIVE in e.flags {
             was_in_time := render_entity(e, game.beatmap.music_time_ms)
             if was_in_time {
-                append(game.temp_gfx_refs.next, handle)
+                append(expiring_gfx_refs.next, handle)
             } else {
                 slotmap.remove(&game.entities, handle)
             }
@@ -424,7 +438,7 @@ process_and_draw_temp_gfx_handles :: proc() {
             slotmap.remove(&game.entities, handle)
         }
     }
-    sb.swap(&game.temp_gfx_refs)
+    sb.swap(expiring_gfx_refs)
 }
 
 render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
@@ -449,10 +463,10 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
     
     r_push_transform(fullscreen_transform)
-    r_draw_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.4), reserved_texture(.SLIDER_FRAMEBUFFER))
+    r_draw_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.4), builtin_texture(.SLIDER_FRAMEBUFFER))
 }
 
-test_bg_entity :: proc(bg_path: string) -> (result: slotmap.Handle) {
+test_bg_entity :: proc(bg_path, shader_name: string) -> (result: Entity_Handle) {
     tex, ok := mapset_texture(bg_path)
     if ok {
         bg_aspect_ratio := f32(tex.h) / f32(tex.w)
@@ -465,12 +479,11 @@ test_bg_entity :: proc(bg_path: string) -> (result: slotmap.Handle) {
         }
         bg_size *= playfield_size_osupx / window.rect.h
         
-        return push_entity({
+        return entity_new_expiring(&game.map_expiring_gfx, {
             flags = {.ACTIVE},
-            element = element_push(&game.elements, Element{
-                type = .MAP_ELEMENT, 
-                tex = mapset_texture_slot(bg_path),
-                shader = mapset_shader_slot("wave")
+            element = element_new({
+                tex = mapset_texture_slot_or_else(bg_path, builtin_texture(.WHITE)),
+                shader = mapset_pipeline_slot_or_else(shader_name, builtin_pipeline_slot(.QUAD))
             }),
             layer = .BACKGROUND,
     

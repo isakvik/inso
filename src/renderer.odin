@@ -216,7 +216,7 @@ renderer_init :: proc() {
     //
 
     fullscreen_geometry := buffer_init(MAX_BATCH_VERTICES, window.fullscreen_store.data)
-    r_draw_rect(&fullscreen_geometry, {0,0,1,1}, with_alpha(color_white, 0.5), reserved_texture(.SLIDER_FRAMEBUFFER))
+    r_draw_rect(&fullscreen_geometry, {0,0,1,1}, with_alpha(color_white, 0.5), builtin_texture(.SLIDER_FRAMEBUFFER))
     
     //
     
@@ -438,7 +438,7 @@ r_push_draw :: proc(index_offset: u32, index_count: i32, instance_count: i32 = 1
         instance_count = instance_count
     })
     cmds := &window.renderer.layer_command_queues[window.renderer.current_layer]
-    window.renderer.current_draw = transmute(^Command_Draw)&cmds.data[cmds.len - size_of(Command_Draw)]
+    window.renderer.current_draw = cast(^Command_Draw)&cmds.data[cmds.len - size_of(Command_Draw)]
     
     window.renderer.new_draw_on_next_push = false
 }
@@ -781,7 +781,7 @@ r_draw_layout_rect :: proc(geometry: ^Buffer(Quad), rect: Rect, anchor: Layout_A
 // todo(isak): thickness doesn't really work anymore... should prolly fetch scale from current transform
 // todo(isak): add angle, but that requires placing the rects on the middle of each side with respect to it
 r_draw_rect_outline :: proc(geometry: ^Buffer(Quad), rect: Rect, color: Color, thickness_px: f32) {
-    xform := window.renderer.current_global_data
+    //xform := window.renderer.current_global_data
 
     offset: f32 = math.mod(thickness_px, 2)
     thickness_y: f32 = thickness_px

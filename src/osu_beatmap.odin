@@ -25,8 +25,6 @@ Beatmap :: struct {
     visible_hit_object_state: Visibility_State,
     preempt_ms: f64,
     circle_radius_osupx: f32,
-
-    map_gfx_refs: []slotmap.Handle,
 }
 
 beatmap_on_init :: proc(beatmap: ^Beatmap) {
@@ -52,26 +50,45 @@ beatmap_on_init :: proc(beatmap: ^Beatmap) {
 
     write_default_elements(&game.elements, &game.animations)
     
-    rb.init(&game.gfx_handles, 8192, memory.allocators[.ENTITIES])
-    game.gfx_handles.length = cap(game.gfx_handles.data)
+    rb.init(&game.persistent_gfx, 8192, memory.allocators[.ENTITIES])
+    game.persistent_gfx.length = cap(game.persistent_gfx.data)
     
-    q.init(&game.map_gfx_refs, 1024, memory.allocators[.ENTITIES])
-    
-    sb.init(&game.temp_gfx_refs, 8192)
-    slotmap.init(&game.entities, 8192)
+    sb.init(&game.gameplay_expiring_gfx, 8192, memory.allocators[.ENTITIES])
+    sb.init(&game.map_expiring_gfx, 8192, memory.allocators[.ENTITIES])
+    slotmap.init(&game.entities, 8192, memory.allocators[.ENTITIES])
     _ = slotmap.insert(&game.entities, null_entity)
     
     // todo(isak): opinionated entity pushing; needs to be rewritten to take scriptable objects and skin metrics
     // into account
     write_default_entities_from_map(game.active_map)
     
-    bg_handle := test_bg_entity(game.active_map.bg_filename)
-    q.append(&game.map_gfx_refs, bg_handle)
+    bg_handle := test_bg_entity(game.active_map.bg_filename, "wave")
+    
+    lua_beatmap_on_init()
 }
 
 beatmap_on_update :: proc(beatmap: ^Beatmap) {
-    beatmap.map_gfx_refs = game.map_gfx_refs.data[:game.map_gfx_refs.len]
+    if sound_is_finished(&game.beatmap.music) {
+        beatmap_reload(&game.beatmap)
+        sound_set_position_ms(&game.beatmap.music, 0)
+    }
     
+    if game.beatmap.music_time_ms < 0 {
+        game.beatmap.music_time_ms += game.dt * f64(game.paused ? 0 : game.time_rate)
+        
+        if game.beatmap.music_time_ms >= 0 {
+            sound_resume(&game.beatmap.music)
+            sound_set_position_ms(&game.beatmap.music, 0)
+            
+            game.beatmap.music_time_ms = beatmap_music_position_interpolated_ms(&game.beatmap)
+        }
+    } else {
+        // note(isak): map play time is determined by the sound library (and whether we were able to play music or not), 
+        // but song time interpolation is required because BASS reports play position in buffer size granularity
+        game.beatmap.music_time_ms = beatmap_music_position_interpolated_ms(&game.beatmap)
+    }
+    
+    lua_beatmap_on_update(game.beatmap.music_time_ms)
 }
 
 beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
@@ -82,9 +99,8 @@ beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
         hobj.gfx_handles = {}
     }
     
-    q.destroy(&game.map_gfx_refs)
-    rb.destroy(&game.gfx_handles)
-    sb.destroy(&game.temp_gfx_refs)
+    rb.destroy(&game.persistent_gfx)
+    sb.destroy(&game.gameplay_expiring_gfx)
     slotmap.destroy(&game.entities)
 }
 
@@ -108,12 +124,14 @@ beatmap_reload :: proc(beatmap: ^Beatmap) {
     
     game.active_mapset = mapset_free_and_reload(game.active_mapset)
     game.active_map = &game.active_mapset.osu_map
+    game.active_notosu_map = &game.active_mapset.notosu_map
     beatmap_on_init(beatmap)
 }
 
 
 // note(isak): this function tries to minimize the discrepancy between the audio library's reported music position and
-// the running real time clock, pretty much exactly as implemented before me in McOsu.
+// the running real time clock, pretty much exactly as implemented before me in McOsu. 
+// (it's not as much interpolation as it is a dynamic extrapolation of music time based on real time...)
 //
 // i can't help but feel like there's a simpler solution because even on a good setup it's routinely "off" by a 
 // millisecond, but maybe i just don't understand the problem that deeply?

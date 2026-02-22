@@ -36,6 +36,12 @@ app_cleanup :: proc() {
 //////////////////////////////////////////////////////
 // note(isak): io api
 
+file_size :: proc(path: string) -> (result: i64, err: os.Error) {
+    f := os.open(path) or_return
+	defer os.close(f)
+	return os.file_size(f)
+}
+
 read_entire_file :: proc(path: string, allocator := context.allocator) -> (result: []u8, err: os.Error) {
     loop_count: int
     for len(result) == 0 && err == os.General_Error.None && loop_count < 1000 {
@@ -52,11 +58,7 @@ read_entire_file_to_string :: proc(path: string, allocator := context.allocator)
 }
 
 read_entire_file_to_cstring :: proc(path: string, allocator := context.allocator) -> (cstring, int, os.Error) {
-    data, err := os.read_entire_file(path, allocator)
+    data, err := read_entire_file(path, allocator)
     len := len(data)
-    if len > 0 {
-        _ = new(byte, allocator) // note(isak): safety padding. can't trust other programmers to get it right
-        len += 1
-    }
     return cstring(raw_data(data)), len, err
 }

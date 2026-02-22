@@ -98,7 +98,7 @@ text_init :: proc() {
 
 text_resize_callback :: proc(ctx: rawptr, w, h: int) {
     _texture_reinit(&window.font_atlas_texture, i32(w), i32(h), ctx)
-    fs.__dirtyRectReset(transmute(^fs.FontContext)ctx)
+    fs.__dirtyRectReset(cast(^fs.FontContext)ctx)
 }
 
 text_update_callback :: proc(ctx: rawptr, dirty_rect: [4]f32, texture_data: rawptr) {

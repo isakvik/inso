@@ -22,10 +22,6 @@ skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
 //////////////////////////////////////////////////////
 // note(isak): core types
 
-Graphics_Object :: struct {
-    num_entities, first_entity_at: int
-}
-
 Tween :: enum {
     LINEAR,
     ACCELERATE,
@@ -181,10 +177,10 @@ animation_new :: proc(buf: ^q.Queue(Animation), elems: ..Animation) -> []Animati
 // note(isak): animation api
 
 element_new :: proc(el: Element) -> (result: Element_ID) {
-    result = Element_ID(game.elements.len)
+    result = Element_ID(game.beatmap.elements.len)
     el := el
     el.type = .CUSTOM_ELEMENT
-    q.append(&game.elements, el)
+    q.append(&game.beatmap.elements, el)
     return result
 }
 
@@ -291,10 +287,10 @@ Entity_Handle :: slotmap.Handle
 
 entity_new :: proc(e: Entity) -> Entity_Handle {
     e := e
-    e.id = game.next_entity_id
-    game.next_entity_id += 1
+    e.id = game.beatmap.next_entity_id
+    game.beatmap.next_entity_id += 1
     
-    return slotmap.insert(&game.entities, e)
+    return slotmap.insert(&game.beatmap.entities, e)
 }
 
 entity_new_expiring :: proc(buf: ^sb.Swap_Buffer(Entity_Handle), e: Entity) -> (result: Entity_Handle) {
@@ -305,7 +301,7 @@ entity_new_expiring :: proc(buf: ^sb.Swap_Buffer(Entity_Handle), e: Entity) -> (
 
 clear_hitobject_entities :: proc(hobj: ^Hit_Object) {
     for handle in hobj.gfx_handles {
-        slotmap.remove(&game.entities, handle)
+        slotmap.remove(&game.beatmap.entities, handle)
     }
     hobj.gfx_handles = {}
 }
@@ -339,7 +335,7 @@ reserve_handles :: proc(buf: ^rb.Ring_Buffer(Entity_Handle), #any_int n: int) ->
 write_default_entities_from_map :: proc(osu_map: ^Osu_Map) {
     for &hobj in game.beatmap.hit_objects {
         hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
-        hobj.gfx_handles = reserve_handles(&game.persistent_gfx, len(hit_circle_el_types)) or_continue
+        hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, len(hit_circle_el_types)) or_continue
         #reverse for el_type, i in hit_circle_el_types {
             e := Entity{
                 flags = {.ACTIVE},
@@ -371,7 +367,7 @@ render_entity :: proc(e: ^Entity, at_time: f64) -> bool {
     }
     rel_time := at_time - e.start_time_ms
 
-    element := &game.elements.data[e.element]
+    element := &game.beatmap.elements.data[e.element]
     tex := element.tex
 
     rect := Rect{e.pos.x, e.pos.y, e.size.x, e.size.y}
@@ -380,7 +376,7 @@ render_entity :: proc(e: ^Entity, at_time: f64) -> bool {
     texture_override: bool
     seen_animation_of_type: [Animation_Variant]bool
 
-    #reverse for &anim in game.elements.data[e.element].animations {
+    #reverse for &anim in game.beatmap.elements.data[e.element].animations {
         base := cast(^Base_Animation)&anim
         if rel_time < base.start_time || seen_animation_of_type[base.variant] {
             continue
@@ -426,16 +422,16 @@ render_entity :: proc(e: ^Entity, at_time: f64) -> bool {
 
 process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Entity_Handle)) {
     for handle in expiring_gfx_refs.current {
-        e := slotmap.get(&game.entities, handle) or_continue
+        e := slotmap.get(&game.beatmap.entities, handle) or_continue
         if .ACTIVE in e.flags {
             was_in_time := render_entity(e, game.beatmap.music_time_ms)
             if was_in_time {
                 append(expiring_gfx_refs.next, handle)
             } else {
-                slotmap.remove(&game.entities, handle)
+                slotmap.remove(&game.beatmap.entities, handle)
             }
         } else {
-            slotmap.remove(&game.entities, handle)
+            slotmap.remove(&game.beatmap.entities, handle)
         }
     }
     sb.swap(expiring_gfx_refs)
@@ -479,7 +475,7 @@ test_bg_entity :: proc(bg_path, shader_name: string) -> (result: Entity_Handle) 
         }
         bg_size *= playfield_size_osupx / window.rect.h
         
-        return entity_new_expiring(&game.map_expiring_gfx, {
+        return entity_new_expiring(&game.beatmap.map_expiring_gfx, {
             flags = {.ACTIVE},
             element = element_new({
                 tex = mapset_texture_slot_or_else(bg_path, builtin_texture(.WHITE)),

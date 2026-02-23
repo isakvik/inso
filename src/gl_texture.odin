@@ -58,7 +58,7 @@ texture_free :: proc(textures: []u32) {
     gl.DeleteTextures(i32(len(textures)), raw_data(textures))
 }
 
-texture_delete :: proc(texture: ^Texture) {
+texture_cleanup :: proc(texture: ^Texture) {
     texture_free({texture.tex_id})
     texture.tex_id = 0
 }
@@ -105,8 +105,8 @@ texture_from_file :: proc(path: string) -> (Texture, os.Error) {
     
     channels: i32
     pixels := stbi.load_from_memory(raw_data(data[:]), i32(len(data)), &result.w, &result.h, &channels, 4)
+    defer stbi.image_free(pixels)
     result.tex_id, result.tex_handle = _texture_init_with_data(result.w, result.h, pixels)
-
     return result, err
 }
 

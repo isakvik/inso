@@ -10,6 +10,8 @@ import "core:strings"
 
 
 Beatmap :: struct {
+    // -- graphics data fields
+    
     music: Sound,
     music_time_ms: f64,
     music_time_uninterpolated_ms: f64,
@@ -25,6 +27,23 @@ Beatmap :: struct {
     visible_hit_object_state: Visibility_State,
     preempt_ms: f64,
     circle_radius_osupx: f32,
+    
+    // -- graphics data fields
+    
+    // todo(isak): if entities are added sequentially, this allows for an acceleration structure where 
+    // we keep track of the timespan of active entities and thus don't have to iterate the entire set
+    persistent_gfx: rb.Ring_Buffer(Entity_Handle),
+    
+    gameplay_expiring_gfx: sb.Swap_Buffer(Entity_Handle),
+    map_expiring_gfx: sb.Swap_Buffer(Entity_Handle),
+    
+    entities: slotmap.Slotmap(Entity),
+    next_entity_id: int, // note(isak): rolling entity id sequence
+    
+    // note(isak): entities refer to an element, which in turn refer to a set of animations that determine
+    // the final quad. the given element of an entity can be overridden mid-map by scripts for effects
+    elements: q.Queue(Element),
+    animations: q.Queue(Animation),
 }
 
 beatmap_on_init :: proc(beatmap: ^Beatmap) {
@@ -44,25 +63,27 @@ beatmap_on_init :: proc(beatmap: ^Beatmap) {
     
     // map graphics init
     
-    q.init(&game.elements, 1024, memory.allocators[.MAPSET])
-    q.append(&game.elements, null_element)
-    q.init(&game.animations, 1024, memory.allocators[.MAPSET])
+    beatmap.next_entity_id = 1
+    q.init(&beatmap.elements, 1024, memory.allocators[.MAPSET])
+    q.append(&beatmap.elements, null_element)
+    q.init(&beatmap.animations, 1024, memory.allocators[.MAPSET])
 
-    write_default_elements(&game.elements, &game.animations)
+    write_default_elements(&beatmap.elements, &beatmap.animations)
     
-    rb.init(&game.persistent_gfx, 8192, memory.allocators[.ENTITIES])
-    game.persistent_gfx.length = cap(game.persistent_gfx.data)
+    rb.init(&beatmap.persistent_gfx, 8192, memory.allocators[.ENTITIES])
+    beatmap.persistent_gfx.length = cap(beatmap.persistent_gfx.data)
     
-    sb.init(&game.gameplay_expiring_gfx, 8192, memory.allocators[.ENTITIES])
-    sb.init(&game.map_expiring_gfx, 8192, memory.allocators[.ENTITIES])
-    slotmap.init(&game.entities, 8192, memory.allocators[.ENTITIES])
-    _ = slotmap.insert(&game.entities, null_entity)
+    sb.init(&beatmap.gameplay_expiring_gfx, 8192, memory.allocators[.ENTITIES])
+    sb.init(&beatmap.map_expiring_gfx, 8192, memory.allocators[.ENTITIES])
+    slotmap.init(&beatmap.entities, 8192, memory.allocators[.ENTITIES])
+    _ = slotmap.insert(&beatmap.entities, null_entity)
     
+    //-- @temp
     // todo(isak): opinionated entity pushing; needs to be rewritten to take scriptable objects and skin metrics
     // into account
     write_default_entities_from_map(game.active_map)
-    
     bg_handle := test_bg_entity(game.active_map.bg_filename, "wave")
+    //--
     
     lua_beatmap_on_init()
 }
@@ -99,9 +120,9 @@ beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
         hobj.gfx_handles = {}
     }
     
-    rb.destroy(&game.persistent_gfx)
-    sb.destroy(&game.gameplay_expiring_gfx)
-    slotmap.destroy(&game.entities)
+    rb.destroy(&beatmap.persistent_gfx)
+    sb.destroy(&beatmap.gameplay_expiring_gfx)
+    slotmap.destroy(&beatmap.entities)
 }
 
 beatmap_load :: proc(beatmap: ^Beatmap) {

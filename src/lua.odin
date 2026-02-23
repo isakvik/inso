@@ -45,6 +45,10 @@ lua_classes: [Lua_Class_Type]Lua_Class = {
     },
 }
 
+luaapi_global_funcs := []lua.L_Reg {
+  { "load_file", lua_global_load_file },
+}
+
 //////////////////////////////////////////////////////
 // note(isak): lua core
 
@@ -69,7 +73,7 @@ lua_init :: proc(script_path: string) {
     lua.open_string(state)
     lua.open_math(state)
     lua.open_debug(state)
-    //lua.open_package(state)
+    //lua.open_package(state) // don't need it
     
     // note(isak): unsafe libraries. you want a map where every note you hit deletes a random file from your PC?
     // this is how you get that
@@ -77,15 +81,12 @@ lua_init :: proc(script_path: string) {
     //lua.open_os(lua_ctx.state) 
         
     lua_ctx.odin_context = context
-   L:= lua_ctx.state
+    L:= lua_ctx.state
     
-    // note(isak): dofile    
-    if lua.L_dofile(L, strings.clone_to_cstring(script_path)) == lua.OK {
-        register_lua_classes(L)
-        
-        lua.sethook(L, lua_watchdog_instruction_count_hook, i32(lua.MASKCOUNT), LUA_WATCHDOG_INSTRUCTION_COUNT)
-        
-    } else {
+    lua_register_global_funcs(L)
+    lua_register_classes(L)
+    
+    if lua.L_dofile(L, strings.clone_to_cstring(script_path)) != lua.OK {
         lua_log_error("Lua initialization error:")
     }
 }
@@ -123,9 +124,38 @@ lua_log_error :: proc "c" (log_str: string = "Lua error:", location := #caller_l
     lua.pop(L, 1)
 }
 
-lua_watchdog_instruction_count_hook :: proc "c" (L: ^lua.State, ar: ^lua.Debug) {
-    lua.L_error(L, "Lua execution error: Exceeded 1 million instructions. Check for infinite loops or increase frame budget")
+lua_register_instruction_count_hook :: proc() {
+    L:= lua_ctx.state
+    lua_watchdog_instruction_count_hook :: proc "c" (L: ^lua.State, ar: ^lua.Debug) {
+        lua.L_error(L, "Lua execution error: Exceeded 1 million instructions. Check for infinite loops or increase frame budget")
+    }
+    lua.sethook(L, lua_watchdog_instruction_count_hook, i32(lua.MASKCOUNT), LUA_WATCHDOG_INSTRUCTION_COUNT)
 }
+
+lua_register_global_funcs :: proc(L: ^lua.State) {
+    for global_func in luaapi_global_funcs {
+        lua.pushcfunction(L, global_func.func)
+        lua.setglobal(L, global_func.name)
+    }
+}
+
+lua_register_classes :: proc(L: ^lua.State) {
+    for class in lua_classes {
+        // note(isak): sets up object methods like instance:set_xyz(...)
+        lua.L_newmetatable(L, class.name)
+        lua.pushvalue(L, -1)
+        lua.setfield(L, -2, "__index")
+        lua.L_setfuncs(L, raw_data(class.instance_funcs), 0)
+        
+        // note(isak): sets up type methods like Class.new(...)
+        lua.newtable(L)
+        lua.L_setfuncs(L, raw_data(class.static_funcs), 0)
+        lua.setglobal(L, class.name)
+        
+        lua.pop(L, 1)
+    }   
+}
+
 
 //////////////////////////////////////////////////////
 // note(isak): global beatmap communication API
@@ -164,6 +194,8 @@ lua_beatmap_on_init :: proc() {
 }
 
 lua_beatmap_on_update :: proc(time_ms: f64) {
+    lua_register_instruction_count_hook()
+    
     L:= lua_ctx.state
     if time_ms != lua_ctx.last_rendered_timestamp_ms {
         lua.getglobal(L, "on_update")
@@ -182,22 +214,21 @@ lua_beatmap_on_update :: proc(time_ms: f64) {
     }
 }
 
-
-register_lua_classes :: proc(L: ^lua.State) {
-    for class in lua_classes {
-        lua.L_newmetatable(L, class.name)
-        lua.pushvalue(L, -1)
-        lua.setfield(L, -2, "__index")
-        lua.L_setfuncs(L, raw_data(class.instance_funcs), 0)
-        
-        lua.newtable(L)
-        lua.L_setfuncs(L, raw_data(class.static_funcs), 0)
-        lua.setglobal(L, class.name)
-        
-        lua.pop(L, 1)
-    }   
+lua_global_load_file :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_ctx.odin_context
+    filename := lua.L_checkstring(L, 1)
+    
+    full_path_str := strings.concatenate({game.active_mapset.folder_path, string(filename)}, context.temp_allocator)
+    _pad := new(byte, context.temp_allocator)
+    full_path := strings.unsafe_string_to_cstring(full_path_str)
+    
+    if lua.L_loadfile(L, full_path) != lua.OK {
+        return lua.L_error(L, "User error - script file not found: %s", full_path)
+    }
+    
+    lua.pcall(L, 0, 1, 0)
+    return 1
 }
-
 
 
 //////////////////////////////////////////////////////
@@ -256,8 +287,8 @@ luaapi_element_set_tex :: proc "c" (L: ^lua.State) -> (result: i32) {
     tex_id, found := mapset_texture_slot(tex_name)
     
     if found {
-        if el_id < game.elements.len {
-            el := q.get_ptr(&game.elements, el_id)
+        if el_id < game.beatmap.elements.len {
+            el := q.get_ptr(&game.beatmap.elements, el_id)
             el.tex = tex_id
         }
     } else {
@@ -274,8 +305,8 @@ luaapi_element_set_shader :: proc "c" (L: ^lua.State) -> (result: i32) {
     shader_id, found := mapset_pipeline_slot(shader_name)
     
     if found {
-        if el_id < game.elements.len {
-            el := q.get_ptr(&game.elements, el_id)
+        if el_id < game.beatmap.elements.len {
+            el := q.get_ptr(&game.beatmap.elements, el_id)
             el.shader = shader_id
         }
     } else {
@@ -325,7 +356,9 @@ start_time_ms, end_time_ms: f64,
 
 luaapi_entity_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_ctx.odin_context
-    log.info("GC triggered for entity: ")
+    handle := cast(^Entity_Handle)lua.L_checkudata(L, 1, lua_classes[.ENTITY].name)
+    log.debug("GC triggered for entity:", handle.generation, handle.index)
+    slotmap.remove(&game.beatmap.entities, handle^)
     return result
 }
 
@@ -335,9 +368,8 @@ luaapi_entity_new :: proc "c" (L: ^lua.State) -> (result: i32) {
     element := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
     // todo(isak) what happens when element isnt found
     
-    data := cast(^Entity_Handle)lua.newuserdata(L, size_of(Entity_Handle))
-    
-    data^ = entity_new_expiring(&game.map_expiring_gfx, {
+    handle := cast(^Entity_Handle)lua.newuserdata(L, size_of(Entity_Handle))
+    handle^ = entity_new_expiring(&game.beatmap.map_expiring_gfx, {
         element = element^,
         flags = {.ACTIVE},
         layer = window.renderer.current_layer,
@@ -360,7 +392,7 @@ luaapi_entity_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
     handle := cast(^Entity_Handle)lua.L_checkudata(L, 1, lua_classes[.ENTITY].name)
     x, y := lua_number(2), lua_number(3)
     
-    e, found := slotmap.get(&game.entities, handle^)
+    e, found := slotmap.get(&game.beatmap.entities, handle^)
     if found {
         e.pos = vec2{f32(x), f32(y)}
     }
@@ -372,7 +404,7 @@ luaapi_entity_set_size :: proc "c" (L: ^lua.State) -> (result: i32) {
     handle := cast(^Entity_Handle)lua.L_checkudata(L, 1, lua_classes[.ENTITY].name)
     w, h := lua_number(2), lua_number(3)
     
-    e, found := slotmap.get(&game.entities, handle^)
+    e, found := slotmap.get(&game.beatmap.entities, handle^)
     if found {
         e.size = vec2{f32(w), f32(h)}
     }

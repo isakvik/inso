@@ -126,7 +126,7 @@ mapset_free :: proc(mapset: ^Mapset) -> string {
     win32_close_directory_watch(&mapset.watch)
     
     for &texture in mapset.textures.data {
-        texture_delete(&texture)
+        texture_cleanup(&texture)
     }
     for i in len(Builtin_Pipeline_Slot)..<window.pipelines.len {
         sg.destroy_pipeline(window.pipelines.data[i])
@@ -165,48 +165,64 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
 
     mapset.folder_path = mapset_path
     
-    files: []os.File_Info
-    dir_handle, io_err := os.open(path)
 
     // note(isak): file contents cannot exit this function, don't leave strings
-    files, io_err = os.read_dir(dir_handle, 1024, context.temp_allocator)
     defer mem.free_all(context.temp_allocator)
-    
-    os.change_directory(path)
     defer os.change_directory(app.base_dir)
-
-    q.init(&mapset.textures)
-    mapset.texture_slot_by_name = make(map[string]u32, max(len(files), 16))
-    mapset.pipeline_slot_by_name = make(map[string]u32, max(len(files), 16))
     
-    for file in files {
-        extension := filepath.ext(file.name)
-        switch extension {
-            case ".notosu": {
-                filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
-                mapset.notosu_map = mapset_parse_notosu(mapset, filedata)
-            }
-            case ".osu": {
-                filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
-                mapset.osu_map = mapset_parse_osu(mapset, filedata)
-            }
-            case ".png", ".jpg": {
-                tex_key := strings.clone(file.name, memory.allocators[.MAPSET])
-                tex, file_err := texture_from_file(file.name)
-                mapset.texture_slot_by_name[tex_key] = u32(mapset.textures.len)
-                q.push_back(&mapset.textures, tex)
-            } 
-            case ".gltf": {
-                model_store := load_model(file.name)
-            }
-        }
-    }
+    q.init(&mapset.textures)
+    mapset.texture_slot_by_name = make(map[string]u32, 16)
+    mapset.pipeline_slot_by_name = make(map[string]u32, 16)
+    
+    walk_directory(mapset, path)
 
     cur_path, err := os.get_working_directory(context.temp_allocator)
     mapset.watch = win32_init_directory_watch(cur_path)
     log.info("initialized directory watch for path:", cur_path)
     
     return mapset, true
+}
+
+walk_directory :: proc(mapset: ^Mapset, path: string) {
+    cwd, _ := os.get_working_directory(context.temp_allocator)
+    defer os.change_directory(cwd)
+    
+    files: []os.File_Info
+    dir_handle, io_err := os.open(path)
+    files, io_err = os.read_dir(dir_handle, 1024, context.temp_allocator)
+    
+    os.change_directory(path)
+
+    for file in files {
+        if file.type == .Directory {
+            walk_directory(mapset, file.name)
+        } else {
+            handle_file(mapset, file)
+        }
+    }
+}
+
+handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
+    extension := filepath.ext(file.name)
+    switch extension {
+        case ".notosu": {
+            filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
+            mapset.notosu_map = mapset_parse_notosu(mapset, filedata)
+        }
+        case ".osu": {
+            filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
+            mapset.osu_map = mapset_parse_osu(mapset, filedata)
+        }
+        case ".png", ".jpg": {
+            tex_key := strings.clone(file.name, memory.allocators[.MAPSET])
+            tex, file_err := texture_from_file(file.name)
+            mapset.texture_slot_by_name[tex_key] = u32(mapset.textures.len)
+            q.push_back(&mapset.textures, tex)
+        } 
+        case ".gltf": {
+            model_store := load_model(file.name)
+        }
+    }
 }
 
 load_model :: proc(path: string) -> ^GL_Buffer(Mesh_Vertex) {

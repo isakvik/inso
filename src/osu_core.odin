@@ -36,24 +36,7 @@ game: struct {
     time_rate: f32,
     
     // note(isak): map game view fields
-
-    persistent_gfx: rb.Ring_Buffer(Entity_Handle), // note(isak): 
     
-    gameplay_expiring_gfx: sb.Swap_Buffer(Entity_Handle),
-    map_expiring_gfx: sb.Swap_Buffer(Entity_Handle),
-    
-    entities: slotmap.Slotmap(Entity),
-    next_entity_id: int, // note(isak): rolling entity id sequence
-    
-    /*
-        note(isak): entities refer to an element, which in turn refer to a set of animations that determine 
-        the final transform. the given element of an entity can be overridden mid-map by scripts for effects
-    */
-    elements: q.Queue(Element),
-    animations: q.Queue(Animation),
-    
-    script_gfx_objects: q.Queue(Graphics_Object),
-
     ui_timeline: UI_Timeline,
 }
 
@@ -174,7 +157,6 @@ Osu_Map :: struct {
 }
 
 osu_on_init :: proc() {
-    game.next_entity_id = 1
     game.time_rate = 1.0
     game.mode = .PLAY
     
@@ -202,6 +184,7 @@ osu_on_update :: proc(dt: f64) {
     
     beatmap_on_update(&game.beatmap)
     
+    // todo(isak): this really handles a bunch of debug stuff too. fix up the modes and such
     #partial switch game.mode {
         case .PLAY: handle_play_input_events()
     }
@@ -211,6 +194,7 @@ osu_on_update :: proc(dt: f64) {
     
     playfield_transform := transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
     
+    // todo(isak): valid key presses system needs testing
     if valid_key_press() {
         for &hobj, i in hobj_it {
             if len(hobj.gfx_handles) == 2 {
@@ -223,7 +207,7 @@ osu_on_update :: proc(dt: f64) {
             
             clear_hitobject_entities(&hobj)
             
-            hobj.gfx_handles = reserve_handles(&game.persistent_gfx, 2) or_continue
+            hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, 2) or_continue
             
             hobj.gfx_handles[0] = entity_new({
                 flags = {.ACTIVE},
@@ -248,7 +232,7 @@ osu_on_update :: proc(dt: f64) {
                 end_time_ms = map_time + 600
             })
             
-            entity_new_expiring(&game.gameplay_expiring_gfx, {
+            entity_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
                 flags = {.ACTIVE},
                 element = builtin_element_slot(.JUDGMENT),
                 layer = .HIT_OBJECTS,
@@ -265,7 +249,7 @@ osu_on_update :: proc(dt: f64) {
         }
     }
     
-    // game render
+    // beatmap render
     
     r_bind_layer_and_push_current_state(.HIT_OBJECTS)
     
@@ -282,24 +266,24 @@ osu_on_update :: proc(dt: f64) {
     r_push_transform(playfield_transform)
 
     // note(isak): we render hitobject elements back to front for correct blending
-    // todo(isak): @speed - long iteration, but seems necessary to not cull gfx objects outside an 
-    // object's given start/end time window
+    // todo(isak): @speed - use persistent_gfx for visible set optimization
     #reverse for &hobj in game.beatmap.hit_objects {
         #reverse for handle in hobj.gfx_handles {
-            e := slotmap.get(&game.entities, handle) or_continue
+            e := slotmap.get(&game.beatmap.entities, handle) or_continue
             if .ACTIVE in e.flags {
                 render_entity(e, map_time)
             }
         }
     }
     
-    process_and_draw_expiring_gfx_refs(&game.gameplay_expiring_gfx)
+    process_and_draw_expiring_gfx_refs(&game.beatmap.gameplay_expiring_gfx)
     
     r_bind_layer_and_push_current_state(.BACKGROUND, transform = playfield_transform)
     
-    process_and_draw_expiring_gfx_refs(&game.map_expiring_gfx)
+    process_and_draw_expiring_gfx_refs(&game.beatmap.map_expiring_gfx)
     
-    // render ui
+    // ui render
+    
     // todo(isak): "screens" implementation for determining relevant UI components?
     handle_and_render_timeline()
     render_input_display()
@@ -307,7 +291,7 @@ osu_on_update :: proc(dt: f64) {
 
 // note(isak): this function assumes the start times of objects are sorted, but doesn't require end times to be.
 // a pathological case might be a 2B element that stretches from the beginning of the map to the end
-// todo(isak): it doesn't read from the latest object state; it's a viable small optimization
+// todo(isak): latest object state is not implemented
 get_visible_hobj_iterator :: proc(state: ^Visibility_State, time: f64) -> []Hit_Object {
     result: []Hit_Object
     updated_from_index := state.earliest_i
@@ -370,7 +354,6 @@ handle_play_input_events :: proc() {
     osu_controller.m2 = mouse.buttons[.RIGHT]
 }
 
-// todo(isak): game logic. needs testing
 valid_key_press :: proc() -> bool {
     if osu_controller.mouse_keys_enabled {
         if is_pressed(osu_controller.k1) && !is_down(osu_controller.m1) ||

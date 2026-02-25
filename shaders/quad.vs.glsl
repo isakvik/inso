@@ -54,4 +54,5 @@ void main() {
 
     vec3 pos = t * vec3(rotatedPos, 1.0); 
     gl_Position.xy = pos.xy;
+    //gl_Position.z = gl_VertexID / 65536.0;
 }

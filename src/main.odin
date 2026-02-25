@@ -93,14 +93,17 @@ memory: struct {
 
 // note(isak): this should take care of error printing
 memory_init :: proc() -> runtime.Allocator_Error {
-    using memory
-    init_tracked_growing_arena(&arenas[.GLOBAL], &allocators[.GLOBAL], &global_backing_alloc, &global_tracker) or_return
+    arenas := &memory.arenas
+    allocators := &memory.allocators
+    
+    init_tracked_growing_arena(&arenas[.GLOBAL], &allocators[.GLOBAL], 
+        &memory.global_backing_alloc, &memory.global_tracker) or_return
     init_growing_arena(&arenas[.MAPSET], &allocators[.MAPSET]) or_return
     init_growing_arena(&arenas[.ENTITIES], &allocators[.ENTITIES]) or_return
     init_growing_arena(&arenas[.FRAME], &allocators[.FRAME]) or_return
 
     for layer in Layer {
-        init_growing_arena(&command_buffer_arenas[layer], &command_buffer_allocators[layer]) or_return
+        init_growing_arena(&memory.command_buffer_arenas[layer], &memory.command_buffer_allocators[layer]) or_return
     }
     return .None
 }

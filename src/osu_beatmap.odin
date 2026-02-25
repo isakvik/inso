@@ -71,7 +71,7 @@ beatmap_on_init :: proc(beatmap: ^Beatmap) {
     write_default_elements(&beatmap.elements, &beatmap.animations)
     
     rb.init(&beatmap.persistent_gfx, 8192, memory.allocators[.ENTITIES])
-    beatmap.persistent_gfx.length = cap(beatmap.persistent_gfx.data)
+    beatmap.persistent_gfx.len = cap(beatmap.persistent_gfx.data)
     
     sb.init(&beatmap.gameplay_expiring_gfx, 8192, memory.allocators[.ENTITIES])
     sb.init(&beatmap.map_expiring_gfx, 8192, memory.allocators[.ENTITIES])

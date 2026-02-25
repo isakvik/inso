@@ -117,7 +117,7 @@ slider_pipeline_desc :: proc() -> sg.Pipeline_Desc {
         blend_color = {1.0, 1.0, 1.0, 1.0},
         colors = {
             0 = { blend = {
-                enabled = false,
+                enabled = false, // note(isak): we use depth testing instead of max blending
                 op_alpha = .MAX,
                 src_factor_rgb = .ONE,
                 src_factor_alpha = .ONE,

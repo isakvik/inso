@@ -24,6 +24,7 @@ lua_ctx: struct {
 Lua_Class_Type :: enum {
     ENTITY,
     ELEMENT,
+    HITOBJECT,
 }
 
 Lua_Class :: struct {
@@ -43,6 +44,11 @@ lua_classes: [Lua_Class_Type]Lua_Class = {
         static_funcs = luaapi_element_static_funcs,
         instance_funcs = luaapi_element_instance_funcs,
     },
+    .HITOBJECT = {
+        name = "Hitobject",
+        static_funcs = luaapi_hitobject_static_funcs,
+        instance_funcs = luaapi_hitobject_instance_funcs,
+    },
 }
 
 luaapi_global_funcs := []lua.L_Reg {
@@ -53,7 +59,6 @@ luaapi_global_funcs := []lua.L_Reg {
 // note(isak): lua core
 
 LUA_WATCHDOG_INSTRUCTION_COUNT :: 1_000_000
-
 
 lua_init :: proc(script_path: string) {
     script_file_len, err := file_size(script_path)
@@ -260,7 +265,7 @@ luaapi_element_instance_funcs := []lua.L_Reg {
 
 luaapi_element_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_ctx.odin_context
-    log.info("GC triggered for entity: ")
+    //log.info("GC triggered for entity: ")
     return result
 }
 
@@ -340,7 +345,6 @@ luaapi_entity_instance_funcs := []lua.L_Reg {
 }
 
 /*
-
 size: vec2,
 angle_deg: f32,
 anchor: Layout_Anchor,
@@ -351,13 +355,12 @@ accel: vec2,
 angle_vel: f32,
 
 start_time_ms, end_time_ms: f64,
-
 */
 
 luaapi_entity_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_ctx.odin_context
     handle := cast(^Entity_Handle)lua.L_checkudata(L, 1, lua_classes[.ENTITY].name)
-    log.debug("GC triggered for entity:", handle.generation, handle.index)
+    //log.debug("GC triggered for entity:", handle.generation, handle.index)
     slotmap.remove(&game.beatmap.entities, handle^)
     return result
 }
@@ -373,7 +376,7 @@ luaapi_entity_new :: proc "c" (L: ^lua.State) -> (result: i32) {
         element = element^,
         flags = {.ACTIVE},
         layer = window.renderer.current_layer,
-        anchor = .CENTER,
+        anchor = .TOP_LEFT,
         
         color = {255, 255, 255, 255},
         
@@ -400,6 +403,95 @@ luaapi_entity_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
 }
 
 luaapi_entity_set_size :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_ctx.odin_context
+    handle := cast(^Entity_Handle)lua.L_checkudata(L, 1, lua_classes[.ENTITY].name)
+    w, h := lua_number(2), lua_number(3)
+    
+    e, found := slotmap.get(&game.beatmap.entities, handle^)
+    if found {
+        e.size = vec2{f32(w), f32(h)}
+    }
+    return lua_return_self()
+}
+
+//////////////////////////////////////////////////////
+// note(isak): hitobject object API
+
+@(private="file")
+luaapi_hitobject_static_funcs := []lua.L_Reg {
+  { "get_at_index", luaapi_hitobject_get_at_index },
+  { "get_at_ms", luaapi_hitobject_get_at_ms },
+  { "new", luaapi_hitobject_new },
+  { nil, nil               },
+}
+
+@(private="file")
+luaapi_hitobject_instance_funcs := []lua.L_Reg {
+  { "__gc", luaapi_hitobject_gc },
+  { "set_pos", luaapi_hitobject_set_pos },
+  { "set_size", luaapi_hitobject_set_size },
+  { nil, nil },
+}
+
+/*
+size: vec2,
+angle_deg: f32,
+anchor: Layout_Anchor,
+color: Color,
+
+vel: vec2,
+accel: vec2,
+angle_vel: f32,
+
+start_time_ms, end_time_ms: f64,
+*/
+
+luaapi_hitobject_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_ctx.odin_context
+    handle := cast(^Entity_Handle)lua.L_checkudata(L, 1, lua_classes[.ENTITY].name)
+    //log.debug("GC triggered for entity:", handle.generation, handle.index)
+    return result
+}
+
+luaapi_hitobject_get_at_index :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_ctx.odin_context
+    
+    data := cast(^Element_ID)lua.newuserdata(L, size_of(Element_ID))
+    return 1
+}
+luaapi_hitobject_get_at_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_ctx.odin_context
+    
+    return 1
+}
+
+luaapi_hitobject_new :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_ctx.odin_context
+    
+    data := cast(^Element_ID)lua.newuserdata(L, size_of(Element_ID))
+    data^ = element_new({
+        shader = builtin_pipeline_slot(.QUAD),
+        tex = builtin_texture(.WHITE),
+    })
+    
+    lua.L_getmetatable(L, lua_classes[.ELEMENT].name)
+    lua.setmetatable(L, -2)
+    return 1
+}
+
+luaapi_hitobject_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_ctx.odin_context
+    handle := cast(^Entity_Handle)lua.L_checkudata(L, 1, lua_classes[.ENTITY].name)
+    x, y := lua_number(2), lua_number(3)
+    
+    e, found := slotmap.get(&game.beatmap.entities, handle^)
+    if found {
+        e.pos = vec2{f32(x), f32(y)}
+    }
+    return lua_return_self()
+}
+
+luaapi_hitobject_set_size :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_ctx.odin_context
     handle := cast(^Entity_Handle)lua.L_checkudata(L, 1, lua_classes[.ENTITY].name)
     w, h := lua_number(2), lua_number(3)

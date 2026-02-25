@@ -463,6 +463,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                 for i in 1..<len(lines) {
                     hobj := &result.hit_objects[i - 1]
                     hobj_extra_params: string
+                    hobj.index = i - 1
 
                     // note(isak): parse base params - every hobj type has a differing set of params after these
                     from_i, s_len: int

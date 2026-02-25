@@ -396,20 +396,20 @@ command_push_scissor_mode      :: proc(cmd: Command_Scissor_Mode) -> bool { retu
 
 
 _command_push_header :: proc(type: Command_Type) -> bool {
-    using window.renderer
-    ok, err := queue.push_back(&layer_command_queues[current_layer], u8(type))
+    layer := window.renderer.current_layer
+    ok, err := queue.push_back(&window.renderer.layer_command_queues[layer], u8(type))
     assert(err == .None)
     return ok
 }
 
 _command_push :: proc(cmd: $T, type: Command_Type) -> bool {
-    using window.renderer
+    layer := window.renderer.current_layer
     cmd := cmd
     ok := _command_push_header(type)
     if ok {
         err: runtime.Allocator_Error
         cmd_data: []u8 = slice.from_ptr((^u8)(&cmd), size_of(T))
-        ok, err = queue.push_back_elems(&layer_command_queues[current_layer], ..cmd_data)
+        ok, err = queue.push_back_elems(&window.renderer.layer_command_queues[layer], ..cmd_data)
         assert(err == .None)
     }
     assert(ok)

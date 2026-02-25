@@ -66,6 +66,7 @@ Hit_Object_Type :: enum {
 }
 
 Hit_Object :: struct {
+    index: int,
     start_time_ms, end_time_ms: f64,
     pos: vec2,
     type: Hit_Object_Type,

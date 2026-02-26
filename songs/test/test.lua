@@ -1,7 +1,7 @@
 
 local rand = load_file("rand.lua")
 
--- missing thoughts:
+-- missing thoughts (drawable):
 -- layer: should be required argument, probably
 -- time: should be argument, definitely (with entire map as default)
 
@@ -28,9 +28,29 @@ function on_init()
     --e = Entity.new(el)
     --    :set_pos(rand.float(0, 512), rand.float(0, 512))
     --    :set_size(100,100)
+    
+    -- todo(isak): hitobjects as relating to the visuals are actually drawables, and it's just temp code
+    -- so this kind of stuff won't work (during map runtime). but i gotta make
+    -- some indirect game logic hitobject that can be pushed around and tested with, and then render
+    -- those. isn't that what the entity is supposed to be, anyway? so i really just need an entity
+    -- reference here instead of the hitobject.
+    
+    -- so this is a logic entity of TYPE hitobject we're referring to. but in reality, we have several
+    -- graphical drawables that we all wanna move around; so we need to be able to organize that.
+    
+    -- ideas for those:
+    -- create manipulatable logic entity from hitobject
+    --   instance with position and time and diffsettings and such
+    --   rendering logic drawables needs parameters so that the logic entity acts as a parent
+    -- 
+    
+    hobj = Hitobject.get_at_ms(0)
 end
 
 
 function on_update(time_ms)
     --e:set_pos(rand.float(0, 512), rand.float(0, 512))
+    
+    x, y = hobj:get_pos()
+    hobj:set_pos(0, y)
 end

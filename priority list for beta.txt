@@ -1,10 +1,13 @@
 priority list for beta
 
-entity storage, gameplay rendering order
+-- PRE BETA -- 
+
+lock in game logic entity handling
 
 scripting
     api
     versioning (version capabilities?)
+        is this needed?
 
 game mechanics (not score, replays, etc)
     hittesting
@@ -12,13 +15,16 @@ game mechanics (not score, replays, etc)
     judgments
     slider rendering
     hitsounds
-    game music sync
     slider bounds
+
+rendering 
+    render to FBO
+
+-- POST BETA RELEASE -- 
 
 rendering
     locking bugfix
-    render to FBO
+    optimization
 
 platform
     input thread
-    transform stack

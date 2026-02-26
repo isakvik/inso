@@ -10,7 +10,7 @@ import "core:strings"
 
 
 Beatmap :: struct {
-    // -- graphics data fields
+    // -- game data fields
     
     music: Sound,
     music_time_ms: f64,
@@ -28,20 +28,20 @@ Beatmap :: struct {
     preempt_ms: f64,
     circle_radius_osupx: f32,
     
-    // -- graphics data fields
+    // -- gfx data fields
     
-    // todo(isak): if entities are added sequentially, this allows for an acceleration structure where 
-    // we keep track of the timespan of active entities and thus don't have to iterate the entire set
-    persistent_gfx: rb.Ring_Buffer(Entity_Handle),
+    // todo(isak): if drawables are added sequentially, this allows for an acceleration structure where 
+    // we keep track of the timespan of active drawables and thus don't have to iterate the entire set
+    persistent_gfx: rb.Ring_Buffer(Drawable_Handle),
     
-    gameplay_expiring_gfx: sb.Swap_Buffer(Entity_Handle),
-    map_expiring_gfx: sb.Swap_Buffer(Entity_Handle),
+    gameplay_expiring_gfx: sb.Swap_Buffer(Drawable_Handle),
+    map_expiring_gfx: sb.Swap_Buffer(Drawable_Handle),
     
-    entities: slotmap.Slotmap(Entity),
-    next_entity_id: int, // note(isak): rolling entity id sequence
+    drawables: slotmap.Slotmap(Drawable),
+    next_drawable_id: int, // note(isak): rolling drawable id sequence
     
-    // note(isak): entities refer to an element, which in turn refer to a set of animations that determine
-    // the final quad. the given element of an entity can be overridden mid-map by scripts for effects
+    // note(isak): drawables refer to an element, which in turn refer to a set of animations that determine
+    // the final quad. the given element of an drawable can be overridden mid-map by scripts for effects
     elements: q.Queue(Element),
     animations: q.Queue(Animation),
 }
@@ -63,26 +63,26 @@ beatmap_on_init :: proc(beatmap: ^Beatmap) {
     
     // map graphics init
     
-    beatmap.next_entity_id = 1
+    beatmap.next_drawable_id = 1
     q.init(&beatmap.elements, 1024, memory.allocators[.MAPSET])
     q.append(&beatmap.elements, null_element)
     q.init(&beatmap.animations, 1024, memory.allocators[.MAPSET])
 
     write_default_elements(&beatmap.elements, &beatmap.animations)
     
-    rb.init(&beatmap.persistent_gfx, 8192, memory.allocators[.ENTITIES])
+    rb.init(&beatmap.persistent_gfx, 8192, memory.allocators[.DRAWABLES])
     beatmap.persistent_gfx.len = cap(beatmap.persistent_gfx.data)
     
-    sb.init(&beatmap.gameplay_expiring_gfx, 8192, memory.allocators[.ENTITIES])
-    sb.init(&beatmap.map_expiring_gfx, 8192, memory.allocators[.ENTITIES])
-    slotmap.init(&beatmap.entities, 8192, memory.allocators[.ENTITIES])
-    _ = slotmap.insert(&beatmap.entities, null_entity)
+    sb.init(&beatmap.gameplay_expiring_gfx, 8192, memory.allocators[.DRAWABLES])
+    sb.init(&beatmap.map_expiring_gfx, 8192, memory.allocators[.DRAWABLES])
+    slotmap.init(&beatmap.drawables, 8192, memory.allocators[.DRAWABLES])
+    _ = slotmap.insert(&beatmap.drawables, null_drawable)
     
     //-- @temp
-    // todo(isak): opinionated entity pushing; needs to be rewritten to take scriptable objects and skin metrics
+    // todo(isak): opinionated drawable pushing; needs to be rewritten to take scriptable objects and skin metrics
     // into account
-    write_default_entities_from_map(game.active_map)
-    bg_handle := test_bg_entity(game.active_map.bg_filename, "wave")
+    write_default_drawables_from_map(game.active_map)
+    bg_handle := test_bg_drawable(game.active_map.bg_filename, "wave")
     //--
     
     lua_beatmap_on_init()
@@ -122,7 +122,7 @@ beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
     
     rb.destroy(&beatmap.persistent_gfx)
     sb.destroy(&beatmap.gameplay_expiring_gfx)
-    slotmap.destroy(&beatmap.entities)
+    slotmap.destroy(&beatmap.drawables)
 }
 
 beatmap_load :: proc(beatmap: ^Beatmap) {
@@ -134,7 +134,7 @@ beatmap_load :: proc(beatmap: ^Beatmap) {
         log.error("tried to open map sound file, but failed:", game.active_map.audio_filepath)
     }
     
-    lua_init(game.active_notosu_map.lua_entry_point)
+    lua_create_beatmap_script_context(game.active_notosu_map.lua_entry_point)
 }
 
 beatmap_reload :: proc(beatmap: ^Beatmap) {

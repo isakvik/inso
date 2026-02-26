@@ -17,8 +17,7 @@ playfield_rect :: Rect{ 0, 0, playfield_size_osupx, playfield_size_osupx }
 
 osu_slider_curve_points_separation :: f32(2.5)
 
-// note(isak): state struct. keep it lean, put large data fields in arenas
-
+// note(isak): state struct. keep it lean, put large data fields in arenas and point to it here
 game: struct {
     dt: f64, 
     active_mapset: ^Mapset,
@@ -40,8 +39,9 @@ game: struct {
     ui_timeline: UI_Timeline,
 }
 
-null_entity := Entity{}
-null_element := Element{}
+// note(isak): we reserve the first slot for safety reasons, and we crash on modification for debug reasons
+@(rodata) null_drawable := Drawable{}
+@(rodata) null_element := Element{}
 
 osu_controller: struct {
     k1, k2, m1, m2: Button_State,
@@ -67,9 +67,9 @@ Hit_Object_Type :: enum {
 
 Hit_Object :: struct {
     index: int,
+    type: Hit_Object_Type,
     start_time_ms, end_time_ms: f64,
     pos: vec2,
-    type: Hit_Object_Type,
     
     type_flags: int,
     hitsound_flags: byte,
@@ -77,7 +77,7 @@ Hit_Object :: struct {
     slider_path_index: int,
     slider_repeats: int,
     
-    gfx_handles: []Entity_Handle,
+    gfx_handles: []Drawable_Handle,
 }
 
 Slider_Path_Type :: enum {
@@ -195,22 +195,22 @@ osu_on_update :: proc(dt: f64) {
     
     playfield_transform := transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
     
+    //-- @temp
     // todo(isak): valid key presses system needs testing
     if valid_key_press() {
         for &hobj, i in hobj_it {
             if len(hobj.gfx_handles) == 2 {
                 continue
             }
-            
             if !point_in_circle(osu_controller.mouse_pos, hobj.pos, game.beatmap.circle_radius_osupx) {
                 continue
             }
             
-            clear_hitobject_entities(&hobj)
+            clear_hitobject_drawables(&hobj)
             
             hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, 2) or_continue
             
-            hobj.gfx_handles[0] = entity_new({
+            hobj.gfx_handles[0] = drawable_new({
                 flags = {.ACTIVE},
                 element = builtin_element_slot(.CLICKED_HIT_CIRCLE_OVERLAY),
                 layer = .HIT_OBJECTS,
@@ -221,7 +221,7 @@ osu_on_update :: proc(dt: f64) {
                 start_time_ms = map_time,
                 end_time_ms = map_time + 600
             })
-            hobj.gfx_handles[1] = entity_new({
+            hobj.gfx_handles[1] = drawable_new({
                 flags = {.ACTIVE},
                 element = builtin_element_slot(.CLICKED_HIT_CIRCLE),
                 layer = .HIT_OBJECTS,
@@ -233,7 +233,7 @@ osu_on_update :: proc(dt: f64) {
                 end_time_ms = map_time + 600
             })
             
-            entity_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
+            drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
                 flags = {.ACTIVE},
                 element = builtin_element_slot(.JUDGMENT),
                 layer = .HIT_OBJECTS,
@@ -249,11 +249,13 @@ osu_on_update :: proc(dt: f64) {
             })
         }
     }
+    //--
     
     // beatmap render
     
     r_bind_layer_and_push_current_state(.HIT_OBJECTS)
     
+    //-- @temp
     for hobj in hobj_it {
         if map_time < hobj.start_time_ms - game.beatmap.preempt_ms || hobj.end_time_ms < map_time {
             continue
@@ -262,6 +264,7 @@ osu_on_update :: proc(dt: f64) {
             render_slider(&window.renderer, &game.beatmap.slider_paths[hobj.slider_path_index])
         }
     }
+    //--
     
     r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
     r_push_transform(playfield_transform)
@@ -270,9 +273,9 @@ osu_on_update :: proc(dt: f64) {
     // todo(isak): @speed - use persistent_gfx for visible set optimization
     #reverse for &hobj in game.beatmap.hit_objects {
         #reverse for handle in hobj.gfx_handles {
-            e := slotmap.get(&game.beatmap.entities, handle) or_continue
+            e := slotmap.get(&game.beatmap.drawables, handle) or_continue
             if .ACTIVE in e.flags {
-                render_entity(e, map_time)
+                render_drawable(e, map_time)
             }
         }
     }

@@ -125,20 +125,22 @@ user_element_slot :: proc(slot: u32) -> Element_ID {
 }
 
 
-Entity_Flags :: distinct bit_set[Entity_Flag; u32]
-Entity_Flag :: enum u32 {
+Drawable_Flags :: distinct bit_set[Drawable_Flag; u32]
+Drawable_Flag :: enum u32 {
     ACTIVE,
 }
 
 // note(isak): graphical entity that is pushed to the renderer
-Entity :: struct {
+Drawable :: struct {
     id: int,
-    flags: Entity_Flags,
+    flags: Drawable_Flags,
     element: Element_ID,
     layer: Layer,
 
     // note(isak): quad params
-    // implicitly: 1 quad vertex, 6 indices that are appended to buffer every draw
+    // todo(isak): implicitly 1 quad vertex, 6 indices that are appended to buffer every draw. this might need 
+    // rethinking if we want to support arbitrary geometry... or maybe just recommend using a frame and
+    // drawing to that directly somehow
     pos: vec2,
     size: vec2,
     angle_deg: f32,
@@ -281,33 +283,33 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
 }
 
 //////////////////////////////////////////////////////
-// note(isak): entity api
+// note(isak): drawable api
 
-Entity_Handle :: slotmap.Handle
+Drawable_Handle :: slotmap.Handle
 
-entity_new :: proc(e: Entity) -> Entity_Handle {
-    e := e
-    e.id = game.beatmap.next_entity_id
-    game.beatmap.next_entity_id += 1
+drawable_new :: proc(d: Drawable) -> Drawable_Handle {
+    d := d
+    d.id = game.beatmap.next_drawable_id
+    game.beatmap.next_drawable_id += 1
     
-    return slotmap.insert(&game.beatmap.entities, e)
+    return slotmap.insert(&game.beatmap.drawables, d)
 }
 
-entity_new_expiring :: proc(buf: ^sb.Swap_Buffer(Entity_Handle), e: Entity) -> (result: Entity_Handle) {
-    result = entity_new(e)
+drawable_new_expiring :: proc(buf: ^sb.Swap_Buffer(Drawable_Handle), d: Drawable) -> (result: Drawable_Handle) {
+    result = drawable_new(d)
     sb.append(buf, result)
     return result
 }
 
-clear_hitobject_entities :: proc(hobj: ^Hit_Object) {
+clear_hitobject_drawables :: proc(hobj: ^Hit_Object) {
     for handle in hobj.gfx_handles {
-        slotmap.remove(&game.beatmap.entities, handle)
+        slotmap.remove(&game.beatmap.drawables, handle)
     }
     hobj.gfx_handles = {}
 }
 
 // note(isak): seeks the entirety of the ring buffer until a contiguous run of n unoccupied handles are found
-reserve_handles :: proc(buf: ^rb.Ring_Buffer(Entity_Handle), #any_int n: int) -> ([]Entity_Handle, bool) {
+reserve_handles :: proc(buf: ^rb.Ring_Buffer(Drawable_Handle), #any_int n: int) -> ([]Drawable_Handle, bool) {
     at: int 
     has_contiguous_space: bool
     for !has_contiguous_space && at < cap(buf.data) {
@@ -332,12 +334,12 @@ reserve_handles :: proc(buf: ^rb.Ring_Buffer(Entity_Handle), #any_int n: int) ->
     return slice.from_ptr(rb.at(buf, buf.cursor), 0), false
 }
 
-write_default_entities_from_map :: proc(osu_map: ^Osu_Map) {
+write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
     for &hobj in game.beatmap.hit_objects {
         hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
         hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, len(hit_circle_el_types)) or_continue
         #reverse for el_type, i in hit_circle_el_types {
-            e := Entity{
+            e := Drawable{
                 flags = {.ACTIVE},
                 element = builtin_element_slot(el_type),
                 layer = .HIT_OBJECTS,
@@ -356,12 +358,12 @@ write_default_entities_from_map :: proc(osu_map: ^Osu_Map) {
                 e.color = color_purple
             }
             
-            hobj.gfx_handles[i] = entity_new(e)
+            hobj.gfx_handles[i] = drawable_new(e)
         }
     }
 }
 
-render_entity :: proc(e: ^Entity, at_time: f64) -> bool {
+render_drawable :: proc(e: ^Drawable, at_time: f64) -> bool {
     if at_time < e.start_time_ms || e.end_time_ms < at_time {
         return false
     }
@@ -420,18 +422,18 @@ render_entity :: proc(e: ^Entity, at_time: f64) -> bool {
     return true
 }
 
-process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Entity_Handle)) {
+process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Drawable_Handle)) {
     for handle in expiring_gfx_refs.current {
-        e := slotmap.get(&game.beatmap.entities, handle) or_continue
+        e := slotmap.get(&game.beatmap.drawables, handle) or_continue
         if .ACTIVE in e.flags {
-            was_in_time := render_entity(e, game.beatmap.music_time_ms)
+            was_in_time := render_drawable(e, game.beatmap.music_time_ms)
             if was_in_time {
                 append(expiring_gfx_refs.next, handle)
             } else {
-                slotmap.remove(&game.beatmap.entities, handle)
+                slotmap.remove(&game.beatmap.drawables, handle)
             }
         } else {
-            slotmap.remove(&game.beatmap.entities, handle)
+            slotmap.remove(&game.beatmap.drawables, handle)
         }
     }
     sb.swap(expiring_gfx_refs)
@@ -462,7 +464,7 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
     r_draw_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.4), builtin_texture(.SLIDER_FRAMEBUFFER))
 }
 
-test_bg_entity :: proc(bg_path, shader_name: string) -> (result: Entity_Handle) {
+test_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Handle) {
     tex, ok := mapset_texture(bg_path)
     if ok {
         bg_aspect_ratio := f32(tex.h) / f32(tex.w)
@@ -475,7 +477,7 @@ test_bg_entity :: proc(bg_path, shader_name: string) -> (result: Entity_Handle) 
         }
         bg_size *= playfield_size_osupx / window.rect.h
         
-        return entity_new_expiring(&game.beatmap.map_expiring_gfx, {
+        return drawable_new_expiring(&game.beatmap.map_expiring_gfx, {
             flags = {.ACTIVE},
             element = element_new({
                 tex = mapset_texture_slot_or_else(bg_path, builtin_texture(.WHITE)),

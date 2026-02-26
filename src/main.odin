@@ -61,7 +61,7 @@ Memory_Arenas :: enum {
     
     // note(isak): this is to be used for graphical entity data, "unbounded" since it's written to by
     // game logic and scripts. cleared on mapset reload/unload
-    ENTITIES,
+    DRAWABLES,
     
     // note(isak): temporary allocator. cleared on frame end
     FRAME,
@@ -99,7 +99,7 @@ memory_init :: proc() -> runtime.Allocator_Error {
     init_tracked_growing_arena(&arenas[.GLOBAL], &allocators[.GLOBAL], 
         &memory.global_backing_alloc, &memory.global_tracker) or_return
     init_growing_arena(&arenas[.MAPSET], &allocators[.MAPSET]) or_return
-    init_growing_arena(&arenas[.ENTITIES], &allocators[.ENTITIES]) or_return
+    init_growing_arena(&arenas[.DRAWABLES], &allocators[.DRAWABLES]) or_return
     init_growing_arena(&arenas[.FRAME], &allocators[.FRAME]) or_return
 
     for layer in Layer {

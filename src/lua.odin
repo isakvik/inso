@@ -14,7 +14,7 @@ import lua "luajit"
 // note(isak): implementation detail: we're using luajit, which in practice seems to be some kind of 
 // wrapper of lua 5.1 that adds some extra stuff from 5.2 or so it might be 
 
-lua_ctx: struct {
+lua_beatmap: struct {
     state: ^lua.State,
     odin_context: runtime.Context,
     
@@ -22,7 +22,7 @@ lua_ctx: struct {
 }
 
 Lua_Class_Type :: enum {
-    ENTITY,
+    DRAWABLE,
     ELEMENT,
     HITOBJECT,
 }
@@ -34,10 +34,10 @@ Lua_Class :: struct {
 }
 
 lua_classes: [Lua_Class_Type]Lua_Class = {
-    .ENTITY = {
-        name = "Entity",
-        static_funcs = luaapi_entity_static_funcs,
-        instance_funcs = luaapi_entity_instance_funcs,
+    .DRAWABLE = {
+        name = "Drawable",
+        static_funcs = luaapi_drawable_static_funcs,
+        instance_funcs = luaapi_drawable_instance_funcs,
     },
     .ELEMENT = {
         name = "Element",
@@ -60,7 +60,7 @@ luaapi_global_funcs := []lua.L_Reg {
 
 LUA_WATCHDOG_INSTRUCTION_COUNT :: 1_000_000
 
-lua_init :: proc(script_path: string) {
+lua_create_beatmap_script_context :: proc(script_path: string) {
     script_file_len, err := file_size(script_path)
     if err != os.General_Error.None {
         log.errorf("loading lua script '{}' failed, error: {}", script_path, err)
@@ -72,7 +72,7 @@ lua_init :: proc(script_path: string) {
     }
     
     state := lua.L_newstate()
-    lua_ctx.state = state
+    lua_beatmap.state = state
     lua.open_base(state)
     lua.open_table(state)
     lua.open_string(state)
@@ -85,8 +85,8 @@ lua_init :: proc(script_path: string) {
     //lua.open_io(lua_ctx.state) 
     //lua.open_os(lua_ctx.state) 
         
-    lua_ctx.odin_context = context
-    L:= lua_ctx.state
+    lua_beatmap.odin_context = context
+    L:= lua_beatmap.state
     
     lua_register_global_funcs(L)
     lua_register_classes(L)
@@ -97,40 +97,41 @@ lua_init :: proc(script_path: string) {
 }
 
 lua_cleanup :: proc() {
-    if lua_ctx.state != nil {
-        lua.close(lua_ctx.state)
+    if lua_beatmap.state != nil {
+        lua.close(lua_beatmap.state)
     }
 }
 
 lua_reload :: proc(script_path: string) {
     lua_cleanup()
-    lua_init(script_path)
+    lua_create_beatmap_script_context(script_path)
 }
 
 
-lua_number :: proc "c" (at: i32) -> lua.Number { return lua.L_checknumber(lua_ctx.state, at) }
+lua_int :: proc "c" (at: i32) -> lua.Integer { return lua.L_checkinteger(lua_beatmap.state, at) }
+lua_number :: proc "c" (at: i32) -> lua.Number { return lua.L_checknumber(lua_beatmap.state, at) }
 lua_string :: proc "c" (at: i32) -> string {
     len: uint
-    ptr := transmute(^u8)lua.L_checklstring(lua_ctx.state, at, &len)
+    ptr := transmute(^u8)lua.L_checklstring(lua_beatmap.state, at, &len)
     return string(slice.from_ptr(ptr, int(len)))
 }
 
 lua_return_self :: proc "c" () -> i32 {
-    lua.pushvalue(lua_ctx.state, 1)
+    lua.pushvalue(lua_beatmap.state, 1)
     return 1
 }
 
 
 lua_log_error :: proc "c" (log_str: string = "Lua error:", location := #caller_location) {
-    L:= lua_ctx.state
-    context = lua_ctx.odin_context
+    L:= lua_beatmap.state
+    context = lua_beatmap.odin_context
     
     log.error(log_str, "\n", lua.tostring(L, -1), sep = "", location = location)
     lua.pop(L, 1)
 }
 
 lua_register_instruction_count_hook :: proc() {
-    L:= lua_ctx.state
+    L:= lua_beatmap.state
     lua_watchdog_instruction_count_hook :: proc "c" (L: ^lua.State, ar: ^lua.Debug) {
         lua.L_error(L, "Lua execution error: Exceeded 1 million instructions. Check for infinite loops or increase frame budget")
     }
@@ -185,7 +186,7 @@ lua to C:
 */ 
 
 lua_beatmap_on_init :: proc() {
-    L:= lua_ctx.state
+    L:= lua_beatmap.state
     lua.getglobal(L, "on_init")
     
     if (lua.isfunction(L, -1)) {
@@ -201,8 +202,8 @@ lua_beatmap_on_init :: proc() {
 lua_beatmap_on_update :: proc(time_ms: f64) {
     lua_register_instruction_count_hook()
     
-    L:= lua_ctx.state
-    if time_ms != lua_ctx.last_rendered_timestamp_ms {
+    L:= lua_beatmap.state
+    if time_ms != lua_beatmap.last_rendered_timestamp_ms {
         lua.getglobal(L, "on_update")
     
         if (lua.isfunction(L, -1)) {
@@ -215,12 +216,12 @@ lua_beatmap_on_update :: proc(time_ms: f64) {
             lua.pop(L, 1)
         }
         
-        lua_ctx.last_rendered_timestamp_ms = time_ms
+        lua_beatmap.last_rendered_timestamp_ms = time_ms
     }
 }
 
 lua_global_load_file :: proc "c" (L: ^lua.State) -> i32 {
-    context = lua_ctx.odin_context
+    context = lua_beatmap.odin_context
     filename := lua.L_checkstring(L, 1)
     
     full_path_str := strings.concatenate({game.active_mapset.folder_path, string(filename)}, context.temp_allocator)
@@ -264,13 +265,13 @@ luaapi_element_instance_funcs := []lua.L_Reg {
 }
 
 luaapi_element_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_ctx.odin_context
-    //log.info("GC triggered for entity: ")
+    context = lua_beatmap.odin_context
+    //log.info("GC triggered for drawable: ")
     return result
 }
 
 luaapi_element_new :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_ctx.odin_context
+    context = lua_beatmap.odin_context
     
     data := cast(^Element_ID)lua.newuserdata(L, size_of(Element_ID))
     data^ = element_new({
@@ -285,7 +286,7 @@ luaapi_element_new :: proc "c" (L: ^lua.State) -> (result: i32) {
 
 
 luaapi_element_set_tex :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_ctx.odin_context
+    context = lua_beatmap.odin_context
     userdata := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
     el_id := uint(userdata^)
     tex_name := lua_string(2)
@@ -303,7 +304,7 @@ luaapi_element_set_tex :: proc "c" (L: ^lua.State) -> (result: i32) {
 }
 
 luaapi_element_set_shader :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_ctx.odin_context
+    context = lua_beatmap.odin_context
     userdata := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
     el_id := uint(userdata^)
     shader_name := lua_string(2)
@@ -321,26 +322,26 @@ luaapi_element_set_shader :: proc "c" (L: ^lua.State) -> (result: i32) {
 }
 
 //////////////////////////////////////////////////////
-// note(isak): entity object API
+// note(isak): drawable object API
 
 @(private="file")
-luaapi_entity_static_funcs := []lua.L_Reg {
-  { "new",           luaapi_entity_new },
+luaapi_drawable_static_funcs := []lua.L_Reg {
+  { "new",           luaapi_drawable_new },
   { nil,             nil               },
 }
 
 @(private="file")
-luaapi_entity_instance_funcs := []lua.L_Reg {
-  { "__gc", luaapi_entity_gc },
-  { "set_pos", luaapi_entity_set_pos },
-  { "set_size", luaapi_entity_set_size },
-  //{ "set_anchor", luaapi_entity_set_anchor },
-  //{ "set_color", luaapi_entity_set_color },
-  //{ "set_vel", luaapi_entity_set_vel },
-  //{ "set_accel", luaapi_entity_set_accel },
-  //{ "set_angle_vel", luaapi_entity_set_angle_vel },
-  //{ "set_start_time_ms", luaapi_entity_set_start_time_ms },
-  //{ "set_end_time_ms", luaapi_entity_set_end_time_ms },
+luaapi_drawable_instance_funcs := []lua.L_Reg {
+  { "__gc", luaapi_drawable_gc },
+  { "set_pos", luaapi_drawable_set_pos },
+  { "set_size", luaapi_drawable_set_size },
+  //{ "set_anchor", luaapi_drawable_set_anchor },
+  //{ "set_color", luaapi_drawable_set_color },
+  //{ "set_vel", luaapi_drawable_set_vel },
+  //{ "set_accel", luaapi_drawable_set_accel },
+  //{ "set_angle_vel", luaapi_drawable_set_angle_vel },
+  //{ "set_start_time_ms", luaapi_drawable_set_start_time_ms },
+  //{ "set_end_time_ms", luaapi_drawable_set_end_time_ms },
   { nil, nil },
 }
 
@@ -357,22 +358,22 @@ angle_vel: f32,
 start_time_ms, end_time_ms: f64,
 */
 
-luaapi_entity_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_ctx.odin_context
-    handle := cast(^Entity_Handle)lua.L_checkudata(L, 1, lua_classes[.ENTITY].name)
-    //log.debug("GC triggered for entity:", handle.generation, handle.index)
-    slotmap.remove(&game.beatmap.entities, handle^)
+luaapi_drawable_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
+    //log.debug("GC triggered for drawable:", handle.generation, handle.index)
+    slotmap.remove(&game.beatmap.drawables, handle^)
     return result
 }
 
-luaapi_entity_new :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_ctx.odin_context
+luaapi_drawable_new :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
     
     element := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
     // todo(isak) what happens when element isnt found
     
-    handle := cast(^Entity_Handle)lua.newuserdata(L, size_of(Entity_Handle))
-    handle^ = entity_new_expiring(&game.beatmap.map_expiring_gfx, {
+    handle := cast(^Drawable_Handle)lua.newuserdata(L, size_of(Drawable_Handle))
+    handle^ = drawable_new_expiring(&game.beatmap.map_expiring_gfx, {
         element = element^,
         flags = {.ACTIVE},
         layer = window.renderer.current_layer,
@@ -384,30 +385,30 @@ luaapi_entity_new :: proc "c" (L: ^lua.State) -> (result: i32) {
         end_time_ms = game.beatmap.length_ms
     })
     
-    lua.L_getmetatable(L, lua_classes[.ENTITY].name)
+    lua.L_getmetatable(L, lua_classes[.DRAWABLE].name)
     lua.setmetatable(L, -2)
     
     return 1
 }
 
-luaapi_entity_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_ctx.odin_context
-    handle := cast(^Entity_Handle)lua.L_checkudata(L, 1, lua_classes[.ENTITY].name)
+luaapi_drawable_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
     x, y := lua_number(2), lua_number(3)
     
-    e, found := slotmap.get(&game.beatmap.entities, handle^)
+    e, found := slotmap.get(&game.beatmap.drawables, handle^)
     if found {
         e.pos = vec2{f32(x), f32(y)}
     }
     return lua_return_self()
 }
 
-luaapi_entity_set_size :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_ctx.odin_context
-    handle := cast(^Entity_Handle)lua.L_checkudata(L, 1, lua_classes[.ENTITY].name)
+luaapi_drawable_set_size :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
     w, h := lua_number(2), lua_number(3)
     
-    e, found := slotmap.get(&game.beatmap.entities, handle^)
+    e, found := slotmap.get(&game.beatmap.drawables, handle^)
     if found {
         e.size = vec2{f32(w), f32(h)}
     }
@@ -419,17 +420,16 @@ luaapi_entity_set_size :: proc "c" (L: ^lua.State) -> (result: i32) {
 
 @(private="file")
 luaapi_hitobject_static_funcs := []lua.L_Reg {
-  { "get_at_index", luaapi_hitobject_get_at_index },
   { "get_at_ms", luaapi_hitobject_get_at_ms },
-  { "new", luaapi_hitobject_new },
-  { nil, nil               },
+  //{ "new", luaapi_hitobject_new },
+  { nil, nil },
 }
 
 @(private="file")
 luaapi_hitobject_instance_funcs := []lua.L_Reg {
   { "__gc", luaapi_hitobject_gc },
+  { "get_pos", luaapi_hitobject_get_pos },
   { "set_pos", luaapi_hitobject_set_pos },
-  { "set_size", luaapi_hitobject_set_size },
   { nil, nil },
 }
 
@@ -447,58 +447,49 @@ start_time_ms, end_time_ms: f64,
 */
 
 luaapi_hitobject_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_ctx.odin_context
-    handle := cast(^Entity_Handle)lua.L_checkudata(L, 1, lua_classes[.ENTITY].name)
-    //log.debug("GC triggered for entity:", handle.generation, handle.index)
+    handle := cast(^int)lua.L_checkudata(L, 1, lua_classes[.HITOBJECT].name)
+    //log.debug("GC triggered for drawable:", handle.generation, handle.index)
     return result
 }
 
-luaapi_hitobject_get_at_index :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_ctx.odin_context
-    
-    data := cast(^Element_ID)lua.newuserdata(L, size_of(Element_ID))
-    return 1
-}
 luaapi_hitobject_get_at_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_ctx.odin_context
-    
-    return 1
+    context = lua_beatmap.odin_context
+    at_ms := lua_int(1)
+    hitobject_index, found := game.active_mapset.hitobject_index_by_ms[int(at_ms)]
+    if found {
+        data := cast(^int)lua.newuserdata(L, size_of(int))
+        
+        lua.L_getmetatable(L, lua_classes[.HITOBJECT].name)
+        lua.setmetatable(L, -2)
+        result = 1
+    } else {
+        log.error("User error - no hitobject at ms:", at_ms)
+    }
+    return result
 }
 
-luaapi_hitobject_new :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_ctx.odin_context
+luaapi_hitobject_get_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    handle := cast(^int)lua.L_checkudata(L, 1, lua_classes[.HITOBJECT].name)
     
-    data := cast(^Element_ID)lua.newuserdata(L, size_of(Element_ID))
-    data^ = element_new({
-        shader = builtin_pipeline_slot(.QUAD),
-        tex = builtin_texture(.WHITE),
-    })
-    
-    lua.L_getmetatable(L, lua_classes[.ELEMENT].name)
-    lua.setmetatable(L, -2)
-    return 1
+    if handle^ < len(game.beatmap.hit_objects) {
+        hobj := &game.beatmap.hit_objects[handle^]
+        lua.pushnumber(L, lua.Number(hobj.pos.x))
+        lua.pushnumber(L, lua.Number(hobj.pos.y))
+        result = lua_return_self() + 2
+    }
+    return result
 }
 
 luaapi_hitobject_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_ctx.odin_context
-    handle := cast(^Entity_Handle)lua.L_checkudata(L, 1, lua_classes[.ENTITY].name)
+    context = lua_beatmap.odin_context
+    handle := cast(^int)lua.L_checkudata(L, 1, lua_classes[.HITOBJECT].name)
     x, y := lua_number(2), lua_number(3)
     
-    e, found := slotmap.get(&game.beatmap.entities, handle^)
-    if found {
-        e.pos = vec2{f32(x), f32(y)}
+    if handle^ < len(game.beatmap.hit_objects) {
+        e := &game.beatmap.hit_objects[handle^]
+        e.pos = {f32(x), f32(y)}
+        result = lua_return_self()
     }
-    return lua_return_self()
-}
-
-luaapi_hitobject_set_size :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_ctx.odin_context
-    handle := cast(^Entity_Handle)lua.L_checkudata(L, 1, lua_classes[.ENTITY].name)
-    w, h := lua_number(2), lua_number(3)
-    
-    e, found := slotmap.get(&game.beatmap.entities, handle^)
-    if found {
-        e.size = vec2{f32(w), f32(h)}
-    }
-    return lua_return_self()
+    return result
 }

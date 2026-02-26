@@ -40,6 +40,7 @@ Mapset :: struct {
     textures: q.Queue(Texture),
     texture_slot_by_name: map[string]u32,
     pipeline_slot_by_name: map[string]u32,
+    hitobject_index_by_ms: map[int]int,
     
     model_store: ^GL_Buffer(Mesh_Vertex),
 
@@ -138,7 +139,7 @@ mapset_free :: proc(mapset: ^Mapset) -> string {
     
     mapset_path := strings.clone(mapset.folder_path, context.temp_allocator)
     
-    virtual.arena_free_all(&memory.arenas[.ENTITIES])
+    virtual.arena_free_all(&memory.arenas[.DRAWABLES])
     virtual.arena_free_all(&memory.arenas[.MAPSET])
     
     return mapset_path
@@ -166,13 +167,14 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
     mapset.folder_path = mapset_path
     
 
-    // note(isak): file contents cannot exit this function, don't leave strings
+    // note(isak): file contents cannot exit this function, don't leave strings allocated here
     defer mem.free_all(context.temp_allocator)
     defer os.change_directory(app.base_dir)
     
     q.init(&mapset.textures)
     mapset.texture_slot_by_name = make(map[string]u32, 16)
     mapset.pipeline_slot_by_name = make(map[string]u32, 16)
+    mapset.hitobject_index_by_ms = make(map[int]int, 128)
     
     walk_directory(mapset, path)
 
@@ -524,8 +526,11 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
 
                         hobj.end_time_ms = hobj.start_time_ms + slider.distance_osupx * 2
                     }
+                    
+                    mapset.hitobject_index_by_ms[int(hobj.start_time_ms)] = hobj.index
                 }
 
+                // note(isak): looks like a memory optimization, but i don't think it makes that much sense
                 temp_slider_size := int(slider_temp_queue.len) * size_of(Slider_Path)
                 slider_array_ptr, err := mem.alloc(temp_slider_size); assert(err == .None)
                 mem.copy(slider_array_ptr, raw_data(slider_temp_queue.data), temp_slider_size)

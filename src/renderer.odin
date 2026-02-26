@@ -78,9 +78,7 @@ Renderer :: struct {
     layer_command_queues: [Layer]queue.Queue(u8),
 
     current_draw: ^Command_Draw,
-    null_draw: Command_Draw,
-    
-    text_draw: Command_Draw,
+    text_draw: Command_Draw, // todo(isak) this makes text rendering pretty nonconfigurable... good for debug tho
     
     new_draw_on_next_push: bool,
     current_layer: Layer,
@@ -94,6 +92,8 @@ Renderer :: struct {
 
     trace_frame: bool
 }
+
+@(rodata) null_draw := Command_Draw{}
 
 
 Texture_Handle :: u64
@@ -131,7 +131,7 @@ rect_to_array :: proc(r: Rect) -> [4]f32 {
 
 renderer_init :: proc() {
     renderer := &window.renderer
-    renderer.current_draw = &renderer.null_draw
+    renderer.current_draw = &null_draw
 
     sg.setup({
         environment = {
@@ -215,8 +215,8 @@ renderer_init :: proc() {
 
     //
 
-    fullscreen_geometry := buffer_init(MAX_BATCH_VERTICES, window.fullscreen_store.data)
-    r_draw_rect(&fullscreen_geometry, {0,0,1,1}, with_alpha(color_white, 0.5), builtin_texture(.SLIDER_FRAMEBUFFER))
+    //fullscreen_geometry := buffer_init(MAX_BATCH_VERTICES, window.fullscreen_store.data)
+    //r_draw_rect(&fullscreen_geometry, {0,0,1,1}, with_alpha(color_white, 0.5), builtin_texture(.SLIDER_FRAMEBUFFER))
     
     //
     
@@ -596,8 +596,7 @@ batch_begin :: proc(renderer: ^Renderer) {
     renderer.text_geometry.data = tbo_advance_and_get(&window.text_store)
     renderer.text_geometry.count = 0
 
-    renderer.current_draw.index_count = 0
-    renderer.current_draw.index_offset = 0
+    r_push_draw(0,0)
 }
 
 batch_end :: proc(renderer: ^Renderer) {

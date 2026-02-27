@@ -527,7 +527,12 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                         hobj.end_time_ms = hobj.start_time_ms + slider.distance_osupx * 2
                     }
                     
-                    mapset.hitobject_index_by_ms[int(hobj.start_time_ms)] = hobj.index
+                    // note(isak): millisecond lookup has to point to the first hitobject in case of 
+                    // simultaneous objects so that range lookups work
+                    hobj_key := int(hobj.start_time_ms)
+                    if !(hobj_key in mapset.hitobject_index_by_ms) {
+                        mapset.hitobject_index_by_ms[int(hobj.start_time_ms)] = hobj.index
+                    }
                 }
 
                 // note(isak): looks like a memory optimization, but i don't think it makes that much sense

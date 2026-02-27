@@ -25,7 +25,7 @@ function on_init()
     el = Element.new()
         :set_tex("kawayabughorou.jpg")
     
-    --e = Entity.new(el)
+    --d = Drawable.new(el)
     --    :set_pos(rand.float(0, 512), rand.float(0, 512))
     --    :set_size(100,100)
     
@@ -42,15 +42,21 @@ function on_init()
     -- create manipulatable logic entity from hitobject
     --   instance with position and time and diffsettings and such
     --   rendering logic drawables needs parameters so that the logic entity acts as a parent
-    -- 
     
-    hobj = Hitobject.get_at_ms(0)
+    --hobj = Hitobject.get_at_ms(0) -- needs optional index param so we can get the next at ms 0
+    
+    list = Hitobject.range_ms(0, 4250)
 end
 
 
 function on_update(time_ms)
     --e:set_pos(rand.float(0, 512), rand.float(0, 512))
     
-    x, y = hobj:get_pos()
-    hobj:set_pos(0, y)
+    for i, hobj in ipairs(list) do 
+        x, y = hobj:get_pos()
+        x = x + math.cos((time_ms*i) / 1000 + i)* 100
+        y = y + math.sin((time_ms*i) / 1000 + i)* 100
+        hobj:set_pos(x,y)
+    end
+    
 end

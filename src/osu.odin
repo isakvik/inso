@@ -69,16 +69,21 @@ Hit_Object :: struct {
     index: int,
     type: Hit_Object_Type,
     start_time_ms, end_time_ms: f64,
-    pos: vec2,
+    pos, script_pos_translation: vec2,
     
     type_flags: int,
     hitsound_flags: byte,
 
     slider_path_index: int,
-    slider_repeats: int,
+    slider_repeats, slider_repeat_at: int,
     
     gfx_handles: []Drawable_Handle,
 }
+
+hit_object_pos :: proc(hobj: ^Hit_Object) -> vec2 {
+    return hobj.pos + hobj.script_pos_translation
+}
+
 
 Slider_Path_Type :: enum {
     NONE,
@@ -202,7 +207,9 @@ osu_on_update :: proc(dt: f64) {
             if len(hobj.gfx_handles) == 2 {
                 continue
             }
-            if !point_in_circle(osu_controller.mouse_pos, hobj.pos, game.beatmap.circle_radius_osupx) {
+            
+            hobj_pos := hit_object_pos(&hobj)
+            if !point_in_circle(osu_controller.mouse_pos, hobj_pos, game.beatmap.circle_radius_osupx) {
                 continue
             }
             
@@ -214,7 +221,6 @@ osu_on_update :: proc(dt: f64) {
                 flags = {.ACTIVE},
                 element = builtin_element_slot(.CLICKED_HIT_CIRCLE_OVERLAY),
                 layer = .HIT_OBJECTS,
-                pos = hobj.pos,
                 size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
                 color = color_white,
@@ -225,7 +231,6 @@ osu_on_update :: proc(dt: f64) {
                 flags = {.ACTIVE},
                 element = builtin_element_slot(.CLICKED_HIT_CIRCLE),
                 layer = .HIT_OBJECTS,
-                pos = hobj.pos,
                 size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
                 color = color_purple,
@@ -237,7 +242,7 @@ osu_on_update :: proc(dt: f64) {
                 flags = {.ACTIVE},
                 element = builtin_element_slot(.JUDGMENT),
                 layer = .HIT_OBJECTS,
-                pos = hobj.pos,
+                pos = hobj_pos,
                 size = [2]f32{0.5, 1} * game.beatmap.circle_radius_osupx,
                 anchor = .CENTER,
                 color = color_sky_blue,
@@ -256,12 +261,15 @@ osu_on_update :: proc(dt: f64) {
     r_bind_layer_and_push_current_state(.HIT_OBJECTS)
     
     //-- @temp
-    for hobj in hobj_it {
+    // todo(isak): for the eventual rewrite here that takes object type into account, consider a
+    // function pointer in the hitobject struct that renders (and maybe one that updates? continual
+    // logic is necessary for sliders... hitting circles is a keyboard event kind of thing)
+    for &hobj in hobj_it {
         if map_time < hobj.start_time_ms - game.beatmap.preempt_ms || hobj.end_time_ms < map_time {
             continue
         }
         if hobj.type == .SLIDER {
-            render_slider(&window.renderer, &game.beatmap.slider_paths[hobj.slider_path_index])
+            render_slider(&window.renderer, &hobj)
         }
     }
     //--
@@ -275,7 +283,7 @@ osu_on_update :: proc(dt: f64) {
         #reverse for handle in hobj.gfx_handles {
             e := slotmap.get(&game.beatmap.drawables, handle) or_continue
             if .ACTIVE in e.flags {
-                render_drawable(e, map_time)
+                render_drawable(e, map_time, hit_object_pos(&hobj))
             }
         }
     }

@@ -343,7 +343,6 @@ write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
                 flags = {.ACTIVE},
                 element = builtin_element_slot(el_type),
                 layer = .HIT_OBJECTS,
-                pos = hobj.pos,
                 size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
                 color = with_alpha(color_white, 1),
@@ -363,7 +362,7 @@ write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
     }
 }
 
-render_drawable :: proc(e: ^Drawable, at_time: f64) -> bool {
+render_drawable :: proc(e: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) -> bool {
     if at_time < e.start_time_ms || e.end_time_ms < at_time {
         return false
     }
@@ -372,7 +371,7 @@ render_drawable :: proc(e: ^Drawable, at_time: f64) -> bool {
     element := &game.beatmap.elements.data[e.element]
     tex := element.tex
 
-    rect := Rect{e.pos.x, e.pos.y, e.size.x, e.size.y}
+    rect := Rect{e.pos.x + parent_pos.x, e.pos.y + parent_pos.y, e.size.x, e.size.y}
     angle := e.angle_deg + e.angle_vel * f32(rel_time / 1000)
     color := e.color
     texture_override: bool
@@ -439,9 +438,11 @@ process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Dr
     sb.swap(expiring_gfx_refs)
 }
 
-render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
+render_slider :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
     // todo(isak): generate partial instance draws (snaking) and the bounding quads like the smart cookie you are
 
+    slider := &game.beatmap.slider_paths[hobj.slider_path_index]
+    
     r_bind_pipeline({builtin_pipeline_slot(.SLIDER)})
     r_bind_framebuffer({ write = .SLIDERS })    
     r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
@@ -449,7 +450,9 @@ render_slider :: proc(renderer: ^Renderer, slider: ^Slider_Path) {
 
     pf_size: f32 = playfield_size_osupx / game.beatmap.circle_radius_osupx
 
-    r_push_transform(transform_from_bounds({0,0,pf_size,pf_size}, window.aspect_ratio))
+    slider_translation := -hobj.script_pos_translation / 2
+    x, y := slider_translation.x / pf_size, slider_translation.y / pf_size
+    r_push_transform(transform_from_bounds({x, y, pf_size,pf_size}, window.aspect_ratio))
 
     command_push_draw_slider(Command_Draw_Slider{
         base_instance = u32(slider.first_instance_at),

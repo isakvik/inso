@@ -162,7 +162,7 @@ beatmap_music_position_interpolated_ms :: proc(beatmap: ^Beatmap) -> (result: f6
     
     if sound_is_playing(&beatmap.music) {
         
-        // note(isak): thanks peppy(c) for the magic numbers
+        // note(isak): thanks peppy(tm) for the magic numbers
         time_rate := f64(game.time_rate)
         interpolation_delta_ms := (real_time - beatmap.last_music_position_interpolation_check_time) * 1000 * time_rate
         interpolation_delta_limit: f64 = 

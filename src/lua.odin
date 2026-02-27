@@ -77,7 +77,9 @@ lua_create_beatmap_script_context :: proc(script_path: string) {
     lua.open_table(state)
     lua.open_string(state)
     lua.open_math(state)
-    lua.open_debug(state)
+    if ODIN_DEBUG {
+        lua.open_debug(state)
+    }
     //lua.open_package(state) // don't need it
     
     // note(isak): unsafe libraries. you want a map where every note you hit deletes a random file from your PC?
@@ -162,6 +164,13 @@ lua_register_classes :: proc(L: ^lua.State) {
     }   
 }
 
+// note(isak): pushes a handle and associates it with the given name
+lua_create_object :: proc "c" (L: ^lua.State, handle: $T, name: cstring) {
+    data := cast(^T)lua.newuserdata(L, size_of(T))
+    data^ = handle
+    lua.L_getmetatable(L, name)
+    lua.setmetatable(L, -2)
+}
 
 //////////////////////////////////////////////////////
 // note(isak): global beatmap communication API
@@ -203,7 +212,7 @@ lua_beatmap_on_update :: proc(time_ms: f64) {
     lua_register_instruction_count_hook()
     
     L:= lua_beatmap.state
-    if time_ms != lua_beatmap.last_rendered_timestamp_ms {
+    //if time_ms != lua_beatmap.last_rendered_timestamp_ms {
         lua.getglobal(L, "on_update")
     
         if (lua.isfunction(L, -1)) {
@@ -217,7 +226,7 @@ lua_beatmap_on_update :: proc(time_ms: f64) {
         }
         
         lua_beatmap.last_rendered_timestamp_ms = time_ms
-    }
+    //}
 }
 
 lua_global_load_file :: proc "c" (L: ^lua.State) -> i32 {
@@ -421,7 +430,7 @@ luaapi_drawable_set_size :: proc "c" (L: ^lua.State) -> (result: i32) {
 @(private="file")
 luaapi_hitobject_static_funcs := []lua.L_Reg {
   { "get_at_ms", luaapi_hitobject_get_at_ms },
-  //{ "new", luaapi_hitobject_new },
+  { "range_ms", luaapi_hitobject_range_ms },
   { nil, nil },
 }
 
@@ -457,15 +466,40 @@ luaapi_hitobject_get_at_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
     at_ms := lua_int(1)
     hitobject_index, found := game.active_mapset.hitobject_index_by_ms[int(at_ms)]
     if found {
-        data := cast(^int)lua.newuserdata(L, size_of(int))
-        
-        lua.L_getmetatable(L, lua_classes[.HITOBJECT].name)
-        lua.setmetatable(L, -2)
+        lua_create_object(L, hitobject_index, lua_classes[.HITOBJECT].name)
         result = 1
     } else {
         log.error("User error - no hitobject at ms:", at_ms)
     }
     return result
+}
+
+luaapi_hitobject_range_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    from_ms, to_ms := lua_int(1), lua_int(2)
+    
+    hitobject_index, found := game.active_mapset.hitobject_index_by_ms[int(from_ms)]
+    if !found {
+        log.warn("User warning - no hitobject at ms:", from_ms)
+        hitobject_index = 0
+    }
+    
+    default_array_size: i32 = 64
+    lua.createtable(L, default_array_size, 0)
+    
+    for i in hitobject_index..<len(game.beatmap.hit_objects) {
+        hobj := &game.beatmap.hit_objects[i] 
+        if hobj.start_time_ms < f64(from_ms) {
+            continue
+        }
+        if f64(to_ms) < hobj.start_time_ms {
+            break
+        }
+        lua_create_object(L, i, lua_classes[.HITOBJECT].name)
+        
+        lua.rawseti(L, -2, i32(i + 1))
+    }
+    return 1
 }
 
 luaapi_hitobject_get_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
@@ -487,8 +521,9 @@ luaapi_hitobject_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
     x, y := lua_number(2), lua_number(3)
     
     if handle^ < len(game.beatmap.hit_objects) {
-        e := &game.beatmap.hit_objects[handle^]
-        e.pos = {f32(x), f32(y)}
+        hobj := &game.beatmap.hit_objects[handle^]
+        hobj.script_pos_translation = {f32(x), f32(y)} - hobj.pos
+        
         result = lua_return_self()
     }
     return result

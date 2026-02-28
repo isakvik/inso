@@ -430,6 +430,7 @@ calculate_bezier_point_from_time :: proc(t: f64, curve: Slider_Curve) {
 base_dist : f32 = 2.5
 
 //todo(yokes): make a procedure for calculating points on bezier and arch sliders when the curve is too slight
+//check todos under circular_arc_to_piecewise_linear and bezier_to_piecewise_linear
 calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), start_pos: vec2, end_pos: vec2, curve_distance: f64) -> f64 {
     return curve_distance
 }
@@ -588,7 +589,6 @@ b_spline_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_
         q.push(&to_flatten, parent)
     }
 
-    //todo(yokes): buffer_push all instances in output
     //main goal is to edit the curve such that the instances pushed are the new coordinates where the slider is drawn
     instances_at = instance_buf.count
     curr_distance : f64 = 0
@@ -600,6 +600,7 @@ b_spline_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_
         
             if f32(curr_distance) > base_dist {
                 //todo(yokes): at the moment the end point overlaps an instance with the start point of the next output.data
+                //probably add curve_distance as parameter, pass remaining slider distance into write_instances_from_straight
                 write_instances_from_straight(instance_buf, q.get(&output, i), q.get(&output, i + 1), curr_distance)
             } else {
                 buffer_push(instance_buf, point)
@@ -700,7 +701,8 @@ write_instances_from_straight :: proc(instance_buf: ^Buffer(vec2), start_pos: ve
     //so it will always draw until it reaches the last control point which can make sliders longer than they should be
     for i in 0..<iterations {
         buffer_push(instance_buf, start_pos + i * xy_vector / iterations)
-
+        
+        //todo(yokes): calculate where the last point of the slider would be with the remaining distance, and buffer_push it
         if i * linalg.length(xy_vector) / iterations > f32(remaining_distance) {
             break
         }
@@ -718,21 +720,17 @@ write_instances_from_curve :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Cu
     remaining_distance := curve_distance
     instance_count, instances_at : i32
     if type == .ARC {
+        //todo(yokes): copy the tolerance from lazer code to check if a slider is parallell
         is_parallel: bool
 
         if is_parallel {
             remaining_distance = write_instances_from_straight(instance_buf, curve[0], curve[2], curve_distance)
         } else {
-            //todo(yokes): instance_buf points between nodes (arc)
-            //todo(yokes): not enough points when theta is small
             remaining_distance = circular_arc_to_piecewise_linear(instance_buf, curve)
         }
     } else if type == .LINEAR || len(curve) < 3 {
-        //todo(yokes): instance_buf points between nodes (linear) copy "is_parrallel" code or something
         remaining_distance = write_instances_from_straight(instance_buf, curve[0], curve[1], curve_distance)
     } else {
-        //todo(yokes): instance_buf points inbetween nodes (bezier) https://en.wikipedia.org/wiki/B%C3%A9zier_curve
-        //todo(yokes): not enough points when theta is small
         instance_count, instances_at, remaining_distance = b_spline_to_piecewise_linear(instance_buf, curve, max(1, len(curve)))
     }
 

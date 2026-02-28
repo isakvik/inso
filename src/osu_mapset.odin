@@ -47,6 +47,7 @@ Mapset :: struct {
     watch: Win32_Directory_Watch
 }
 
+
 mapset_texture :: proc(name: string) -> (result: ^Texture, found: bool) {
     assert(game.active_mapset != nil)
     index: u32
@@ -122,6 +123,13 @@ osu_section_headers := []string{
     "[Colours]",
     "[HitObjects]",
 }
+
+Osu_Sample_Set :: enum {
+    NORMAL,
+    SOFT,
+    DRUM
+}
+
 
 mapset_free :: proc(mapset: ^Mapset) -> string {
     win32_close_directory_watch(&mapset.watch)

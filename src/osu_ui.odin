@@ -140,8 +140,8 @@ render_input_display :: proc() {
         r_draw_layout_rect(&window.renderer.quad_geometry, rect, .BOTTOM_RIGHT, display_color, builtin_texture(.WHITE))
     }
 
-    render_input_key(osu_controller.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 })
-    render_input_key(osu_controller.k2, { window.rect.w, window.rect.h / 2,      30, 30 })
-    render_input_key(osu_controller.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 })
-    render_input_key(osu_controller.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 })
+    render_input_key(game.input.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 })
+    render_input_key(game.input.k2, { window.rect.w, window.rect.h / 2,      30, 30 })
+    render_input_key(game.input.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 })
+    render_input_key(game.input.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 })
 }

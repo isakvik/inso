@@ -271,7 +271,7 @@ keyboard_next_frame :: proc() {
 
 rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
     if (event.type == sdl.EventType.KEY_DOWN) {
-        rebind^ = event.key.scancode //TODO(yokes): this doesn't work, osu_controller.k1_key = event.key.scancode works
+        rebind^ = event.key.scancode //TODO(yokes): this doesn't work, game.input.k1_key = event.key.scancode works
         fmt.printfln("key set to {}", event.key.scancode)
     }
 }
@@ -402,12 +402,12 @@ main :: proc() {
                     running = false
                 }
 
-                /*if is_down(osu_controller.m1) {
-                    rebind_input(event, &osu_controller.k1_key)
+                /*if is_down(game.input.m1) {
+                    rebind_input(event, &game.input.k1_key)
                 }
 
-                if is_down(osu_controller.m2) {
-                    rebind_input(event, &osu_controller.k2_key)
+                if is_down(game.input.m2) {
+                    rebind_input(event, &game.input.k2_key)
                 }*/
             }
 
@@ -427,7 +427,7 @@ main :: proc() {
             mouse_pt.x -= (window.rect.w - window.rect.h) / 2
             mouse_pt *= linalg.matrix3_inverse(playfield_transform) * transform_to_mat3(window.screenspace_transform)
             
-            osu_controller.mouse_pos = mouse_pt.xy
+            game.input.mouse_pos = mouse_pt.xy
             
             mu.input_mouse_move(&window.ui_ctx, i32(mouse.pos.x), i32(mouse.pos.y))
         }
@@ -470,7 +470,7 @@ main :: proc() {
             
             r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
             
-            pf_cur_rect: Rect = { osu_controller.mouse_pos.x, osu_controller.mouse_pos.y, 20, 20 }
+            pf_cur_rect: Rect = { game.input.mouse_pos.x, game.input.mouse_pos.y, 20, 20 }
             r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, builtin_texture(.WHITE),
                 f32(time_s_since_beginning_of_program()*20))
             r_draw_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
@@ -558,7 +558,7 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
         
         mu.layout_row(ctx, {80, 10, -1}, 0)
         mu.label(ctx, "Mouse keys:")
-        mu.label(ctx, osu_controller.mouse_keys_enabled ? "on" : "off")
+        mu.label(ctx, game.input.mouse_keys_enabled ? "on" : "off")
     }
 }
 

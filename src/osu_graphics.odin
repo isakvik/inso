@@ -16,7 +16,7 @@ skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
     .HIT_CIRCLE_OVERLAY = .HITCIRCLEOVERLAY,
     .APPROACH_CIRCLE = .APPROACHCIRCLE,
     .COMBO_NUMBER = .COMBO_1,
-    .JUDGMENT = .LIGHTING,
+    .JUDGEMENT = .LIGHTING,
 }
 
 //////////////////////////////////////////////////////
@@ -40,12 +40,11 @@ Animation_Variant :: enum {
 }
 
 Base_Animation :: struct {
-    variant: Animation_Variant,
     tween: Tween,
     start_time, end_time: f64,
 }
 
-Animation :: union #align(4) {
+Animation :: union #no_nil #align(4) {
     Animation_Translate,
     Animation_Scale,
     Animation_Rotate,
@@ -79,6 +78,22 @@ Animation_Texture :: struct {
     texture_id: u32,
 }
 
+animation_variant :: proc(anim: Animation) -> (result: Animation_Variant) {
+    switch v in anim {
+    case Animation_Translate: result = .TRANSLATE
+    case Animation_Scale:     result = .SCALE
+    case Animation_Rotate:    result = .ROTATE
+    case Animation_Color:     result = .COLOR
+    case Animation_Alpha:     result = .ALPHA
+    case Animation_Texture:   result = .TEXTURE
+    }
+    return result
+}
+
+Script_Animation_List :: struct {
+    at, num_animations: uint,
+}
+
 
 // note(isak): builtin element types
 Element_Type :: enum {
@@ -98,7 +113,7 @@ Element_Type :: enum {
 
     CLICKED_HIT_CIRCLE,
     CLICKED_HIT_CIRCLE_OVERLAY,
-    JUDGMENT,
+    JUDGEMENT,
     
     CUSTOM_ELEMENT
 }
@@ -160,18 +175,7 @@ Drawable :: struct {
 
 animation_new :: proc(buf: ^q.Queue(Animation), elems: ..Animation) -> []Animation {
     temp := buf.len
-    for &e in elems {
-        switch &v in e {
-            case Animation_Translate:   v.variant = .TRANSLATE
-            case Animation_Scale:       v.variant = .SCALE
-            case Animation_Color:       v.variant = .COLOR
-            case Animation_Alpha:       v.variant = .ALPHA
-            case Animation_Rotate:      v.variant = .ROTATE
-            case Animation_Texture:     v.variant = .TEXTURE
-        }
-    }
     q.append_elems(buf, ..elems)
-
     return buf.data[temp:buf.len]
 }
 
@@ -232,7 +236,7 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
         })
     }
     
-    elements.data[builtin_element_slot(.JUDGMENT)] = {
+    elements.data[builtin_element_slot(.JUDGEMENT)] = {
         tex = skin_texture(.LIGHTING),
 
         animations = animation_new(anims, 
@@ -363,7 +367,10 @@ write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
 }
 
 render_drawable :: proc(e: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) -> bool {
-    if at_time < e.start_time_ms || e.end_time_ms < at_time {
+    if at_time < e.start_time_ms {
+        return true
+    }
+    if e.end_time_ms < at_time {
         return false
     }
     rel_time := at_time - e.start_time_ms
@@ -379,7 +386,7 @@ render_drawable :: proc(e: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
 
     #reverse for &anim in game.beatmap.elements.data[e.element].animations {
         base := cast(^Base_Animation)&anim
-        if rel_time < base.start_time || seen_animation_of_type[base.variant] {
+        if rel_time < base.start_time || seen_animation_of_type[animation_variant(anim)] {
             continue
         }
 
@@ -411,7 +418,7 @@ render_drawable :: proc(e: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
                 texture_override = true
                 tex = a.texture_id
         }
-        seen_animation_of_type[base.variant] = true
+        seen_animation_of_type[animation_variant(anim)] = true
     }
 
     r_check_and_bind_pipeline({element.shader})
@@ -425,8 +432,8 @@ process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Dr
     for handle in expiring_gfx_refs.current {
         e := slotmap.get(&game.beatmap.drawables, handle) or_continue
         if .ACTIVE in e.flags {
-            was_in_time := render_drawable(e, game.beatmap.music_time_ms)
-            if was_in_time {
+            still_alive := render_drawable(e, game.beatmap.music_time_ms)
+            if still_alive {
                 append(expiring_gfx_refs.next, handle)
             } else {
                 slotmap.remove(&game.beatmap.drawables, handle)

@@ -1,8 +1,6 @@
 priority list for beta
 
--- PRE BETA -- 
-
-lock in game logic entity handling
+-- PRE BETA --
 
 scripting
     api
@@ -12,19 +10,40 @@ scripting
 game mechanics (not score, replays, etc)
     hittesting
     notelock
-    judgments
+    judgements
     slider rendering
     hitsounds
     slider bounds
+    playfield scaling
+    score system
+    all the visuals
+        combocolors
+        combonumbers
+        animations
+        object dimming
+        drop shadow
+        slider border
+        
 
 rendering 
     render to FBO
+    lua frame object
 
 -- POST BETA RELEASE -- 
 
 rendering
     locking bugfix
+    bindless textures fallback
     optimization
+    
+lua 
+    REPL console
+    particle system
+
+game
+    entity hierarchy inspector
+    offset wizard
 
 platform
+    lua profiling (nested profiler block support)
     input thread

@@ -85,7 +85,7 @@ beatmap_on_init :: proc(beatmap: ^Beatmap) {
     bg_handle := test_bg_drawable(game.active_map.bg_filename, "wave")
     //--
     
-    lua_beatmap_on_init()
+    lua_call_beatmap_func("on_init")
 }
 
 beatmap_on_update :: proc(beatmap: ^Beatmap) {

@@ -37,19 +37,19 @@ game: struct {
     // note(isak): map game view fields
     
     ui_timeline: UI_Timeline,
+    
+    input: struct {
+        k1, k2, m1, m2: Button_State,
+        k1_key, k2_key: sdl.Scancode, //TODO(yokes): add keybinding menu
+        
+        mouse_keys_enabled: bool,
+        mouse_pos: vec2,
+    }
 }
 
 // note(isak): we reserve the first slot for safety reasons, and we crash on modification for debug reasons
 @(rodata) null_drawable := Drawable{}
 @(rodata) null_element := Element{}
-
-osu_controller: struct {
-    k1, k2, m1, m2: Button_State,
-    k1_key, k2_key: sdl.Scancode, //TODO(yokes): add keybinding menu
-    
-    mouse_keys_enabled: bool,
-    mouse_pos: vec2,
-}
 
 // note(isak): core types
 
@@ -107,7 +107,6 @@ Slider_Path :: struct {
     instance_count, first_instance_at: i32, // note(isak): this could be a slice, but data reads are probs unnecessary
 }
 
-
 Game_Mode :: enum {
     UNINITIALIZED,
     MENU,
@@ -123,10 +122,19 @@ Layer :: enum {
     DEBUG
 }
 
-Osu_Sample_Set :: enum {
-    NORMAL,
-    SOFT,
-    DRUM
+Judgement :: enum {
+    NONE,
+    
+    MISS,
+    BAD,
+    GOOD,
+    GREAT,
+    
+    SLIDER_SMALL_SCOREPOINT, // 10
+    SLIDER_LARGE_SCOREPOINT, // 30
+    
+    IGNORED_HIT, // note(isak): used when we need a result that doesn't affect score 
+    COMBO_BREAK, // note(isak): intended for scripted misses
 }
 
 Notosu_Map :: struct {
@@ -168,8 +176,8 @@ osu_on_init :: proc() {
     
     ui_init_timeline(&game.ui_timeline)
     
-    osu_controller.k1_key = sdl.Scancode.Z
-    osu_controller.k2_key = sdl.Scancode.X
+    game.input.k1_key = sdl.Scancode.Z
+    game.input.k2_key = sdl.Scancode.X
 
     beatmap_on_init(&game.beatmap)
 }
@@ -183,7 +191,7 @@ osu_on_update :: proc(dt: f64) {
         beatmap_reload(&game.beatmap)
     } else if updated_systems[.SCRIPTS] {
         lua_reload(game.active_notosu_map.lua_entry_point)
-        lua_beatmap_on_init()
+        lua_call_beatmap_func("on_init")
     }
     
     // note(isak): game logic - map
@@ -209,7 +217,7 @@ osu_on_update :: proc(dt: f64) {
             }
             
             hobj_pos := hit_object_pos(&hobj)
-            if !point_in_circle(osu_controller.mouse_pos, hobj_pos, game.beatmap.circle_radius_osupx) {
+            if !point_in_circle(game.input.mouse_pos, hobj_pos, game.beatmap.circle_radius_osupx) {
                 continue
             }
             
@@ -240,7 +248,7 @@ osu_on_update :: proc(dt: f64) {
             
             drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
                 flags = {.ACTIVE},
-                element = builtin_element_slot(.JUDGMENT),
+                element = builtin_element_slot(.JUDGEMENT),
                 layer = .HIT_OBJECTS,
                 pos = hobj_pos,
                 size = [2]f32{0.5, 1} * game.beatmap.circle_radius_osupx,
@@ -252,9 +260,34 @@ osu_on_update :: proc(dt: f64) {
                 start_time_ms = map_time,
                 end_time_ms = map_time + 600
             })
-        }
+        } 
     }
     //--
+    
+    
+    if lua_cares_about_event(.ON_KEY_DOWN) {
+        for code in sdl.Scancode {
+            if is_key_pressed(code) do lua_beatmap_on_key_pressed(code)
+        }
+    }
+    if lua_cares_about_event(.ON_KEY_UP) {
+        for code in sdl.Scancode {
+            if is_key_released(code) do lua_beatmap_on_key_released(code)
+        }
+    }
+    if lua_cares_about_event(.ON_CONTROLLER_PRESSED) {
+        if is_pressed(game.input.k1) do lua_beatmap_on_controller_pressed("k1")
+        if is_pressed(game.input.k2) do lua_beatmap_on_controller_pressed("k2")
+        if is_pressed(game.input.m1) do lua_beatmap_on_controller_pressed("m1")
+        if is_pressed(game.input.m2) do lua_beatmap_on_controller_pressed("m2")
+    }
+    if lua_cares_about_event(.ON_CONTROLLER_RELEASED) {
+        if is_released(game.input.k1) do lua_beatmap_on_controller_released("k1")
+        if is_released(game.input.k2) do lua_beatmap_on_controller_released("k2")
+        if is_released(game.input.m1) do lua_beatmap_on_controller_released("m1")
+        if is_released(game.input.m2) do lua_beatmap_on_controller_released("m2")
+    }
+    
     
     // beatmap render
     
@@ -355,28 +388,28 @@ handle_play_input_events :: proc() {
     }
     
     if is_key_pressed(.F10) {
-        osu_controller.mouse_keys_enabled = !osu_controller.mouse_keys_enabled
+        game.input.mouse_keys_enabled = !game.input.mouse_keys_enabled
     }
     
-    osu_controller.k1.is_down = keyboard.buttons[osu_controller.k1_key]
-    osu_controller.k1.was_down = keyboard.buttons_prev_frame[osu_controller.k1_key]
-    osu_controller.k2.is_down = keyboard.buttons[osu_controller.k2_key]
-    osu_controller.k2.was_down = keyboard.buttons_prev_frame[osu_controller.k2_key]
-    osu_controller.m1 = mouse.buttons[.LEFT]
-    osu_controller.m2 = mouse.buttons[.RIGHT]
+    game.input.k1.is_down = keyboard.buttons[game.input.k1_key]
+    game.input.k1.was_down = keyboard.buttons_prev_frame[game.input.k1_key]
+    game.input.k2.is_down = keyboard.buttons[game.input.k2_key]
+    game.input.k2.was_down = keyboard.buttons_prev_frame[game.input.k2_key]
+    game.input.m1 = mouse.buttons[.LEFT]
+    game.input.m2 = mouse.buttons[.RIGHT]
 }
 
 valid_key_press :: proc() -> bool {
-    if osu_controller.mouse_keys_enabled {
-        if is_pressed(osu_controller.k1) && !is_down(osu_controller.m1) ||
-            is_pressed(osu_controller.k2) && !is_down(osu_controller.m2) {
+    if game.input.mouse_keys_enabled {
+        if is_pressed(game.input.k1) && !is_down(game.input.m1) ||
+            is_pressed(game.input.k2) && !is_down(game.input.m2) {
             return true
         }
         
-        return is_pressed(osu_controller.m1) && !is_down(osu_controller.k1) || 
-            is_pressed(osu_controller.m2) && !is_down(osu_controller.k2)
+        return is_pressed(game.input.m1) && !is_down(game.input.k1) || 
+            is_pressed(game.input.m2) && !is_down(game.input.k2)
     } else {
-        return is_pressed(osu_controller.k1) || is_pressed(osu_controller.k2)
+        return is_pressed(game.input.k1) || is_pressed(game.input.k2)
     }
 }
 
@@ -440,26 +473,26 @@ write_instances_from_path :: proc(
 //////////////////////////////////////////////////////
 // NOTE(yokes): in-game button input api
 
-is_down :: proc(button: Button_State) -> bool {
+is_down :: proc "c" (button: Button_State) -> bool {
     return button.is_down
 }
 
-is_pressed :: proc(button: Button_State) -> bool {
+is_pressed :: proc "c" (button: Button_State) -> bool {
     return button.is_down && !button.was_down
 }
 
-is_released :: proc(button: Button_State) -> bool {
+is_released :: proc "c" (button: Button_State) -> bool {
     return !button.is_down && button.was_down
 }
 
-is_key_down :: proc(code: sdl.Scancode) -> bool {
+is_key_down :: proc "c" (code: sdl.Scancode) -> bool {
     return keyboard.buttons[code]
 }
 
-is_key_pressed :: proc(code: sdl.Scancode) -> bool {
+is_key_pressed :: proc "c" (code: sdl.Scancode) -> bool {
     return keyboard.buttons[code] && !keyboard.buttons_prev_frame[code]
 }
 
-is_key_released :: proc(code: sdl.Scancode) -> bool {
+is_key_released :: proc "c" (code: sdl.Scancode) -> bool {
     return !keyboard.buttons[code] && keyboard.buttons_prev_frame[code]
 }

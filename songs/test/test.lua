@@ -3,21 +3,6 @@ local rand = load_file("rand.lua")
 
 -- missing thoughts (drawable):
 -- layer: should be required argument, probably
--- time: should be argument, definitely (with entire map as default)
-
--- required data:
--- check_key
--- on_hitobject_hit
--- get_hitobject_at_ms(1000)
-
--- animation list
--- storyboards are defined like _M,start,end,x,y,x,y. probably should define animations like that
---  Animation.new()
---      :move(500, 1500, pos, end_pos[, tween])
---      :scale(500, 1500, pos, end_pos)
-
--- needs specific handling for animation lists... can't just add at any time cuz it's defined as a slice
--- and we do want continuity for performance reasons
 
 
 function on_init()
@@ -29,7 +14,11 @@ function on_init()
     el = Element.new()
         :set_tex("kawayabughorou.jpg")
         :set_animation(a)
-        :set_shader("wave")
+        
+    dd = Drawable.new(el, 0, 0)
+        :set_size(100,100)
+        :set_anchor(Anchor.CENTER)
+        :set_layer(Layer.OVERLAY)
     
     -- todo(isak) should be able to register custom events through a string here...
     -- using an observer with a set of handles for an event
@@ -38,13 +27,13 @@ function on_init()
     
     list = Hitobject.get_in_range_ms(0, 4250)
     
+    
     table = {}
     for i, hobj in ipairs(list) do 
         t = hobj:get_start_time()
-        dd = Drawable.new(el, t - 1200, t)
+        table[i] = dd:clone()
             :set_pos(hobj:get_pos())
-            :set_size(100,100)
-        table[i] = dd
+            :set_time(t-1200, t)
     end
 end
 

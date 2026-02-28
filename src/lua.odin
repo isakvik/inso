@@ -1,12 +1,13 @@
 package notosu
 
-import "vendor:sdl3"
 import "base:runtime"
+import "core:fmt"
 import "core:log"
 import os "core:os/os2"
 import "core:slice"
 import "core:strings"
 import q "core:container/queue"
+import "core:reflect"
 
 import "slotmap"
 import lua "luajit"
@@ -14,7 +15,7 @@ import sdl "vendor:sdl3"
 
 
 // note(isak): implementation detail: we're using luajit, which in practice seems to be some kind of 
-// wrapper of lua 5.1 that adds some extra stuff from 5.2 or so it might be 
+// wrapper of lua 5.1 that adds some extra stuff from 5.2 or so
 
 lua_beatmap: struct {
     state: ^lua.State,
@@ -106,6 +107,13 @@ luaapi_global_funcs := []lua.L_Reg {
   { "key_is_up", lua_key_is_up },
 }
 
+// note(isak): we use reflection to pull the names and associated enums directly to lua tables
+luaapi_enum_constants := [?]struct { t: typeid, name: cstring }{
+    { Layer, "Layer" },
+    { Judgement, "Judgement" },
+    { Layout_Anchor, "Anchor" },
+}
+
 //////////////////////////////////////////////////////
 // note(isak): lua core
 
@@ -143,8 +151,11 @@ lua_create_beatmap_script_context :: proc(script_path: string) {
     
     lua_register_global_funcs(L)
     lua_register_classes(L)
+    for e in luaapi_enum_constants {
+        lua_register_enum(L, e.t, e.name)
+    }
     
-    if lua.L_dofile(L, strings.clone_to_cstring(script_path)) != lua.OK {
+    if lua.L_dofile(L, strings.clone_to_cstring(script_path)) !=  lua.OK {
         lua_log_error("Lua initialization error:")
     } else {
         lua_check_registered_events(L)
@@ -196,6 +207,36 @@ lua_register_classes :: proc(L: ^lua.State) {
             lua.setglobal(L, class.name)
         }        
     }   
+}
+
+lua_register_enum :: proc(L: ^lua.State, e: typeid, tablename: cstring) {
+    lua.newtable(L) // storage table
+    
+    names  := reflect.enum_field_names(e)
+    values := reflect.enum_field_values(e)
+    for name, i in names {
+        lua.pushinteger(L, cast(lua.Integer)values[i])
+        fieldname: cstring = strings.unsafe_string_to_cstring(name)
+        lua.setfield(L, -2, fieldname)
+    }
+
+    lua.newtable(L) // indexable proxy table
+    lua.newtable(L) // metatable
+
+    // Move the Storage table into the metatable's __index 
+    // This makes the Proxy "redirect" all reads to the Storage table
+    lua.pushvalue(L, -3)
+    lua.setfield(L, -2, "__index")
+
+    lua.pushcfunction(L, proc "c" (L: ^lua.State) -> i32 {
+        return lua.L_error(L, "Cannot modify registered constants.")
+    })
+    lua.setfield(L, -2, "__newindex")
+
+    lua.setmetatable(L, -2)
+
+    lua.setglobal(L, tablename)
+    lua.pop(L, 1)
 }
 
 lua_check_registered_events :: proc(L: ^lua.State) {
@@ -362,17 +403,17 @@ lua_beatmap_on_controller_released :: proc(key: cstring) {
     )
 }
 
-lua_beatmap_on_key_pressed :: proc(key: sdl3.Scancode) {
+lua_beatmap_on_key_pressed :: proc(key: sdl.Scancode) {
     lua_call_beatmap_func("on_key_pressed", key,
-        proc(key: sdl3.Scancode) -> i32 {
+        proc(key: sdl.Scancode) -> i32 {
             lua.pushstring(lua_beatmap.state, sdl.GetScancodeName(key))
             return 1
         }
     )
 }
-lua_beatmap_on_key_released :: proc(key: sdl3.Scancode) {
+lua_beatmap_on_key_released :: proc(key: sdl.Scancode) {
     lua_call_beatmap_func("on_key_released", key,
-        proc(key: sdl3.Scancode) -> i32 {
+        proc(key: sdl.Scancode) -> i32 {
             lua.pushstring(lua_beatmap.state, sdl.GetScancodeName(key))
             return 1
         }
@@ -706,13 +747,15 @@ luaapi_tween_static_funcs := []lua.L_Reg {
 
 @(private="file")
 luaapi_drawable_static_funcs := []lua.L_Reg {
-  { "new",           luaapi_drawable_new },
-  { nil,             nil               },
+  { "new", luaapi_drawable_new },
+  { nil, nil },
 }
 
 @(private="file")
 luaapi_drawable_instance_funcs := []lua.L_Reg {
   { "__gc", luaapi_drawable_gc },
+  { "clone", luaapi_drawable_clone },
+  { "set_layer", luaapi_drawable_set_layer },
   { "set_pos", luaapi_drawable_set_pos },
   { "set_size", luaapi_drawable_set_size },
   { "set_anchor", luaapi_drawable_set_anchor },
@@ -720,8 +763,9 @@ luaapi_drawable_instance_funcs := []lua.L_Reg {
   //{ "set_vel", luaapi_drawable_set_vel },
   //{ "set_accel", luaapi_drawable_set_accel },
   //{ "set_angle_vel", luaapi_drawable_set_angle_vel },
-  { "set_start_time_ms", luaapi_drawable_set_start_time_ms },
-  { "set_end_time_ms", luaapi_drawable_set_end_time_ms },
+  { "set_start_time", luaapi_drawable_set_start_time },
+  { "set_end_time", luaapi_drawable_set_end_time },
+  { "set_time", luaapi_drawable_set_time },
   { nil, nil },
 }
 
@@ -762,6 +806,26 @@ luaapi_drawable_new :: proc "c" (L: ^lua.State) -> (result: i32) {
     return 1
 }
 
+
+
+luaapi_drawable_clone :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    
+    handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
+    d, found := slotmap.get(&game.beatmap.drawables, handle^)
+    if found {
+        lua.pop(L, 1)
+        handle := cast(^Drawable_Handle)lua.newuserdata(L, size_of(Drawable_Handle))
+        handle^ = drawable_new_expiring(&game.beatmap.map_expiring_gfx, d^)
+        
+        lua.L_getmetatable(L, lua_classes[.DRAWABLE].name)
+        lua.setmetatable(L, -2)
+        
+        result = 1
+    }
+    return result
+}
+
 _luaapi_drawable_op :: proc "c" (
     L: ^lua.State, 
     op: proc "c" (L: ^lua.State, d: ^Drawable) -> i32
@@ -769,12 +833,19 @@ _luaapi_drawable_op :: proc "c" (
     context = lua_beatmap.odin_context
     handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
     d, found := slotmap.get(&game.beatmap.drawables, handle^)
+    
     if found {
         result = op(L, d) + lua_return_self()
     }
     return result
 }
 
+luaapi_drawable_set_layer :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        d.layer = Layer(lua_int(2))
+        return 0
+    })
+}
 luaapi_drawable_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         x, y := lua_number(2), lua_number(3)
@@ -802,15 +873,21 @@ luaapi_drawable_set_color :: proc "c" (L: ^lua.State) -> (result: i32) {
         return 0
     })
 }
-luaapi_drawable_set_start_time_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
+luaapi_drawable_set_start_time :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         d.start_time_ms = f64(lua_number(2))
         return 0
     })
 }
-luaapi_drawable_set_end_time_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
+luaapi_drawable_set_end_time :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         d.end_time_ms = f64(lua_number(2))
+        return 0
+    })
+}
+luaapi_drawable_set_time :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        d.start_time_ms, d.end_time_ms = f64(lua_number(2)), f64(lua_number(3))
         return 0
     })
 }

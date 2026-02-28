@@ -116,8 +116,8 @@ Game_Mode :: enum {
 Layer :: enum {
     BACKGROUND,
     FOREGROUND,
-    OVERLAY,
     HIT_OBJECTS,
+    OVERLAY,
     UI,
     DEBUG
 }

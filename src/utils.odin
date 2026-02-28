@@ -102,6 +102,14 @@ color_from_vec :: proc "contextless" (v: vec4) -> Color {
     result[3] = u8(v.a * 0xFF)
     return result
 }
+color_from_pixel :: proc "contextless" (p: u32) -> Color {
+    result: Color
+    result[0] = u8((p & 0x000000FF) >> 0)
+    result[1] = u8((p & 0x0000FF00) >> 8)
+    result[2] = u8((p & 0x00FF0000) >> 16)
+    result[3] = u8((p & 0xFF000000) >> 24)
+    return result
+}
 
 //////////////////////////////////////////////////////
 // note(isak): memory utils

@@ -39,12 +39,24 @@ Animation_Variant :: enum {
     TEXTURE,
 }
 
+animation_variant :: proc(anim: Animation) -> (result: Animation_Variant) {
+    switch v in anim {
+    case Animation_Translate: result = .TRANSLATE
+    case Animation_Scale:     result = .SCALE
+    case Animation_Rotate:    result = .ROTATE
+    case Animation_Color:     result = .COLOR
+    case Animation_Alpha:     result = .ALPHA
+    case Animation_Texture:   result = .TEXTURE
+    }
+    return result
+}
+
 Base_Animation :: struct {
     tween: Tween,
     start_time, end_time: f64,
 }
 
-Animation :: union #no_nil #align(4) {
+Animation :: union #align(4) {
     Animation_Translate,
     Animation_Scale,
     Animation_Rotate,
@@ -76,18 +88,6 @@ Animation_Alpha :: struct {
 Animation_Texture :: struct {
     using base: Base_Animation,
     texture_id: u32,
-}
-
-animation_variant :: proc(anim: Animation) -> (result: Animation_Variant) {
-    switch v in anim {
-    case Animation_Translate: result = .TRANSLATE
-    case Animation_Scale:     result = .SCALE
-    case Animation_Rotate:    result = .ROTATE
-    case Animation_Color:     result = .COLOR
-    case Animation_Alpha:     result = .ALPHA
-    case Animation_Texture:   result = .TEXTURE
-    }
-    return result
 }
 
 Script_Animation_List :: struct {
@@ -162,6 +162,7 @@ Drawable :: struct {
     anchor: Layout_Anchor,
     color: Color,
     
+    // todo(isak): these are kinda intuitively made... not integrated into lua yet
     vel: vec2,
     accel: vec2,
     angle_vel: f32,
@@ -498,7 +499,7 @@ test_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Hand
             pos = {256, 256},
             size = bg_size,
             anchor = .CENTER,
-            color = {30,30,30,255},
+            color = {30,30,30,100},
             
             start_time_ms = game.beatmap.start_time_ms,
             end_time_ms = game.beatmap.length_ms

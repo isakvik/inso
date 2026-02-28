@@ -58,6 +58,7 @@ Lua_Class_Type :: enum {
     ANIMATION,
     TWEEN,
     HITOBJECT,
+    COLOR,
 }
 
 Lua_Class :: struct {
@@ -85,12 +86,15 @@ lua_classes: [Lua_Class_Type]Lua_Class = {
     .TWEEN = {
         name            = "Tween",
         static_funcs    = luaapi_tween_static_funcs,
-        instance_funcs  = luaapi_tween_instance_funcs,
     },
     .HITOBJECT = {
         name            = "Hitobject",
         static_funcs    = luaapi_hitobject_static_funcs,
         instance_funcs  = luaapi_hitobject_instance_funcs,
+    },
+    .COLOR = {
+        name            = "Color",
+        static_funcs    = luaapi_color_static_funcs,
     },
 }
 
@@ -177,17 +181,20 @@ lua_register_global_funcs :: proc(L: ^lua.State) {
 lua_register_classes :: proc(L: ^lua.State) {
     for class in lua_classes {
         // note(isak): sets up object methods like instance:set_xyz(...)
-        lua.L_newmetatable(L, class.name)
-        lua.pushvalue(L, -1)
-        lua.setfield(L, -2, "__index")
-        lua.L_setfuncs(L, raw_data(class.instance_funcs), 0)
+        if len(class.instance_funcs) > 0 {
+            lua.L_newmetatable(L, class.name)
+            lua.pushvalue(L, -1)
+            lua.setfield(L, -2, "__index")
+            lua.L_setfuncs(L, raw_data(class.instance_funcs), 0)
+            lua.pop(L, 1)
+        }
         
         // note(isak): sets up type methods like Class.new(...)
-        lua.newtable(L)
-        lua.L_setfuncs(L, raw_data(class.static_funcs), 0)
-        lua.setglobal(L, class.name)
-        
-        lua.pop(L, 1)
+        if len(class.static_funcs) > 0 {
+            lua.newtable(L)
+            lua.L_setfuncs(L, raw_data(class.static_funcs), 0)
+            lua.setglobal(L, class.name)
+        }        
     }   
 }
 
@@ -226,6 +233,8 @@ lua_log_error :: proc "c" (log_str: string = "Lua error:", location := #caller_l
     
     log.error(log_str, "\n", lua.tostring(L, -1), sep = "", location = location)
     lua.pop(L, 1)
+    
+    assert(false)
 }
 
 // note(isak): pushes a handle and associates it with the given name. 
@@ -441,16 +450,6 @@ lua_call_beatmap_func :: proc {
 //////////////////////////////////////////////////////
 // note(isak): element object API
 
-/*
-shader: Pipeline_ID,
-static_geometry: bool,
-ssbo: u32,
-index_count: u32,
-
-tex: u32,
-animations: []Animation,
-*/
-
 @(private="file")
 luaapi_element_static_funcs := []lua.L_Reg {
   { "new",           luaapi_element_new },
@@ -548,7 +547,26 @@ luaapi_animation_static_funcs := []lua.L_Reg {
 @(private="file")
 luaapi_animation_instance_funcs := []lua.L_Reg {
   { "move", luaapi_animation_move },
+  { "scale", luaapi_animation_scale },
+  { "rotate", luaapi_animation_rotate },
+  { "color", luaapi_animation_color },
+  { "alpha", luaapi_animation_alpha },
+  { "texture", luaapi_animation_texture },
   { nil, nil },
+}
+
+_lua_check_animation_list_and_potentially_relocate :: proc(anim_list: ^Script_Animation_List) {
+    if (anim_list.at + anim_list.num_animations) != game.beatmap.animations.len {
+        prev_at := anim_list.at
+        anim_list.at = game.beatmap.animations.len
+        if anim_list.num_animations > 0 {
+            // note(isak): we relocate the slice to the end of the animation list if it's not at the end.
+            // this leaves holes, but is the best we can do given the stable pointer requirement
+            unfinished_anim_list := game.beatmap.animations.data[prev_at:prev_at + anim_list.num_animations]
+            q.push_back_elems(&game.beatmap.animations, ..unfinished_anim_list)
+            log.warn("Lua warning: relocated animation list to index:", anim_list.at)
+        }
+    }
 }
 
 luaapi_animation_new :: proc "c" (L: ^lua.State) -> i32 {
@@ -567,14 +585,12 @@ luaapi_animation_move :: proc "c" (L: ^lua.State) -> i32 {
     from_x, from_y := lua_number(4), lua_number(5)
     to_x, to_y     := lua_number(6), lua_number(7)
     q.append(&game.beatmap.animations, Animation_Translate{
-        variant    = .TRANSLATE,
         start_time = f64(start),
         end_time   = f64(end),
         start_pos  = {f32(from_x), f32(from_y)},
         end_pos    = {f32(to_x), f32(to_y)}
     })
     anim_list.num_animations += 1
-    
     return lua_return_self()
 }
 
@@ -588,14 +604,12 @@ luaapi_animation_scale :: proc "c" (L: ^lua.State) -> i32 {
     from       := vec2{f32(lua_number(4)), f32(lua_number(5))}
     to         := vec2{f32(lua_number(6)), f32(lua_number(7))}
     q.append(&game.beatmap.animations, Animation_Scale{
-        variant     = .SCALE,
         start_time  = f64(start),
         end_time    = f64(end),
         start_scale = from,
         end_scale   = to,
     })
     anim_list.num_animations += 1
-    
     return lua_return_self()
 }
 
@@ -608,14 +622,31 @@ luaapi_animation_rotate :: proc "c" (L: ^lua.State) -> i32 {
     start, end := lua_number(2), lua_number(3)
     from, to   := f32(lua_number(4)), f32(lua_number(5))
     q.append(&game.beatmap.animations, Animation_Rotate{
-        variant     = .ROTATE,
         start_time  = f64(start),
         end_time    = f64(end),
         start_angle = from,
         end_angle   = to
     })
     anim_list.num_animations += 1
+    return lua_return_self()
+}
+
+luaapi_animation_color :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
     
+    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
+    _lua_check_animation_list_and_potentially_relocate(anim_list)
+    
+    start, end := lua_number(2), lua_number(3)
+    from, to   := color_from_pixel(u32(lua_int(4))), color_from_pixel(u32(lua_int(5)))
+    
+    q.append(&game.beatmap.animations, Animation_Color{
+        start_time  = f64(start),
+        end_time    = f64(end),
+        start_color = from,
+        end_color   = to
+    })
+    anim_list.num_animations += 1
     return lua_return_self()
 }
 
@@ -628,29 +659,36 @@ luaapi_animation_alpha :: proc "c" (L: ^lua.State) -> i32 {
     start, end := lua_number(2), lua_number(3)
     from, to   := f32(lua_number(4)), f32(lua_number(5))
     q.append(&game.beatmap.animations, Animation_Alpha{
-        variant     = .ALPHA,
         start_time  = f64(start),
         end_time    = f64(end),
         start_alpha = from,
         end_alpha   = to
     })
     anim_list.num_animations += 1
-    
     return lua_return_self()
 }
 
-_lua_check_animation_list_and_potentially_relocate :: proc(anim_list: ^Script_Animation_List) {
-    if (anim_list.at + anim_list.num_animations) != game.beatmap.animations.len {
-        prev_at := anim_list.at
-        anim_list.at = game.beatmap.animations.len
-        if anim_list.num_animations > 0 {
-            // note(isak): we relocate the slice to the end of the animation list if it's not at the end.
-            // this leaves holes, but is the best we can do given the stable pointer requirement
-            unfinished_anim_list := game.beatmap.animations.data[prev_at:prev_at + anim_list.num_animations]
-            q.push_back_elems(&game.beatmap.animations, ..unfinished_anim_list)
-            log.warn("Lua warning: relocated animation list to index:", anim_list.at)
-        }
+luaapi_animation_texture :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    
+    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
+    _lua_check_animation_list_and_potentially_relocate(anim_list)
+    
+    start, end := lua_number(2), lua_number(3)
+    tex_name := lua_string(4)
+    tex_id, found := mapset_texture_slot(tex_name)
+    if !found {
+        log.error("User error - texture not found:", tex_name)
+        tex_id = builtin_texture(.WHITE)
     }
+    
+    q.append(&game.beatmap.animations, Animation_Texture{
+        start_time = f64(start),
+        end_time   = f64(end),
+        texture_id = tex_id 
+    })
+    anim_list.num_animations += 1
+    return lua_return_self()
 }
 
 //////////////////////////////////////////////////////
@@ -658,11 +696,6 @@ _lua_check_animation_list_and_potentially_relocate :: proc(anim_list: ^Script_An
 
 @(private="file")
 luaapi_tween_static_funcs := []lua.L_Reg {
-  { nil, nil },
-}
-
-@(private="file")
-luaapi_tween_instance_funcs := []lua.L_Reg {
   { nil, nil },
 }
 
@@ -682,28 +715,15 @@ luaapi_drawable_instance_funcs := []lua.L_Reg {
   { "__gc", luaapi_drawable_gc },
   { "set_pos", luaapi_drawable_set_pos },
   { "set_size", luaapi_drawable_set_size },
-  //{ "set_anchor", luaapi_drawable_set_anchor },
-  //{ "set_color", luaapi_drawable_set_color },
+  { "set_anchor", luaapi_drawable_set_anchor },
+  { "set_color", luaapi_drawable_set_color },
   //{ "set_vel", luaapi_drawable_set_vel },
   //{ "set_accel", luaapi_drawable_set_accel },
   //{ "set_angle_vel", luaapi_drawable_set_angle_vel },
-  //{ "set_start_time_ms", luaapi_drawable_set_start_time_ms },
-  //{ "set_end_time_ms", luaapi_drawable_set_end_time_ms },
+  { "set_start_time_ms", luaapi_drawable_set_start_time_ms },
+  { "set_end_time_ms", luaapi_drawable_set_end_time_ms },
   { nil, nil },
 }
-
-/*
-size: vec2,
-angle_deg: f32,
-anchor: Layout_Anchor,
-color: Color,
-
-vel: vec2,
-accel: vec2,
-angle_vel: f32,
-
-start_time_ms, end_time_ms: f64,
-*/
 
 luaapi_drawable_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_beatmap.odin_context
@@ -729,6 +749,7 @@ luaapi_drawable_new :: proc "c" (L: ^lua.State) -> (result: i32) {
         layer = window.renderer.current_layer,
         anchor = .TOP_LEFT,
         
+        size = {40, 40}, // note(isak): default size just so we don't get confused when it's not set...
         color = {255, 255, 255, 255},
         
         start_time_ms = start_time,
@@ -741,28 +762,57 @@ luaapi_drawable_new :: proc "c" (L: ^lua.State) -> (result: i32) {
     return 1
 }
 
-luaapi_drawable_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
+_luaapi_drawable_op :: proc "c" (
+    L: ^lua.State, 
+    op: proc "c" (L: ^lua.State, d: ^Drawable) -> i32
+) -> (result: i32) {
     context = lua_beatmap.odin_context
     handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
-    x, y := lua_number(2), lua_number(3)
-    
-    e, found := slotmap.get(&game.beatmap.drawables, handle^)
+    d, found := slotmap.get(&game.beatmap.drawables, handle^)
     if found {
-        e.pos = vec2{f32(x), f32(y)}
+        result = op(L, d) + lua_return_self()
     }
-    return lua_return_self()
+    return result
 }
 
+luaapi_drawable_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        x, y := lua_number(2), lua_number(3)
+        d.pos = vec2{f32(x), f32(y)}
+        return 0
+    })
+}
 luaapi_drawable_set_size :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_beatmap.odin_context
-    handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
-    w, h := lua_number(2), lua_number(3)
-    
-    e, found := slotmap.get(&game.beatmap.drawables, handle^)
-    if found {
-        e.size = vec2{f32(w), f32(h)}
-    }
-    return lua_return_self()
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        w, h := lua_number(2), lua_number(3)
+        d.size = vec2{f32(w), f32(h)}
+        return 0
+    })
+}
+luaapi_drawable_set_anchor :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        val := lua_int(2)
+        d.anchor = Layout_Anchor(val)
+        return 0
+    })
+}
+luaapi_drawable_set_color :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        d.color = color_from_pixel(u32(lua_int(2)))
+        return 0
+    })
+}
+luaapi_drawable_set_start_time_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        d.start_time_ms = f64(lua_number(2))
+        return 0
+    })
+}
+luaapi_drawable_set_end_time_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        d.end_time_ms = f64(lua_number(2))
+        return 0
+    })
 }
 
 //////////////////////////////////////////////////////
@@ -780,21 +830,12 @@ luaapi_hitobject_instance_funcs := []lua.L_Reg {
   { "__gc", luaapi_hitobject_gc },
   { "get_pos", luaapi_hitobject_get_pos },
   { "set_pos", luaapi_hitobject_set_pos },
+  { "get_start_time", luaapi_hitobject_get_start_time },
+  { "set_start_time", luaapi_hitobject_set_start_time },
+  { "get_end_time", luaapi_hitobject_get_end_time },
+  { "set_end_time", luaapi_hitobject_set_end_time },
   { nil, nil },
 }
-
-/*
-size: vec2,
-angle_deg: f32,
-anchor: Layout_Anchor,
-color: Color,
-
-vel: vec2,
-accel: vec2,
-angle_vel: f32,
-
-start_time_ms, end_time_ms: f64,
-*/
 
 luaapi_hitobject_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
     handle := cast(^int)lua.L_checkudata(L, 1, lua_classes[.HITOBJECT].name)
@@ -843,29 +884,80 @@ luaapi_hitobject_get_in_range_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
     return 1
 }
 
-luaapi_hitobject_get_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_beatmap.odin_context
+_luaapi_hitobject_op :: proc "c" (
+    L: ^lua.State, 
+    op: proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32
+) -> (result: i32) {
     handle := cast(^int)lua.L_checkudata(L, 1, lua_classes[.HITOBJECT].name)
-    
     if handle^ < len(game.beatmap.hit_objects) {
         hobj := &game.beatmap.hit_objects[handle^]
-        lua.pushnumber(L, lua.Number(hobj.pos.x))
-        lua.pushnumber(L, lua.Number(hobj.pos.y))
-        result = lua_return_self() + 2
+        result = op(L, hobj) + lua_return_self()
     }
     return result
 }
 
+luaapi_hitobject_get_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32 {
+        lua.pushnumber(L, lua.Number(hobj.pos.x))
+        lua.pushnumber(L, lua.Number(hobj.pos.y))
+        return 2
+    })
+}
 luaapi_hitobject_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_beatmap.odin_context
-    handle := cast(^int)lua.L_checkudata(L, 1, lua_classes[.HITOBJECT].name)
-    x, y := lua_number(2), lua_number(3)
-    
-    if handle^ < len(game.beatmap.hit_objects) {
-        hobj := &game.beatmap.hit_objects[handle^]
-        hobj.script_pos_translation = {f32(x), f32(y)} - hobj.pos
-        
-        result = lua_return_self()
-    }
-    return result
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32 {
+        // note(isak): we forcibly make the translation non-relative. might not keep this?
+        hobj.script_pos_translation.x = f32(lua_number(2)) - hobj.pos.x
+        hobj.script_pos_translation.y = f32(lua_number(3)) - hobj.pos.y
+        return 0
+    })
+}
+
+luaapi_hitobject_get_start_time :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32 {
+        lua.pushnumber(L, lua.Number(hobj.start_time_ms))
+        return 1
+    })
+}
+luaapi_hitobject_set_start_time :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32 {
+        hobj.start_time_ms = f64(lua_number(2))
+        return 0
+    })
+}
+
+luaapi_hitobject_get_end_time :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32 {
+        lua.pushnumber(L, lua.Number(hobj.end_time_ms))
+        return 1
+    })
+}
+luaapi_hitobject_set_end_time :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32 {
+        hobj.end_time_ms = f64(lua_number(2))
+        return 0
+    })
+}
+
+//////////////////////////////////////////////////////
+// note(isak): color object API
+
+@(private="file")
+luaapi_color_static_funcs := []lua.L_Reg {
+  { "rgb", luaapi_color_rgb },
+  { "rgba", luaapi_color_rgba },
+  { nil, nil },
+}
+
+luaapi_color_rgba :: proc "c" (L: ^lua.State) -> (result: i32) {
+    r, g, b, a := lua_int(1), lua_int(2), lua_int(3), lua_int(4)
+    color := Color{u8(min(r, 255)),u8(min(g, 255)),u8(min(b, 255)),u8(min(a, 255))}
+    lua.pushinteger(L, lua.Integer(color_to_pixel_u8(color)))
+    return 1
+}
+
+luaapi_color_rgb :: proc "c" (L: ^lua.State) -> (result: i32) {
+    r, g, b := lua_int(1), lua_int(2), lua_int(3)
+    color := Color{u8(min(r, 255)),u8(min(g, 255)),u8(min(b, 255)),255}
+    lua.pushinteger(L, lua.Integer(color_to_pixel_u8(color)))
+    return 1
 }

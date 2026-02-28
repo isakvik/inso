@@ -19,23 +19,33 @@ local rand = load_file("rand.lua")
 -- needs specific handling for animation lists... can't just add at any time cuz it's defined as a slice
 -- and we do want continuity for performance reasons
 
+
 function on_init()
     a = Animation.new()
-        :move(0, 2000, 0, 200, 512, 200)
-        -- :scale(500, 1500, pos, end_pos)
-        
-    a:move(2000, 3000, 0, 200, 512, 200)
+        :color(2000, 3000, Color.rgb(255,0,0), Color.rgb(0,0,255))
+        :scale(0, 2000, 0,0, 2,2)
+        :texture(2000, 2000, "no.jpg")
     
     el = Element.new()
         :set_tex("kawayabughorou.jpg")
         :set_animation(a)
+        :set_shader("wave")
     
-    d = Drawable.new(el, 0, 3000)
-        :set_size(100,100)
+    -- todo(isak) should be able to register custom events through a string here...
+    -- using an observer with a set of handles for an event
     
     --hobj = Hitobject.get_at_ms(0) -- needs optional index param so we can get the next at ms 0
     
     list = Hitobject.get_in_range_ms(0, 4250)
+    
+    table = {}
+    for i, hobj in ipairs(list) do 
+        t = hobj:get_start_time()
+        dd = Drawable.new(el, t - 1200, t)
+            :set_pos(hobj:get_pos())
+            :set_size(100,100)
+        table[i] = dd
+    end
 end
 
 
@@ -48,6 +58,7 @@ function on_update(time_ms)
         x = x + math.cos((time_ms*i*0.01) / 1000 + i*0.1)* 100
         y = y + math.sin((time_ms*i*0.01) / 1000 + i*0.1)* 100
         hobj:set_pos(x,y)
+        table[i]:set_pos(x,y)
     end
 end
 

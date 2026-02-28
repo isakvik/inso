@@ -591,10 +591,22 @@ b_spline_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_
     //todo(yokes): buffer_push all instances in output
     //main goal is to edit the curve such that the instances pushed are the new coordinates where the slider is drawn
     instances_at = instance_buf.count
+    curr_distance : f64 = 0
     total_distance = 0
     for point, i in output.data[:output.len] {
         if i < int(output.len) - 1 {
-            total_distance += f64(linalg.vector_length(q.get(&output, i + 1) - q.get(&output, i)))
+            curr_distance = f64(linalg.vector_length(q.get(&output, i + 1) - q.get(&output, i)))
+            total_distance += curr_distance
+        
+            if f32(curr_distance) > base_dist {
+                //todo(yokes): at the moment the end point overlaps an instance with the start point of the next output.data
+                write_instances_from_straight(instance_buf, q.get(&output, i), q.get(&output, i + 1), curr_distance)
+            } else {
+                buffer_push(instance_buf, point)
+            }
+
+        } else {
+            buffer_push(instance_buf, point)
         }
             
         buffer_push(instance_buf, point)

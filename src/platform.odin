@@ -8,6 +8,10 @@ import "core:path/filepath"
 app: struct {
     base_dir: string,
     logger: log.Logger,
+    
+    debug_display_frame_profiler: bool,
+    debug_display_memory_profiler: bool,
+    debug_display_fontatlas: bool
 }
 
 app_init :: proc() {
@@ -32,11 +36,17 @@ app_cleanup :: proc() {
 //////////////////////////////////////////////////////
 // note(isak): io api
 
-read_entire_file :: proc(path: string, allocator := context.allocator) -> ([]u8, os.Error) {
-    result: []u8
-    err: os.Error = os.General_Error.None
-    for len(result) == 0 && err == os.General_Error.None {
-        result, err = os.read_entire_file_from_path(path, allocator)
+file_size :: proc(path: string) -> (result: i64, err: os.Error) {
+    f := os.open(path) or_return
+	defer os.close(f)
+	return os.file_size(f)
+}
+
+read_entire_file :: proc(path: string, allocator := context.allocator) -> (result: []u8, err: os.Error) {
+    loop_count: int
+    for len(result) == 0 && err == os.General_Error.None && loop_count < 1000 {
+        result, err = os.read_entire_file(path, allocator)
+        loop_count += 1
     }
     null_guard := new(u8, allocator)
     return result, err
@@ -45,4 +55,10 @@ read_entire_file :: proc(path: string, allocator := context.allocator) -> ([]u8,
 read_entire_file_to_string :: proc(path: string, allocator := context.allocator) -> (string, os.Error) {
     data, err := read_entire_file(path, allocator)
     return string(data), err
+}
+
+read_entire_file_to_cstring :: proc(path: string, allocator := context.allocator) -> (cstring, int, os.Error) {
+    data, err := read_entire_file(path, allocator)
+    len := len(data)
+    return cstring(raw_data(data)), len, err
 }

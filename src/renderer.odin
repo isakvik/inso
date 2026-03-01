@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:math"
 import "core:math/linalg"
 import "core:fmt"
+import "core:log"
 import os "core:os/os2"
 import "core:slice"
 import "core:strings"
@@ -77,9 +78,7 @@ Renderer :: struct {
     layer_command_queues: [Layer]queue.Queue(u8),
 
     current_draw: ^Command_Draw,
-    null_draw: Command_Draw,
-    
-    text_draw: Command_Draw,
+    text_draw: Command_Draw, // todo(isak) this makes text rendering pretty nonconfigurable... good for debug tho
     
     new_draw_on_next_push: bool,
     current_layer: Layer,
@@ -93,6 +92,8 @@ Renderer :: struct {
 
     trace_frame: bool
 }
+
+@(rodata) null_draw := Command_Draw{}
 
 
 Texture_Handle :: u64
@@ -130,7 +131,7 @@ rect_to_array :: proc(r: Rect) -> [4]f32 {
 
 renderer_init :: proc() {
     renderer := &window.renderer
-    renderer.current_draw = &renderer.null_draw
+    renderer.current_draw = &null_draw
 
     sg.setup({
         environment = {
@@ -214,8 +215,8 @@ renderer_init :: proc() {
 
     //
 
-    fullscreen_geometry := buffer_init(MAX_BATCH_VERTICES, window.fullscreen_store.data)
-    r_draw_rect(&fullscreen_geometry, {0,0,1,1}, with_alpha(color_white, 0.5), reserved_texture(.SLIDER_FRAMEBUFFER))
+    //fullscreen_geometry := buffer_init(MAX_BATCH_VERTICES, window.fullscreen_store.data)
+    //r_draw_rect(&fullscreen_geometry, {0,0,1,1}, with_alpha(color_white, 0.5), builtin_texture(.SLIDER_FRAMEBUFFER))
     
     //
     
@@ -275,14 +276,14 @@ Shader :: struct {
 }
 
 shader_init :: proc(vs_path, fs_path: string, alloc: runtime.Allocator = context.temp_allocator) -> (Shader, Shader_Error) {
-    vs_filedata, vs_err := read_entire_file(vs_path, alloc)
-    if vs_err != os.ERROR_NONE {
-        fmt.printfln("loading vert shader file '{}' failed: {}", vs_path, vs_err)
+    vs_filedata, vs_filelen, vs_err := read_entire_file_to_cstring(vs_path, alloc)
+    if vs_err != os.ERROR_NONE || vs_filelen == 0 {
+        log.errorf("loading vert shader file '{}' failed: {}", vs_path, vs_err)
         return {}, .READ_ERROR
     }
-    fs_filedata, fs_err := read_entire_file(fs_path, alloc)
-    if fs_err != os.ERROR_NONE {
-        fmt.printfln("loading frag shader file '{}' failed: {}", fs_path, fs_err)
+    fs_filedata, fs_filelen, fs_err := read_entire_file_to_cstring(fs_path, alloc)
+    if fs_err != os.ERROR_NONE || fs_filelen == 0 {
+        log.errorf("loading frag shader file '{}' failed: {}", fs_path, fs_err)
         return {}, .READ_ERROR
     }
 
@@ -292,8 +293,8 @@ shader_init :: proc(vs_path, fs_path: string, alloc: runtime.Allocator = context
 
     temp_shader := sg.make_shader(
         sg.Shader_Desc {
-            vertex_func = {source = strings.clone_to_cstring(string(vs_filedata))},
-            fragment_func = {source = strings.clone_to_cstring(string(fs_filedata))}
+            vertex_func = {source = vs_filedata},
+            fragment_func = {source = fs_filedata}
         },
     )
 
@@ -312,7 +313,7 @@ shader_reinit :: proc(shader: ^Shader, alloc: runtime.Allocator = context.temp_a
     new_shader, err := shader_init(shader.vs_path, shader.fs_path, alloc)
     if err != .NONE {
         assert(err == .COMPILE_ERROR)
-        fmt.println("Shader compile errors found. Paths:", shader.vs_path, shader.fs_path)
+        log.errorf("Shader compile errors found. Paths:", shader.vs_path, shader.fs_path)
         return err
     }
     sg.destroy_shader(shader.shader)
@@ -395,20 +396,20 @@ command_push_scissor_mode      :: proc(cmd: Command_Scissor_Mode) -> bool { retu
 
 
 _command_push_header :: proc(type: Command_Type) -> bool {
-    using window.renderer
-    ok, err := queue.push_back(&layer_command_queues[current_layer], u8(type))
+    layer := window.renderer.current_layer
+    ok, err := queue.push_back(&window.renderer.layer_command_queues[layer], u8(type))
     assert(err == .None)
     return ok
 }
 
 _command_push :: proc(cmd: $T, type: Command_Type) -> bool {
-    using window.renderer
+    layer := window.renderer.current_layer
     cmd := cmd
     ok := _command_push_header(type)
     if ok {
         err: runtime.Allocator_Error
         cmd_data: []u8 = slice.from_ptr((^u8)(&cmd), size_of(T))
-        ok, err = queue.push_back_elems(&layer_command_queues[current_layer], ..cmd_data)
+        ok, err = queue.push_back_elems(&window.renderer.layer_command_queues[layer], ..cmd_data)
         assert(err == .None)
     }
     assert(ok)
@@ -437,7 +438,7 @@ r_push_draw :: proc(index_offset: u32, index_count: i32, instance_count: i32 = 1
         instance_count = instance_count
     })
     cmds := &window.renderer.layer_command_queues[window.renderer.current_layer]
-    window.renderer.current_draw = transmute(^Command_Draw)&cmds.data[cmds.len - size_of(Command_Draw)]
+    window.renderer.current_draw = cast(^Command_Draw)&cmds.data[cmds.len - size_of(Command_Draw)]
     
     window.renderer.new_draw_on_next_push = false
 }
@@ -526,17 +527,23 @@ r_end_scissor_mode :: proc() {
     
     (maybe just keeping state per layer is better? this may require some discipline though.)
 */
-_r_bind_layer :: proc(layer: Layer) {
+r_bind_layer :: proc(layer: Layer) {
     window.renderer.current_layer = layer
 }
 
-r_push_layer :: proc(layer: Layer,    
+r_check_and_bind_layer :: proc(layer: Layer) {
+    if layer != window.renderer.current_layer {
+        r_bind_layer(layer)
+    }
+}
+
+r_bind_layer_and_push_current_state :: proc(layer: Layer,    
     framebuffer: Command_Bind_Framebuffer = window.renderer.current_framebuffer,
     pipeline: Command_Bind_Pipeline = window.renderer.current_pipeline,
     transform: Transform = window.renderer.current_global_data.transform,
     scissor_region: Command_Scissor_Mode = window.renderer.current_scissor
 ) {
-    _r_bind_layer(layer)
+    r_bind_layer(layer)
     r_push_current_state(framebuffer, pipeline, transform, scissor_region)
 }
 
@@ -589,8 +596,7 @@ batch_begin :: proc(renderer: ^Renderer) {
     renderer.text_geometry.data = tbo_advance_and_get(&window.text_store)
     renderer.text_geometry.count = 0
 
-    renderer.current_draw.index_count = 0
-    renderer.current_draw.index_offset = 0
+    r_push_draw(0,0)
 }
 
 batch_end :: proc(renderer: ^Renderer) {
@@ -774,7 +780,7 @@ r_draw_layout_rect :: proc(geometry: ^Buffer(Quad), rect: Rect, anchor: Layout_A
 // todo(isak): thickness doesn't really work anymore... should prolly fetch scale from current transform
 // todo(isak): add angle, but that requires placing the rects on the middle of each side with respect to it
 r_draw_rect_outline :: proc(geometry: ^Buffer(Quad), rect: Rect, color: Color, thickness_px: f32) {
-    xform := window.renderer.current_global_data
+    //xform := window.renderer.current_global_data
 
     offset: f32 = math.mod(thickness_px, 2)
     thickness_y: f32 = thickness_px

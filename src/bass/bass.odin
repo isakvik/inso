@@ -1,8 +1,8 @@
 /*
-	BASS 2.4 C/C++ header file
-	Copyright (c) 1999-2025 Un4seen Developments Ltd.
+    BASS 2.4 C/C++ header file
+    Copyright (c) 1999-2025 Un4seen Developments Ltd.
 
-	See the BASS.CHM file for more detailed documentation
+    See the BASS.CHM file for more detailed documentation
 */
 package bass
 
@@ -187,9 +187,9 @@ OBJECT_DS3DL :: 2 // IDirectSound3DListener
 
 // Device info structure
 DEVICEINFO :: struct {
-	name:   cstring, // description
-	driver: cstring, // driver
-	flags:  DWORD,
+    name:   cstring, // description
+    driver: cstring, // driver
+    flags:  DWORD,
 }
 
 // DEVICEINFO flags
@@ -216,14 +216,14 @@ DEVICES_AIRPLAY :: 0x1000000
 
 // Output device info structure
 INFO :: struct {
-	flags:     DWORD, // DirectSound capabilities (DSCAPS_xxx flags)
-	reserved:  [7]DWORD,
-	minbuf:    DWORD, // recommended minimum buffer length in ms
-	dsver:     DWORD, // DirectSound version
-	latency:   DWORD, // average delay (in ms) before start of playback
-	initflags: DWORD, // Init "flags" parameter
-	speakers:  DWORD, // number of speakers available
-	freq:      DWORD, // current output rate
+    flags:     DWORD, // DirectSound capabilities (DSCAPS_xxx flags)
+    reserved:  [7]DWORD,
+    minbuf:    DWORD, // recommended minimum buffer length in ms
+    dsver:     DWORD, // DirectSound version
+    latency:   DWORD, // average delay (in ms) before start of playback
+    initflags: DWORD, // Init "flags" parameter
+    speakers:  DWORD, // number of speakers available
+    freq:      DWORD, // current output rate
 }
 
 // INFO flags (from DSOUND.H)
@@ -233,11 +233,11 @@ DSCAPS_HARDWARE   :: 0x80000000  // hardware mixed
 
 // Recording device info structure
 RECORDINFO :: struct {
-	flags:    DWORD, // DirectSound capabilities (DSCCAPS_xxx flags)
-	formats:  DWORD, // number of channels (in high 8 bits)
-	inputs:   DWORD, // number of inputs
-	singlein: BOOL,  // TRUE = only 1 input can be set at a time
-	freq:     DWORD, // current sample rate
+    flags:    DWORD, // DirectSound capabilities (DSCCAPS_xxx flags)
+    formats:  DWORD, // number of channels (in high 8 bits)
+    inputs:   DWORD, // number of inputs
+    singlein: BOOL,  // TRUE = only 1 input can be set at a time
+    freq:     DWORD, // current sample rate
 }
 
 // RECORDINFO flags (from DSOUND.H)
@@ -252,22 +252,22 @@ FILE_HANDLE  :: 4  // handle/descriptor
 
 // Sample info structure
 SAMPLE :: struct {
-	freq:     DWORD, // default playback rate
-	volume:   f32,   // default volume (0-1)
-	pan:      f32,   // default pan (-1=left, 0=middle, 1=right)
-	flags:    DWORD, // SAMPLE_xxx flags
-	length:   DWORD, // length (in bytes)
-	max:      DWORD, // maximum simultaneous playbacks
-	origres:  DWORD, // original resolution
-	chans:    DWORD, // number of channels
-	mingap:   DWORD, // minimum gap (ms) between creating channels
-	mode3d:   DWORD, // 3DMODE_xxx mode
-	mindist:  f32,   // minimum distance
-	maxdist:  f32,   // maximum distance
-	iangle:   DWORD, // angle of inside projection cone
-	oangle:   DWORD, // angle of outside projection cone
-	outvol:   f32,   // delta-volume outside the projection cone
-	reserved: [2]DWORD,
+    freq:     DWORD, // default playback rate
+    volume:   f32,   // default volume (0-1)
+    pan:      f32,   // default pan (-1=left, 0=middle, 1=right)
+    flags:    DWORD, // SAMPLE_xxx flags
+    length:   DWORD, // length (in bytes)
+    max:      DWORD, // maximum simultaneous playbacks
+    origres:  DWORD, // original resolution
+    chans:    DWORD, // number of channels
+    mingap:   DWORD, // minimum gap (ms) between creating channels
+    mode3d:   DWORD, // 3DMODE_xxx mode
+    mindist:  f32,   // minimum distance
+    maxdist:  f32,   // maximum distance
+    iangle:   DWORD, // angle of inside projection cone
+    oangle:   DWORD, // angle of outside projection cone
+    outvol:   f32,   // delta-volume outside the projection cone
+    reserved: [2]DWORD,
 }
 
 SAMPLE_8BITS     :: 1                   // 8 bit
@@ -338,14 +338,14 @@ RECORD_PAUSE       :: 0x8000     // start recording paused
 
 // Channel info structure
 CHANNELINFO :: struct {
-	freq:     DWORD, // default playback rate
-	chans:    DWORD, // channels
-	flags:    DWORD,
-	ctype:    DWORD, // type of channel
-	origres:  DWORD, // original resolution
-	plugin:   HPLUGIN,
-	sample:   HSAMPLE,
-	filename: cstring,
+    freq:     DWORD, // default playback rate
+    chans:    DWORD, // channels
+    flags:    DWORD,
+    ctype:    DWORD, // type of channel
+    origres:  DWORD, // original resolution
+    plugin:   HPLUGIN,
+    sample:   HSAMPLE,
+    filename: cstring,
 }
 
 ORIGRES_FLOAT  :: 0x10000
@@ -380,22 +380,22 @@ CTYPE_MUSIC_MO3        :: 0x00100 // MO3 flag
 PLUGIN_PROC  :: 1
 
 PLUGINFORM :: struct {
-	ctype: DWORD,   // channel type
-	name:  cstring, // format description
-	exts:  cstring, // file extension filter (*.ext1;*.ext2;etc...)
+    ctype: DWORD,   // channel type
+    name:  cstring, // format description
+    exts:  cstring, // file extension filter (*.ext1;*.ext2;etc...)
 }
 
 PLUGININFO :: struct {
-	version: DWORD,            // version (same form as GetVersion)
-	formatc: DWORD,            // number of formats
-	formats: ^PLUGINFORM, // the array of formats
+    version: DWORD,            // version (same form as GetVersion)
+    formatc: DWORD,            // number of formats
+    formats: ^PLUGINFORM, // the array of formats
 }
 
 // 3D vector (for 3D positions/velocities/orientations)
 BASS_3DVECTOR :: struct {
-	x: f32, // +=right, -=left
-	y: f32, // +=up, -=down
-	z: f32, // +=front, -=behind
+    x: f32, // +=right, -=left
+    y: f32, // +=up, -=down
+    z: f32, // +=front, -=behind
 }
 
 // 3D channel modes
@@ -413,7 +413,7 @@ SAMCHAN_STREAM  :: 2 // create a stream
 
 @(default_calling_convention="c")
 foreign lib {
-	STREAMPROC :: proc(HSTREAM, rawptr, DWORD, rawptr) -> DWORD ---
+    STREAMPROC :: proc(HSTREAM, rawptr, DWORD, rawptr) -> DWORD ---
 }
 
 /* User stream callback function.
@@ -438,27 +438,27 @@ STREAMFILE_BUFFERPUSH :: 2
 
 @(default_calling_convention="c")
 foreign lib {
-	// User file callback functions
-	FILECLOSEPROC :: proc(rawptr) ---
-	FILELENPROC   :: proc(rawptr) -> QWORD ---
-	FILEREADPROC  :: proc(rawptr, DWORD, rawptr) -> DWORD ---
-	FILESEEKPROC  :: proc(QWORD, rawptr) -> BOOL ---
-	FILEOPENPROC  :: proc(cstring, DWORD) -> rawptr ---
+    // User file callback functions
+    FILECLOSEPROC :: proc(rawptr) ---
+    FILELENPROC   :: proc(rawptr) -> QWORD ---
+    FILEREADPROC  :: proc(rawptr, DWORD, rawptr) -> DWORD ---
+    FILESEEKPROC  :: proc(QWORD, rawptr) -> BOOL ---
+    FILEOPENPROC  :: proc(cstring, DWORD) -> rawptr ---
 }
 
 FILEPROCS :: struct {
-	close:  proc "c" (),
-	length: proc "c" () -> QWORD,
-	read:   proc "c" () -> DWORD,
-	seek:   proc "c" () -> BOOL,
+    close:  proc "c" (),
+    length: proc "c" () -> QWORD,
+    read:   proc "c" () -> DWORD,
+    seek:   proc "c" () -> BOOL,
 }
 
 FILEOPENPROCS :: struct {
-	close:  proc "c" (),
-	length: proc "c" () -> QWORD,
-	read:   proc "c" () -> DWORD,
-	seek:   proc "c" () -> BOOL,
-	open:   proc "c" () -> rawptr,
+    close:  proc "c" (),
+    length: proc "c" () -> QWORD,
+    read:   proc "c" () -> DWORD,
+    seek:   proc "c" () -> BOOL,
+    open:   proc "c" () -> rawptr,
 }
 
 // StreamPutFileData options
@@ -481,7 +481,7 @@ FILEPOS_ASYNCSIZE :: 12
 
 @(default_calling_convention="c")
 foreign lib {
-	DOWNLOADPROC :: proc(rawptr, DWORD, rawptr) ---
+    DOWNLOADPROC :: proc(rawptr, DWORD, rawptr) ---
 }
 
 /* Internet stream download callback function.
@@ -512,22 +512,22 @@ SYNC_ONETIME    :: 0x80000000 // flag: sync only once, else continuously
 
 @(default_calling_convention="c")
 foreign lib {
-	SYNCPROC :: proc(HSYNC, DWORD, DWORD, rawptr) ---
+    SYNCPROC :: proc(HSYNC, DWORD, DWORD, rawptr) ---
 
-	/* Sync callback function.
-	handle : The sync that has occured
-	channel: Channel that the sync occured in
-	data   : Additional data associated with the sync's occurance
-	user   : The 'user' parameter given when calling ChannelSetSync */
-	DSPPROC :: proc(HDSP, DWORD, rawptr, DWORD, rawptr) ---
+    /* Sync callback function.
+    handle : The sync that has occured
+    channel: Channel that the sync occured in
+    data   : Additional data associated with the sync's occurance
+    user   : The 'user' parameter given when calling ChannelSetSync */
+    DSPPROC :: proc(HDSP, DWORD, rawptr, DWORD, rawptr) ---
 
-	/* DSP callback function.
-	handle : The DSP handle
-	channel: Channel that the DSP is being applied to
-	buffer : Buffer to apply the DSP to
-	length : Number of bytes in the buffer
-	user   : The 'user' parameter given when calling ChannelSetDSP */
-	RECORDPROC :: proc(HRECORD, rawptr, DWORD, rawptr) -> BOOL ---
+    /* DSP callback function.
+    handle : The DSP handle
+    channel: Channel that the DSP is being applied to
+    buffer : Buffer to apply the DSP to
+    length : Number of bytes in the buffer
+    user   : The 'user' parameter given when calling ChannelSetDSP */
+    RECORDPROC :: proc(HRECORD, rawptr, DWORD, rawptr) -> BOOL ---
 }
 
 /* Recording callback function.
@@ -653,113 +653,113 @@ TAG_INCREF         :: 0x20000000 // flag: increment channel's reference count
 
 // ID3v1 tag structure
 _TAG_ID3 :: struct {
-	id:      [3]i8,
-	title:   [30]i8,
-	artist:  [30]i8,
-	album:   [30]i8,
-	year:    [4]i8,
-	comment: [30]i8,
-	genre:   BYTE,
+    id:      [3]i8,
+    title:   [30]i8,
+    artist:  [30]i8,
+    album:   [30]i8,
+    year:    [4]i8,
+    comment: [30]i8,
+    genre:   BYTE,
 }
 
 // Binary tag structure
 _TAG_BINARY :: struct {
-	data:   rawptr,
-	length: DWORD,
+    data:   rawptr,
+    length: DWORD,
 }
 
 // Binary APE tag structure
 _TAG_APE_BINARY :: struct {
-	key:    cstring,
-	data:   rawptr,
-	length: DWORD,
+    key:    cstring,
+    data:   rawptr,
+    length: DWORD,
 }
 
 _TAG_BEXT :: struct {
-	Description:         [256]i8,  // description
-	Originator:          [32]i8,   // name of the originator
-	OriginatorReference: [32]i8,   // reference of the originator
-	OriginationDate:     [10]i8,   // date of creation (yyyy-mm-dd)
-	OriginationTime:     [8]i8,    // time of creation (hh-mm-ss)
-	TimeReference:       QWORD,    // first sample count since midnight (little-endian)
-	Version:             WORD,     // BWF version (little-endian)
-	UMID:                [64]BYTE, // SMPTE UMID
-	Reserved:            [190]BYTE,
-	CodingHistory:       [^]i8,    // history
+    Description:         [256]i8,  // description
+    Originator:          [32]i8,   // name of the originator
+    OriginatorReference: [32]i8,   // reference of the originator
+    OriginationDate:     [10]i8,   // date of creation (yyyy-mm-dd)
+    OriginationTime:     [8]i8,    // time of creation (hh-mm-ss)
+    TimeReference:       QWORD,    // first sample count since midnight (little-endian)
+    Version:             WORD,     // BWF version (little-endian)
+    UMID:                [64]BYTE, // SMPTE UMID
+    Reserved:            [190]BYTE,
+    CodingHistory:       [^]i8,    // history
 }
 
 // BWF "cart" tag structures
 _TAG_CART_TIMER :: struct {
-	dwUsage: DWORD, // FOURCC timer usage ID
-	dwValue: DWORD, // timer value in samples from head
+    dwUsage: DWORD, // FOURCC timer usage ID
+    dwValue: DWORD, // timer value in samples from head
 }
 
 _TAG_CART :: struct {
-	Version:            [4]i8,             // version of the data structure
-	Title:              [64]i8,            // title of cart audio sequence
-	Artist:             [64]i8,            // artist or creator name
-	CutID:              [64]i8,            // cut number identification
-	ClientID:           [64]i8,            // client identification
-	Category:           [64]i8,            // category ID, PSA, NEWS, etc
-	Classification:     [64]i8,            // classification or auxiliary key
-	OutCue:             [64]i8,            // out cue text
-	StartDate:          [10]i8,            // yyyy-mm-dd
-	StartTime:          [8]i8,             // hh:mm:ss
-	EndDate:            [10]i8,            // yyyy-mm-dd
-	EndTime:            [8]i8,             // hh:mm:ss
-	ProducerAppID:      [64]i8,            // name of vendor or application
-	ProducerAppVersion: [64]i8,            // version of producer application
-	UserDef:            [64]i8,            // user defined text
-	dwLevelReference:   DWORD,             // sample value for 0 dB reference
-	PostTimer:          [8]_TAG_CART_TIMER, // 8 time markers after head
-	Reserved:           [276]i8,
-	URL:                [1024]i8,          // uniform resource locator
-	TagText:            [^]i8,             // free form text for scripts or tags
+    Version:            [4]i8,             // version of the data structure
+    Title:              [64]i8,            // title of cart audio sequence
+    Artist:             [64]i8,            // artist or creator name
+    CutID:              [64]i8,            // cut number identification
+    ClientID:           [64]i8,            // client identification
+    Category:           [64]i8,            // category ID, PSA, NEWS, etc
+    Classification:     [64]i8,            // classification or auxiliary key
+    OutCue:             [64]i8,            // out cue text
+    StartDate:          [10]i8,            // yyyy-mm-dd
+    StartTime:          [8]i8,             // hh:mm:ss
+    EndDate:            [10]i8,            // yyyy-mm-dd
+    EndTime:            [8]i8,             // hh:mm:ss
+    ProducerAppID:      [64]i8,            // name of vendor or application
+    ProducerAppVersion: [64]i8,            // version of producer application
+    UserDef:            [64]i8,            // user defined text
+    dwLevelReference:   DWORD,             // sample value for 0 dB reference
+    PostTimer:          [8]_TAG_CART_TIMER, // 8 time markers after head
+    Reserved:           [276]i8,
+    URL:                [1024]i8,          // uniform resource locator
+    TagText:            [^]i8,             // free form text for scripts or tags
 }
 
 // RIFF "cue " tag structures
 _TAG_CUE_POINT :: struct {
-	dwName:         DWORD,
-	dwPosition:     DWORD,
-	fccChunk:       DWORD,
-	dwChunkStart:   DWORD,
-	dwBlockStart:   DWORD,
-	dwSampleOffset: DWORD,
+    dwName:         DWORD,
+    dwPosition:     DWORD,
+    fccChunk:       DWORD,
+    dwChunkStart:   DWORD,
+    dwBlockStart:   DWORD,
+    dwSampleOffset: DWORD,
 }
 
 _TAG_CUE :: struct {
-	dwCuePoints: DWORD,
-	CuePoints:   [^]_TAG_CUE_POINT,
+    dwCuePoints: DWORD,
+    CuePoints:   [^]_TAG_CUE_POINT,
 }
 
 // RIFF "smpl" tag structures
 _TAG_SMPL_LOOP :: struct {
-	dwIdentifier: DWORD,
-	dwType:       DWORD,
-	dwStart:      DWORD,
-	dwEnd:        DWORD,
-	dwFraction:   DWORD,
-	dwPlayCount:  DWORD,
+    dwIdentifier: DWORD,
+    dwType:       DWORD,
+    dwStart:      DWORD,
+    dwEnd:        DWORD,
+    dwFraction:   DWORD,
+    dwPlayCount:  DWORD,
 }
 
 _TAG_SMPL :: struct {
-	dwManufacturer:      DWORD,
-	dwProduct:           DWORD,
-	dwSamplePeriod:      DWORD,
-	dwMIDIUnityNote:     DWORD,
-	dwMIDIPitchFraction: DWORD,
-	dwSMPTEFormat:       DWORD,
-	dwSMPTEOffset:       DWORD,
-	cSampleLoops:        DWORD,
-	cbSamplerData:       DWORD,
-	SampleLoops:         [^]_TAG_SMPL_LOOP,
+    dwManufacturer:      DWORD,
+    dwProduct:           DWORD,
+    dwSamplePeriod:      DWORD,
+    dwMIDIUnityNote:     DWORD,
+    dwMIDIPitchFraction: DWORD,
+    dwSMPTEFormat:       DWORD,
+    dwSMPTEOffset:       DWORD,
+    cSampleLoops:        DWORD,
+    cbSamplerData:       DWORD,
+    SampleLoops:         [^]_TAG_SMPL_LOOP,
 }
 
 // CoreAudio codec info structure
 _TAG_CA_CODEC :: struct {
-	ftype: DWORD,   // file format
-	atype: DWORD,   // audio format
-	name:  cstring, // description
+    ftype: DWORD,   // file format
+    atype: DWORD,   // audio format
+    name:  cstring, // description
 }
 
 // ChannelGetLength/GetPosition/SetPosition modes
@@ -817,81 +817,81 @@ FX_DX8_REVERB      :: 8
 FX_VOLUME          :: 9
 
 DX8_CHORUS :: struct {
-	fWetDryMix: f32,
-	fDepth:     f32,
-	fFeedback:  f32,
-	fFrequency: f32,
-	lWaveform:  DWORD, // 0=triangle, 1=sine
-	fDelay:     f32,
-	lPhase:     DWORD, // DX8_PHASE_xxx
+    fWetDryMix: f32,
+    fDepth:     f32,
+    fFeedback:  f32,
+    fFrequency: f32,
+    lWaveform:  DWORD, // 0=triangle, 1=sine
+    fDelay:     f32,
+    lPhase:     DWORD, // DX8_PHASE_xxx
 }
 
 DX8_COMPRESSOR :: struct {
-	fGain:      f32,
-	fAttack:    f32,
-	fRelease:   f32,
-	fThreshold: f32,
-	fRatio:     f32,
-	fPredelay:  f32,
+    fGain:      f32,
+    fAttack:    f32,
+    fRelease:   f32,
+    fThreshold: f32,
+    fRatio:     f32,
+    fPredelay:  f32,
 }
 
 DX8_DISTORTION :: struct {
-	fGain:                  f32,
-	fEdge:                  f32,
-	fPostEQCenterFrequency: f32,
-	fPostEQBandwidth:       f32,
-	fPreLowpassCutoff:      f32,
+    fGain:                  f32,
+    fEdge:                  f32,
+    fPostEQCenterFrequency: f32,
+    fPostEQBandwidth:       f32,
+    fPreLowpassCutoff:      f32,
 }
 
 DX8_ECHO :: struct {
-	fWetDryMix:  f32,
-	fFeedback:   f32,
-	fLeftDelay:  f32,
-	fRightDelay: f32,
-	lPanDelay:   BOOL,
+    fWetDryMix:  f32,
+    fFeedback:   f32,
+    fLeftDelay:  f32,
+    fRightDelay: f32,
+    lPanDelay:   BOOL,
 }
 
 DX8_FLANGER :: struct {
-	fWetDryMix: f32,
-	fDepth:     f32,
-	fFeedback:  f32,
-	fFrequency: f32,
-	lWaveform:  DWORD, // 0=triangle, 1=sine
-	fDelay:     f32,
-	lPhase:     DWORD, // DX8_PHASE_xxx
+    fWetDryMix: f32,
+    fDepth:     f32,
+    fFeedback:  f32,
+    fFrequency: f32,
+    lWaveform:  DWORD, // 0=triangle, 1=sine
+    fDelay:     f32,
+    lPhase:     DWORD, // DX8_PHASE_xxx
 }
 
 DX8_GARGLE :: struct {
-	dwRateHz:    DWORD, // Rate of modulation in hz
-	dwWaveShape: DWORD, // 0=triangle, 1=square
+    dwRateHz:    DWORD, // Rate of modulation in hz
+    dwWaveShape: DWORD, // 0=triangle, 1=square
 }
 
 DX8_I3DL2REVERB :: struct {
-	lRoom:               i32, // [-10000, 0]      default: -1000 mB
-	lRoomHF:             i32, // [-10000, 0]      default: 0 mB
-	flRoomRolloffFactor: f32, // [0.0, 10.0]      default: 0.0
-	flDecayTime:         f32, // [0.1, 20.0]      default: 1.49s
-	flDecayHFRatio:      f32, // [0.1, 2.0]       default: 0.83
-	lReflections:        i32, // [-10000, 1000]   default: -2602 mB
-	flReflectionsDelay:  f32, // [0.0, 0.3]       default: 0.007 s
-	lReverb:             i32, // [-10000, 2000]   default: 200 mB
-	flReverbDelay:       f32, // [0.0, 0.1]       default: 0.011 s
-	flDiffusion:         f32, // [0.0, 100.0]     default: 100.0 %
-	flDensity:           f32, // [0.0, 100.0]     default: 100.0 %
-	flHFReference:       f32, // [20.0, 20000.0]  default: 5000.0 Hz
+    lRoom:               i32, // [-10000, 0]      default: -1000 mB
+    lRoomHF:             i32, // [-10000, 0]      default: 0 mB
+    flRoomRolloffFactor: f32, // [0.0, 10.0]      default: 0.0
+    flDecayTime:         f32, // [0.1, 20.0]      default: 1.49s
+    flDecayHFRatio:      f32, // [0.1, 2.0]       default: 0.83
+    lReflections:        i32, // [-10000, 1000]   default: -2602 mB
+    flReflectionsDelay:  f32, // [0.0, 0.3]       default: 0.007 s
+    lReverb:             i32, // [-10000, 2000]   default: 200 mB
+    flReverbDelay:       f32, // [0.0, 0.1]       default: 0.011 s
+    flDiffusion:         f32, // [0.0, 100.0]     default: 100.0 %
+    flDensity:           f32, // [0.0, 100.0]     default: 100.0 %
+    flHFReference:       f32, // [20.0, 20000.0]  default: 5000.0 Hz
 }
 
 DX8_PARAMEQ :: struct {
-	fCenter:    f32,
-	fBandwidth: f32,
-	fGain:      f32,
+    fCenter:    f32,
+    fBandwidth: f32,
+    fGain:      f32,
 }
 
 DX8_REVERB :: struct {
-	fInGain:          f32, // [-96.0,0.0]            default: 0.0 dB
-	fReverbMix:       f32, // [-96.0,0.0]            default: 0.0 db
-	fReverbTime:      f32, // [0.001,3000.0]         default: 1000.0 ms
-	fHighFreqRTRatio: f32, // [0.001,0.999]          default: 0.001
+    fInGain:          f32, // [-96.0,0.0]            default: 0.0 dB
+    fReverbMix:       f32, // [-96.0,0.0]            default: 0.0 db
+    fReverbTime:      f32, // [0.001,3000.0]         default: 1000.0 ms
+    fHighFreqRTRatio: f32, // [0.001,0.999]          default: 0.001
 }
 
 DX8_PHASE_NEG_180        :: 0
@@ -901,15 +901,15 @@ DX8_PHASE_90             :: 3
 DX8_PHASE_180            :: 4
 
 FX_VOLUME_PARAM :: struct {
-	fTarget:  f32,
-	fCurrent: f32,
-	fTime:    f32,
-	lCurve:   DWORD,
+    fTarget:  f32,
+    fCurrent: f32,
+    fTime:    f32,
+    lCurve:   DWORD,
 }
 
 @(default_calling_convention="c")
 foreign lib {
-	DEVICENOTIFYPROC :: proc(DWORD) ---
+    DEVICENOTIFYPROC :: proc(DWORD) ---
 }
 
 /* Device notification callback function.
@@ -922,7 +922,7 @@ DEVICENOTIFY_REC_DEFAULTCOM :: 4 // the default communication recording device h
 
 @(default_calling_convention="c")
 foreign lib {
-	IOSNOTIFYPROC :: proc(DWORD) ---
+    IOSNOTIFYPROC :: proc(DWORD) ---
 }
 
 /* iOS notification callback function.
@@ -932,112 +932,112 @@ IOSNOTIFY_INTERRUPT_END :: 2 // interruption ended
 
 @(default_calling_convention="c",link_prefix="BASS_")
 foreign lib {
-	SetConfig              :: proc(option: DWORD, value: DWORD) -> BOOL ---
-	GetConfig              :: proc(option: DWORD) -> DWORD ---
-	SetConfigPtr           :: proc(option: DWORD, value: rawptr) -> BOOL ---
-	GetConfigPtr           :: proc(option: DWORD) -> rawptr ---
-	GetVersion             :: proc() -> DWORD ---
-	ErrorGetCode           :: proc() -> i32 ---
-	GetDeviceInfo          :: proc(device: DWORD, info: ^DEVICEINFO) -> BOOL ---
-	Init                   :: proc(device: i32, freq: DWORD, flags: DWORD, win: HWND, dsguid: rawptr) -> BOOL ---
-	Free                   :: proc() -> BOOL ---
-	SetDevice              :: proc(device: DWORD) -> BOOL ---
-	GetDevice              :: proc() -> DWORD ---
-	GetInfo                :: proc(info: ^INFO) -> BOOL ---
-	Start                  :: proc() -> BOOL ---
-	Stop                   :: proc() -> BOOL ---
-	Pause                  :: proc() -> BOOL ---
-	IsStarted              :: proc() -> DWORD ---
-	Update                 :: proc(length: DWORD) -> BOOL ---
-	GetCPU                 :: proc() -> f32 ---
-	SetVolume              :: proc(volume: f32) -> BOOL ---
-	GetVolume              :: proc() -> f32 ---
-	GetDSoundObject        :: proc(object: DWORD) -> rawptr ---
-	Set3DFactors           :: proc(distf: f32, rollf: f32, doppf: f32) -> BOOL ---
-	Get3DFactors           :: proc(distf: ^f32, rollf: ^f32, doppf: ^f32) -> BOOL ---
-	Set3DPosition          :: proc(pos: ^BASS_3DVECTOR, vel: ^BASS_3DVECTOR, front: ^BASS_3DVECTOR, top: ^BASS_3DVECTOR) -> BOOL ---
-	Get3DPosition          :: proc(pos: ^BASS_3DVECTOR, vel: ^BASS_3DVECTOR, front: ^BASS_3DVECTOR, top: ^BASS_3DVECTOR) -> BOOL ---
-	Apply3D                :: proc() ---
-	PluginLoad             :: proc(file: cstring, flags: DWORD) -> HPLUGIN ---
-	PluginFree             :: proc(handle: HPLUGIN) -> BOOL ---
-	PluginEnable           :: proc(handle: HPLUGIN, enable: BOOL) -> BOOL ---
-	PluginGetInfo          :: proc(handle: HPLUGIN) -> ^PLUGININFO ---
-	SampleLoad             :: proc(filetype: DWORD, file: rawptr, offset: QWORD, length: DWORD, max: DWORD, flags: DWORD) -> HSAMPLE ---
-	SampleCreate           :: proc(length: DWORD, freq: DWORD, chans: DWORD, max: DWORD, flags: DWORD) -> HSAMPLE ---
-	SampleFree             :: proc(handle: HSAMPLE) -> BOOL ---
-	SampleSetData          :: proc(handle: HSAMPLE, buffer: rawptr) -> BOOL ---
-	SampleGetData          :: proc(handle: HSAMPLE, buffer: rawptr) -> BOOL ---
-	SampleGetInfo          :: proc(handle: HSAMPLE, info: ^SAMPLE) -> BOOL ---
-	SampleSetInfo          :: proc(handle: HSAMPLE, info: ^SAMPLE) -> BOOL ---
-	SampleGetChannel       :: proc(handle: HSAMPLE, flags: DWORD) -> DWORD ---
-	SampleGetChannels      :: proc(handle: HSAMPLE, channels: ^HCHANNEL) -> DWORD ---
-	SampleStop             :: proc(handle: HSAMPLE) -> BOOL ---
-	StreamCreate           :: proc(freq: DWORD, chans: DWORD, flags: DWORD, _proc: proc "c" () -> DWORD, user: rawptr) -> HSTREAM ---
-	StreamCreateFile       :: proc(filetype: DWORD, file: rawptr, offset: QWORD, length: QWORD, flags: DWORD) -> HSTREAM ---
-	StreamCreateURL        :: proc(url: cstring, offset: DWORD, flags: DWORD, _proc: proc "c" (), user: rawptr) -> HSTREAM ---
-	StreamCreateFileUser   :: proc(system: DWORD, flags: DWORD, _proc: ^FILEPROCS, user: rawptr) -> HSTREAM ---
-	StreamCancel           :: proc(user: rawptr) -> BOOL ---
-	StreamFree             :: proc(handle: HSTREAM) -> BOOL ---
-	StreamGetFilePosition  :: proc(handle: HSTREAM, mode: DWORD) -> QWORD ---
-	StreamPutData          :: proc(handle: HSTREAM, buffer: rawptr, length: DWORD) -> DWORD ---
-	StreamPutFileData      :: proc(handle: HSTREAM, buffer: rawptr, length: DWORD) -> DWORD ---
-	MusicLoad              :: proc(filetype: DWORD, file: rawptr, offset: QWORD, length: DWORD, flags: DWORD, freq: DWORD) -> HMUSIC ---
-	MusicFree              :: proc(handle: HMUSIC) -> BOOL ---
-	RecordGetDeviceInfo    :: proc(device: DWORD, info: ^DEVICEINFO) -> BOOL ---
-	RecordInit             :: proc(device: i32) -> BOOL ---
-	RecordFree             :: proc() -> BOOL ---
-	RecordSetDevice        :: proc(device: DWORD) -> BOOL ---
-	RecordGetDevice        :: proc() -> DWORD ---
-	RecordGetInfo          :: proc(info: ^RECORDINFO) -> BOOL ---
-	RecordGetInputName     :: proc(input: i32) -> cstring ---
-	RecordSetInput         :: proc(input: i32, flags: DWORD, volume: f32) -> BOOL ---
-	RecordGetInput         :: proc(input: i32, volume: ^f32) -> DWORD ---
-	RecordStart            :: proc(freq: DWORD, chans: DWORD, flags: DWORD, _proc: proc "c" () -> BOOL, user: rawptr) -> HRECORD ---
-	ChannelBytes2Seconds   :: proc(handle: DWORD, pos: QWORD) -> f64 ---
-	ChannelSeconds2Bytes   :: proc(handle: DWORD, pos: f64) -> QWORD ---
-	ChannelGetDevice       :: proc(handle: DWORD) -> DWORD ---
-	ChannelSetDevice       :: proc(handle: DWORD, device: DWORD) -> BOOL ---
-	ChannelIsActive        :: proc(handle: DWORD) -> DWORD ---
-	ChannelGetInfo         :: proc(handle: DWORD, info: ^CHANNELINFO) -> BOOL ---
-	ChannelGetTags         :: proc(handle: DWORD, tags: DWORD) -> cstring ---
-	ChannelFlags           :: proc(handle: DWORD, flags: DWORD, mask: DWORD) -> DWORD ---
-	ChannelLock            :: proc(handle: DWORD, lock: BOOL) -> BOOL ---
-	ChannelRef             :: proc(handle: DWORD, inc: BOOL) -> BOOL ---
-	ChannelFree            :: proc(handle: DWORD) -> BOOL ---
-	ChannelPlay            :: proc(handle: DWORD, restart: BOOL) -> BOOL ---
-	ChannelStart           :: proc(handle: DWORD) -> BOOL ---
-	ChannelStop            :: proc(handle: DWORD) -> BOOL ---
-	ChannelPause           :: proc(handle: DWORD) -> BOOL ---
-	ChannelUpdate          :: proc(handle: DWORD, length: DWORD) -> BOOL ---
-	ChannelSetAttribute    :: proc(handle: DWORD, attrib: DWORD, value: f32) -> BOOL ---
-	ChannelGetAttribute    :: proc(handle: DWORD, attrib: DWORD, value: ^f32) -> BOOL ---
-	ChannelSlideAttribute  :: proc(handle: DWORD, attrib: DWORD, value: f32, time: DWORD) -> BOOL ---
-	ChannelIsSliding       :: proc(handle: DWORD, attrib: DWORD) -> BOOL ---
-	ChannelSetAttributeEx  :: proc(handle: DWORD, attrib: DWORD, value: rawptr, typesize: DWORD) -> BOOL ---
-	ChannelGetAttributeEx  :: proc(handle: DWORD, attrib: DWORD, value: rawptr, typesize: DWORD) -> DWORD ---
-	ChannelSet3DAttributes :: proc(handle: DWORD, mode: i32, min: f32, max: f32, iangle: i32, oangle: i32, outvol: f32) -> BOOL ---
-	ChannelGet3DAttributes :: proc(handle: DWORD, mode: ^DWORD, min: ^f32, max: ^f32, iangle: ^DWORD, oangle: ^DWORD, outvol: ^f32) -> BOOL ---
-	ChannelSet3DPosition   :: proc(handle: DWORD, pos: ^BASS_3DVECTOR, orient: ^BASS_3DVECTOR, vel: ^BASS_3DVECTOR) -> BOOL ---
-	ChannelGet3DPosition   :: proc(handle: DWORD, pos: ^BASS_3DVECTOR, orient: ^BASS_3DVECTOR, vel: ^BASS_3DVECTOR) -> BOOL ---
-	ChannelGetLength       :: proc(handle: DWORD, mode: DWORD) -> QWORD ---
-	ChannelSetPosition     :: proc(handle: DWORD, pos: QWORD, mode: DWORD) -> BOOL ---
-	ChannelGetPosition     :: proc(handle: DWORD, mode: DWORD) -> QWORD ---
-	ChannelGetLevel        :: proc(handle: DWORD) -> DWORD ---
-	ChannelGetLevelEx      :: proc(handle: DWORD, levels: ^f32, length: f32, flags: DWORD) -> BOOL ---
-	ChannelGetData         :: proc(handle: DWORD, buffer: rawptr, length: DWORD) -> DWORD ---
-	ChannelSetSync         :: proc(handle: DWORD, type: DWORD, param: QWORD, _proc: proc "c" (), user: rawptr) -> HSYNC ---
-	ChannelRemoveSync      :: proc(handle: DWORD, sync: HSYNC) -> BOOL ---
-	ChannelSetLink         :: proc(handle: DWORD, chan: DWORD) -> BOOL ---
-	ChannelRemoveLink      :: proc(handle: DWORD, chan: DWORD) -> BOOL ---
-	ChannelSetDSP          :: proc(handle: DWORD, _proc: proc "c" (), user: rawptr, priority: i32) -> HDSP ---
-	ChannelSetDSPEx        :: proc(handle: DWORD, _proc: proc "c" (), user: rawptr, priority: i32, flags: DWORD) -> HDSP ---
-	ChannelRemoveDSP       :: proc(handle: DWORD, dsp: HDSP) -> BOOL ---
-	ChannelSetFX           :: proc(handle: DWORD, type: DWORD, priority: i32) -> HFX ---
-	ChannelRemoveFX        :: proc(handle: DWORD, fx: HFX) -> BOOL ---
-	FXSetParameters        :: proc(handle: HFX, params: rawptr) -> BOOL ---
-	FXGetParameters        :: proc(handle: HFX, params: rawptr) -> BOOL ---
-	FXSetPriority          :: proc(handle: DWORD, priority: i32) -> BOOL ---
-	FXSetBypass            :: proc(handle: DWORD, bypass: BOOL) -> BOOL ---
-	FXReset                :: proc(handle: DWORD) -> BOOL ---
-	FXFree                 :: proc(handle: DWORD) -> BOOL ---
+    SetConfig              :: proc(option: DWORD, value: DWORD) -> BOOL ---
+    GetConfig              :: proc(option: DWORD) -> DWORD ---
+    SetConfigPtr           :: proc(option: DWORD, value: rawptr) -> BOOL ---
+    GetConfigPtr           :: proc(option: DWORD) -> rawptr ---
+    GetVersion             :: proc() -> DWORD ---
+    ErrorGetCode           :: proc() -> i32 ---
+    GetDeviceInfo          :: proc(device: DWORD, info: ^DEVICEINFO) -> BOOL ---
+    Init                   :: proc(device: i32, freq: DWORD, flags: DWORD, win: HWND, dsguid: rawptr) -> BOOL ---
+    Free                   :: proc() -> BOOL ---
+    SetDevice              :: proc(device: DWORD) -> BOOL ---
+    GetDevice              :: proc() -> DWORD ---
+    GetInfo                :: proc(info: ^INFO) -> BOOL ---
+    Start                  :: proc() -> BOOL ---
+    Stop                   :: proc() -> BOOL ---
+    Pause                  :: proc() -> BOOL ---
+    IsStarted              :: proc() -> DWORD ---
+    Update                 :: proc(length: DWORD) -> BOOL ---
+    GetCPU                 :: proc() -> f32 ---
+    SetVolume              :: proc(volume: f32) -> BOOL ---
+    GetVolume              :: proc() -> f32 ---
+    GetDSoundObject        :: proc(object: DWORD) -> rawptr ---
+    Set3DFactors           :: proc(distf: f32, rollf: f32, doppf: f32) -> BOOL ---
+    Get3DFactors           :: proc(distf: ^f32, rollf: ^f32, doppf: ^f32) -> BOOL ---
+    Set3DPosition          :: proc(pos: ^BASS_3DVECTOR, vel: ^BASS_3DVECTOR, front: ^BASS_3DVECTOR, top: ^BASS_3DVECTOR) -> BOOL ---
+    Get3DPosition          :: proc(pos: ^BASS_3DVECTOR, vel: ^BASS_3DVECTOR, front: ^BASS_3DVECTOR, top: ^BASS_3DVECTOR) -> BOOL ---
+    Apply3D                :: proc() ---
+    PluginLoad             :: proc(file: cstring, flags: DWORD) -> HPLUGIN ---
+    PluginFree             :: proc(handle: HPLUGIN) -> BOOL ---
+    PluginEnable           :: proc(handle: HPLUGIN, enable: BOOL) -> BOOL ---
+    PluginGetInfo          :: proc(handle: HPLUGIN) -> ^PLUGININFO ---
+    SampleLoad             :: proc(filetype: DWORD, file: rawptr, offset: QWORD, length: DWORD, max: DWORD, flags: DWORD) -> HSAMPLE ---
+    SampleCreate           :: proc(length: DWORD, freq: DWORD, chans: DWORD, max: DWORD, flags: DWORD) -> HSAMPLE ---
+    SampleFree             :: proc(handle: HSAMPLE) -> BOOL ---
+    SampleSetData          :: proc(handle: HSAMPLE, buffer: rawptr) -> BOOL ---
+    SampleGetData          :: proc(handle: HSAMPLE, buffer: rawptr) -> BOOL ---
+    SampleGetInfo          :: proc(handle: HSAMPLE, info: ^SAMPLE) -> BOOL ---
+    SampleSetInfo          :: proc(handle: HSAMPLE, info: ^SAMPLE) -> BOOL ---
+    SampleGetChannel       :: proc(handle: HSAMPLE, flags: DWORD) -> DWORD ---
+    SampleGetChannels      :: proc(handle: HSAMPLE, channels: ^HCHANNEL) -> DWORD ---
+    SampleStop             :: proc(handle: HSAMPLE) -> BOOL ---
+    StreamCreate           :: proc(freq: DWORD, chans: DWORD, flags: DWORD, _proc: proc "c" () -> DWORD, user: rawptr) -> HSTREAM ---
+    StreamCreateFile       :: proc(filetype: DWORD, file: rawptr, offset: QWORD, length: QWORD, flags: DWORD) -> HSTREAM ---
+    StreamCreateURL        :: proc(url: cstring, offset: DWORD, flags: DWORD, _proc: proc "c" (), user: rawptr) -> HSTREAM ---
+    StreamCreateFileUser   :: proc(system: DWORD, flags: DWORD, _proc: ^FILEPROCS, user: rawptr) -> HSTREAM ---
+    StreamCancel           :: proc(user: rawptr) -> BOOL ---
+    StreamFree             :: proc(handle: HSTREAM) -> BOOL ---
+    StreamGetFilePosition  :: proc(handle: HSTREAM, mode: DWORD) -> QWORD ---
+    StreamPutData          :: proc(handle: HSTREAM, buffer: rawptr, length: DWORD) -> DWORD ---
+    StreamPutFileData      :: proc(handle: HSTREAM, buffer: rawptr, length: DWORD) -> DWORD ---
+    MusicLoad              :: proc(filetype: DWORD, file: rawptr, offset: QWORD, length: DWORD, flags: DWORD, freq: DWORD) -> HMUSIC ---
+    MusicFree              :: proc(handle: HMUSIC) -> BOOL ---
+    RecordGetDeviceInfo    :: proc(device: DWORD, info: ^DEVICEINFO) -> BOOL ---
+    RecordInit             :: proc(device: i32) -> BOOL ---
+    RecordFree             :: proc() -> BOOL ---
+    RecordSetDevice        :: proc(device: DWORD) -> BOOL ---
+    RecordGetDevice        :: proc() -> DWORD ---
+    RecordGetInfo          :: proc(info: ^RECORDINFO) -> BOOL ---
+    RecordGetInputName     :: proc(input: i32) -> cstring ---
+    RecordSetInput         :: proc(input: i32, flags: DWORD, volume: f32) -> BOOL ---
+    RecordGetInput         :: proc(input: i32, volume: ^f32) -> DWORD ---
+    RecordStart            :: proc(freq: DWORD, chans: DWORD, flags: DWORD, _proc: proc "c" () -> BOOL, user: rawptr) -> HRECORD ---
+    ChannelBytes2Seconds   :: proc(handle: DWORD, pos: QWORD) -> f64 ---
+    ChannelSeconds2Bytes   :: proc(handle: DWORD, pos: f64) -> QWORD ---
+    ChannelGetDevice       :: proc(handle: DWORD) -> DWORD ---
+    ChannelSetDevice       :: proc(handle: DWORD, device: DWORD) -> BOOL ---
+    ChannelIsActive        :: proc(handle: DWORD) -> DWORD ---
+    ChannelGetInfo         :: proc(handle: DWORD, info: ^CHANNELINFO) -> BOOL ---
+    ChannelGetTags         :: proc(handle: DWORD, tags: DWORD) -> cstring ---
+    ChannelFlags           :: proc(handle: DWORD, flags: DWORD, mask: DWORD) -> DWORD ---
+    ChannelLock            :: proc(handle: DWORD, lock: BOOL) -> BOOL ---
+    ChannelRef             :: proc(handle: DWORD, inc: BOOL) -> BOOL ---
+    ChannelFree            :: proc(handle: DWORD) -> BOOL ---
+    ChannelPlay            :: proc(handle: DWORD, restart: BOOL) -> BOOL ---
+    ChannelStart           :: proc(handle: DWORD) -> BOOL ---
+    ChannelStop            :: proc(handle: DWORD) -> BOOL ---
+    ChannelPause           :: proc(handle: DWORD) -> BOOL ---
+    ChannelUpdate          :: proc(handle: DWORD, length: DWORD) -> BOOL ---
+    ChannelSetAttribute    :: proc(handle: DWORD, attrib: DWORD, value: f32) -> BOOL ---
+    ChannelGetAttribute    :: proc(handle: DWORD, attrib: DWORD, value: ^f32) -> BOOL ---
+    ChannelSlideAttribute  :: proc(handle: DWORD, attrib: DWORD, value: f32, time: DWORD) -> BOOL ---
+    ChannelIsSliding       :: proc(handle: DWORD, attrib: DWORD) -> BOOL ---
+    ChannelSetAttributeEx  :: proc(handle: DWORD, attrib: DWORD, value: rawptr, typesize: DWORD) -> BOOL ---
+    ChannelGetAttributeEx  :: proc(handle: DWORD, attrib: DWORD, value: rawptr, typesize: DWORD) -> DWORD ---
+    ChannelSet3DAttributes :: proc(handle: DWORD, mode: i32, min: f32, max: f32, iangle: i32, oangle: i32, outvol: f32) -> BOOL ---
+    ChannelGet3DAttributes :: proc(handle: DWORD, mode: ^DWORD, min: ^f32, max: ^f32, iangle: ^DWORD, oangle: ^DWORD, outvol: ^f32) -> BOOL ---
+    ChannelSet3DPosition   :: proc(handle: DWORD, pos: ^BASS_3DVECTOR, orient: ^BASS_3DVECTOR, vel: ^BASS_3DVECTOR) -> BOOL ---
+    ChannelGet3DPosition   :: proc(handle: DWORD, pos: ^BASS_3DVECTOR, orient: ^BASS_3DVECTOR, vel: ^BASS_3DVECTOR) -> BOOL ---
+    ChannelGetLength       :: proc(handle: DWORD, mode: DWORD) -> QWORD ---
+    ChannelSetPosition     :: proc(handle: DWORD, pos: QWORD, mode: DWORD) -> BOOL ---
+    ChannelGetPosition     :: proc(handle: DWORD, mode: DWORD) -> QWORD ---
+    ChannelGetLevel        :: proc(handle: DWORD) -> DWORD ---
+    ChannelGetLevelEx      :: proc(handle: DWORD, levels: ^f32, length: f32, flags: DWORD) -> BOOL ---
+    ChannelGetData         :: proc(handle: DWORD, buffer: rawptr, length: DWORD) -> DWORD ---
+    ChannelSetSync         :: proc(handle: DWORD, type: DWORD, param: QWORD, _proc: proc "c" (), user: rawptr) -> HSYNC ---
+    ChannelRemoveSync      :: proc(handle: DWORD, sync: HSYNC) -> BOOL ---
+    ChannelSetLink         :: proc(handle: DWORD, chan: DWORD) -> BOOL ---
+    ChannelRemoveLink      :: proc(handle: DWORD, chan: DWORD) -> BOOL ---
+    ChannelSetDSP          :: proc(handle: DWORD, _proc: proc "c" (), user: rawptr, priority: i32) -> HDSP ---
+    ChannelSetDSPEx        :: proc(handle: DWORD, _proc: proc "c" (), user: rawptr, priority: i32, flags: DWORD) -> HDSP ---
+    ChannelRemoveDSP       :: proc(handle: DWORD, dsp: HDSP) -> BOOL ---
+    ChannelSetFX           :: proc(handle: DWORD, type: DWORD, priority: i32) -> HFX ---
+    ChannelRemoveFX        :: proc(handle: DWORD, fx: HFX) -> BOOL ---
+    FXSetParameters        :: proc(handle: HFX, params: rawptr) -> BOOL ---
+    FXGetParameters        :: proc(handle: HFX, params: rawptr) -> BOOL ---
+    FXSetPriority          :: proc(handle: DWORD, priority: i32) -> BOOL ---
+    FXSetBypass            :: proc(handle: DWORD, bypass: BOOL) -> BOOL ---
+    FXReset                :: proc(handle: DWORD) -> BOOL ---
+    FXFree                 :: proc(handle: DWORD) -> BOOL ---
 }

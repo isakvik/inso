@@ -1,32 +1,29 @@
 package notosu
 
-import "core:encoding/hex"
-import "core:image/netpbm"
 import sb "swap_buffer"
 import "slotmap"
 import rb "ring_buffer"
 
 import "base:intrinsics"
 import "base:runtime"
+import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import q "core:container/queue"
 
-import "core:fmt"
-
 import sdl "vendor:sdl3"
 
 
-osu_playfield_size_osupx :: f32(512)
-playfield_rect :: Rect{ 0, 0, osu_playfield_size_osupx, osu_playfield_size_osupx }
+playfield_size_osupx :: f32(512)
+playfield_rect :: Rect{ 0, 0, playfield_size_osupx, playfield_size_osupx }
 
 osu_slider_curve_points_separation :: f32(2.5)
 
-// note(isak): state struct. keep it lean, put large data fields in arenas
-
+// note(isak): state struct. keep it lean, put large data fields in arenas and point to it here
 game: struct {
     dt: f64, 
     active_mapset: ^Mapset,
+    active_notosu_map: ^Notosu_Map,
     active_map: ^Osu_Map,
     active_skin: [Skin_Element_Type]Skin_Element,
     
@@ -37,37 +34,24 @@ game: struct {
     beatmap: Beatmap,
     
     paused: bool,
-    time_rate: f64,
+    time_rate: f32,
     
     // note(isak): map game view fields
-
-    gfx_handles: rb.Ring_Buffer(slotmap.Handle),
-    temp_gfx_refs: sb.Swap_Buffer(slotmap.Handle),
     
-    entities: slotmap.Slotmap(Entity),
-    next_entity_id: int, // note(isak): rolling entity id sequence
-    
-    /*
-        note(isak): entities refer to an element, which in turn refer to a set of animations that determine 
-        the final transform. the given element of an entity can be overridden mid-map by scripts for effects
-    */
-    elements: q.Queue(Element),
-    animations: q.Queue(Animation),
-    
-    script_gfx_objects: q.Queue(Graphics_Object),
-
     ui_timeline: UI_Timeline,
-}
-
-null_element := Element{}
-
-osu_controller: struct {
-    k1, k2, m1, m2: Button_State,
-    k1_key, k2_key: sdl.Scancode, //TODO(yokes): add keybinding menu
     
-    mouse_keys_enabled: bool,
-    mouse_pos: vec2,
+    input: struct {
+        k1, k2, m1, m2: Button_State,
+        k1_key, k2_key: sdl.Scancode, //TODO(yokes): add keybinding menu
+        
+        mouse_keys_enabled: bool,
+        mouse_pos: vec2,
+    }
 }
+
+// note(isak): we reserve the first slot for safety reasons, and we crash on modification for debug reasons
+@(rodata) null_drawable := Drawable{}
+@(rodata) null_element := Element{}
 
 // note(isak): core types
 
@@ -84,18 +68,24 @@ Hit_Object_Type :: enum {
 }
 
 Hit_Object :: struct {
-    start_time_ms, end_time_ms: f64,
-    pos: vec2,
+    index: int,
     type: Hit_Object_Type,
+    start_time_ms, end_time_ms: f64,
+    pos, script_pos_translation: vec2,
     
     type_flags: int,
     hitsound_flags: byte,
 
     slider_path_index: int,
-    slider_repeats: int,
+    slider_repeats, slider_repeat_at: int,
     
-    gfx_handles: []slotmap.Handle,
+    gfx_handles: []Drawable_Handle,
 }
+
+hit_object_pos :: proc(hobj: ^Hit_Object) -> vec2 {
+    return hobj.pos + hobj.script_pos_translation
+}
+
 
 Slider_Path_Type :: enum {
     NONE,
@@ -119,7 +109,6 @@ Slider_Path :: struct {
     instance_count, first_instance_at: i32, // note(isak): this could be a slice, but data reads are probs unnecessary
 }
 
-
 Game_Mode :: enum {
     UNINITIALIZED,
     MENU,
@@ -129,16 +118,25 @@ Game_Mode :: enum {
 Layer :: enum {
     BACKGROUND,
     FOREGROUND,
-    OVERLAY,
     HIT_OBJECTS,
+    OVERLAY,
     UI,
     DEBUG
 }
 
-Osu_Sample_Set :: enum {
-    NORMAL,
-    SOFT,
-    DRUM
+Judgement :: enum {
+    NONE,
+    
+    MISS,
+    BAD,
+    GOOD,
+    GREAT,
+    
+    SLIDER_SMALL_SCOREPOINT, // 10
+    SLIDER_LARGE_SCOREPOINT, // 30
+    
+    IGNORED_HIT, // note(isak): used when we need a result that doesn't affect score 
+    COMBO_BREAK, // note(isak): intended for scripted misses
 }
 
 Notosu_Map :: struct {
@@ -169,212 +167,178 @@ Osu_Map :: struct {
         bg_filename: string,
     },
     
+    audio_filepath: string,
     hit_objects: []Hit_Object,
     slider_paths: []Slider_Path,
 }
 
 osu_on_init :: proc() {
-    game.next_entity_id = 1
     game.time_rate = 1.0
     game.mode = .PLAY
     
     ui_init_timeline(&game.ui_timeline)
     
-    osu_controller.k1_key = sdl.Scancode.Z
-    osu_controller.k2_key = sdl.Scancode.X
+    game.input.k1_key = sdl.Scancode.Z
+    game.input.k2_key = sdl.Scancode.X
 
-    osu_on_beatmap_init()
-}
-
-osu_on_beatmap_init :: proc() {
-    // map graphics init
-    
-    q.init(&game.elements, 1024, memory.allocs[.MAPSET])
-    q.append(&game.elements, null_element)
-    q.init(&game.animations, 1024, memory.allocs[.MAPSET])
-
-    write_default_elements(&game.elements, &game.animations)
-    
-    rb.init(&game.gfx_handles, 8192, memory.allocs[.ENTITIES])
-    game.gfx_handles.length = cap(game.gfx_handles.data)
-    
-    sb.init(&game.temp_gfx_refs, 8192)
-    slotmap.init(&game.entities, 8192)
-    
-    // map logic init
-    
-    game.beatmap.start_time_ms = -(game.beatmap.preempt_ms + game.active_map.audio_lead_in)
-    game.beatmap.circle_radius_osupx = convert_circle_size_to_radius_osupx(game.active_map.diff_circle_size)
-    game.beatmap.preempt_ms = convert_approach_rate_to_preempt_ms(game.active_map.diff_approach_rate)
-    
-    game.beatmap.length_ms = game.active_map.hit_objects[len(game.active_map.hit_objects) - 1].end_time_ms + 1000
-    
-    game.beatmap.hit_objects = game.active_map.hit_objects
-    game.beatmap.slider_paths = game.active_map.slider_paths
-    
-    sound_set_position_ms(&game.beatmap.music, 1800)
-    
-    // todo(isak): opinionated entity pushing; needs to be rewritten to take scriptable objects and skin metrics
-    // into account
-    write_default_entities_from_map(game.active_map)
-}
-
-osu_on_map_destroy :: proc() {
-    for &hobj in game.beatmap.hit_objects {
-        hobj.gfx_handles = {}
-    }
-    
-    rb.destroy(&game.gfx_handles)
-    sb.destroy(&game.temp_gfx_refs)
-    slotmap.destroy(&game.entities)
-}
-
-osu_reload_map :: proc() {
-    osu_on_map_destroy()
-    
-    game.mode = .PLAY
-    game.beatmap.visible_hit_object_state = {}
-    
-    game.active_mapset = mapset_free_and_reload(game.active_mapset)
-    game.active_map = &game.active_mapset.osu_map
-    osu_on_beatmap_init()
+    beatmap_on_init(&game.beatmap)
 }
 
 
 osu_on_update :: proc(dt: f64) {
     game.dt = dt
-    map_dt := dt * game.time_rate * (game.paused ? 0 : 1)
 
     updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
     if updated_systems[.OSU_FILE] {
-        osu_reload_map()
-    }
-    
-    if game.beatmap.music_time_ms > game.beatmap.length_ms {
-        game.beatmap.music_time_ms = clamp(game.beatmap.start_time_ms, -1800, 0)
-        osu_reload_map()
+        beatmap_reload(&game.beatmap)
+    } else if updated_systems[.SCRIPTS] {
+        lua_reload(game.active_notosu_map.lua_entry_point)
+        lua_call_beatmap_func("on_init")
     }
     
     // note(isak): game logic - map
-
-    // note(isak): map play time is determined by the sound library (and whether we were able to play music or not), 
-    // but song time interpolation is required because BASS reports play position in buffer size granularity
-    music_time := get_music_position_interpolated_ms()
-    game.beatmap.music_time_ms = music_time
     
+    beatmap_on_update(&game.beatmap)
+    
+    // todo(isak): this really handles a bunch of debug stuff too. fix up the modes and such
     #partial switch game.mode {
         case .PLAY: handle_play_input_events()
     }
     
-    hobj_it := get_visible_hobj_iterator(&game.beatmap.visible_hit_object_state, music_time)
+    map_time := game.beatmap.music_time_ms
+    hobj_it := get_visible_hobj_iterator(&game.beatmap.visible_hit_object_state, map_time)
     
     playfield_transform := transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
     
+    //-- @temp
+    // todo(isak): valid key presses system needs testing
     if valid_key_press() {
         for &hobj, i in hobj_it {
             if len(hobj.gfx_handles) == 2 {
                 continue
             }
             
-            if !point_in_circle(osu_controller.mouse_pos, hobj.pos, game.beatmap.circle_radius_osupx) {
+            hobj_pos := hit_object_pos(&hobj)
+            if !point_in_circle(game.input.mouse_pos, hobj_pos, game.beatmap.circle_radius_osupx) {
                 continue
             }
             
-            clear_hitobject_entities(&hobj)
+            clear_hitobject_drawables(&hobj)
             
-            hobj.gfx_handles = reserve_handles(&game.gfx_handles, 2) or_continue
-            hobj.gfx_handles[0] = push_entity({
+            hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, 2) or_continue
+            
+            hobj.gfx_handles[0] = drawable_new({
                 flags = {.ACTIVE},
-                element = element_id(.CLICKED_HIT_CIRCLE_OVERLAY),
-                pos = hobj.pos,
+                element = builtin_element_slot(.CLICKED_HIT_CIRCLE_OVERLAY),
+                layer = .HIT_OBJECTS,
                 size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
                 color = color_white,
-                start_time_ms = music_time,
-                end_time_ms = music_time + 600
+                start_time_ms = map_time,
+                end_time_ms = map_time + 600
             })
-            hobj.gfx_handles[1] = push_entity({
+            hobj.gfx_handles[1] = drawable_new({
                 flags = {.ACTIVE},
-                element = element_id(.CLICKED_HIT_CIRCLE),
-                pos = hobj.pos,
+                element = builtin_element_slot(.CLICKED_HIT_CIRCLE),
+                layer = .HIT_OBJECTS,
                 size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
                 color = color_purple,
-                start_time_ms = music_time,
-                end_time_ms = music_time + 600
+                start_time_ms = map_time,
+                end_time_ms = map_time + 600
             })
             
-            push_entity_temp({
+            drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
                 flags = {.ACTIVE},
-                element = element_id(.JUDGMENT),
-                pos = hobj.pos,
+                element = builtin_element_slot(.JUDGEMENT),
+                layer = .HIT_OBJECTS,
+                pos = hobj_pos,
                 size = [2]f32{0.5, 1} * game.beatmap.circle_radius_osupx,
                 anchor = .CENTER,
                 color = color_sky_blue,
                 
                 angle_vel = 360.0,
                 
-                start_time_ms = music_time,
-                end_time_ms = music_time + 600
+                start_time_ms = map_time,
+                end_time_ms = map_time + 600
             })
+        } 
+    }
+    //--
+    
+    
+    if lua_cares_about_event(.ON_KEY_DOWN) {
+        for code in sdl.Scancode {
+            if is_key_pressed(code) do lua_beatmap_on_key_pressed(code)
         }
     }
+    if lua_cares_about_event(.ON_KEY_UP) {
+        for code in sdl.Scancode {
+            if is_key_released(code) do lua_beatmap_on_key_released(code)
+        }
+    }
+    if lua_cares_about_event(.ON_CONTROLLER_PRESSED) {
+        if is_pressed(game.input.k1) do lua_beatmap_on_controller_pressed("k1")
+        if is_pressed(game.input.k2) do lua_beatmap_on_controller_pressed("k2")
+        if is_pressed(game.input.m1) do lua_beatmap_on_controller_pressed("m1")
+        if is_pressed(game.input.m2) do lua_beatmap_on_controller_pressed("m2")
+    }
+    if lua_cares_about_event(.ON_CONTROLLER_RELEASED) {
+        if is_released(game.input.k1) do lua_beatmap_on_controller_released("k1")
+        if is_released(game.input.k2) do lua_beatmap_on_controller_released("k2")
+        if is_released(game.input.m1) do lua_beatmap_on_controller_released("m1")
+        if is_released(game.input.m2) do lua_beatmap_on_controller_released("m2")
+    }
     
-    // game render
     
-    r_push_layer(.HIT_OBJECTS)
+    // beatmap render
     
-    for hobj, i in hobj_it {
-        if music_time < hobj.start_time_ms - game.beatmap.preempt_ms || hobj.end_time_ms < music_time {
+    r_bind_layer_and_push_current_state(.HIT_OBJECTS)
+    
+    //-- @temp
+    // todo(isak): for the eventual rewrite here that takes object type into account, consider a
+    // function pointer in the hitobject struct that renders (and maybe one that updates? continual
+    // logic is necessary for sliders... hitting circles is a keyboard event kind of thing)
+    for &hobj in hobj_it {
+        if map_time < hobj.start_time_ms - game.beatmap.preempt_ms || hobj.end_time_ms < map_time {
             continue
         }
         if hobj.type == .SLIDER {
-            render_slider(&window.renderer, &game.beatmap.slider_paths[hobj.slider_path_index])
+            render_slider(&window.renderer, &hobj)
         }
     }
+    //--
     
     r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
     r_push_transform(playfield_transform)
 
     // note(isak): we render hitobject elements back to front for correct blending
-    // todo(isak): @speed - long iteration, but seems necessary to not cull gfx objects outside an 
-    // object's given start/end time window
+    // todo(isak): @speed - use persistent_gfx for visible set optimization
     #reverse for &hobj in game.beatmap.hit_objects {
         #reverse for handle in hobj.gfx_handles {
-            e := slotmap.get(&game.entities, handle) or_continue
+            e := slotmap.get(&game.beatmap.drawables, handle) or_continue
             if .ACTIVE in e.flags {
-                render_entity(e, music_time)
+                render_drawable(e, map_time, hit_object_pos(&hobj))
             }
         }
     }
     
-    process_and_draw_temp_gfx_handles()
+    process_and_draw_expiring_gfx_refs(&game.beatmap.gameplay_expiring_gfx)
     
-    // render ui
+    r_bind_layer_and_push_current_state(.BACKGROUND, transform = playfield_transform)
+    
+    process_and_draw_expiring_gfx_refs(&game.beatmap.map_expiring_gfx)
+    
+    // ui render
+    
     // todo(isak): "screens" implementation for determining relevant UI components?
-
-    seek_to_ms: f64
-    if ui_update_timeline(&game.ui_timeline, &seek_to_ms) {
-        sound_set_position_ms(&game.beatmap.music, seek_to_ms)
-    }
-    render_timeline(&game.ui_timeline)
-    
+    handle_and_render_timeline()
     render_input_display()
-}
-
-mapset_texture :: proc(name: string) -> u32 {
-    assert(game.active_mapset != nil)
-    return map_texture(game.active_mapset.texture_slot_by_name[name])
-}
-
-mapset_shader :: proc(name: string) -> u32 {
-    assert(game.active_mapset != nil)
-    return map_pipeline(game.active_mapset.shader_slot_by_name[name])
 }
 
 // note(isak): this function assumes the start times of objects are sorted, but doesn't require end times to be.
 // a pathological case might be a 2B element that stretches from the beginning of the map to the end
-// todo(isak): it doesn't read from the latest object state; it's a viable small optimization
+// todo(isak): latest object state is not implemented
 get_visible_hobj_iterator :: proc(state: ^Visibility_State, time: f64) -> []Hit_Object {
     result: []Hit_Object
     updated_from_index := state.earliest_i
@@ -404,6 +368,51 @@ get_visible_hobj_iterator :: proc(state: ^Visibility_State, time: f64) -> []Hit_
         result = hit_objects[state.earliest_i:min(state.latest_i, len(hit_objects))]
     }
     return result
+}
+
+handle_play_input_events :: proc() {
+    if is_key_pressed(.ESCAPE) || is_key_pressed(.SPACE) {
+        beatmap_pause(&game.beatmap, !game.paused)
+    }
+    if is_key_pressed(.R) {
+        beatmap_reload(&game.beatmap)
+    }
+    if is_key_pressed(.HOME) {
+        game.time_rate = 1
+    }
+    if is_key_pressed(.PAGEUP) {
+        game.time_rate *= 2
+        sound_set_speed(&game.beatmap.music, game.time_rate)
+    }
+    if is_key_pressed(.PAGEDOWN) {
+        game.time_rate /= 2
+        sound_set_speed(&game.beatmap.music, game.time_rate)
+    }
+    
+    if is_key_pressed(.F10) {
+        game.input.mouse_keys_enabled = !game.input.mouse_keys_enabled
+    }
+    
+    game.input.k1.is_down = keyboard.buttons[game.input.k1_key]
+    game.input.k1.was_down = keyboard.buttons_prev_frame[game.input.k1_key]
+    game.input.k2.is_down = keyboard.buttons[game.input.k2_key]
+    game.input.k2.was_down = keyboard.buttons_prev_frame[game.input.k2_key]
+    game.input.m1 = mouse.buttons[.LEFT]
+    game.input.m2 = mouse.buttons[.RIGHT]
+}
+
+valid_key_press :: proc() -> bool {
+    if game.input.mouse_keys_enabled {
+        if is_pressed(game.input.k1) && !is_down(game.input.m1) ||
+            is_pressed(game.input.k2) && !is_down(game.input.m2) {
+            return true
+        }
+        
+        return is_pressed(game.input.m1) && !is_down(game.input.k1) || 
+            is_pressed(game.input.m2) && !is_down(game.input.k2)
+    } else {
+        return is_pressed(game.input.k1) || is_pressed(game.input.k2)
+    }
 }
 
 
@@ -787,26 +796,26 @@ write_instances_from_path :: proc(
 //////////////////////////////////////////////////////
 // NOTE(yokes): in-game button input api
 
-is_down :: proc(button: Button_State) -> bool {
+is_down :: proc "c" (button: Button_State) -> bool {
     return button.is_down
 }
 
-is_pressed :: proc(button: Button_State) -> bool {
+is_pressed :: proc "c" (button: Button_State) -> bool {
     return button.is_down && !button.was_down
 }
 
-is_released :: proc(button: Button_State) -> bool {
+is_released :: proc "c" (button: Button_State) -> bool {
     return !button.is_down && button.was_down
 }
 
-is_key_down :: proc(code: sdl.Scancode) -> bool {
+is_key_down :: proc "c" (code: sdl.Scancode) -> bool {
     return keyboard.buttons[code]
 }
 
-is_key_pressed :: proc(code: sdl.Scancode) -> bool {
+is_key_pressed :: proc "c" (code: sdl.Scancode) -> bool {
     return keyboard.buttons[code] && !keyboard.buttons_prev_frame[code]
 }
 
-is_key_released :: proc(code: sdl.Scancode) -> bool {
+is_key_released :: proc "c" (code: sdl.Scancode) -> bool {
     return !keyboard.buttons[code] && keyboard.buttons_prev_frame[code]
 }

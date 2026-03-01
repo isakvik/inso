@@ -1,25 +1,49 @@
 priority list for beta
 
-entity storage, gameplay rendering order
+-- PRE BETA --
 
 scripting
-	api
-	versioning (version capabilities?)
+    api
+    versioning (version capabilities?)
+        is this needed?
 
 game mechanics (not score, replays, etc)
-	hittesting
-	notelock
-	judgments
-	slider rendering
-	hitsounds
-	game music sync
-	slider bounds
+    hittesting
+    notelock
+    judgements
+    slider rendering
+    hitsounds
+    slider bounds
+    playfield scaling
+    score system
+    all the visuals
+        combocolors
+        combonumbers
+        animations
+        object dimming
+        drop shadow
+        slider border
+        
+
+rendering 
+    render to FBO
+    lua frame object
+
+-- POST BETA RELEASE -- 
 
 rendering
-	locking bugfix
-	render to FBO
+    locking bugfix
+    bindless textures fallback
+    optimization
+    
+lua 
+    REPL console
+    particle system
+
+game
+    entity hierarchy inspector
+    offset wizard
 
 platform
-	input thread
-	transform stack
-	
+    lua profiling (nested profiler block support)
+    input thread

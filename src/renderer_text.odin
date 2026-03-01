@@ -98,7 +98,7 @@ text_init :: proc() {
 
 text_resize_callback :: proc(ctx: rawptr, w, h: int) {
     _texture_reinit(&window.font_atlas_texture, i32(w), i32(h), ctx)
-    fs.__dirtyRectReset(transmute(^fs.FontContext)ctx)
+    fs.__dirtyRectReset(cast(^fs.FontContext)ctx)
 }
 
 text_update_callback :: proc(ctx: rawptr, dirty_rect: [4]f32, texture_data: rawptr) {
@@ -178,8 +178,8 @@ text_submit_geometry :: proc(renderer: ^Renderer) {
     
     // note(isak): since we do vertex picking and our vertex data composes a whole glyph, 
     // i've written the shader to draw a glyph quad by invoking a quad 6 times
-    r_push_layer(.DEBUG)
-    r_bind_pipeline({ builtin_pipeline(.TEXT) })
+    r_bind_layer_and_push_current_state(.DEBUG)
+    r_bind_pipeline({ builtin_pipeline_slot(.TEXT) })
     r_bind_ssbo(&window.text_store, .VERTEX_BUFFER)
     r_push_draw(
         index_offset = 0,

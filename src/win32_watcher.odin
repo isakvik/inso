@@ -64,10 +64,9 @@ win32_close_directory_watch :: proc(watch_dir: ^Win32_Directory_Watch) {
 win32_get_directory_changes :: proc(watch_dir: ^Win32_Directory_Watch) {
     assert(watch_dir.initialized)
 
-    using windows
-    completion_key: ULONG_PTR
-    lpOverlapped: LPOVERLAPPED
-    has_result := GetQueuedCompletionStatus(
+    completion_key: windows.ULONG_PTR
+    lpOverlapped: windows.LPOVERLAPPED
+    has_result := windows.GetQueuedCompletionStatus(
         watch_dir.iocp_handle,
         &watch_dir.notify_bytes_written,
         &completion_key,
@@ -81,8 +80,8 @@ win32_get_directory_changes :: proc(watch_dir: ^Win32_Directory_Watch) {
         watch_dir.notify_bytes_written = 0
     }
 
-    if (GetLastError() == WAIT_TIMEOUT) {
-        SetLastError(0)
+    if (windows.GetLastError() == windows.WAIT_TIMEOUT) {
+        windows.SetLastError(0)
     } else {
         win32_print_error()
     }
@@ -91,14 +90,13 @@ win32_get_directory_changes :: proc(watch_dir: ^Win32_Directory_Watch) {
 win32_start_directory_change_io :: proc(watch: ^Win32_Directory_Watch) {
     assert(watch.initialized)
 
-    using windows
-    ReadDirectoryChangesW(
+    windows.ReadDirectoryChangesW(
         watch.dir_handle,
         &watch.notify_buffer,
         NOTIFY_BUFFER_SIZE,
         true, // watch subtree
-        FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
-        FILE_NOTIFY_CHANGE_CREATION | FILE_NOTIFY_CHANGE_LAST_WRITE,
+        windows.FILE_NOTIFY_CHANGE_FILE_NAME | windows.FILE_NOTIFY_CHANGE_DIR_NAME |
+        windows.FILE_NOTIFY_CHANGE_CREATION | windows.FILE_NOTIFY_CHANGE_LAST_WRITE,
         nil,
         &watch.overlapped,
         nil

@@ -12,7 +12,6 @@ import "core:sys/windows"
 import "core:time"
 import vmem "core:mem/virtual"
 
-import lua "vendor:lua/5.4"
 import mu "vendor:microui"
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
@@ -52,19 +51,6 @@ local networking
 
 */
 
-memory_arena_names := [?]string {
-    "Global",
-    "Mapset",
-    "Frame",
-    "Element",
-    "Command buffer[BACKGROUND]",
-    "Command buffer[FOREGROUND]",
-    "Command buffer[HIT_OBJECT]",
-    "Command buffer[OVERLAY]",
-    "Command buffer[UI]",
-    "Command buffer[DEBUG]",
-}
-
 Memory_Arenas :: enum {
     // note(isak): never cleared. used instead of odin's regular arena to keep track of our allocations
     GLOBAL,
@@ -75,14 +61,27 @@ Memory_Arenas :: enum {
     
     // note(isak): this is to be used for graphical entity data, "unbounded" since it's written to by
     // game logic and scripts. cleared on mapset reload/unload
-    ENTITIES,
+    DRAWABLES,
     
     // note(isak): temporary allocator. cleared on frame end
     FRAME,
 }
 
+memory_arena_names := [?]string {
+    "Global",
+    "Mapset",
+    "Entities",
+    "Frame",
+    "Command buffer[BACKGROUND]",
+    "Command buffer[FOREGROUND]",
+    "Command buffer[HIT_OBJECT]",
+    "Command buffer[OVERLAY]",
+    "Command buffer[UI]",
+    "Command buffer[DEBUG]",
+}
+
 memory: struct {
-    allocs: [Memory_Arenas]runtime.Allocator,
+    allocators: [Memory_Arenas]runtime.Allocator,
     arenas: [Memory_Arenas]vmem.Arena,
     
     global_backing_alloc: runtime.Allocator,
@@ -94,19 +93,22 @@ memory: struct {
 
 // note(isak): this should take care of error printing
 memory_init :: proc() -> runtime.Allocator_Error {
-    using memory
-    init_tracked_growing_arena(&arenas[.GLOBAL], &allocs[.GLOBAL], &global_backing_alloc, &global_tracker) or_return
-    init_growing_arena(&arenas[.MAPSET], &allocs[.MAPSET]) or_return
-    init_growing_arena(&arenas[.ENTITIES], &allocs[.ENTITIES]) or_return
-    init_growing_arena(&arenas[.FRAME], &allocs[.FRAME]) or_return
+    arenas := &memory.arenas
+    allocators := &memory.allocators
+    
+    init_tracked_growing_arena(&arenas[.GLOBAL], &allocators[.GLOBAL], 
+        &memory.global_backing_alloc, &memory.global_tracker) or_return
+    init_growing_arena(&arenas[.MAPSET], &allocators[.MAPSET]) or_return
+    init_growing_arena(&arenas[.DRAWABLES], &allocators[.DRAWABLES]) or_return
+    init_growing_arena(&arenas[.FRAME], &allocators[.FRAME]) or_return
 
     for layer in Layer {
-        init_growing_arena(&command_buffer_arenas[layer], &command_buffer_allocators[layer]) or_return
+        init_growing_arena(&memory.command_buffer_arenas[layer], &memory.command_buffer_allocators[layer]) or_return
     }
     return .None
 }
 
-mu_init :: proc() {
+debug_ui_init :: proc() {
     mu.init(&window.ui_ctx)
     window.ui_ctx.text_width = mu.default_atlas_text_width
     window.ui_ctx.text_height = mu.default_atlas_text_height
@@ -176,12 +178,6 @@ window: struct {
 
     skin_textures: [Skin_Element_Type]Texture,
     is_high_resolution: [Skin_Element_Type]bool
-}
-
-debug_info: struct {
-    display_frame_profiler: bool,
-    display_memory_profiler: bool,
-    display_fontatlas: bool
 }
 
 window_init :: proc(rect: Rect) {
@@ -275,43 +271,29 @@ keyboard_next_frame :: proc() {
 
 rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
     if (event.type == sdl.EventType.KEY_DOWN) {
-        rebind^ = event.key.scancode //TODO(yokes): this doesn't work, osu_controller.k1_key = event.key.scancode works
+        rebind^ = event.key.scancode //TODO(yokes): this doesn't work, game.input.k1_key = event.key.scancode works
         fmt.printfln("key set to {}", event.key.scancode)
     }
 }
 
-lua_ctx: struct {
-    state: ^lua.State
-}
-
 main :: proc() {
-    _program_start_time = current_time()
+    _program_start_tsc = sdl.GetPerformanceCounter()
     
     if memory_init() != .None {
         panic("memory_init :: error")
     }
-    context.allocator = memory.allocs[.GLOBAL]
-    context.temp_allocator = memory.allocs[.FRAME]
+    
+    // note(isak): context stuff must be set in main scope
+    context.allocator = memory.allocators[.GLOBAL]
+    context.temp_allocator = memory.allocators[.FRAME]
     
     app_init()
-   	context.logger = app.logger
+    context.logger = app.logger 
     defer app_cleanup()
-    
-    /*
-    lua_ctx.state = lua.L_newstate()
-    defer lua.close(lua_ctx.state)
-    
-    lua.L_openlibs(lua_ctx.state)
-    
-    script: cstring = "print('Hello from Lua!')"
-    lua.L_dostring(lua_ctx.state, script)
-    */
 
     if (!sdl.Init({.VIDEO})) {
         log.panic("SDL video init error:", sdl.GetError())
     }
-
-    sound_enabled := false
 
     window_init({w = 1024, h = 512})
     window.ui_enabled = true
@@ -329,7 +311,7 @@ main :: proc() {
 
     window_resize(i32(window.rect.w), i32(window.rect.h))
 
-    mu_init()
+    debug_ui_init()
     text_init()
     keyboard_init()
     
@@ -342,41 +324,20 @@ main :: proc() {
         test_mapset_path := "songs/test/"
         
         game.active_mapset, ok = mapset_open_for_editing(test_mapset_path)
+        game.active_notosu_map = &game.active_mapset.notosu_map
         game.active_map = &game.active_mapset.osu_map
         if !ok {
             log.error("tried to open mapset, but failed:", test_mapset_path)
         }
         
-        os.change_directory(test_mapset_path)
-        defer os.change_directory(app.base_dir)
-        
-        game.beatmap.music = sound_stream_init(game.active_map.audio_filename)
-        sound_play(&game.beatmap.music)
-        if !ok {
-            log.error("tried to open map sound file, but failed:", test_mapset_path)
-        }
-        
-        log.info(game.active_map.audio_filename, "length in ms:", sound_get_length_ms(&game.beatmap.music))
+        // todo(isak): dependent on map load... make a more granular api for map load purposes
+        prepare_textures_for_rendering()
     }
     
-    
-    
-    // note(isak): dependent on map load... make a more granular api for map load purposes
-    prepare_textures_for_rendering()
 
     osu_on_init()
 
-    /*
-        note(isak): basic timestep handling is ALMOST sufficient as we run the game and its
-        physics(!) at a very high rate, and always assume failure in the case of not being able to
-        hit the time windows.
-
-        however, we do have to watch out for audio sync issues; audio output runs concurrently with
-        game stepping, so we cannot advance the time if there are issues with sound. the sound
-        system should therefore manage its "currently playing" state more carefully than in other
-        games, where playing a sound is more or less fire and forget, at least most of the time.
-    */
-    time_current_frame := current_time()
+    time_current_frame := current_time_s()
     time_first_frame := time_current_frame
     time_last_frame := time_current_frame
     frame_count: u64
@@ -441,12 +402,12 @@ main :: proc() {
                     running = false
                 }
 
-                /*if is_down(osu_controller.m1) {
-                    rebind_input(event, &osu_controller.k1_key)
+                /*if is_down(game.input.m1) {
+                    rebind_input(event, &game.input.k1_key)
                 }
 
-                if is_down(osu_controller.m2) {
-                    rebind_input(event, &osu_controller.k2_key)
+                if is_down(game.input.m2) {
+                    rebind_input(event, &game.input.k2_key)
                 }*/
             }
 
@@ -466,7 +427,7 @@ main :: proc() {
             mouse_pt.x -= (window.rect.w - window.rect.h) / 2
             mouse_pt *= linalg.matrix3_inverse(playfield_transform) * transform_to_mat3(window.screenspace_transform)
             
-            osu_controller.mouse_pos = mouse_pt.xy
+            game.input.mouse_pos = mouse_pt.xy
             
             mu.input_mouse_move(&window.ui_ctx, i32(mouse.pos.x), i32(mouse.pos.y))
         }
@@ -475,7 +436,7 @@ main :: proc() {
             profiler_block_begin(.PREPARE_FRAME); defer profiler_block_end() 
             
             time_last_frame = time_current_frame
-            time_current_frame = current_time()
+            time_current_frame = current_time_s()
 
             // prepare drawing
             begin_frame(renderer)
@@ -484,7 +445,7 @@ main :: proc() {
         {   
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
             
-            r_push_layer(.DEBUG, transform = window.screenspace_transform)
+            r_bind_layer_and_push_current_state(.DEBUG, transform = window.screenspace_transform)
             if window.ui_enabled {
                 r_push_transform(window.screenspace_transform)
                 mu.begin(&window.ui_ctx)
@@ -493,29 +454,25 @@ main :: proc() {
                 handle_debug_ui_events(&window.ui_ctx)
                 render_debug_ui(renderer, &window.ui_ctx)
             }
-
-            /* note(isak): need to update sound here. deltatime should be dependent on how much sound we are able to
-               play, which in regular circumstances shouldn't matter, but in case of device errors we cannot advance 
-            */
             
-            dt := time_current_frame - time_last_frame
+            dt_ms := (time_current_frame - time_last_frame) * 1000
 
-            r_push_layer(.BACKGROUND, transform = window.screenspace_transform)
-            osu_on_update(dt)
+            r_bind_layer_and_push_current_state(.BACKGROUND, transform = window.screenspace_transform)
+            osu_on_update(dt_ms)
 
-            r_push_layer(.UI, pipeline = {builtin_pipeline(.QUAD)})
+            r_bind_layer_and_push_current_state(.UI, pipeline = {builtin_pipeline_slot(.QUAD)})
             
             r_push_transform(window.screenspace_transform)
             
             cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 80, 80 }
             r_draw_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture(.CURSOR),
-                f32(time_since_beginning_of_program()*20))
+                f32(time_s_since_beginning_of_program()*20))
             
             r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
             
-            pf_cur_rect: Rect = { osu_controller.mouse_pos.x, osu_controller.mouse_pos.y, 20, 20 }
-            r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, reserved_texture(.WHITE),
-                f32(time_since_beginning_of_program()*20))
+            pf_cur_rect: Rect = { game.input.mouse_pos.x, game.input.mouse_pos.y, 20, 20 }
+            r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, builtin_texture(.WHITE),
+                f32(time_s_since_beginning_of_program()*20))
             r_draw_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
         }
         
@@ -523,26 +480,26 @@ main :: proc() {
             /*
                 todo(isak): state of the renderer:
                 usage:
-                - batch overrun has not been tested but won't work; it should run end_frame().. probably
+                - batch overrun has not been tested
                 - transforms should be a dynamic stack that we just write as we process the frame; can save a bunch
                     of draw calls
             */
             profiler_block_begin(.GAME_DRAW); defer profiler_block_end()
             
-            r_push_layer(.DEBUG, transform = window.screenspace_transform)
+            r_bind_layer_and_push_current_state(.DEBUG, transform = window.screenspace_transform)
 
-            if debug_info.display_fontatlas {
+            if app.debug_display_fontatlas {
                 r_draw_rect(&renderer.quad_geometry,
                     {0, 0, f32(text_engine.ctx.width), f32(text_engine.ctx.height)},
                     color_white,
-                    reserved_texture(.FONT_ATLAS))
+                    builtin_texture(.FONT_ATLAS))
             }
 
-            if debug_info.display_frame_profiler {
+            if app.debug_display_frame_profiler {
                 profiler_push_blocks_as_text(renderer, frame_count)
                 profiler_push_quad(&renderer.quad_geometry, frame_count)
             }
-            if debug_info.display_memory_profiler {
+            if app.debug_display_memory_profiler {
                 profiler_push_memory_diag_text(renderer)
             }
             end_frame(renderer)
@@ -558,7 +515,7 @@ main :: proc() {
 
             process_builtin_shader_changes(&shaders_watch)
 
-            if debug_info.display_frame_profiler {
+            if app.debug_display_frame_profiler {
                 profiler_write_texture_column(frame_count, window.profiler_texture)
 
                 if frame_count % 100 == 0 {
@@ -584,8 +541,6 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
     _debug_ui_initialized += 1
     
     if mu.window(ctx, "饕餮尤魔 :3", {}, opts + init_opts) {
-        win := mu.get_current_container(ctx)
-
         mu.layout_row(ctx, {54, -1}, 0)
         mu.label(ctx, "Time:")
         
@@ -603,42 +558,30 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
         
         mu.layout_row(ctx, {80, 10, -1}, 0)
         mu.label(ctx, "Mouse keys:")
-        mu.label(ctx, osu_controller.mouse_keys_enabled ? "on" : "off")
+        mu.label(ctx, game.input.mouse_keys_enabled ? "on" : "off")
     }
 }
 
 handle_debug_ui_events :: proc(ctx: ^mu.Context) {
-    if is_key_pressed(.R) {
-        osu_reload_map()
-    }
-    if is_key_pressed(.HOME) {
-        game.time_rate = 1
-    }
-    if is_key_pressed(.PAGEUP) {
-        game.time_rate *= 2
-    }
-    if is_key_pressed(.PAGEDOWN) {
-        game.time_rate /= 2
-    }
     if is_key_pressed(.F1) {
         window.renderer.trace_frame = !window.renderer.trace_frame
     }
     if is_key_pressed(.F2) {
-        debug_info.display_fontatlas = !debug_info.display_fontatlas
+        app.debug_display_fontatlas = !app.debug_display_fontatlas
     }
     if is_key_pressed(.F3) {
-        debug_info.display_frame_profiler = !debug_info.display_frame_profiler
+        app.debug_display_frame_profiler = !app.debug_display_frame_profiler
     }
     if is_key_pressed(.F4) {
-        debug_info.display_memory_profiler = !debug_info.display_memory_profiler
+        app.debug_display_memory_profiler = !app.debug_display_memory_profiler
         
         track := &memory.global_tracker
         if len(track.allocation_map) > 0 {
-			fmt.eprintf("=== global allocator - %v allocations not freed: ===\n", len(track.allocation_map))
-			for _, entry in track.allocation_map {
-				fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
-			}
-		}
+            fmt.eprintf("=== global allocator - %v allocations not freed: ===\n", len(track.allocation_map))
+            for _, entry in track.allocation_map {
+                fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
+            }
+        }
     }
 
     // note(isak): handle offscreen windows
@@ -712,7 +655,7 @@ render_debug_ui :: proc(renderer: ^Renderer, ctx: ^mu.Context) {
             f32(icon_rect.w) / f32(window.ui_atlas_texture.w), 
             f32(icon_rect.h) / f32(window.ui_atlas_texture.h)
         }
-        r_draw_rect_with_uv(&renderer.quad_geometry, pos, uv, color, reserved_texture(.UI_ATLAS))
+        r_draw_rect_with_uv(&renderer.quad_geometry, pos, uv, color, builtin_texture(.UI_ATLAS))
     }
 
     command_backing: ^mu.Command
@@ -723,8 +666,9 @@ render_debug_ui :: proc(renderer: ^Renderer, ctx: ^mu.Context) {
             case ^mu.Command_Clip:
                 r_begin_scissor_mode(cmd.rect.x, cmd.rect.y, cmd.rect.w, i32(window.rect.h) - cmd.rect.h)
             case ^mu.Command_Rect:
-                r_draw_rect(&renderer.quad_geometry, {f32(cmd.rect.x), f32(cmd.rect.y), f32(cmd.rect.w), f32(cmd.rect.h)}, 
-                          transmute(Color)cmd.color)
+                r_draw_rect(&renderer.quad_geometry, 
+                    {f32(cmd.rect.x), f32(cmd.rect.y), f32(cmd.rect.w), f32(cmd.rect.h)}, 
+                    transmute(Color)cmd.color)
             case ^mu.Command_Icon:
                 icon_rect := mu.default_atlas[cmd.id]
                 push_icon(renderer, cmd.rect, icon_rect, transmute(Color)cmd.color)
@@ -744,8 +688,8 @@ begin_frame :: proc(renderer: ^Renderer) {
         time = f32(game.beatmap.music_time_ms)
     })
 
-    _r_bind_layer(.BACKGROUND)
-    r_bind_pipeline({builtin_pipeline(.QUAD)})
+    r_bind_layer(.BACKGROUND)
+    r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
     r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
     r_push_transform(identity_transform)
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
@@ -767,8 +711,8 @@ process_builtin_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
         }
         fmt.println("reloaded builtin shaders")
 
-        pipeline_reinit(&window.pipelines.data[builtin_pipeline(.QUAD)], quad_pipeline_desc())
-        pipeline_reinit(&window.pipelines.data[builtin_pipeline(.SLIDER)], slider_pipeline_desc())
-        pipeline_reinit(&window.pipelines.data[builtin_pipeline(.TEXT)], text_pipeline_desc())
+        pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.QUAD)], quad_pipeline_desc())
+        pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.SLIDER)], slider_pipeline_desc())
+        pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.TEXT)], text_pipeline_desc())
     }
 }

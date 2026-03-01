@@ -1,8 +1,8 @@
 /*
-	BASSmix 2.4 C/C++ header file
-	Copyright (c) 2005-2022 Un4seen Developments Ltd.
+    BASSmix 2.4 C/C++ header file
+    Copyright (c) 2005-2022 Un4seen Developments Ltd.
 
-	See the BASSMIX.CHM file for more detailed documentation
+    See the BASSMIX.CHM file for more detailed documentation
 */
 package bass
 
@@ -56,8 +56,8 @@ ATTRIB_SPLIT_ASYNCPERIOD  :: 0x15011
 
 // Envelope node
 MIXER_NODE :: struct {
-	pos:   QWORD,
-	value: f32,
+    pos:   QWORD,
+    value: f32,
 }
 
 // Envelope types
@@ -84,33 +84,33 @@ CTYPE_STREAM_SPLIT :: 0x10801
 
 @(default_calling_convention="c",link_prefix="BASS_")
 foreign lib {
-	Mixer_GetVersion            :: proc() -> DWORD ---
-	Mixer_StreamCreate          :: proc(freq: DWORD, chans: DWORD, flags: DWORD) -> HSTREAM ---
-	Mixer_StreamAddChannel      :: proc(handle: HSTREAM, channel: DWORD, flags: DWORD) -> BOOL ---
-	Mixer_StreamAddChannelEx    :: proc(handle: HSTREAM, channel: DWORD, flags: DWORD, start: QWORD, length: QWORD) -> BOOL ---
-	Mixer_StreamGetChannels     :: proc(handle: HSTREAM, channels: ^DWORD, count: DWORD) -> DWORD ---
-	Mixer_ChannelGetMixer       :: proc(handle: DWORD) -> HSTREAM ---
-	Mixer_ChannelIsActive       :: proc(handle: DWORD) -> DWORD ---
-	Mixer_ChannelFlags          :: proc(handle: DWORD, flags: DWORD, mask: DWORD) -> DWORD ---
-	Mixer_ChannelRemove         :: proc(handle: DWORD) -> BOOL ---
-	Mixer_ChannelSetPosition    :: proc(handle: DWORD, pos: QWORD, mode: DWORD) -> BOOL ---
-	Mixer_ChannelGetPosition    :: proc(handle: DWORD, mode: DWORD) -> QWORD ---
-	Mixer_ChannelGetPositionEx  :: proc(channel: DWORD, mode: DWORD, delay: DWORD) -> QWORD ---
-	Mixer_ChannelGetLevel       :: proc(handle: DWORD) -> DWORD ---
-	Mixer_ChannelGetLevelEx     :: proc(handle: DWORD, levels: ^f32, length: f32, flags: DWORD) -> BOOL ---
-	Mixer_ChannelGetData        :: proc(handle: DWORD, buffer: rawptr, length: DWORD) -> DWORD ---
-	Mixer_ChannelSetSync        :: proc(handle: DWORD, type: DWORD, param: QWORD, _proc: proc "c" (), user: rawptr) -> HSYNC ---
-	Mixer_ChannelRemoveSync     :: proc(channel: DWORD, sync: HSYNC) -> BOOL ---
-	Mixer_ChannelSetMatrix      :: proc(handle: DWORD, _matrix: rawptr) -> BOOL ---
-	Mixer_ChannelSetMatrixEx    :: proc(handle: DWORD, _matrix: rawptr, time: f32) -> BOOL ---
-	Mixer_ChannelGetMatrix      :: proc(handle: DWORD, _matrix: rawptr) -> BOOL ---
-	Mixer_ChannelSetEnvelope    :: proc(handle: DWORD, type: DWORD, nodes: ^MIXER_NODE, count: DWORD) -> BOOL ---
-	Mixer_ChannelSetEnvelopePos :: proc(handle: DWORD, type: DWORD, pos: QWORD) -> BOOL ---
-	Mixer_ChannelGetEnvelopePos :: proc(handle: DWORD, type: DWORD, value: ^f32) -> QWORD ---
-	Split_StreamCreate          :: proc(channel: DWORD, flags: DWORD, chanmap: ^i32) -> HSTREAM ---
-	Split_StreamGetSource       :: proc(handle: HSTREAM) -> DWORD ---
-	Split_StreamGetSplits       :: proc(handle: DWORD, splits: ^HSTREAM, count: DWORD) -> DWORD ---
-	Split_StreamReset           :: proc(handle: DWORD) -> BOOL ---
-	Split_StreamResetEx         :: proc(handle: DWORD, offset: DWORD) -> BOOL ---
-	Split_StreamGetAvailable    :: proc(handle: DWORD) -> DWORD ---
+    Mixer_GetVersion            :: proc() -> DWORD ---
+    Mixer_StreamCreate          :: proc(freq: DWORD, chans: DWORD, flags: DWORD) -> HSTREAM ---
+    Mixer_StreamAddChannel      :: proc(handle: HSTREAM, channel: DWORD, flags: DWORD) -> BOOL ---
+    Mixer_StreamAddChannelEx    :: proc(handle: HSTREAM, channel: DWORD, flags: DWORD, start: QWORD, length: QWORD) -> BOOL ---
+    Mixer_StreamGetChannels     :: proc(handle: HSTREAM, channels: ^DWORD, count: DWORD) -> DWORD ---
+    Mixer_ChannelGetMixer       :: proc(handle: DWORD) -> HSTREAM ---
+    Mixer_ChannelIsActive       :: proc(handle: DWORD) -> DWORD ---
+    Mixer_ChannelFlags          :: proc(handle: DWORD, flags: DWORD, mask: DWORD) -> DWORD ---
+    Mixer_ChannelRemove         :: proc(handle: DWORD) -> BOOL ---
+    Mixer_ChannelSetPosition    :: proc(handle: DWORD, pos: QWORD, mode: DWORD) -> BOOL ---
+    Mixer_ChannelGetPosition    :: proc(handle: DWORD, mode: DWORD) -> QWORD ---
+    Mixer_ChannelGetPositionEx  :: proc(channel: DWORD, mode: DWORD, delay: DWORD) -> QWORD ---
+    Mixer_ChannelGetLevel       :: proc(handle: DWORD) -> DWORD ---
+    Mixer_ChannelGetLevelEx     :: proc(handle: DWORD, levels: ^f32, length: f32, flags: DWORD) -> BOOL ---
+    Mixer_ChannelGetData        :: proc(handle: DWORD, buffer: rawptr, length: DWORD) -> DWORD ---
+    Mixer_ChannelSetSync        :: proc(handle: DWORD, type: DWORD, param: QWORD, _proc: proc "c" (), user: rawptr) -> HSYNC ---
+    Mixer_ChannelRemoveSync     :: proc(channel: DWORD, sync: HSYNC) -> BOOL ---
+    Mixer_ChannelSetMatrix      :: proc(handle: DWORD, _matrix: rawptr) -> BOOL ---
+    Mixer_ChannelSetMatrixEx    :: proc(handle: DWORD, _matrix: rawptr, time: f32) -> BOOL ---
+    Mixer_ChannelGetMatrix      :: proc(handle: DWORD, _matrix: rawptr) -> BOOL ---
+    Mixer_ChannelSetEnvelope    :: proc(handle: DWORD, type: DWORD, nodes: ^MIXER_NODE, count: DWORD) -> BOOL ---
+    Mixer_ChannelSetEnvelopePos :: proc(handle: DWORD, type: DWORD, pos: QWORD) -> BOOL ---
+    Mixer_ChannelGetEnvelopePos :: proc(handle: DWORD, type: DWORD, value: ^f32) -> QWORD ---
+    Split_StreamCreate          :: proc(channel: DWORD, flags: DWORD, chanmap: ^i32) -> HSTREAM ---
+    Split_StreamGetSource       :: proc(handle: HSTREAM) -> DWORD ---
+    Split_StreamGetSplits       :: proc(handle: DWORD, splits: ^HSTREAM, count: DWORD) -> DWORD ---
+    Split_StreamReset           :: proc(handle: DWORD) -> BOOL ---
+    Split_StreamResetEx         :: proc(handle: DWORD, offset: DWORD) -> BOOL ---
+    Split_StreamGetAvailable    :: proc(handle: DWORD) -> DWORD ---
 }

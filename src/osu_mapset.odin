@@ -39,18 +39,53 @@ Mapset :: struct {
     num_shaders: int,
     textures: q.Queue(Texture),
     texture_slot_by_name: map[string]u32,
-    shader_slot_by_name: map[string]u32,
+    pipeline_slot_by_name: map[string]u32,
+    hitobject_index_by_ms: map[int]int,
     
     model_store: ^GL_Buffer(Mesh_Vertex),
 
     watch: Win32_Directory_Watch
 }
 
+
+mapset_texture :: proc(name: string) -> (result: ^Texture, found: bool) {
+    assert(game.active_mapset != nil)
+    index: u32
+    index, found = game.active_mapset.texture_slot_by_name[name]
+    if found do result = q.get_ptr(&game.active_mapset.textures, index)
+    else do result = &game.active_mapset.textures.data[0]
+    return result, found
+}
+
+mapset_texture_slot :: proc(name: string) -> (result: u32, found: bool) {
+    assert(game.active_mapset != nil)
+    index: u32
+    index, found = game.active_mapset.texture_slot_by_name[name]
+    if found do result = user_texture(index)
+    return result, found
+}
+mapset_texture_slot_or_else :: proc(name: string, default: u32) -> u32 {
+    return mapset_texture_slot(name) or_else default
+}
+
+mapset_pipeline_slot :: proc(name: string) -> (result: u32, found: bool) {
+    assert(game.active_mapset != nil)
+    index: u32
+    index, found = game.active_mapset.pipeline_slot_by_name[name]
+    if found do result = user_pipeline_slot(index)
+    return result, found
+}
+mapset_pipeline_slot_or_else :: proc(name: string, default: u32) -> u32 {
+    return mapset_pipeline_slot(name) or_else default
+}
+
+
 Notosu_Map_System :: enum {
     OSU_FILE,
-    NOTOSU_FILES,
+    NOTOSU_FILE,
     SCRIPTS,
-    SHADERS
+    SHADERS,
+    ASSETS,
 }
 
 Notosu_Section_Header_Types :: enum {
@@ -89,11 +124,18 @@ osu_section_headers := []string{
     "[HitObjects]",
 }
 
+Osu_Sample_Set :: enum {
+    NORMAL,
+    SOFT,
+    DRUM
+}
+
+
 mapset_free :: proc(mapset: ^Mapset) -> string {
     win32_close_directory_watch(&mapset.watch)
     
     for &texture in mapset.textures.data {
-        texture_delete(&texture)
+        texture_cleanup(&texture)
     }
     for i in len(Builtin_Pipeline_Slot)..<window.pipelines.len {
         sg.destroy_pipeline(window.pipelines.data[i])
@@ -105,7 +147,7 @@ mapset_free :: proc(mapset: ^Mapset) -> string {
     
     mapset_path := strings.clone(mapset.folder_path, context.temp_allocator)
     
-    virtual.arena_free_all(&memory.arenas[.ENTITIES])
+    virtual.arena_free_all(&memory.arenas[.DRAWABLES])
     virtual.arena_free_all(&memory.arenas[.MAPSET])
     
     return mapset_path
@@ -120,7 +162,7 @@ mapset_free_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
 
 // note(isak): clones given path into mapset allocator
 mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
-    context.allocator = memory.allocs[.MAPSET]
+    context.allocator = memory.allocators[.MAPSET]
     
     mapset_path := strings.clone(path)
     mapset, alloc_err := new(Mapset)
@@ -132,42 +174,17 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
 
     mapset.folder_path = mapset_path
     
-    files: []os.File_Info
-    dir_handle, io_err := os.open(path)
 
-    // note(isak): file contents cannot exit this function, don't leave strings
-    files, io_err = os.read_dir(dir_handle, 1024, context.temp_allocator)
+    // note(isak): file contents cannot exit this function, don't leave strings allocated here
     defer mem.free_all(context.temp_allocator)
-    
-    os.change_directory(path)
     defer os.change_directory(app.base_dir)
-
-    q.init(&mapset.textures)
-    mapset.texture_slot_by_name = make(map[string]u32, max(len(files), 16))
-    mapset.shader_slot_by_name = make(map[string]u32, max(len(files), 16))
     
-    for file in files {
-        extension := filepath.ext(file.name)
-        switch extension {
-            case ".notosu": {
-                filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
-                mapset.notosu_map = mapset_parse_notosu(mapset, filedata)
-            }
-            case ".osu": {
-                filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
-                mapset.osu_map = mapset_parse_osu(filedata)
-            }
-            case ".png", ".jpg": {
-                tex_key := strings.clone(file.name, memory.allocs[.MAPSET])
-                tex, file_err := texture_from_file(file.name)
-                mapset.texture_slot_by_name[tex_key] = u32(mapset.textures.len)
-                q.push_back(&mapset.textures, tex)
-            } 
-            case ".gltf": {
-                model_store := load_model(file.name)
-            }
-        }
-    }
+    q.init(&mapset.textures)
+    mapset.texture_slot_by_name = make(map[string]u32, 16)
+    mapset.pipeline_slot_by_name = make(map[string]u32, 16)
+    mapset.hitobject_index_by_ms = make(map[int]int, 128)
+    
+    walk_directory(mapset, path)
 
     cur_path, err := os.get_working_directory(context.temp_allocator)
     mapset.watch = win32_init_directory_watch(cur_path)
@@ -176,9 +193,51 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
     return mapset, true
 }
 
+walk_directory :: proc(mapset: ^Mapset, path: string) {
+    cwd, _ := os.get_working_directory(context.temp_allocator)
+    defer os.change_directory(cwd)
+    
+    files: []os.File_Info
+    dir_handle, io_err := os.open(path)
+    files, io_err = os.read_dir(dir_handle, 1024, context.temp_allocator)
+    
+    os.change_directory(path)
+
+    for file in files {
+        if file.type == .Directory {
+            walk_directory(mapset, file.name)
+        } else {
+            handle_file(mapset, file)
+        }
+    }
+}
+
+handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
+    extension := filepath.ext(file.name)
+    switch extension {
+        case ".notosu": {
+            filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
+            mapset.notosu_map = mapset_parse_notosu(mapset, filedata)
+        }
+        case ".osu": {
+            filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
+            mapset.osu_map = mapset_parse_osu(mapset, filedata)
+        }
+        case ".png", ".jpg": {
+            tex_key := strings.clone(file.name, memory.allocators[.MAPSET])
+            tex, file_err := texture_from_file(file.name)
+            mapset.texture_slot_by_name[tex_key] = u32(mapset.textures.len)
+            q.push_back(&mapset.textures, tex)
+        } 
+        case ".gltf": {
+            model_store := load_model(file.name)
+        }
+    }
+}
+
 load_model :: proc(path: string) -> ^GL_Buffer(Mesh_Vertex) {
     cgltf_alloc :: proc "c" (user: rawptr, size: uint) -> rawptr {
-        alloc := memory.allocs[.FRAME]
+        alloc := memory.allocators[.FRAME]
         context = runtime.default_context()
         buf, err := alloc.procedure(alloc.data, .Alloc, int(size), align_of(f32), nil, 0)
         return raw_data(buf)
@@ -198,22 +257,22 @@ load_model :: proc(path: string) -> ^GL_Buffer(Mesh_Vertex) {
     result = cgltf.load_buffers(options, data, path_cstr)
     assert(result == .success)
     
-    store := r_create_static_store(Mesh_Vertex, 36, memory.allocs[.MAPSET])
+    store := r_create_static_store(Mesh_Vertex, 36, memory.allocators[.MAPSET])
     
     for primitive in data.meshes[0].primitives[:] {
         for attrib in primitive.attributes {
             attr_bufview := attrib.data.buffer_view
             #partial switch attrib.type {
             case .position:
-                for pos, i in slice.from_ptr(transmute(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
+                for pos, i in slice.from_ptr(cast(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
                     store.data[i].pos = pos
                 }
             case .normal:
-                for norm, i in slice.from_ptr(transmute(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
+                for norm, i in slice.from_ptr(cast(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
                     store.data[i].norm = norm
                 }
             case .texcoord:
-                for uv, i in slice.from_ptr(transmute(^vec2)attr_bufview.buffer.data, int(attrib.data.count)) {
+                for uv, i in slice.from_ptr(cast(^vec2)attr_bufview.buffer.data, int(attrib.data.count)) {
                     store.data[i].uv = uv
                 }
             }
@@ -223,67 +282,28 @@ load_model :: proc(path: string) -> ^GL_Buffer(Mesh_Vertex) {
     return store
 }
 
-mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu_Map_System]bool {
-    updated_systems: [Notosu_Map_System]bool
-
-    win32_get_directory_changes(watch)
-    if watch.notify_bytes_written > 0 {
-        
-        wfilename_buf: [MAX_PATH]u16
-        for true {
-            notify, wfilename_len := win32_watch_get_next_notify(watch, &wfilename_buf)
-            if wfilename_len > 0 {
-                filename_buf: [MAX_PATH]u8
-                for i in 0..<wfilename_len {
-                    filename_buf[i] = u8(wfilename_buf[i])
-                }
-                
-                extension := filepath.ext(string(filename_buf[:wfilename_len]))
-                switch extension {
-                    case ".osu": updated_systems[.OSU_FILE] = true
-                    case ".glsl": updated_systems[.SHADERS] = true
-                    case ".lua": updated_systems[.SCRIPTS] = true
-                    case ".notosu": updated_systems[.NOTOSU_FILES] = true
-                    // todo(isak) asset files... eventually
-                }
-
-                if notify.next_entry_offset == 0 {
-                    break
-                }
-            } 
-            else {
-                break
-            }
-        }
-
-        watch.notify_bytes_written = 0
-    }
-
-    return updated_systems
-}
-
 
 mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map {
     result: Notosu_Map
-    context.allocator = memory.allocs[.MAPSET]
+    context.allocator = memory.allocators[.MAPSET]
     
     // todo(isak): test code that should be replaced with notosu shader section reads
-    
-    builtin_quad_vs_path := strings.concatenate({app.base_dir, "/", quad_vs_path}, context.allocator)
-    shader, err := shader_init(builtin_quad_vs_path, "quad_wave.fs.glsl")
-    assert(err == .NONE)
-    
-    mapset.shader_slot_by_name["wave"] = u32(mapset.num_shaders)
-    q.push(&window.shaders, shader)
-    
-    custom_desc := quad_pipeline_desc()
-    custom_desc.shader = shader.shader
-    q.push(&window.pipelines, sg.make_pipeline(custom_desc))
-    
+    {
+        builtin_quad_vs_path := strings.concatenate({app.base_dir, "/", quad_vs_path}, context.allocator)
+        shader, err := shader_init(builtin_quad_vs_path, "quad_wave.fs.glsl")
+        assert(err == .NONE)
+        
+        mapset.pipeline_slot_by_name["wave"] = u32(mapset.num_shaders)
+        q.push(&window.shaders, shader)
+        
+        custom_desc := quad_pipeline_desc()
+        custom_desc.shader = shader.shader
+        q.push(&window.pipelines, sg.make_pipeline(custom_desc))
+    }
     
     mesh_desc := sg.Pipeline_Desc{
         label = "builtin.quad",
-        shader = window.shaders.data[builtin_pipeline(.QUAD)].shader,
+        shader = window.shaders.data[builtin_pipeline_slot(.QUAD)].shader,
         //index_type = .UINT16,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
@@ -336,9 +356,9 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
         case .GENERAL:
             for i in 1..<len(lines) {
                 key, value := get_key_value(lines[i])
-                ok: bool
                 switch key {
-                    case "LuaEntryPoint": result.lua_entry_point = strings.clone(value)
+                    case "LuaEntryPoint": 
+                        result.lua_entry_point = strings.concatenate({mapset.folder_path, value}, memory.allocators[.GLOBAL])
                 }
             }
         case .SHADERS:
@@ -352,9 +372,9 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
 }
 
 
-mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
+mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
     result: Osu_Map
-    context.allocator = memory.allocs[.MAPSET]
+    context.allocator = memory.allocators[.MAPSET]
     
     c: Consumer = {
         str = osu_file
@@ -394,7 +414,9 @@ mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
                     key, value := get_key_value(lines[i])
                     ok: bool
                     switch key {
-                        case "AudioFilename": result.audio_filename = strings.clone(value)
+                        case "AudioFilename": 
+                            result.audio_filename = strings.clone(value)
+                            result.audio_filepath = strings.concatenate({mapset.folder_path, value})
                         case "AudioLeadIn": result.audio_lead_in, ok = strconv.parse_f64(value); assert(ok)
                         case "SampleSet": 
                             switch value {
@@ -451,6 +473,7 @@ mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
                 for i in 1..<len(lines) {
                     hobj := &result.hit_objects[i - 1]
                     hobj_extra_params: string
+                    hobj.index = i - 1
 
                     // note(isak): parse base params - every hobj type has a differing set of params after these
                     from_i, s_len: int
@@ -511,12 +534,20 @@ mapset_parse_osu :: proc(osu_file: string) -> Osu_Map {
 
                         hobj.end_time_ms = hobj.start_time_ms + slider.distance_osupx * 2
                     }
+                    
+                    // note(isak): millisecond lookup has to point to the first hitobject in case of 
+                    // simultaneous objects so that range lookups work
+                    hobj_key := int(hobj.start_time_ms)
+                    if !(hobj_key in mapset.hitobject_index_by_ms) {
+                        mapset.hitobject_index_by_ms[int(hobj.start_time_ms)] = hobj.index
+                    }
                 }
 
+                // note(isak): looks like a memory optimization, but i don't think it makes that much sense
                 temp_slider_size := int(slider_temp_queue.len) * size_of(Slider_Path)
                 slider_array_ptr, err := mem.alloc(temp_slider_size); assert(err == .None)
                 mem.copy(slider_array_ptr, raw_data(slider_temp_queue.data), temp_slider_size)
-                result.slider_paths = slice.from_ptr(transmute(^Slider_Path)slider_array_ptr, int(slider_temp_queue.len))
+                result.slider_paths = slice.from_ptr(cast(^Slider_Path)slider_array_ptr, int(slider_temp_queue.len))
         }
     }
 
@@ -585,4 +616,49 @@ convert_approach_rate_to_preempt_ms :: proc(ar: f64) -> f64 {
 
 convert_circle_size_to_radius_osupx :: proc(cs: f64) -> f32 {
     return f32((54.4 - 4.48 * cs) * 1.00041)
+}
+
+
+mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu_Map_System]bool {
+    updated_systems: [Notosu_Map_System]bool
+
+    win32_get_directory_changes(watch)
+    if watch.notify_bytes_written > 0 {
+        
+        wfilename_buf: [MAX_PATH]u16
+        for true {
+            notify, wfilename_len := win32_watch_get_next_notify(watch, &wfilename_buf)
+            if wfilename_len > 0 {
+                filename_buf: [MAX_PATH]u8
+                for i in 0..<wfilename_len {
+                    filename_buf[i] = u8(wfilename_buf[i])
+                }
+                
+                extension := filepath.ext(string(filename_buf[:wfilename_len]))
+                switch extension {
+                    case ".osu": updated_systems[.OSU_FILE] = true
+                    case ".glsl": updated_systems[.SHADERS] = true
+                    case ".lua": updated_systems[.SCRIPTS] = true
+                    case ".notosu": updated_systems[.NOTOSU_FILE] = true
+                }
+                for img_ext in supported_image_extensions {
+                    if extension == img_ext {
+                        updated_systems[.ASSETS] = true
+                        break
+                    }
+                }
+
+                if notify.next_entry_offset == 0 {
+                    break
+                }
+            } 
+            else {
+                break
+            }
+        }
+
+        watch.notify_bytes_written = 0
+    }
+
+    return updated_systems
 }

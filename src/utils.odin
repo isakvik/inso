@@ -14,7 +14,7 @@ import sdl "vendor:sdl3"
 // note(isak): time api
 
 _rdtsc_frequency := u64(sdl.GetPerformanceFrequency())
-_program_start_time: f64
+_program_start_tsc: u64
 
 
 tsc_to_ms :: proc(tsc: u64) -> f64 {
@@ -25,12 +25,12 @@ tsc_to_s :: proc(tsc: u64) -> f64 {
     return f64(tsc) / f64(_rdtsc_frequency)
 }
 
-current_time :: proc() -> f64 {
+current_time_s :: proc() -> f64 {
     return tsc_to_s(sdl.GetPerformanceCounter())
 }
 
-time_since_beginning_of_program :: proc() -> f64 {
-    return current_time() - _program_start_time
+time_s_since_beginning_of_program :: proc() -> f64 {
+    return tsc_to_s(sdl.GetPerformanceCounter() - _program_start_tsc)
 }
 
 time_ms_to_string :: proc(time: f64) -> (result: string) {
@@ -100,6 +100,14 @@ color_from_vec :: proc "contextless" (v: vec4) -> Color {
     result[1] = u8(v.g * 0xFF)
     result[2] = u8(v.b * 0xFF)
     result[3] = u8(v.a * 0xFF)
+    return result
+}
+color_from_pixel :: proc "contextless" (p: u32) -> Color {
+    result: Color
+    result[0] = u8((p & 0x000000FF) >> 0)
+    result[1] = u8((p & 0x0000FF00) >> 8)
+    result[2] = u8((p & 0x00FF0000) >> 16)
+    result[3] = u8((p & 0xFF000000) >> 24)
     return result
 }
 

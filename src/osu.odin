@@ -440,7 +440,24 @@ base_dist : f32 = 2.5
 
 //todo(yokes): make a procedure for calculating points on bezier and arch sliders when the curve is too slight
 //check todos under circular_arc_to_piecewise_linear and bezier_to_piecewise_linear
-calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), start_pos: vec2, end_pos: vec2, curve_distance: f64) -> f64 {
+calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), output: ^q.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
+    curr_distance : f64 = 0
+    for point, i in output.data[:output.len] {
+        if i < int(output.len) - 1 {
+            curr_distance = f64(linalg.vector_length(q.get(output, i + 1) - q.get(output, i)))
+            total_distance += curr_distance
+
+            if f32(curr_distance) > base_dist {
+                //todo(yokes): at the moment the end point overlaps an instance with the start point of the next output.data
+                write_instances_from_straight(instance_buf, q.get(output, i), q.get(output, i + 1), curr_distance)
+            } else {
+                buffer_push(instance_buf, point)
+            }
+
+        } else {
+            buffer_push(instance_buf, point)
+        }
+    }
     return curve_distance
 }
 
@@ -454,11 +471,11 @@ Circular_Arc_Properties :: struct {
 
 circular_arc_tol : f32 = 0.1
 // https://github.com/ppy/osu-framework/blob/ca40f0a4d314b2acbad09f63e63824ae2670aa29/osu.Framework/Utils/PathApproximator.cs#L175
-circular_arc_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve) -> (total_distance: f64) {
+circular_arc_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, curve_distance: f64) -> (total_distance: f64) {
     pr : Circular_Arc_Properties = circular_arc_properties_from_triangle(curve)
     if !pr.is_valid {
         instance_count, instances_at : i32
-        instance_count, instances_at, total_distance = bezier_to_piecewise_linear(instance_buf, curve)
+        instance_count, instances_at, total_distance = bezier_to_piecewise_linear(instance_buf, curve, curve_distance)
         return total_distance
     }
 
@@ -474,23 +491,7 @@ circular_arc_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Sli
         q.push(&output, pr.center + o)
     }
 
-    curr_distance : f64 = 0
-    for point, i in output.data[:output.len] {
-        if i < int(output.len) - 1 {
-            curr_distance = f64(linalg.vector_length(q.get(&output, i + 1) - q.get(&output, i)))
-            total_distance += curr_distance
-
-            if f32(curr_distance) > base_dist {
-                //todo(yokes): at the moment the end point overlaps an instance with the start point of the next output.data
-                write_instances_from_straight(instance_buf, q.get(&output, i), q.get(&output, i + 1), curr_distance)
-            } else {
-                buffer_push(instance_buf, point)
-            }
-
-        } else {
-            buffer_push(instance_buf, point)
-        }
-    }
+    total_distance = calculate_points_between_instances(instance_buf, &output, curve_distance)
     return total_distance
 }
 
@@ -540,12 +541,12 @@ circular_arc_properties_from_triangle :: proc(curve: Slider_Curve) -> (result: C
     return
 }
 
-bezier_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve) -> (instance_count, instances_at: i32, total_distance: f64) {
-    return b_spline_to_piecewise_linear(instance_buf, curve, max(1, len(curve) - 1))
+bezier_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, curve_distance: f64) -> (instance_count, instances_at: i32, total_distance: f64) {
+    return b_spline_to_piecewise_linear(instance_buf, curve, max(1, len(curve) - 1), curve_distance)
     
 }
 
-b_spline_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, degree: int) -> (instance_count, instances_at: i32, total_distance: f64) {
+b_spline_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, degree: int, curve_distance: f64) -> (instance_count, instances_at: i32, total_distance: f64) {
     assert(degree >= 1, fmt.tprintfln("curve degree error: lower than 1 ::", degree))
 
     // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L86
@@ -600,27 +601,7 @@ b_spline_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_
 
     //main goal is to edit the curve such that the instances pushed are the new coordinates where the slider is drawn
     instances_at = instance_buf.count
-    curr_distance : f64 = 0
-    total_distance = 0
-    for point, i in output.data[:output.len] {
-        if i < int(output.len) - 1 {
-            curr_distance = f64(linalg.vector_length(q.get(&output, i + 1) - q.get(&output, i)))
-            total_distance += curr_distance
-        
-            if f32(curr_distance) > base_dist {
-                //todo(yokes): at the moment the end point overlaps an instance with the start point of the next output.data
-                //probably add curve_distance as parameter, pass remaining slider distance into write_instances_from_straight
-                write_instances_from_straight(instance_buf, q.get(&output, i), q.get(&output, i + 1), curr_distance)
-            } else {
-                buffer_push(instance_buf, point)
-            }
-
-        } else {
-            buffer_push(instance_buf, point)
-        }
-            
-        buffer_push(instance_buf, point)
-    }
+    total_distance = calculate_points_between_instances(instance_buf, &output, curve_distance)
     return i32(output.len), instances_at, total_distance
 }
 
@@ -704,15 +685,18 @@ b_spline_to_bezier_internal :: proc(result: ^q.Queue(vec2), curve: Slider_Curve,
 
 write_instances_from_straight :: proc(instance_buf: ^Buffer(vec2), start_pos: vec2, end_pos: vec2, curve_distance: f64) -> f64 {
     remaining_distance := curve_distance
+    curr_distance : f32 = 0
     xy_vector : vec2 = end_pos - start_pos
     iterations := linalg.length(xy_vector) / base_dist
-    //todo(yokes): as of now the slider does not take into account if it has any length left,
-    //so it will always draw until it reaches the last control point which can make sliders longer than they should be
+
     for i in 0..<iterations {
+        curr_distance += base_dist
         buffer_push(instance_buf, start_pos + i * xy_vector / iterations)
         
-        //todo(yokes): calculate where the last point of the slider would be with the remaining distance, and buffer_push it
-        if i * linalg.length(xy_vector) / iterations > f32(remaining_distance) {
+        if (curr_distance + base_dist) > f32(remaining_distance) {
+            remaining_distance = remaining_distance - f64(curr_distance)
+            iterations_remaining := f32(remaining_distance) / base_dist
+            buffer_push(instance_buf, start_pos + iterations_remaining * xy_vector)
             break
         }
     }
@@ -720,9 +704,9 @@ write_instances_from_straight :: proc(instance_buf: ^Buffer(vec2), start_pos: ve
     travelled_distance := math.pow(math.pow(end_pos.y - start_pos.y, 2) + math.pow(end_pos.x - start_pos.x, 2), 0.5)
     remaining_distance = curve_distance - f64(travelled_distance)
     if remaining_distance < 0.01 {
-        buffer_push(instance_buf, start_pos + xy_vector)
+        return 0
     }
-    return remaining_distance
+    return f64(travelled_distance)
 }
 
 write_instances_from_curve :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, type: Slider_Path_Type, curve_distance: f64) -> f64 {
@@ -735,12 +719,12 @@ write_instances_from_curve :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Cu
         if is_parallel {
             remaining_distance = write_instances_from_straight(instance_buf, curve[0], curve[2], curve_distance)
         } else {
-            remaining_distance = circular_arc_to_piecewise_linear(instance_buf, curve)
+            remaining_distance = circular_arc_to_piecewise_linear(instance_buf, curve, curve_distance)
         }
     } else if type == .LINEAR || len(curve) < 3 {
         remaining_distance = write_instances_from_straight(instance_buf, curve[0], curve[1], curve_distance)
     } else {
-        instance_count, instances_at, remaining_distance = b_spline_to_piecewise_linear(instance_buf, curve, max(1, len(curve)))
+        instance_count, instances_at, remaining_distance = b_spline_to_piecewise_linear(instance_buf, curve, max(1, len(curve)), curve_distance)
     }
 
     return remaining_distance

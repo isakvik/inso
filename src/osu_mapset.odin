@@ -572,7 +572,7 @@ mapset_parse_osu_slider_params :: proc(hobj: ^Hit_Object, slider: ^Slider_Path, 
                     case "L": slider.type = .LINEAR
                     case "C": slider.type = .CATMULL
                 }
-                slider.nodes = mapset_parse_osu_slider_nodes(slider_nodes_str)
+                slider.nodes = mapset_parse_osu_slider_nodes(slider_nodes_str, hobj.pos)
             case 1:
                 hobj.slider_repeats, ok = strconv.parse_int(value); assert(ok)
             case 2:
@@ -587,18 +587,18 @@ mapset_parse_osu_slider_params :: proc(hobj: ^Hit_Object, slider: ^Slider_Path, 
 }
 
 @(require_results)
-mapset_parse_osu_slider_nodes :: proc(value: string, alloc: mem.Allocator = context.allocator) -> []Slider_Node {
+mapset_parse_osu_slider_nodes :: proc(value: string, start_pos: vec2, alloc: mem.Allocator = context.allocator) -> []Slider_Node {
     temp := virtual.arena_temp_begin(&memory.arenas[.FRAME])
     defer virtual.arena_temp_end(temp)
 
     sections := strings.split(value, "|", virtual.arena_allocator(temp.arena))
-    result := make_slice([]Slider_Node, len(sections), alloc)
+    result := make_slice([]Slider_Node, len(sections) + 1, alloc)
 
-    sec_i: int
+    result[0] = start_pos
+
     ok: bool
-    for section in sections {
-        defer sec_i += 1
-        node := &result[sec_i]
+    for section, i in sections {
+        node := &result[i + 1]
 
         sep_at := strings.index_byte(section, ':')
         assert(sep_at > 0, fmt.tprintfln("slider parse error :: unsized node:", value))

@@ -4,6 +4,8 @@ local rand = load_file("rand.lua")
 -- missing thoughts (drawable):
 -- layer: should be required argument, probably
 
+-- needs easy way to refer to map settings and their consequential results 
+--   ar in millis, cs in osupx
 
 function on_init()
     a = Animation.new()
@@ -18,7 +20,7 @@ function on_init()
     dd = Drawable.new(el, 0, 0)
         :set_size(100,100)
         :set_anchor(Anchor.CENTER)
-        :set_layer(Layer.OVERLAY)
+        :set_layer(Layer.BACKGROUND)
     
     -- todo(isak) should be able to register custom events through a string here...
     -- using an observer with a set of handles for an event
@@ -30,6 +32,7 @@ function on_init()
     
     table = {}
     for i, hobj in ipairs(list) do 
+        hobj:hide()
         t = hobj:get_start_time()
         table[i] = dd:clone()
             :set_pos(hobj:get_pos())
@@ -37,13 +40,13 @@ function on_init()
     end
 end
 
-
 function on_update(time_ms)
     -- todo(isak): should animations be relative? they're not in regular osu, so...
     -- d:set_pos(rand.float(0, 512), rand.float(0, 512))
     
     for i, hobj in ipairs(list) do 
-        x, y = hobj:get_pos()
+        x, y = hobj
+            :get_pos()
         x = x + math.cos((time_ms*i*0.01) / 1000 + i*0.1)* 100
         y = y + math.sin((time_ms*i*0.01) / 1000 + i*0.1)* 100
         hobj:set_pos(x,y)

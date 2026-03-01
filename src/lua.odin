@@ -1,7 +1,7 @@
 package notosu
 
 import "base:runtime"
-import "core:fmt"
+import "base:intrinsics"
 import "core:log"
 import os "core:os/os2"
 import "core:slice"
@@ -275,7 +275,7 @@ lua_log_error :: proc "c" (log_str: string = "Lua error:", location := #caller_l
     log.error(log_str, "\n", lua.tostring(L, -1), sep = "", location = location)
     lua.pop(L, 1)
     
-    assert(false)
+    intrinsics.debug_trap()
 }
 
 // note(isak): pushes a handle and associates it with the given name. 
@@ -905,6 +905,8 @@ luaapi_hitobject_static_funcs := []lua.L_Reg {
 @(private="file")
 luaapi_hitobject_instance_funcs := []lua.L_Reg {
   { "__gc", luaapi_hitobject_gc },
+  { "hide", luaapi_hitobject_hide },
+  { "unhide", luaapi_hitobject_unhide },
   { "get_pos", luaapi_hitobject_get_pos },
   { "set_pos", luaapi_hitobject_set_pos },
   { "get_start_time", luaapi_hitobject_get_start_time },
@@ -947,13 +949,10 @@ luaapi_hitobject_get_in_range_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
     lua.createtable(L, default_array_size, 0)
     
     for i in hitobject_index..<len(game.beatmap.hit_objects) {
-        hobj := &game.beatmap.hit_objects[i] 
-        if hobj.start_time_ms < f64(from_ms) {
-            continue
-        }
-        if f64(to_ms) < hobj.start_time_ms {
-            break
-        }
+        hobj := &game.beatmap.hit_objects[i]
+        if hobj.start_time_ms < f64(from_ms) do continue
+        if f64(to_ms) < hobj.start_time_ms do break
+        
         lua_create_userdata(L, i, lua_classes[.HITOBJECT].name)
         
         lua.rawseti(L, -2, i32(i + 1))
@@ -971,6 +970,28 @@ _luaapi_hitobject_op :: proc "c" (
         result = op(L, hobj) + lua_return_self()
     }
     return result
+}
+
+luaapi_hitobject_hide :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32 {
+        context = lua_beatmap.odin_context
+        for handle in hobj.gfx_handles {
+            d, found := slotmap.get(&game.beatmap.drawables, handle)
+            if found do d.flags &= ~{.ACTIVE}
+        }
+        return 0
+    })
+}
+
+luaapi_hitobject_unhide :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32 {
+        context = lua_beatmap.odin_context
+        for handle in hobj.gfx_handles {
+            d, found := slotmap.get(&game.beatmap.drawables, handle)
+            if found do d.flags |= {.ACTIVE}
+        }
+        return 0
+    })
 }
 
 luaapi_hitobject_get_pos :: proc "c" (L: ^lua.State) -> (result: i32) {

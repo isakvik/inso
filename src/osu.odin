@@ -162,7 +162,7 @@ Osu_Map :: struct {
         diff_overall_difficulty: f64,
         diff_approach_rate: f64,
         diff_slider_velocity: f64,
-        diff_slider_tickrate: int,
+        diff_slider_tickrate: f64,
         
         bg_filename: string,
     },
@@ -416,11 +416,42 @@ valid_key_press :: proc() -> bool {
 }
 
 
-split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> []Slider_Curve {
-    // todo(isak): we just make a curve for each node here for testing, but we have to read nodes to figure out 
-    // which ones are red nodes and split by those
-    result := make_slice([]Slider_Curve, 1)
-    result[0] = path.nodes[:]
+split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> (result: []Slider_Curve) {
+    
+    curves := make([dynamic]Slider_Curve)
+    
+    if len(path.nodes) >= 2 {
+        curve_count := 1
+        first_node_i := 0
+        
+        append(&curves, Slider_Curve{})
+        first_curve := &curves[0]
+        
+        current_curve := first_curve
+        prev_node := Slider_Node{min(f32), min(f32)}
+        
+        for node, i in path.nodes {
+            if i == len(path.nodes) - 1 {
+                current_curve^ = path.nodes[first_node_i:len(path.nodes)]
+                break
+            }
+            
+            if node == prev_node {
+                current_curve^ = path.nodes[first_node_i:i]
+                
+                append(&curves, Slider_Curve{})
+                current_curve = &curves[len(curves) - 1]
+                
+                first_node_i = i
+                curve_count += 1
+            }
+            prev_node = node
+        }
+        result = curves[:]
+    } else {
+        result = make([]Slider_Curve, 1)
+        result[0] = path.nodes[:]
+    }
     return result
 }
 
@@ -441,10 +472,9 @@ base_dist : f32 = 2.5
 //todo(yokes): make a procedure for calculating points on bezier and arch sliders when the curve is too slight
 //check todos under circular_arc_to_piecewise_linear and bezier_to_piecewise_linear
 calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), output: ^q.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
-    curr_distance : f64 = 0
     for point, i in output.data[:output.len] {
         if i < int(output.len) - 1 {
-            curr_distance = f64(linalg.vector_length(q.get(output, i + 1) - q.get(output, i)))
+            curr_distance := f64(linalg.vector_length(q.get(output, i + 1) - q.get(output, i)))
             total_distance += curr_distance
 
             if f32(curr_distance) > base_dist {
@@ -458,7 +488,7 @@ calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), output: 
             buffer_push(instance_buf, point)
         }
     }
-    return curve_distance
+    return total_distance
 }
 
 Circular_Arc_Properties :: struct {
@@ -547,7 +577,7 @@ bezier_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Cu
 }
 
 b_spline_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, degree: int, curve_distance: f64) -> (instance_count, instances_at: i32, total_distance: f64) {
-    assert(degree >= 1, fmt.tprintfln("curve degree error: lower than 1 ::", degree))
+    assert(degree >= 1, "curve degree error: lower than 1")
 
     // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L86
     if len(curve) < 2 {
@@ -709,25 +739,28 @@ write_instances_from_straight :: proc(instance_buf: ^Buffer(vec2), start_pos: ve
     return f64(travelled_distance)
 }
 
-write_instances_from_curve :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, type: Slider_Path_Type, curve_distance: f64) -> f64 {
-    remaining_distance := curve_distance
-    instance_count, instances_at : i32
-    if type == .ARC {
-        //todo(yokes): copy the tolerance from lazer code to check if a slider is parallell
-        is_parallel: bool
-
-        if is_parallel {
-            remaining_distance = write_instances_from_straight(instance_buf, curve[0], curve[2], curve_distance)
-        } else {
-            remaining_distance = circular_arc_to_piecewise_linear(instance_buf, curve, curve_distance)
-        }
-    } else if type == .LINEAR || len(curve) < 3 {
-        remaining_distance = write_instances_from_straight(instance_buf, curve[0], curve[1], curve_distance)
-    } else {
-        instance_count, instances_at, remaining_distance = b_spline_to_piecewise_linear(instance_buf, curve, max(1, len(curve)), curve_distance)
+write_instances_from_curve :: proc(
+    instance_buf: ^Buffer(vec2), curve: Slider_Curve, type: Slider_Path_Type, curve_distance: f64
+) -> (travelled_distance: f64) {
+    
+    if len(curve) > 1 {
+        if type == .LINEAR || len(curve) < 3 {
+            travelled_distance = write_instances_from_straight(instance_buf, curve[0], curve[1], curve_distance)
+        } else if type == .ARC {
+            //todo(yokes): copy the tolerance from lazer code to check if a slider is parallel
+            is_parallel: bool
+    
+            if is_parallel {
+                travelled_distance = write_instances_from_straight(instance_buf, curve[0], curve[2], curve_distance)
+            } else {
+                travelled_distance = circular_arc_to_piecewise_linear(instance_buf, curve, curve_distance)
+            }
+        } else if type == .BEZIER {
+            //instance_count, instances_at
+            _, _, travelled_distance = b_spline_to_piecewise_linear(instance_buf, curve, max(1, len(curve)), curve_distance)
+        } 
     }
-
-    return remaining_distance
+    return travelled_distance
 }
 
 /*
@@ -736,24 +769,14 @@ write_instances_from_curve :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Cu
 */
 write_instances_from_path :: proc(
     instance_buf: ^Buffer(vec2), path: ^Slider_Path, alloc: runtime.Allocator = context.allocator
-) -> (i32, i32) {
-    instance_offset := instance_buf.count
+) -> (instance_count: i32, instance_offset: i32) {
+    instance_offset = instance_buf.count
 
-    // todo(isak): test code that just pushes a point for each node
     path.curves = split_path_into_curves(path, alloc)
-    /*
-    for curve in path.curves {
-        buffer_push(instance_buf, curve[0])
-    }*/
-
-    // todo(yokes): test code with straight sliders (start- and endpoint)
-    //buffer_push(instance_buf, [[100,100], [200, 200]])
-    if false {
-        return instance_buf.count - instance_offset, instance_offset
-    }
 
     distance_to_cover := path.distance_osupx
-    for curve in path.curves {
+    for curve, i in path.curves {
+        
         if distance_to_cover > 0 {
             distance_covered_by_curve := 
                 write_instances_from_curve(instance_buf, 
@@ -763,18 +786,15 @@ write_instances_from_path :: proc(
             distance_to_cover -= distance_covered_by_curve
         }
     }
-    if true {
-        return instance_buf.count - instance_offset, instance_offset
-    }
-    
 
     // todo(yokes): if we still have distance left over but zero curves, a linear path needs to cover
     // the remaining distance. maybe mcosu has something neat for this?
     if distance_to_cover > 0 {
 
     }
-
-    return 0, 0
+    
+    instance_count = instance_buf.count - instance_offset
+    return instance_count, instance_offset
 }
 
 //////////////////////////////////////////////////////

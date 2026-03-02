@@ -40,7 +40,7 @@ function on_init()
     end
 end
 
-function on_update(time_ms)
+function on_update_(time_ms)
     -- todo(isak): should animations be relative? they're not in regular osu, so...
     -- d:set_pos(rand.float(0, 512), rand.float(0, 512))
     

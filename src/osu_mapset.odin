@@ -423,6 +423,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                                 case "Normal": result.sample_set = .NORMAL
                                 case "Soft":   result.sample_set = .SOFT
                                 case "Drum":   result.sample_set = .DRUM
+                                case "None":   result.sample_set = .NORMAL
                                 case: assert(false, "unknown/unhandled sampleset")
                             }
                     }
@@ -449,7 +450,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                         case "OverallDifficulty": result.diff_overall_difficulty, ok = strconv.parse_f64(value); assert(ok)
                         case "ApproachRate": result.diff_approach_rate, ok = strconv.parse_f64(value); assert(ok)
                         case "SliderMultiplier": result.diff_slider_velocity, ok = strconv.parse_f64(value); assert(ok)
-                        case "SliderTickRate": result.diff_slider_tickrate, ok = strconv.parse_int(value); assert(ok)
+                        case "SliderTickRate": result.diff_slider_tickrate, ok = strconv.parse_f64(value); assert(ok)
                     }
                 }
             case .EVENTS:
@@ -572,7 +573,12 @@ mapset_parse_osu_slider_params :: proc(hobj: ^Hit_Object, slider: ^Slider_Path, 
                     case "L": slider.type = .LINEAR
                     case "C": slider.type = .CATMULL
                 }
-                slider.nodes = mapset_parse_osu_slider_nodes(slider_nodes_str, hobj.pos)
+                if len(slider_nodes_str) > 0 {
+                    slider.nodes = mapset_parse_osu_slider_nodes(slider_nodes_str, hobj.pos)
+                } else {
+                    slider.nodes = make_slice([]Slider_Node, 1)
+                    slider.nodes[0] = hobj.pos
+                }
             case 1:
                 hobj.slider_repeats, ok = strconv.parse_int(value); assert(ok)
             case 2:
@@ -583,7 +589,7 @@ mapset_parse_osu_slider_params :: proc(hobj: ^Hit_Object, slider: ^Slider_Path, 
                 // edgesets
         }
     }
-    assert(slider.type != .NONE, fmt.tprintln("slider parse error :: unknown slidertype:", params))
+    assert(slider.type != .NONE, "slider parse error :: unknown slidertype")
 }
 
 @(require_results)
@@ -601,9 +607,9 @@ mapset_parse_osu_slider_nodes :: proc(value: string, start_pos: vec2, alloc: mem
         node := &result[i + 1]
 
         sep_at := strings.index_byte(section, ':')
-        assert(sep_at > 0, fmt.tprintfln("slider parse error :: unsized node:", value))
-        node.x, ok = strconv.parse_f32(section[:sep_at]); assert(ok, fmt.tprintfln("slider parse error :: node.x is not a number:", value))
-        node.y, ok = strconv.parse_f32(section[sep_at + 1:]); assert(ok, fmt.tprintfln("slider parse error :: node.y is not a number:", value))
+        assert(sep_at > 0, "slider parse error :: unsized node")
+        node.x, ok = strconv.parse_f32(section[:sep_at]); assert(ok, "slider parse error :: node.x is not a number")
+        node.y, ok = strconv.parse_f32(section[sep_at + 1:]); assert(ok, "slider parse error :: node.y is not a number")
     }
 
     return result

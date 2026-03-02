@@ -84,8 +84,8 @@ memory: struct {
     allocators: [Memory_Arenas]runtime.Allocator,
     arenas: [Memory_Arenas]vmem.Arena,
     
-    global_backing_alloc: runtime.Allocator,
-    global_tracker: mem.Tracking_Allocator,
+    backing_alloc: [Memory_Arenas]runtime.Allocator,
+    tracker: [Memory_Arenas]Guarding_Allocator,
     
     command_buffer_allocators: [Layer]runtime.Allocator,
     command_buffer_arenas: [Layer]vmem.Arena,
@@ -97,10 +97,13 @@ memory_init :: proc() -> runtime.Allocator_Error {
     allocators := &memory.allocators
     
     init_tracked_growing_arena(&arenas[.GLOBAL], &allocators[.GLOBAL], 
-        &memory.global_backing_alloc, &memory.global_tracker) or_return
-    init_growing_arena(&arenas[.MAPSET], &allocators[.MAPSET]) or_return
-    init_growing_arena(&arenas[.DRAWABLES], &allocators[.DRAWABLES]) or_return
-    init_growing_arena(&arenas[.FRAME], &allocators[.FRAME]) or_return
+        &memory.backing_alloc[.GLOBAL], &memory.tracker[.GLOBAL]) or_return
+    init_tracked_growing_arena(&arenas[.MAPSET], &allocators[.MAPSET], 
+        &memory.backing_alloc[.MAPSET], &memory.tracker[.MAPSET]) or_return
+    init_tracked_growing_arena(&arenas[.DRAWABLES], &allocators[.DRAWABLES], 
+        &memory.backing_alloc[.DRAWABLES], &memory.tracker[.DRAWABLES]) or_return
+    init_tracked_growing_arena(&arenas[.FRAME], &allocators[.FRAME], 
+        &memory.backing_alloc[.FRAME], &memory.tracker[.FRAME]) or_return
 
     for layer in Layer {
         init_growing_arena(&memory.command_buffer_arenas[layer], &memory.command_buffer_allocators[layer]) or_return
@@ -575,10 +578,10 @@ handle_debug_ui_events :: proc(ctx: ^mu.Context) {
     if is_key_pressed(.F4) {
         app.debug_display_memory_profiler = !app.debug_display_memory_profiler
         
-        track := &memory.global_tracker
-        if len(track.allocation_map) > 0 {
-            fmt.eprintf("=== global allocator - %v allocations not freed: ===\n", len(track.allocation_map))
-            for _, entry in track.allocation_map {
+        track := &memory.tracker[.GLOBAL]
+        if len(track.alloc.allocation_map) > 0 {
+            fmt.eprintf("=== global allocator - %v allocations not freed: ===\n", len(track.alloc.allocation_map))
+            for _, entry in track.alloc.allocation_map {
                 fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
             }
         }

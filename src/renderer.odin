@@ -16,7 +16,7 @@ import slog "vendor:sokol/log"
 
 
 MAX_BATCH_VERTICES :: 64*1024
-MAX_SLIDER_INSTANCES :: 64*1024
+MAX_SLIDER_INSTANCES :: 16 * 1024 * 1024
 MAX_TEXTURE_HANDLES :: 1024
 
 MAX_DRAW_CALLS_PER_LAYER :: 4096
@@ -172,7 +172,7 @@ renderer_init :: proc() {
     window.quad_store = tbo_init(Quad, MAX_BATCH_VERTICES)
     window.text_store = tbo_init(Glyph_Quad, MAX_BATCH_VERTICES)
 
-    window.slider_instance_store = sbo_init(vec2, MAX_BATCH_VERTICES)
+    window.slider_instance_store = sbo_init(vec2, megabytes(256))
     window.fullscreen_store = sbo_init(Quad, 4)
     window.texture_buffer = sbo_init(u64, MAX_TEXTURE_HANDLES)
     
@@ -211,7 +211,6 @@ renderer_init :: proc() {
 
     populate_slider_circle_vertices(&renderer.circle_geometry)
     
-    renderer.slider_instances.size = MAX_BATCH_VERTICES
 
     //
 

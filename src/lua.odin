@@ -100,11 +100,11 @@ lua_classes: [Lua_Class_Type]Lua_Class = {
 }
 
 luaapi_global_funcs := []lua.L_Reg {
-  { "load_file", lua_global_load_file },
-  { "controller_is_down", lua_controller_is_down },
-  { "controller_is_up", lua_controller_is_up },
-  { "key_is_down", lua_key_is_down },
-  { "key_is_up", lua_key_is_up },
+  { "load_file", luaapi_load_file },
+  { "controller_is_down", luaapi_controller_is_down },
+  { "controller_is_up", luaapi_controller_is_up },
+  { "key_is_down", luaapi_key_is_down },
+  { "key_is_up", luaapi_key_is_up },
 }
 
 // note(isak): we use reflection to pull the names and associated enums directly to lua tables
@@ -290,7 +290,7 @@ lua_create_userdata :: proc "c" (L: ^lua.State, handle: $T, name: cstring) {
 //////////////////////////////////////////////////////
 // note(isak): global beatmap communication API
 
-lua_global_load_file :: proc "c" (L: ^lua.State) -> i32 {
+luaapi_load_file :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     filename := lua.L_checkstring(L, 1)
     
@@ -306,7 +306,7 @@ lua_global_load_file :: proc "c" (L: ^lua.State) -> i32 {
     return 1
 }
 
-lua_controller_is_down :: proc "c" (L: ^lua.State) -> i32 {
+luaapi_controller_is_down :: proc "c" (L: ^lua.State) -> i32 {
     key_name := lua.L_checkstring(L, 1)
     result: bool
     switch key_name {
@@ -319,7 +319,7 @@ lua_controller_is_down :: proc "c" (L: ^lua.State) -> i32 {
     return 1
 }
 
-lua_controller_is_up :: proc "c" (L: ^lua.State) -> i32 {
+luaapi_controller_is_up :: proc "c" (L: ^lua.State) -> i32 {
     key_name := lua.L_checkstring(L, 1)
     result: bool
     switch key_name {
@@ -332,14 +332,14 @@ lua_controller_is_up :: proc "c" (L: ^lua.State) -> i32 {
     return 1
 }
 
-lua_key_is_down :: proc "c" (L: ^lua.State) -> i32 {
+luaapi_key_is_down :: proc "c" (L: ^lua.State) -> i32 {
     key_name := lua.L_checkstring(L, 1)
     scancode := sdl.GetScancodeFromName(key_name)
     lua.pushboolean(L, b32(is_key_down(scancode)))
     return 1
 }
 
-lua_key_is_up :: proc "c" (L: ^lua.State) -> i32 {
+luaapi_key_is_up :: proc "c" (L: ^lua.State) -> i32 {
     key_name := lua.L_checkstring(L, 1)
     scancode := sdl.GetScancodeFromName(key_name)
     lua.pushboolean(L, b32(is_key_down(scancode)))

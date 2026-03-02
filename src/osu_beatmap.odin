@@ -85,7 +85,9 @@ beatmap_on_init :: proc(beatmap: ^Beatmap) {
     bg_handle := test_bg_drawable(game.active_map.bg_filename, "wave")
     //--
     
-    lua_call_beatmap_func("on_init")
+    if lua_cares_about_event(.ON_INIT) {
+        lua_call_beatmap_func("on_init")
+    }
 }
 
 beatmap_on_update :: proc(beatmap: ^Beatmap) {
@@ -109,7 +111,9 @@ beatmap_on_update :: proc(beatmap: ^Beatmap) {
         game.beatmap.music_time_ms = beatmap_music_position_interpolated_ms(&game.beatmap)
     }
     
-    lua_beatmap_on_update(game.beatmap.music_time_ms)
+    if lua_cares_about_event(.ON_UPDATE) {
+        lua_beatmap_on_update(game.beatmap.music_time_ms)
+    }
 }
 
 beatmap_on_destroy :: proc(beatmap: ^Beatmap) {

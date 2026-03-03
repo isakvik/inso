@@ -32,6 +32,7 @@ game: struct {
     // note(isak): map game logic fields
     
     beatmap: Beatmap,
+    playfield_transform: Transform,
     
     paused: bool,
     time_rate: f32,
@@ -105,6 +106,8 @@ Slider_Path :: struct {
 
     nodes: []Slider_Node, // note(isak): slice into our array of all nodes
     curves: []Slider_Curve, // note(isak): slice into mapset arena
+    
+    bounds_min, bounds_max: vec2,
     
     instance_count, first_instance_at: i32, // note(isak): this could be a slice, but data reads are probs unnecessary
 }
@@ -182,6 +185,7 @@ osu_on_init :: proc() {
     game.input.k2_key = sdl.Scancode.X
 
     beatmap_on_init(&game.beatmap)
+    game.playfield_transform = transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
 }
 
 
@@ -207,8 +211,6 @@ osu_on_update :: proc(dt: f64) {
     
     map_time := game.beatmap.music_time_ms
     hobj_it := get_visible_hobj_iterator(&game.beatmap.visible_hit_object_state, map_time)
-    
-    playfield_transform := transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
     
     //-- @temp
     // todo(isak): valid key presses system needs testing
@@ -310,7 +312,7 @@ osu_on_update :: proc(dt: f64) {
     //--
     
     r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
-    r_push_transform(playfield_transform)
+    r_push_transform(game.playfield_transform)
 
     // note(isak): we render hitobject elements back to front for correct blending
     // todo(isak): @speed - use persistent_gfx for visible set optimization
@@ -325,7 +327,7 @@ osu_on_update :: proc(dt: f64) {
     
     process_and_draw_expiring_gfx_refs(&game.beatmap.gameplay_expiring_gfx)
     
-    r_bind_layer_and_push_current_state(.BACKGROUND, transform = playfield_transform)
+    r_bind_layer_and_push_current_state(.BACKGROUND, transform = game.playfield_transform)
     
     process_and_draw_expiring_gfx_refs(&game.beatmap.map_expiring_gfx)
     
@@ -471,7 +473,7 @@ base_dist : f32 = 2.5
 
 //todo(yokes): make a procedure for calculating points on bezier and arch sliders when the curve is too slight
 //check todos under circular_arc_to_piecewise_linear and bezier_to_piecewise_linear
-calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), output: ^q.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
+calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, output: ^q.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
     for point, i in output.data[:output.len] {
         if i < int(output.len) - 1 {
             curr_distance := f64(linalg.vector_length(q.get(output, i + 1) - q.get(output, i)))
@@ -479,7 +481,7 @@ calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), output: 
 
             if f32(curr_distance) > base_dist {
                 //todo(yokes): at the moment the end point overlaps an instance with the start point of the next output.data
-                write_instances_from_straight(instance_buf, q.get(output, i), q.get(output, i + 1), curr_distance)
+                write_instances_from_straight(instance_buf, path, q.get(output, i), q.get(output, i + 1), curr_distance)
             } else {
                 buffer_push(instance_buf, point)
             }
@@ -487,6 +489,9 @@ calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), output: 
         } else {
             buffer_push(instance_buf, point)
         }
+        
+        path.bounds_min.x, path.bounds_min.y = min(path.bounds_min.x, point.x), min(path.bounds_min.y, point.y)
+        path.bounds_max.x, path.bounds_max.y = max(path.bounds_max.x, point.x), max(path.bounds_max.y, point.y)
     }
     return total_distance
 }
@@ -501,11 +506,13 @@ Circular_Arc_Properties :: struct {
 
 circular_arc_tol : f32 = 0.1
 // https://github.com/ppy/osu-framework/blob/ca40f0a4d314b2acbad09f63e63824ae2670aa29/osu.Framework/Utils/PathApproximator.cs#L175
-circular_arc_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, curve_distance: f64) -> (total_distance: f64) {
+circular_arc_to_piecewise_linear :: proc(
+    instance_buf: ^Buffer(vec2), path: ^Slider_Path, curve: Slider_Curve, curve_distance: f64
+) -> (total_distance: f64) {
     pr : Circular_Arc_Properties = circular_arc_properties_from_triangle(curve)
     if !pr.is_valid {
         instance_count, instances_at : i32
-        instance_count, instances_at, total_distance = bezier_to_piecewise_linear(instance_buf, curve, curve_distance)
+        instance_count, instances_at, total_distance = bezier_to_piecewise_linear(instance_buf, path, curve, curve_distance)
         return total_distance
     }
 
@@ -521,7 +528,7 @@ circular_arc_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Sli
         q.push(&output, pr.center + o)
     }
 
-    total_distance = calculate_points_between_instances(instance_buf, &output, curve_distance)
+    total_distance = calculate_points_between_instances(instance_buf, path, &output, curve_distance)
     return total_distance
 }
 
@@ -571,12 +578,16 @@ circular_arc_properties_from_triangle :: proc(curve: Slider_Curve) -> (result: C
     return
 }
 
-bezier_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, curve_distance: f64) -> (instance_count, instances_at: i32, total_distance: f64) {
-    return b_spline_to_piecewise_linear(instance_buf, curve, max(1, len(curve) - 1), curve_distance)
+bezier_to_piecewise_linear :: proc(
+    instance_buf: ^Buffer(vec2), path: ^Slider_Path, curve: Slider_Curve, curve_distance: f64
+) -> (instance_count, instances_at: i32, total_distance: f64) {
+    return b_spline_to_piecewise_linear(instance_buf, path, curve, max(1, len(curve) - 1), curve_distance)
     
 }
 
-b_spline_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, degree: int, curve_distance: f64) -> (instance_count, instances_at: i32, total_distance: f64) {
+b_spline_to_piecewise_linear :: proc(
+    instance_buf: ^Buffer(vec2), path: ^Slider_Path, curve: Slider_Curve, degree: int, curve_distance: f64
+) -> (instance_count, instances_at: i32, total_distance: f64) {
     assert(degree >= 1, "curve degree error: lower than 1")
 
     // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L86
@@ -631,7 +642,7 @@ b_spline_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_
 
     //main goal is to edit the curve such that the instances pushed are the new coordinates where the slider is drawn
     instances_at = instance_buf.count
-    total_distance = calculate_points_between_instances(instance_buf, &output, curve_distance)
+    total_distance = calculate_points_between_instances(instance_buf, path, &output, curve_distance)
     return i32(output.len), instances_at, total_distance
 }
 
@@ -713,7 +724,9 @@ b_spline_to_bezier_internal :: proc(result: ^q.Queue(vec2), curve: Slider_Curve,
     }
 }
 
-write_instances_from_straight :: proc(instance_buf: ^Buffer(vec2), start_pos: vec2, end_pos: vec2, curve_distance: f64) -> f64 {
+write_instances_from_straight :: proc(
+    instance_buf: ^Buffer(vec2), path: ^Slider_Path, start_pos: vec2, end_pos: vec2, curve_distance: f64
+) -> f64 {
     remaining_distance := curve_distance
     curr_distance : f32 = 0
     xy_vector : vec2 = end_pos - start_pos
@@ -730,6 +743,12 @@ write_instances_from_straight :: proc(instance_buf: ^Buffer(vec2), start_pos: ve
             break
         }
     }
+    
+    pts := [?]vec2{start_pos, end_pos}
+    for point in pts {
+        path.bounds_min.x, path.bounds_min.y = min(path.bounds_min.x, point.x), min(path.bounds_min.y, point.y)
+        path.bounds_max.x, path.bounds_max.y = max(path.bounds_max.x, point.x), max(path.bounds_max.y, point.y)
+    }
 
     travelled_distance := math.pow(math.pow(end_pos.y - start_pos.y, 2) + math.pow(end_pos.x - start_pos.x, 2), 0.5)
     remaining_distance = curve_distance - f64(travelled_distance)
@@ -740,24 +759,24 @@ write_instances_from_straight :: proc(instance_buf: ^Buffer(vec2), start_pos: ve
 }
 
 write_instances_from_curve :: proc(
-    instance_buf: ^Buffer(vec2), curve: Slider_Curve, type: Slider_Path_Type, curve_distance: f64
+    instance_buf: ^Buffer(vec2), path: ^Slider_Path, curve: Slider_Curve, type: Slider_Path_Type, curve_distance: f64
 ) -> (travelled_distance: f64) {
     
     if len(curve) > 1 {
         if type == .LINEAR || len(curve) < 3 {
-            travelled_distance = write_instances_from_straight(instance_buf, curve[0], curve[1], curve_distance)
+            travelled_distance = write_instances_from_straight(instance_buf, path, curve[0], curve[1], curve_distance)
         } else if type == .ARC {
             //todo(yokes): copy the tolerance from lazer code to check if a slider is parallel
             is_parallel: bool
     
             if is_parallel {
-                travelled_distance = write_instances_from_straight(instance_buf, curve[0], curve[2], curve_distance)
+                travelled_distance = write_instances_from_straight(instance_buf, path, curve[0], curve[2], curve_distance)
             } else {
-                travelled_distance = circular_arc_to_piecewise_linear(instance_buf, curve, curve_distance)
+                travelled_distance = circular_arc_to_piecewise_linear(instance_buf, path, curve, curve_distance)
             }
         } else if type == .BEZIER {
             //instance_count, instances_at
-            _, _, travelled_distance = b_spline_to_piecewise_linear(instance_buf, curve, max(1, len(curve)), curve_distance)
+            _, _, travelled_distance = b_spline_to_piecewise_linear(instance_buf, path, curve, max(1, len(curve)), curve_distance)
         } 
     }
     return travelled_distance
@@ -779,7 +798,8 @@ write_instances_from_path :: proc(
         
         if distance_to_cover > 0 {
             distance_covered_by_curve := 
-                write_instances_from_curve(instance_buf, 
+                write_instances_from_curve(instance_buf,
+                                           path,
                                            curve, 
                                            path.type,
                                            distance_to_cover)

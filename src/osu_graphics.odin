@@ -446,22 +446,47 @@ process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Dr
     sb.swap(expiring_gfx_refs)
 }
 
-render_slider :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
-    // todo(isak): generate partial instance draws (snaking) and the bounding quads like the smart cookie you are
+slider_screenspace_bounding_box :: proc(slider: ^Slider_Path) -> (result: Rect) {
+    r := game.beatmap.circle_radius_osupx
+    pad := f32(2)
+    result = {
+        slider.bounds_min.x - r,
+        slider.bounds_min.y - r,
+        slider.bounds_max.x - slider.bounds_min.x + r * 2,
+        slider.bounds_max.y - slider.bounds_min.y + r * 2,
+    }
+    result = transform_playfield_rect_to_screenspace(result)
+    result.x, result.y = result.x - pad, result.y - pad
+    result.w, result.h = result.w + pad*2, result.h + pad*2
+    return result
+}
 
+render_slider :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
+    // todo(isak): generate partial instance draws (snaking) like the smart cookie you are
     slider := &game.beatmap.slider_paths[hobj.slider_path_index]
-    
-    r_bind_pipeline({builtin_pipeline_slot(.SLIDER)})
-    r_bind_framebuffer({ write = .SLIDERS })    
-    r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
-    r_clear()
 
     pf_size: f32 = playfield_size_osupx / game.beatmap.circle_radius_osupx
 
     slider_translation := -hobj.script_pos_translation / 2
     x, y := slider_translation.x / pf_size, slider_translation.y / pf_size
-    r_push_transform(transform_from_bounds({x, y, pf_size,pf_size}, window.aspect_ratio))
-
+    
+    pf_rect := Rect{x, y, pf_size,pf_size}
+    slider_pf_transform := transform_from_bounds(rect_to_array(pf_rect), window.aspect_ratio)
+    r_push_transform(slider_pf_transform)
+    
+    slider_rect := slider_screenspace_bounding_box(slider)
+    slider_uvs := Rect{
+        slider_rect.x / window.rect.w,
+        slider_rect.y / window.rect.h,
+        slider_rect.w / window.rect.w,
+        slider_rect.h / window.rect.h,
+    }
+    
+    r_bind_pipeline({builtin_pipeline_slot(.SLIDER)})
+    r_bind_framebuffer({ write = .SLIDERS })
+    r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
+    r_clear()
+    
     command_push_draw_slider(Command_Draw_Slider{
         base_instance = u32(slider.first_instance_at),
         instance_count = i32(slider.instance_count)
@@ -471,8 +496,17 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
     r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
     
-    r_push_transform(fullscreen_transform)
-    r_draw_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.4), builtin_texture(.SLIDER_FRAMEBUFFER))
+    r_push_transform(game.playfield_transform)
+    
+    r_push_transform(window.screenspace_transform)
+    r_draw_rect_outline(&renderer.quad_geometry, slider_rect, color_cyan, 1)
+    r_begin_scissor_mode(slider_rect)
+    r_draw_rect_with_uv(&renderer.quad_geometry, 
+                        slider_rect,
+                        slider_uvs,
+                        with_alpha(color_white, 0.5), 
+                        builtin_texture(.SLIDER_FRAMEBUFFER))
+    r_end_scissor_mode()
 }
 
 test_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Handle) {

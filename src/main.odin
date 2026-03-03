@@ -135,6 +135,7 @@ window: struct {
     rect: Rect,
     aspect_ratio: f32, // note(isak): height over width
     screenspace_transform: Transform,
+    playfield_to_screenspace_transform: Transform,
     renderer: Renderer,
 
     cursor_hidden: bool,
@@ -216,14 +217,21 @@ window_resize :: proc(new_w, new_h: i32) {
     window.swapchain.height = new_h
     window.aspect_ratio = window.rect.h / window.rect.w
     window.screenspace_transform = transform_from_bounds({0, 0, window.rect.w, window.rect.h}, 1)
-
+    game.playfield_transform = transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
+    
     fbo_reinit(&window.framebuffers[.SLIDERS], new_w, new_h)
 }
 
-clipspace_transform := transform_from_bounds({0, 0, 1, 1}, 1)
-window_get_clipspace_transform :: proc() -> Transform {
-    return clipspace_transform
+playfield_to_screenspace_transform :: proc() -> mat3 {
+    side := window.rect.h
+    offset_x := (window.rect.w - side) * 0.5
+    viewport_rect := vec4{offset_x, 0, side, side}
+    screen_to_ndc := transform_to_mat3(transform_from_bounds(viewport_rect, window.aspect_ratio))
+    
+    return transform_to_mat3(game.playfield_transform) * linalg.matrix3_inverse(screen_to_ndc)
 }
+
+clipspace_transform := transform_from_bounds({0, 0, 1, 1}, 1)
 
 window_cleanup :: proc() {
     sdl.GL_DestroyContext(window.gl_context)
@@ -423,14 +431,13 @@ main :: proc() {
             mouse.pos.x = mouse.pos.x - f32(xi)
             mouse.pos.y = mouse.pos.y - f32(yi)
             
-            rect := rect_to_array(playfield_rect)
-            playfield_transform := transform_to_mat3(transform_from_bounds(rect, window.aspect_ratio))
+            pf_mouse := vec2{mouse.pos.x, mouse.pos.y}
+            pf_mouse.x -= (window.rect.w - window.rect.h) / 2
             
-            mouse_pt := vec3{mouse.pos.x, mouse.pos.y, 1.0}
-            mouse_pt.x -= (window.rect.w - window.rect.h) / 2
-            mouse_pt *= linalg.matrix3_inverse(playfield_transform) * transform_to_mat3(window.screenspace_transform)
-            
-            game.input.mouse_pos = mouse_pt.xy
+            game.input.mouse_pos = transform_point_space(pf_mouse,
+                transform_to_mat3(window.screenspace_transform), 
+                transform_to_mat3(game.playfield_transform)
+            )
             
             mu.input_mouse_move(&window.ui_ctx, i32(mouse.pos.x), i32(mouse.pos.y))
         }
@@ -667,7 +674,7 @@ render_debug_ui :: proc(renderer: ^Renderer, ctx: ^mu.Context) {
             case ^mu.Command_Text:
                 push_text(renderer, cmd.str, {f32(cmd.pos.x), f32(cmd.pos.y)}, size = 16, align_v = .Top )
             case ^mu.Command_Clip:
-                r_begin_scissor_mode(cmd.rect.x, cmd.rect.y, cmd.rect.w, i32(window.rect.h) - cmd.rect.h)
+                r_begin_scissor_mode_pixels(cmd.rect.x, cmd.rect.y, cmd.rect.w, i32(window.rect.h) - cmd.rect.h)
             case ^mu.Command_Rect:
                 r_draw_rect(&renderer.quad_geometry, 
                     {f32(cmd.rect.x), f32(cmd.rect.y), f32(cmd.rect.w), f32(cmd.rect.h)}, 

@@ -2,6 +2,7 @@ package notosu
 
 import "base:runtime"
 import "core:fmt"
+import "core:log"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
@@ -63,6 +64,7 @@ color_black         :: Color{0x00, 0x00, 0x00, 0xFF}
 color_red           :: Color{0xFF, 0x00, 0x00, 0xFF}
 color_green         :: Color{0x00, 0xFF, 0x00, 0xFF}
 color_blue          :: Color{0x00, 0x00, 0xFF, 0xFF}
+color_cyan          :: Color{0x00, 0xFF, 0xFF, 0xFF}
 color_orange        :: Color{0xFF, 0x80, 0x00, 0xFF}
 color_lime_green    :: Color{0x80, 0xFF, 0x00, 0xFF}
 color_yellow        :: Color{0xFF, 0xFF, 0x00, 0xFF}
@@ -180,8 +182,9 @@ guarding_allocator_proc :: proc(
     data := (^Guarding_Allocator)(allocator_data)
     
     buffer_guard := int(get_free_phys_memory()) - gigabytes(1)
-    assert(int(data.alloc.current_memory_allocated) + size < buffer_guard) 
+    assert(int(data.alloc.current_memory_allocated) + size < buffer_guard, "memory guard triggered: less than 1GB memory left on computer")
     if int(data.alloc.current_memory_allocated) + size >= buffer_guard {
+        log.error("memory guard triggered: less than 1GB memory left on computer")
         return nil, mem.Allocator_Error.Out_Of_Memory
     }    
     return mem.tracking_allocator_proc(allocator_data, mode, size, alignment, old_memory, old_size, loc)

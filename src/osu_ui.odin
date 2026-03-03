@@ -87,7 +87,7 @@ ui_update_timeline :: proc(ui: ^UI_Timeline, time_value: ^f64) -> (result: bool)
 }
 
 render_timeline :: proc(ui: ^UI_Timeline, beatmap_leadin_fract, beatmap_finish_fract: f32) {
-    r_push_transform(window_get_clipspace_transform())
+    r_push_transform(clipspace_transform)
     
     r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, 1, ui.display_h_px / window.rect.h}, 
                      .BOTTOM_LEFT, with_alpha(color_white, 0.1))

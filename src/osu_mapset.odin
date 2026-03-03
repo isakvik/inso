@@ -6,6 +6,7 @@ import "base:runtime"
 import q "core:container/queue"
 import "core:fmt"
 import "core:log"
+import "core:math"
 import "core:mem"
 import "core:mem/virtual"
 import os "core:os/os2"
@@ -521,7 +522,10 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                     }
                     
                     if hobj.type == .SLIDER {
-                        slider: Slider_Path
+                        slider: Slider_Path = {
+                            bounds_min = {math.F32_MAX, math.F32_MAX},
+                            bounds_max = {math.F32_MIN, math.F32_MIN},
+                        }
                         mapset_parse_osu_slider_params(hobj, &slider, hobj_extra_params)
                         slider.instance_count, slider.first_instance_at = 
                             write_instances_from_path(&window.renderer.slider_instances, &slider)

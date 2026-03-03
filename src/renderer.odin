@@ -123,7 +123,7 @@ Rect :: struct {
 }
 
 rect_to_array :: proc(r: Rect) -> [4]f32 {
-    return {r.x, r.y, r.w, r.h}
+    return transmute([4]f32)r
 }
 
 //////////////////////////////////////////////////////
@@ -380,7 +380,7 @@ Command_Bind_SSBO :: struct {
 }
 
 Command_Scissor_Mode :: struct {
-    x, y, width, height: i32
+    x, y, w, h: i32
 }
 
 command_push_clear             :: proc() -> bool { return _command_push_header(.CLEAR) }
@@ -508,15 +508,28 @@ r_pop_transform :: proc() {
     // todo(isak) implement
 }
 
-r_begin_scissor_mode :: proc(x, y, width, height: i32) {
-    cmd := Command_Scissor_Mode{x, y, width, height}
+r_begin_scissor_mode_pixels :: proc(x, y, w, h: i32) {
+    cmd := Command_Scissor_Mode{x, y, w, h}
     window.renderer.new_draw_on_next_push = true
     window.renderer.current_scissor = cmd
     command_push_scissor_mode(cmd)
 }
 
+r_begin_scissor_mode_rect :: proc(r: Rect) {
+    // note(isak): y value convention is flipped here
+    cmd := Command_Scissor_Mode{i32(r.x), i32(r.y), i32(r.w), i32(r.h)}
+    window.renderer.new_draw_on_next_push = true
+    window.renderer.current_scissor = cmd
+    command_push_scissor_mode(cmd)
+}
+
+r_begin_scissor_mode :: proc {
+    r_begin_scissor_mode_pixels,
+    r_begin_scissor_mode_rect
+}
+
 r_end_scissor_mode :: proc() {
-    r_begin_scissor_mode(0, 0, i32(window.rect.w), i32(window.rect.h))
+    r_begin_scissor_mode_pixels(0, 0, i32(window.rect.w), i32(window.rect.h))
 }
 
 /*
@@ -555,7 +568,7 @@ r_push_current_state :: proc(
     r_bind_framebuffer(cmd_framebuffer)
     r_bind_pipeline(cmd_pipeline)
     r_push_transform(transform)
-    r_begin_scissor_mode(scissor_region.x, scissor_region.y, scissor_region.width, scissor_region.height)
+    r_begin_scissor_mode_pixels(scissor_region.x, scissor_region.y, scissor_region.w, scissor_region.h)
 
     for ssbo_slot in Shader_SSBO_Bind_Slot {
         _r_push_ssbo(window.renderer.current_ssbo_binds[ssbo_slot])
@@ -699,10 +712,10 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 }
                 case .SCISSOR_MODE: {
                     cmd := _command_consume(&command_queue, Command_Scissor_Mode)
+                    // note(isak): GL expects y=0 to be the bottom, but our convention is the top, so we transform
+                    gl.Scissor(cmd.x, i32(window.rect.h) - cmd.y - cmd.h, max(cmd.w, 0), max(cmd.h, 0))
                     
-                    gl.Scissor(cmd.x, cmd.y, max(cmd.width, 0), max(cmd.height, 0))
-                    
-                    if (trace) { fmt.println("  scissor", cmd.x, cmd.y, cmd.width, cmd.height) }
+                    if (trace) { fmt.println("  scissor", cmd.x, cmd.y, cmd.w, cmd.h) }
                 }
             }
         }
@@ -816,6 +829,55 @@ r_draw_rect_outline_fill :: proc(geometry: ^Buffer(Quad), rect: Rect, color_outl
 //////////////////////////////////////////////////////
 // note(isak): layout api
 
+transform_point_space :: proc(pt: vec2, source_to_common: mat3, dest_to_common: mat3) -> vec2 {
+    h_pt := vec3{pt.x, pt.y, 1.0}
+    h_pt = h_pt * source_to_common * linalg.matrix3_inverse(dest_to_common)
+    return h_pt.xy
+}
+
+// note(isak): this is very specific but my transform math makes my brain hurt
+transform_playfield_rect_to_screenspace :: proc(r: Rect) -> Rect {
+    tl_pt := vec3{r.x, r.y, 1.0}
+    br_pt := vec3{r.x + r.w, r.y + r.h, 1.0}
+    
+    xform := playfield_to_screenspace_transform()
+    tl_xform := xform * tl_pt
+    br_xform := xform * br_pt
+    
+    return {
+        (window.rect.w - window.rect.h) / 2 + tl_xform.x, tl_xform.y,
+        br_xform.x - tl_xform.x, br_xform.y - tl_xform.y
+    }
+}
+
+/*
+transform_rect_to_screen_corners :: proc(r: Rect, playfield_to_ndc: mat3, screen_to_ndc: mat3) -> [4]vec2 {
+    corners := [4]vec2{
+        {r.x,       r.y},
+        {r.x + r.w, r.y},
+        {r.x + r.w, r.y + r.h},
+        {r.x,       r.y + r.h},
+    }
+    for i in 0..<4 {
+        corners[i] = transform_point_space(corners[i], playfield_to_ndc, screen_to_ndc)
+    }
+    return corners
+}
+
+calculate_aabb_from_corners :: proc(corners: [4]vec2) -> Rect {
+    min_pt := corners[0]
+    max_pt := corners[0]
+    for i in 1..<4 {
+        min_pt.x = min(min_pt.x, corners[i].x)
+        min_pt.y = min(min_pt.y, corners[i].y)
+        max_pt.x = max(max_pt.x, corners[i].x)
+        max_pt.y = max(max_pt.y, corners[i].y)
+    }
+    return {min_pt.x, min_pt.y, max_pt.x - min_pt.x, max_pt.y - min_pt.y}
+}
+*/
+
+
 rect_translate_by_anchor :: proc(rect: Rect, anchor: Layout_Anchor) -> Rect {
     result := Rect {
         w = rect.w,
@@ -837,20 +899,4 @@ rect_translate_by_anchor :: proc(rect: Rect, anchor: Layout_Anchor) -> Rect {
         result.y = rect.y
     }
     return result
-}
-
-rect_translate_to_inner :: proc(inner, outer: Rect) -> Rect {
-    if outer.w <= 0 || outer.h <= 0 {
-        return {
-            x = outer.x,
-            y = outer.y
-        }
-    }
-
-    return {
-        x = outer.x + (inner.x * outer.w),
-        y = outer.y + (inner.y * outer.h),
-        w = inner.w * outer.w,
-        h = inner.h * outer.h
-    }
 }

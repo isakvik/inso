@@ -79,6 +79,7 @@ Hit_Object :: struct {
 
     slider_path_index: int,
     slider_repeats, slider_repeat_at: int,
+    slider_snaking_frames: i32,
     
     gfx_handles: []Drawable_Handle,
 }
@@ -731,10 +732,12 @@ write_instances_from_straight :: proc(
     curr_distance : f32 = 0
     xy_vector : vec2 = end_pos - start_pos
     iterations := linalg.length(xy_vector) / base_dist
+    last_point_added := start_pos
 
     for i in 0..<iterations {
         curr_distance += base_dist
-        buffer_push(instance_buf, start_pos + i * xy_vector / iterations)
+        last_point_added = start_pos + i * xy_vector / iterations
+        buffer_push(instance_buf, last_point_added)
         
         if (curr_distance + base_dist) > f32(remaining_distance) {
             remaining_distance = remaining_distance - f64(curr_distance)
@@ -744,7 +747,7 @@ write_instances_from_straight :: proc(
         }
     }
     
-    pts := [?]vec2{start_pos, end_pos}
+    pts := [?]vec2{start_pos, last_point_added}
     for point in pts {
         path.bounds_min.x, path.bounds_min.y = min(path.bounds_min.x, point.x), min(path.bounds_min.y, point.y)
         path.bounds_max.x, path.bounds_max.y = max(path.bounds_max.x, point.x), max(path.bounds_max.y, point.y)

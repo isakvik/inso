@@ -48,7 +48,7 @@ void main() {
     mat2 rot = mat2(c, s, -s, c);
     vec2 rotatedPos = center + rot * (localPos - center);
 
-    uv = vec2(q_uvs[right].x, q_uvs[bottom].y); 
+    uv = vec2(q_uvs[right].x, 1.0 - q_uvs[bottom].y); 
     color = unpackUnorm4x8(q.color);
     texIndex = q.texIndex;
 

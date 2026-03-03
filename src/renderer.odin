@@ -528,8 +528,9 @@ r_begin_scissor_mode :: proc {
     r_begin_scissor_mode_rect
 }
 
-r_end_scissor_mode :: proc() {
+r_reset_scissor_mode :: proc() {
     r_begin_scissor_mode_pixels(0, 0, i32(window.rect.w), i32(window.rect.h))
+    window.renderer.new_draw_on_next_push = true
 }
 
 /*

@@ -26,5 +26,5 @@ void main() {
     vec3 pos = t * vec3(ppos, 1.0);
 
     color = v.pos.z;
-    gl_Position = vec4(pos.x, -pos.y, 1.0 - v.pos.z, 1.0);
+    gl_Position = vec4(pos.x, pos.y, 1.0 - v.pos.z, 1.0);
 }

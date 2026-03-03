@@ -472,7 +472,6 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
     
     pf_rect := Rect{x, y, pf_size,pf_size}
     slider_pf_transform := transform_from_bounds(rect_to_array(pf_rect), window.aspect_ratio)
-    r_push_transform(slider_pf_transform)
     
     slider_rect := slider_screenspace_bounding_box(slider)
     slider_uvs := Rect{
@@ -482,9 +481,13 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
         slider_rect.h / window.rect.h,
     }
     
+    r_begin_scissor_mode(slider_rect)
+    
+    r_push_transform(slider_pf_transform)
     r_bind_pipeline({builtin_pipeline_slot(.SLIDER)})
     r_bind_framebuffer({ write = .SLIDERS })
     r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
+    
     r_clear()
     
     command_push_draw_slider(Command_Draw_Slider{
@@ -496,17 +499,20 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
     r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
     
-    r_push_transform(game.playfield_transform)
-    
     r_push_transform(window.screenspace_transform)
-    r_draw_rect_outline(&renderer.quad_geometry, slider_rect, color_cyan, 1)
+    {
+        // note(isak): debug bounds drawing
+        r_reset_scissor_mode()
+        r_draw_rect_outline(&renderer.quad_geometry, slider_rect, color_cyan, 1)
+    }
     r_begin_scissor_mode(slider_rect)
+    
     r_draw_rect_with_uv(&renderer.quad_geometry, 
                         slider_rect,
                         slider_uvs,
                         with_alpha(color_white, 0.5), 
                         builtin_texture(.SLIDER_FRAMEBUFFER))
-    r_end_scissor_mode()
+    r_reset_scissor_mode()
 }
 
 test_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Handle) {

@@ -16,6 +16,7 @@ import mu "vendor:microui"
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
+import stbi "vendor:stb/image"
 
 /*
 todo(isak):
@@ -190,6 +191,7 @@ window_init :: proc(rect: Rect) {
     window.handle = sdl.CreateWindow("notosu!", i32(rect.w), i32(rect.h), sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
     window.aspect_ratio = f32(rect.h) / f32(rect.w)
 
+    stbi.set_flip_vertically_on_load_thread(true)
     sdl.GL_SetAttribute(sdl.GL_CONTEXT_MAJOR_VERSION, 4)
     sdl.GL_SetAttribute(sdl.GL_CONTEXT_MINOR_VERSION, 6)
     sdl.SetHint(sdl.HINT_RENDER_DRIVER, "opengl")
@@ -684,7 +686,7 @@ render_debug_ui :: proc(renderer: ^Renderer, ctx: ^mu.Context) {
                 push_icon(renderer, cmd.rect, icon_rect, transmute(Color)cmd.color)
         }
     }
-    r_end_scissor_mode()
+    r_reset_scissor_mode()
 }
 
 begin_frame :: proc(renderer: ^Renderer) {

@@ -141,7 +141,17 @@ beatmap_load :: proc(beatmap: ^Beatmap) {
     lua_create_beatmap_script_context(game.active_notosu_map.lua_entry_point)
 }
 
-beatmap_reload :: proc(beatmap: ^Beatmap) {
+beatmap_reload :: proc(beatmap: ^Beatmap, keep_song_position: bool = false) {
+    music_time_before_load, time_before_load_ms: f64
+    if keep_song_position {
+        if game.beatmap.music_time_ms < 0 {
+            music_time_before_load = game.beatmap.music_time_ms
+        } else {
+            music_time_before_load = sound_get_position_ms(&game.beatmap.music)
+        }
+        time_before_load_ms = current_time_ms()
+    } 
+    
     beatmap_on_destroy(beatmap)
     
     game.mode = .PLAY
@@ -151,6 +161,15 @@ beatmap_reload :: proc(beatmap: ^Beatmap) {
     game.active_map = &game.active_mapset.osu_map
     game.active_notosu_map = &game.active_mapset.notosu_map
     beatmap_on_init(beatmap)
+    
+    if keep_song_position {
+        if !game.paused do music_time_before_load += current_time_ms() - time_before_load_ms
+        
+        game.beatmap.music_time_ms = music_time_before_load
+        sound_set_position_ms(&game.beatmap.music, music_time_before_load)
+        
+        if !game.paused do sound_resume(&game.beatmap.music)
+    }
 }
 
 

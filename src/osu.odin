@@ -74,18 +74,35 @@ Hit_Object :: struct {
     start_time_ms, end_time_ms: f64,
     pos, script_pos_translation: vec2,
     
+    timing_point_index_uninherited: int,
+    timing_point_index_inherited: int,
     type_flags: int,
     hitsound_flags: byte,
 
     slider_path_index: int,
     slider_repeats, slider_repeat_at: int,
-    slider_snaking_frames: i32,
     
     gfx_handles: []Drawable_Handle,
 }
 
 hit_object_pos :: proc(hobj: ^Hit_Object) -> vec2 {
     return hobj.pos + hobj.script_pos_translation
+}
+
+
+Timing_Point_Type :: enum {
+    UNINHERITED, // red lines
+    INHERITED,   // green lines
+}
+
+Timing_Point :: struct {
+    time: f64,
+    beat_length: f64,
+    meter: u8,
+    sample_set: Osu_Sample_Set,
+    volume: f64,
+    type: Timing_Point_Type,
+    kiai: bool
 }
 
 
@@ -104,6 +121,7 @@ Slider_Path :: struct {
     pos: vec2,
     type: Slider_Path_Type,
     distance_osupx: f64,
+    
 
     nodes: []Slider_Node, // note(isak): slice into our array of all nodes
     curves: []Slider_Curve, // note(isak): slice into mapset arena
@@ -174,6 +192,7 @@ Osu_Map :: struct {
     audio_filepath: string,
     hit_objects: []Hit_Object,
     slider_paths: []Slider_Path,
+    timing_points: []Timing_Point,
 }
 
 osu_on_init :: proc() {
@@ -195,7 +214,7 @@ osu_on_update :: proc(dt: f64) {
 
     updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
     if updated_systems[.OSU_FILE] {
-        beatmap_reload(&game.beatmap)
+        beatmap_reload(&game.beatmap, true)
     } else if updated_systems[.SCRIPTS] {
         lua_reload(game.active_notosu_map.lua_entry_point)
         lua_call_beatmap_func("on_init")
@@ -378,7 +397,8 @@ handle_play_input_events :: proc() {
         beatmap_pause(&game.beatmap, !game.paused)
     }
     if is_key_pressed(.R) {
-        beatmap_reload(&game.beatmap)
+        temp_music_time := game.beatmap.music_time_ms
+        beatmap_reload(&game.beatmap, true)
     }
     if is_key_pressed(.HOME) {
         game.time_rate = 1

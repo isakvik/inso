@@ -2,6 +2,10 @@
 #extension GL_ARB_bindless_texture : require
 #extension GL_NV_gpu_shader5 : enable
 
+/*
+With a shader, you can do anything. So how do you figure out what to do?
+*/
+
 struct Quad {
     vec2 pos_min;
     vec2 pos_max;

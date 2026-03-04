@@ -12,6 +12,7 @@ import "core:mem/virtual"
 import os "core:os/os2"
 import "core:path/filepath"
 import "core:slice"
+import "core:sort"
 import "core:strings"
 import "core:strconv"
 
@@ -236,58 +237,11 @@ handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
     }
 }
 
-load_model :: proc(path: string) -> ^GL_Buffer(Mesh_Vertex) {
-    cgltf_alloc :: proc "c" (user: rawptr, size: uint) -> rawptr {
-        alloc := memory.allocators[.FRAME]
-        context = runtime.default_context()
-        buf, err := alloc.procedure(alloc.data, .Alloc, int(size), align_of(f32), nil, 0)
-        return raw_data(buf)
-    }
-    cgltf_free :: proc "c" (user, ptr: rawptr) {}
-    
-    options := cgltf.options{
-        memory = {
-            alloc_func = cgltf_alloc,
-            free_func = cgltf_free
-        }
-    }
-    
-    path_cstr := strings.clone_to_cstring(path)
-    data, result := cgltf.parse_file(options, path_cstr)
-    assert(result == .success)
-    result = cgltf.load_buffers(options, data, path_cstr)
-    assert(result == .success)
-    
-    store := r_create_static_store(Mesh_Vertex, 36, memory.allocators[.MAPSET])
-    
-    for primitive in data.meshes[0].primitives[:] {
-        for attrib in primitive.attributes {
-            attr_bufview := attrib.data.buffer_view
-            #partial switch attrib.type {
-            case .position:
-                for pos, i in slice.from_ptr(cast(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
-                    store.data[i].pos = pos
-                }
-            case .normal:
-                for norm, i in slice.from_ptr(cast(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
-                    store.data[i].norm = norm
-                }
-            case .texcoord:
-                for uv, i in slice.from_ptr(cast(^vec2)attr_bufview.buffer.data, int(attrib.data.count)) {
-                    store.data[i].uv = uv
-                }
-            }
-        }
-    }
-    
-    return store
-}
-
-
 mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map {
     result: Notosu_Map
     context.allocator = memory.allocators[.MAPSET]
     
+    // -- @temp
     // todo(isak): test code that should be replaced with notosu shader section reads
     {
         builtin_quad_vs_path := strings.concatenate({app.base_dir, "/", quad_vs_path}, context.allocator)
@@ -320,6 +274,7 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
         },
         depth = {compare = .LESS_EQUAL, write_enabled = true},
     }
+    // --
     
     c: Consumer = {
         str = notosu_file
@@ -454,6 +409,42 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                         case "SliderTickRate": result.diff_slider_tickrate, ok = strconv.parse_f64(value); assert(ok)
                     }
                 }
+            case .TIMINGPOINTS:
+                result.timing_points = make_slice([]Timing_Point, len(lines) - 1)
+                
+                for i in 1..<len(lines) {
+                    timing_point := &result.timing_points[i - 1]     
+                    
+                    from_i, s_len: int
+                    arg_i: int
+                    for from_i < len(lines[i]) && 0 <= s_len {
+                        defer arg_i += 1
+                        defer from_i += s_len + 1
+                        s_len = strings.index_byte(lines[i][from_i:], ',')
+                        value := s_len >= 0 ? lines[i][from_i:from_i + s_len] : lines[i][from_i:]
+                                       
+                        ok: bool
+                        switch arg_i {
+                            case 0: timing_point.time, ok = strconv.parse_f64(value); assert(ok)
+                            case 1: timing_point.beat_length, ok = strconv.parse_f64(value); assert(ok)
+                            case 2: meter, ok := strconv.parse_u64(value); assert(ok); 
+                                timing_point.meter = u8(meter)
+                            case 3: sample_set, ok := strconv.parse_u64(value); assert(ok)
+                                switch sample_set {
+                                    case 0: result.sample_set = .NORMAL
+                                    case 1: result.sample_set = .SOFT
+                                    case 2: result.sample_set = .DRUM
+                                    case 3: result.sample_set = .NORMAL
+                                }
+                            case 4: // sample index
+                            case 5: timing_point.volume, ok = strconv.parse_f64(value); assert(ok)
+                            case 6: timing_point.type = value == "1" ? .UNINHERITED : .INHERITED
+                            case 7: effects, ok := strconv.parse_int(value); assert(ok)
+                                timing_point.kiai = effects & 1 == 1
+                        }
+                    }
+                }
+            
             case .EVENTS:
                 for i in 1..<len(lines) {
                     if lines[i] == "//Background and Video events" {
@@ -532,30 +523,63 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                                                       
                         hobj.slider_path_index = int(slider_temp_queue.len)
                         q.append(&slider_temp_queue, slider)
-                        
-
-                        // todo(isak) slider time calculation... requires redline & greenline handling. formula:
-                        // length / (SliderMultiplier * 100 * SV) * beatLength
 
                         hobj.end_time_ms = hobj.start_time_ms + slider.distance_osupx * 2
                     }
-                    
-                    // note(isak): millisecond lookup has to point to the first hitobject in case of 
-                    // simultaneous objects so that range lookups work
-                    hobj_key := int(hobj.start_time_ms)
-                    if !(hobj_key in mapset.hitobject_index_by_ms) {
-                        mapset.hitobject_index_by_ms[int(hobj.start_time_ms)] = hobj.index
-                    }
                 }
 
-                // note(isak): looks like a memory optimization, but i don't think it makes that much sense
+                // note(isak): copies growing temp slider queue to static sized mapset arena
                 temp_slider_size := int(slider_temp_queue.len) * size_of(Slider_Path)
                 slider_array_ptr, err := mem.alloc(temp_slider_size); assert(err == .None)
                 mem.copy(slider_array_ptr, raw_data(slider_temp_queue.data), temp_slider_size)
                 result.slider_paths = slice.from_ptr(cast(^Slider_Path)slider_array_ptr, int(slider_temp_queue.len))
         }
     }
-
+    
+    sort.quick_sort_proc(result.hit_objects, proc(a, b: Hit_Object) -> int {
+        return int(a.start_time_ms) - int(b.start_time_ms)
+    })
+    sort.quick_sort_proc(result.timing_points, proc(a, b: Timing_Point) -> int {
+        return int(a.time) - int(b.time)
+    })
+    
+    current_timing_point_index_uninherited: int
+    current_timing_point_index_inherited: int
+    
+    for &hobj in result.hit_objects {
+        // note(isak): millisecond lookup has to point to the first hitobject in case of 
+        // simultaneous objects so that range lookups work
+        hobj_key := int(hobj.start_time_ms)
+        if !(hobj_key in mapset.hitobject_index_by_ms) {
+            mapset.hitobject_index_by_ms[hobj_key] = hobj.index
+        }
+        
+        // note(isak): seek last counting timing point
+        for timing_point in result.timing_points[current_timing_point_index_inherited:] {
+            if hobj.start_time_ms < timing_point.time {
+                break
+            }
+            if timing_point.type == .UNINHERITED {
+                current_timing_point_index_uninherited = current_timing_point_index_inherited
+            }
+            current_timing_point_index_inherited += 1
+        }
+        hobj.timing_point_index_uninherited = current_timing_point_index_uninherited
+        hobj.timing_point_index_inherited = max(current_timing_point_index_inherited - 1, 0)
+        
+        if hobj.type == .SLIDER {
+            slider_length := result.slider_paths[hobj.slider_path_index].distance_osupx
+            uninherited_beat_length := result.timing_points[current_timing_point_index_uninherited].beat_length
+            
+            inherited_beat_length := result.timing_points[current_timing_point_index_inherited].beat_length
+            slider_multiplier := -1 / (inherited_beat_length / 100)
+            slider_velocity := result.diff_slider_velocity
+            
+            slider_duration := slider_length / (slider_multiplier * 100 * slider_velocity) * uninherited_beat_length
+            hobj.end_time_ms = hobj.start_time_ms + (slider_duration * f64(hobj.slider_repeats))
+        }
+    }
+    
     return result
 }
 
@@ -617,6 +641,54 @@ mapset_parse_osu_slider_nodes :: proc(value: string, start_pos: vec2, alloc: mem
     }
 
     return result
+}
+
+
+load_model :: proc(path: string) -> ^GL_Buffer(Mesh_Vertex) {
+    cgltf_alloc :: proc "c" (user: rawptr, size: uint) -> rawptr {
+        alloc := memory.allocators[.FRAME]
+        context = runtime.default_context()
+        buf, err := alloc.procedure(alloc.data, .Alloc, int(size), align_of(f32), nil, 0)
+        return raw_data(buf)
+    }
+    cgltf_free :: proc "c" (user, ptr: rawptr) {}
+    
+    options := cgltf.options{
+        memory = {
+            alloc_func = cgltf_alloc,
+            free_func = cgltf_free
+        }
+    }
+    
+    path_cstr := strings.clone_to_cstring(path)
+    data, result := cgltf.parse_file(options, path_cstr)
+    assert(result == .success)
+    result = cgltf.load_buffers(options, data, path_cstr)
+    assert(result == .success)
+    
+    store := r_create_static_store(Mesh_Vertex, 36, memory.allocators[.MAPSET])
+    
+    for primitive in data.meshes[0].primitives[:] {
+        for attrib in primitive.attributes {
+            attr_bufview := attrib.data.buffer_view
+            #partial switch attrib.type {
+            case .position:
+                for pos, i in slice.from_ptr(cast(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
+                    store.data[i].pos = pos
+                }
+            case .normal:
+                for norm, i in slice.from_ptr(cast(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
+                    store.data[i].norm = norm
+                }
+            case .texcoord:
+                for uv, i in slice.from_ptr(cast(^vec2)attr_bufview.buffer.data, int(attrib.data.count)) {
+                    store.data[i].uv = uv
+                }
+            }
+        }
+    }
+    
+    return store
 }
 
 

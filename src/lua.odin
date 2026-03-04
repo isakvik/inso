@@ -895,6 +895,9 @@ luaapi_drawable_set_time :: proc "c" (L: ^lua.State) -> (result: i32) {
 //////////////////////////////////////////////////////
 // note(isak): hitobject object API
 
+// todo(isak): Slider object, get_path
+
+
 @(private="file")
 luaapi_hitobject_static_funcs := []lua.L_Reg {
   { "get_at_ms", luaapi_hitobject_get_at_ms },

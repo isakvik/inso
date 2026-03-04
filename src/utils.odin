@@ -22,11 +22,13 @@ _program_start_tsc: u64
 tsc_to_ms :: proc(tsc: u64) -> f64 {
     return f64(tsc) / f64(_rdtsc_frequency / 1000)
 }
-
 tsc_to_s :: proc(tsc: u64) -> f64 {
     return f64(tsc) / f64(_rdtsc_frequency)
 }
 
+current_time_ms :: proc() -> f64 {
+    return tsc_to_ms(sdl.GetPerformanceCounter())
+}
 current_time_s :: proc() -> f64 {
     return tsc_to_s(sdl.GetPerformanceCounter())
 }

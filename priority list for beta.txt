@@ -8,33 +8,37 @@ scripting
         is this needed?
 
 game mechanics (not score, replays, etc)
-    hittesting
-    notelock
-    judgements
-    slider rendering
-    hitsounds
-    slider bounds
-    playfield scaling
-    score system
-    all the visuals
+    phase 1 visuals
+        playfield scaling
         combocolors
         combonumbers
         animations
-        object dimming
-        drop shadow
-        slider border
-        
 
-rendering 
+gameplay
+    hittesting
+    notelock
+    judgements
+    hitsounds
+
+rendering
     render to FBO
     lua frame object
 
--- POST BETA RELEASE -- 
+-- POST MAPPER BETA RELEASE -- 
 
 rendering
     locking bugfix
     bindless textures fallback
     optimization
+    
+gameplay
+    score system
+    
+    phase 2 visuals
+        object dimming
+        drop shadow
+        slider border
+        proper snaking sliders
     
 lua 
     REPL console

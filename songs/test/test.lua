@@ -2,10 +2,12 @@
 local rand = load_file("rand.lua")
 
 -- missing thoughts (drawable):
--- layer: should be required argument, probably
+-- drawable layer: should be required argument, probably
 
 -- needs easy way to refer to map settings and their consequential results 
 --   ar in millis, cs in osupx
+--   convert slider to table of positions
+--      hobj.path.get_positions(point_sep_length[, offset])
 
 function on_init()
     a = Animation.new()
@@ -24,11 +26,11 @@ function on_init()
     
     -- todo(isak) should be able to register custom events through a string here...
     -- using an observer with a set of handles for an event
+    -- could be cool
     
     --hobj = Hitobject.get_at_ms(0) -- needs optional index param so we can get the next at ms 0
     
     list = Hitobject.get_in_range_ms(0, 4250)
-    
     
     table = {}
     for i, hobj in ipairs(list) do 
@@ -40,7 +42,7 @@ function on_init()
     end
 end
 
-function on_update_(time_ms)
+function _on_update(time_ms)
     -- todo(isak): should animations be relative? they're not in regular osu, so...
     -- d:set_pos(rand.float(0, 512), rand.float(0, 512))
     

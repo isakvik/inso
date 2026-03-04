@@ -462,10 +462,7 @@ slider_screenspace_bounding_box :: proc(slider: ^Slider_Path) -> (result: Rect) 
 }
 
 render_slider :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
-    // todo(isak): generate partial instance draws (snaking) like the smart cookie you are
     slider := &game.beatmap.slider_paths[hobj.slider_path_index]
-    hobj.slider_snaking_frames += 1
-
     pf_size: f32 = playfield_size_osupx / game.beatmap.circle_radius_osupx
 
     slider_translation := -hobj.script_pos_translation / 2
@@ -491,9 +488,13 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
     
     r_clear()
     
+    slider_snake_in_time_ms := game.beatmap.preempt_ms * (1.0/3.0)
+    slider_snake_in_time_at := game.beatmap.music_time_ms - hobj.start_time_ms + game.beatmap.preempt_ms
+    slider_snake_instances := i32(f64(slider.instance_count) * clamp(slider_snake_in_time_at / slider_snake_in_time_ms, 0, 1))
+    
     command_push_draw_slider(Command_Draw_Slider{
         base_instance = u32(slider.first_instance_at),
-        instance_count = min(hobj.slider_snaking_frames / 10, i32(slider.instance_count))
+        instance_count = slider_snake_instances
     })
     
     r_bind_framebuffer({ read = .SLIDERS })

@@ -579,7 +579,7 @@ handle_debug_ui_events :: proc(ctx: ^mu.Context) {
         window.renderer.trace_frame = !window.renderer.trace_frame
     }
     if is_key_pressed(.F2) {
-        app.debug_display_fontatlas = !app.debug_display_fontatlas
+        app.debug_display_slider_bounds = !app.debug_display_slider_bounds
     }
     if is_key_pressed(.F3) {
         app.debug_display_frame_profiler = !app.debug_display_frame_profiler

@@ -523,8 +523,6 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                                                       
                         hobj.slider_path_index = int(slider_temp_queue.len)
                         q.append(&slider_temp_queue, slider)
-
-                        hobj.end_time_ms = hobj.start_time_ms + slider.distance_osupx * 2
                     }
                 }
 
@@ -701,6 +699,7 @@ convert_circle_size_to_radius_osupx :: proc(cs: f64) -> f32 {
 }
 
 
+// todo(isak): this likes to crash sometimes on debug breaks, but it's not consistent...
 mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu_Map_System]bool {
     updated_systems: [Notosu_Map_System]bool
 

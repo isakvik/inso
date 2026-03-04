@@ -461,8 +461,7 @@ slider_screenspace_bounding_box :: proc(slider: ^Slider_Path) -> (result: Rect) 
     return result
 }
 
-render_slider :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
-    slider := &game.beatmap.slider_paths[hobj.slider_path_index]
+render_slider :: proc(renderer: ^Renderer, hobj: ^Hit_Object, slider: ^Slider_Path) {
     pf_size: f32 = playfield_size_osupx / game.beatmap.circle_radius_osupx
 
     slider_translation := -hobj.script_pos_translation / 2
@@ -502,8 +501,7 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
     r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
     
     r_push_transform(window.screenspace_transform)
-    {
-        // note(isak): debug bounds drawing
+    if app.debug_display_slider_bounds {
         r_reset_scissor_mode()
         r_draw_rect_outline(&renderer.quad_geometry, slider_rect, color_cyan, 1)
     }

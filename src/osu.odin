@@ -118,10 +118,9 @@ Slider_Node :: vec2
 Slider_Curve :: []Slider_Node
 
 Slider_Path :: struct {
-    pos: vec2,
+    pos, end_pos: vec2,
     type: Slider_Path_Type,
     distance_osupx: f64,
-    
 
     nodes: []Slider_Node, // note(isak): slice into our array of all nodes
     curves: []Slider_Curve, // note(isak): slice into mapset arena
@@ -326,7 +325,14 @@ osu_on_update :: proc(dt: f64) {
             continue
         }
         if hobj.type == .SLIDER {
-            render_slider(&window.renderer, &hobj)
+            slider := &game.beatmap.slider_paths[hobj.slider_path_index]
+            render_slider(&window.renderer, &hobj, slider)
+            
+            r_push_transform(game.playfield_transform)
+            
+            cs := game.beatmap.circle_radius_osupx
+            sliderend_rect := Rect{ slider.end_pos.x - cs, slider.end_pos.y - cs, cs * 2, cs * 2 }
+            r_draw_rect(&window.renderer.quad_geometry, sliderend_rect, with_alpha(color_white, 0.2), skin_texture(.HITCIRCLEOVERLAY))
         }
     }
     //--
@@ -761,8 +767,10 @@ write_instances_from_straight :: proc(
         
         if (curr_distance + base_dist) > f32(remaining_distance) {
             remaining_distance = remaining_distance - f64(curr_distance)
+            /* todo(isak): from my testing this seems to be buggy cuz it leaves an instance in the middle of straights
             iterations_remaining := f32(remaining_distance) / base_dist
             buffer_push(instance_buf, start_pos + iterations_remaining * xy_vector)
+            */
             break
         }
     }
@@ -829,6 +837,8 @@ write_instances_from_path :: proc(
             distance_to_cover -= distance_covered_by_curve
         }
     }
+    
+    path.pos, path.end_pos = instance_buf.data[instance_offset], instance_buf.data[max(instance_buf.count-1, 0)]
 
     // todo(yokes): if we still have distance left over but zero curves, a linear path needs to cover
     // the remaining distance. maybe mcosu has something neat for this?

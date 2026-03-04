@@ -11,7 +11,8 @@ app: struct {
     
     debug_display_frame_profiler: bool,
     debug_display_memory_profiler: bool,
-    debug_display_fontatlas: bool
+    debug_display_fontatlas: bool, // todo(isak): never written to
+    debug_display_slider_bounds: bool,
 }
 
 app_init :: proc() {

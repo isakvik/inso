@@ -28,21 +28,21 @@ lua_beatmap: struct {
 Lua_Beatmap_Event_Type :: enum {
     ON_INIT,
     ON_UPDATE,
-    /* todo(isak) hooks unimplemented */ ON_BEAT, 
-    /* todo(isak) hooks unimplemented */ ON_BPM_CHANGE,
-    /* todo(isak) hooks unimplemented */ ON_PAUSE_CHANGE,
+    ON_BEAT, 
+    ON_TIMING_CHANGE,
+    ON_PAUSE_CHANGE,
     ON_CONTROLLER_PRESSED,
     ON_CONTROLLER_RELEASED,
     ON_KEY_DOWN,
     ON_KEY_UP,
-    /* todo(isak) hooks unimplemented */ ON_CURSOR_MOVED,
+    ON_CURSOR_MOVED,
     /* todo(isak) hooks unimplemented */ ON_JUDGEMENT,
 }
 lua_beatmap_event_names := [Lua_Beatmap_Event_Type]cstring {
     .ON_INIT = "on_init",
     .ON_UPDATE = "on_update",
     .ON_BEAT = "on_beat",
-    .ON_BPM_CHANGE = "on_bpm_change",
+    .ON_TIMING_CHANGE = "on_timing_change",
     .ON_PAUSE_CHANGE = "on_pause_change",
     .ON_CONTROLLER_PRESSED = "on_controller_pressed",
     .ON_CONTROLLER_RELEASED = "on_controller_released",
@@ -101,10 +101,19 @@ lua_classes: [Lua_Class_Type]Lua_Class = {
 
 luaapi_global_funcs := []lua.L_Reg {
   { "load_file", luaapi_load_file },
+  { "get_cursor_pos", luaapi_get_cursor_pos },
   { "controller_is_down", luaapi_controller_is_down },
   { "controller_is_up", luaapi_controller_is_up },
   { "key_is_down", luaapi_key_is_down },
   { "key_is_up", luaapi_key_is_up },
+  
+  /* todo(isak) implement (maybe on Beatmap object):
+  { "get_music_time", luaapi_get_music_time },
+  { "get_bpm", luaapi_get_bpm },
+  { "get_ar_ms", luaapi_get_ar_ms },
+  { "get_cs_osupx", luaapi_get_cs_osupx },
+  
+  */
 }
 
 // note(isak): we use reflection to pull the names and associated enums directly to lua tables
@@ -306,6 +315,12 @@ luaapi_load_file :: proc "c" (L: ^lua.State) -> i32 {
     return 1
 }
 
+luaapi_get_cursor_pos :: proc "c" (L: ^lua.State) -> i32 {
+    lua.pushnumber(L, lua.Number(game.input.mouse_pos.x))
+    lua.pushnumber(L, lua.Number(game.input.mouse_pos.y))
+    return 2
+}
+
 luaapi_controller_is_down :: proc "c" (L: ^lua.State) -> i32 {
     key_name := lua.L_checkstring(L, 1)
     result: bool
@@ -351,7 +366,7 @@ luaapi_key_is_up :: proc "c" (L: ^lua.State) -> i32 {
 // note(isak): beatmap event API
 
 lua_beatmap_on_update :: proc(time_ms: f64) {
-    lua_call_beatmap_func("on_update", time_ms,
+    lua_call_beatmap_func(lua_beatmap_event_names[.ON_UPDATE], time_ms,
         proc(time_ms: f64) -> i32 {
             lua.pushnumber(lua_beatmap.state, lua.Number(time_ms))
             return 1
@@ -360,7 +375,7 @@ lua_beatmap_on_update :: proc(time_ms: f64) {
 }
 
 lua_beatmap_on_beat :: proc(beat: int) {
-    lua_call_beatmap_func("on_beat", beat,
+    lua_call_beatmap_func(lua_beatmap_event_names[.ON_BEAT], beat,
         proc(beat: int) -> i32 {
             lua.pushinteger(lua_beatmap.state, lua.Integer(beat))
             return 1
@@ -368,17 +383,22 @@ lua_beatmap_on_beat :: proc(beat: int) {
     )
 }
 
-lua_beatmap_on_bpm_change :: proc(beat: int) {
-    lua_call_beatmap_func("on_bpm_change", beat,
-        proc(beat: int) -> i32 {
-            lua.pushinteger(lua_beatmap.state, lua.Integer(beat))
-            return 1
+lua_beatmap_on_timing_change :: proc(beat: int, bpm: f64) {
+    Lua_Timing_Change_Params :: struct {
+        beat: int, 
+        bpm: f64
+    }
+    lua_call_beatmap_func(lua_beatmap_event_names[.ON_TIMING_CHANGE], Lua_Timing_Change_Params{beat, bpm},
+        proc(params: Lua_Timing_Change_Params) -> i32 {
+            lua.pushinteger(lua_beatmap.state, lua.Integer(params.beat))
+            lua.pushnumber(lua_beatmap.state, lua.Number(params.bpm))
+            return 2
         }
     )
 }
 
 lua_beatmap_on_pause_change :: proc(paused: bool) {
-    lua_call_beatmap_func("on_bpm_change", paused,
+    lua_call_beatmap_func(lua_beatmap_event_names[.ON_PAUSE_CHANGE], paused,
         proc(paused: bool) -> i32 {
             lua.pushboolean(lua_beatmap.state, b32(paused))
             return 1
@@ -387,7 +407,7 @@ lua_beatmap_on_pause_change :: proc(paused: bool) {
 }
 
 lua_beatmap_on_controller_pressed :: proc(key: cstring) {
-    lua_call_beatmap_func("on_controller_pressed", key,
+    lua_call_beatmap_func(lua_beatmap_event_names[.ON_CONTROLLER_PRESSED], key,
         proc(key: cstring) -> i32 {
             lua.pushstring(lua_beatmap.state, key)
             return 1
@@ -395,7 +415,7 @@ lua_beatmap_on_controller_pressed :: proc(key: cstring) {
     )
 }
 lua_beatmap_on_controller_released :: proc(key: cstring) {
-    lua_call_beatmap_func("on_controller_released", key,
+    lua_call_beatmap_func(lua_beatmap_event_names[.ON_CONTROLLER_RELEASED], key,
         proc(key: cstring) -> i32 {
             lua.pushstring(lua_beatmap.state, key)
             return 1
@@ -404,7 +424,7 @@ lua_beatmap_on_controller_released :: proc(key: cstring) {
 }
 
 lua_beatmap_on_key_pressed :: proc(key: sdl.Scancode) {
-    lua_call_beatmap_func("on_key_pressed", key,
+    lua_call_beatmap_func(lua_beatmap_event_names[.ON_KEY_DOWN], key,
         proc(key: sdl.Scancode) -> i32 {
             lua.pushstring(lua_beatmap.state, sdl.GetScancodeName(key))
             return 1
@@ -412,7 +432,7 @@ lua_beatmap_on_key_pressed :: proc(key: sdl.Scancode) {
     )
 }
 lua_beatmap_on_key_released :: proc(key: sdl.Scancode) {
-    lua_call_beatmap_func("on_key_released", key,
+    lua_call_beatmap_func(lua_beatmap_event_names[.ON_KEY_UP], key,
         proc(key: sdl.Scancode) -> i32 {
             lua.pushstring(lua_beatmap.state, sdl.GetScancodeName(key))
             return 1
@@ -421,7 +441,7 @@ lua_beatmap_on_key_released :: proc(key: sdl.Scancode) {
 }
 
 lua_beatmap_on_cursor_moved :: proc(pos: vec2) {
-    lua_call_beatmap_func("on_cursor_moved", pos,
+    lua_call_beatmap_func(lua_beatmap_event_names[.ON_CURSOR_MOVED], pos,
         proc(pos: vec2) -> i32 {
             lua.pushnumber(lua_beatmap.state, lua.Number(pos.x))
             lua.pushnumber(lua_beatmap.state, lua.Number(pos.y))
@@ -430,14 +450,13 @@ lua_beatmap_on_cursor_moved :: proc(pos: vec2) {
     )
 }
 
-Lua_Judgement_Result :: struct {
-    hobj_index: int,
-    judgement: Judgement,
-    timing_error_ms: f64,
-}
-
-lua_beatmap_on_judgement :: proc(judgement: Lua_Judgement_Result) {
-    lua_call_beatmap_func("on_key_released", judgement,
+lua_beatmap_on_judgement :: proc(hobj_index: int, judgement: Judgement, timing_error_ms: f64) {
+    Lua_Judgement_Result :: struct {
+        hobj_index: int,
+        judgement: Judgement,
+        timing_error_ms: f64,
+    }
+    lua_call_beatmap_func(lua_beatmap_event_names[.ON_JUDGEMENT], Lua_Judgement_Result{hobj_index, judgement, timing_error_ms},
         proc(judgement: Lua_Judgement_Result) -> i32 {
             
             judgement_name: cstring
@@ -951,8 +970,7 @@ luaapi_hitobject_get_in_range_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
     default_array_size: i32 = 64
     lua.createtable(L, default_array_size, 0)
     
-    for i in hitobject_index..<len(game.beatmap.hit_objects) {
-        hobj := &game.beatmap.hit_objects[i]
+    for hobj, i in game.beatmap.hit_objects[hitobject_index:len(game.beatmap.hit_objects)] {
         if hobj.start_time_ms < f64(from_ms) do continue
         if f64(to_ms) < hobj.start_time_ms do break
         

@@ -433,14 +433,6 @@ main :: proc() {
             mouse.pos.x = mouse.pos.x - f32(xi)
             mouse.pos.y = mouse.pos.y - f32(yi)
             
-            pf_mouse := vec2{mouse.pos.x, mouse.pos.y}
-            pf_mouse.x -= (window.rect.w - window.rect.h) / 2
-            
-            game.input.mouse_pos = transform_point_space(pf_mouse,
-                transform_to_mat3(window.screenspace_transform), 
-                transform_to_mat3(game.playfield_transform)
-            )
-            
             mu.input_mouse_move(&window.ui_ctx, i32(mouse.pos.x), i32(mouse.pos.y))
         }
 
@@ -571,6 +563,13 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
         mu.layout_row(ctx, {80, 10, -1}, 0)
         mu.label(ctx, "Mouse keys:")
         mu.label(ctx, game.input.mouse_keys_enabled ? "on" : "off")
+        
+        mu.layout_row(ctx, {80, 10, -1}, 0)
+        mu.label(ctx, "cur redline:")
+        mu.label(ctx, fmt.tprint(game.beatmap.current_timing_point_index_uninherited))
+        mu.layout_row(ctx, {80, 10, -1}, 0)
+        mu.label(ctx, "cur greenline:")
+        mu.label(ctx, fmt.tprint(game.beatmap.current_timing_point_index_inherited))
     }
 }
 

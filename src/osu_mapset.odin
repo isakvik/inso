@@ -466,7 +466,6 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                 for i in 1..<len(lines) {
                     hobj := &result.hit_objects[i - 1]
                     hobj_extra_params: string
-                    hobj.index = i - 1
 
                     // note(isak): parse base params - every hobj type has a differing set of params after these
                     from_i, s_len: int
@@ -534,17 +533,33 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
         }
     }
     
-    sort.quick_sort_proc(result.hit_objects, proc(a, b: Hit_Object) -> int {
+    mapset_postprocess(mapset, &result)
+    
+    return result
+}
+
+mapset_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
+    
+    sort.quick_sort_proc(osu_map.hit_objects, proc(a, b: Hit_Object) -> int {
         return int(a.start_time_ms) - int(b.start_time_ms)
     })
-    sort.quick_sort_proc(result.timing_points, proc(a, b: Timing_Point) -> int {
+    
+    sort.quick_sort_proc(osu_map.timing_points, proc(a, b: Timing_Point) -> int {
+        if int(a.time) == int(b.time) {
+            return int(a.type) - int(b.type)
+        }    
         return int(a.time) - int(b.time)
     })
+    
+    assert(osu_map.timing_points[0].type == .UNINHERITED, "map error :: first timing point is inherited")
+    osu_map.timing_points[0].starts_at_beat = 1
     
     current_timing_point_index_uninherited: int
     current_timing_point_index_inherited: int
     
-    for &hobj in result.hit_objects {
+    for &hobj, i in osu_map.hit_objects {
+        hobj.index = i
+        
         // note(isak): millisecond lookup has to point to the first hitobject in case of 
         // simultaneous objects so that range lookups work
         hobj_key := int(hobj.start_time_ms)
@@ -553,32 +568,40 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
         }
         
         // note(isak): seek last counting timing point
-        for timing_point in result.timing_points[current_timing_point_index_inherited:] {
+        for &timing_point in osu_map.timing_points[current_timing_point_index_inherited:] {
             if hobj.start_time_ms < timing_point.time {
                 break
             }
             if timing_point.type == .UNINHERITED {
+                if current_timing_point_index_uninherited != current_timing_point_index_inherited {
+                    old_timing_point := &osu_map.timing_points[current_timing_point_index_uninherited]
+                    timing_point.starts_at_beat = 1 + old_timing_point.starts_at_beat + 
+                        int((timing_point.time - old_timing_point.time) / old_timing_point.beat_length)
+                }
+                
                 current_timing_point_index_uninherited = current_timing_point_index_inherited
             }
             current_timing_point_index_inherited += 1
         }
+        current_timing_point_index_inherited = max(current_timing_point_index_inherited - 1, 0)
+        
         hobj.timing_point_index_uninherited = current_timing_point_index_uninherited
-        hobj.timing_point_index_inherited = max(current_timing_point_index_inherited - 1, 0)
+        hobj.timing_point_index_inherited = current_timing_point_index_inherited
         
         if hobj.type == .SLIDER {
-            slider_length := result.slider_paths[hobj.slider_path_index].distance_osupx
-            uninherited_beat_length := result.timing_points[current_timing_point_index_uninherited].beat_length
+            slider_length := osu_map.slider_paths[hobj.slider_path_index].distance_osupx
+            uninherited_beat_length := osu_map.timing_points[current_timing_point_index_uninherited].beat_length
             
-            inherited_beat_length := result.timing_points[current_timing_point_index_inherited].beat_length
-            slider_multiplier := -1 / (inherited_beat_length / 100)
-            slider_velocity := result.diff_slider_velocity
+            hobj.slider_velocity = 1.0
+            if current_timing_point_index_uninherited != current_timing_point_index_inherited {
+                inherited_beat_length := osu_map.timing_points[current_timing_point_index_inherited].beat_length
+                hobj.slider_velocity = -1 / (inherited_beat_length / 100)
+            }
             
-            slider_duration := slider_length / (slider_multiplier * 100 * slider_velocity) * uninherited_beat_length
+            slider_duration := slider_length / (hobj.slider_velocity * 100 * osu_map.diff_slider_velocity) * uninherited_beat_length
             hobj.end_time_ms = hobj.start_time_ms + (slider_duration * f64(hobj.slider_repeats))
         }
     }
-    
-    return result
 }
 
 mapset_parse_osu_slider_params :: proc(hobj: ^Hit_Object, slider: ^Slider_Path, params: string, alloc: mem.Allocator = context.allocator) {

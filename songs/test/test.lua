@@ -7,17 +7,31 @@ local rand = load_file("rand.lua")
 -- needs easy way to refer to map settings and their consequential results 
 --   ar in millis, cs in osupx
 --   convert slider to table of positions
---      hobj.path.get_positions(point_sep_length[, offset])
+--      hobj.slider.get_path_positions(point_sep_length[, offset])
+
+-- todo(isak): should animations be relative? they're not in regular osu, so...
+-- they SHOULD be relative cuz animation length as a tweakable parameter would be cool
+-- and having them go from 0.0 to 1.0 is intuitive
+-- an alternative to this could be animation rate on drawable... is it that good tho?
+-- ultimately it's about conventions cuz both ways can get any result
+
+-- diffsettings per object!!
+-- custom AR per object is complicated... animation system should be able to handle this
+
+-- custom events (observer)
+-- trigger_event("blah")
+-- register_event("blah", function () end )
 
 function on_init()
     a = Animation.new()
         :color(2000, 3000, Color.rgb(255,0,0), Color.rgb(0,0,255))
         :scale(0, 2000, 0,0, 2,2)
-        :texture(2000, 2000, "no.jpg")
+        --:texture(2000, 2000, "nonexisting.jpg") -- throws error, but defaults to white pixel
     
     el = Element.new()
         :set_tex("kawayabughorou.jpg")
         :set_animation(a)
+        :set_shader("wave")
         
     dd = Drawable.new(el, 0, 0)
         :set_size(100,100)
@@ -30,6 +44,8 @@ function on_init()
     
     --hobj = Hitobject.get_at_ms(0) -- needs optional index param so we can get the next at ms 0
     
+    
+    -- todo(isak) this has some off by one bug now...
     list = Hitobject.get_in_range_ms(0, 4250)
     
     table = {}
@@ -42,28 +58,24 @@ function on_init()
     end
 end
 
-function _on_update(time_ms)
-    -- todo(isak): should animations be relative? they're not in regular osu, so...
-    -- d:set_pos(rand.float(0, 512), rand.float(0, 512))
-    
+function on_update(time_ms)
     for i, hobj in ipairs(list) do 
-        x, y = hobj
-            :get_pos()
+        x, y = hobj:get_pos()
         x = x + math.cos((time_ms*i*0.01) / 1000 + i*0.1)* 100
         y = y + math.sin((time_ms*i*0.01) / 1000 + i*0.1)* 100
-        hobj:set_pos(x,y)
+        
+        hobj:set_pos(x,y) -- todo(isak) broken on sliders cuz bounding box doesnt move
         table[i]:set_pos(x,y)
     end
 end
 
 function on_beat(beat)
-    -- every 1/1, index 0 meaning the first given timing section
-    print(beat)
+    -- every 1/1, index 1 meaning the first given timing section
     print("beat: " .. beat)
 end
-function on_bpm_change(beat)
+function on_timing_change(beat, bpm)
     -- every redline
-    print("bpm change: " .. beat)
+    print("timing change: " .. beat .. " " .. bpm)
 end
 function on_pause_change(paused)
     -- boolean
@@ -79,24 +91,25 @@ function on_judgement(hobj, judgement, timing_error_ms)
 end
 
 
-function on_controller_pressed(key) 
-    print(key .. " down")
-    print(controller_is_down(key))
-end
-function on_controller_released(key) 
-    print(key .. " up")
-    print(controller_is_up(key))
-end
-
-function on_key_pressed(key) 
-    print(key .. " down")
-    print(key_is_down(key))
-end
-function on_key_released(key) 
-    print(key .. " up")
-    print(key_is_up(key))
-end
-
-function on_cursor_moved(x, y) 
-    print(x, y)
-end
+--function on_controller_pressed(key) 
+--    --can also use controller_is_down(key)
+--    print(key .. " down")
+--end
+--function on_controller_released(key)
+--    --can also use controller_is_up(key)
+--    print(key .. " up")
+--end
+--
+--function on_key_pressed(key) 
+--    --can also use key_is_down(key)
+--    print(key .. " down")
+--end
+--function on_key_released(key) 
+--    --can also use key_is_up(key)
+--    print(key .. " up")
+--end
+--
+--function on_cursor_moved(x, y)
+--    --returns mouse IN PLAYFIELD SPACE, can also use get_cursor_pos()
+--    print(get_cursor_pos())
+--end

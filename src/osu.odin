@@ -81,12 +81,17 @@ Hit_Object :: struct {
 
     slider_path_index: int,
     slider_repeats, slider_repeat_at: int,
+    slider_velocity: f64,
     
     gfx_handles: []Drawable_Handle,
 }
 
 hit_object_pos :: proc(hobj: ^Hit_Object) -> vec2 {
     return hobj.pos + hobj.script_pos_translation
+}
+
+hit_object_duration :: proc(hobj: ^Hit_Object) -> (result: f64) {
+    return hobj.end_time_ms - hobj.start_time_ms
 }
 
 
@@ -102,7 +107,9 @@ Timing_Point :: struct {
     sample_set: Osu_Sample_Set,
     volume: f64,
     type: Timing_Point_Type,
-    kiai: bool
+    kiai: bool,
+    
+    starts_at_beat: int,
 }
 
 
@@ -216,7 +223,9 @@ osu_on_update :: proc(dt: f64) {
         beatmap_reload(&game.beatmap, true)
     } else if updated_systems[.SCRIPTS] {
         lua_reload(game.active_notosu_map.lua_entry_point)
-        lua_call_beatmap_func("on_init")
+        if lua_cares_about_event(.ON_INIT) {
+            lua_call_beatmap_func("on_init")
+        }
     }
     
     // note(isak): game logic - map
@@ -428,6 +437,19 @@ handle_play_input_events :: proc() {
     game.input.k2.was_down = keyboard.buttons_prev_frame[game.input.k2_key]
     game.input.m1 = mouse.buttons[.LEFT]
     game.input.m2 = mouse.buttons[.RIGHT]
+    
+    pf_mouse := vec2{mouse.pos.x, mouse.pos.y}
+    pf_mouse.x -= (window.rect.w - window.rect.h) / 2
+    
+    old_mouse_pos := game.input.mouse_pos
+    game.input.mouse_pos = transform_point_space(pf_mouse,
+        transform_to_mat3(window.screenspace_transform), 
+        transform_to_mat3(game.playfield_transform)
+    )
+    
+    if lua_cares_about_event(.ON_CURSOR_MOVED) && game.input.mouse_pos != old_mouse_pos {
+        lua_beatmap_on_cursor_moved(game.input.mouse_pos)
+    }
 }
 
 valid_key_press :: proc() -> bool {
@@ -496,7 +518,7 @@ calculate_bezier_point_from_time :: proc(t: f64, curve: Slider_Curve) {
 
 }
 
-base_dist : f32 = 2.5
+base_dist : f64 = 2.5
 
 //todo(yokes): make a procedure for calculating points on bezier and arch sliders when the curve is too slight
 //check todos under circular_arc_to_piecewise_linear and bezier_to_piecewise_linear
@@ -506,7 +528,7 @@ calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), path: ^S
             curr_distance := f64(linalg.vector_length(q.get(output, i + 1) - q.get(output, i)))
             total_distance += curr_distance
 
-            if f32(curr_distance) > base_dist {
+            if curr_distance > base_dist {
                 //todo(yokes): at the moment the end point overlaps an instance with the start point of the next output.data
                 write_instances_from_straight(instance_buf, path, q.get(output, i), q.get(output, i + 1), curr_distance)
             } else {
@@ -755,22 +777,22 @@ write_instances_from_straight :: proc(
     instance_buf: ^Buffer(vec2), path: ^Slider_Path, start_pos: vec2, end_pos: vec2, curve_distance: f64
 ) -> f64 {
     remaining_distance := curve_distance
-    curr_distance : f32 = 0
+    curr_distance : f64 = 0
     xy_vector : vec2 = end_pos - start_pos
-    iterations := linalg.length(xy_vector) / base_dist
+    
+    iterations := linalg.length(xy_vector) / f32(base_dist)
+    xy_step := xy_vector / iterations
     last_point_added := start_pos
 
     for i in 0..<iterations {
         curr_distance += base_dist
-        last_point_added = start_pos + i * xy_vector / iterations
+        last_point_added = start_pos + i * xy_step
         buffer_push(instance_buf, last_point_added)
         
-        if (curr_distance + base_dist) > f32(remaining_distance) {
+        if (curr_distance + base_dist) > remaining_distance {
             remaining_distance = remaining_distance - f64(curr_distance)
-            /* todo(isak): from my testing this seems to be buggy cuz it leaves an instance in the middle of straights
-            iterations_remaining := f32(remaining_distance) / base_dist
-            buffer_push(instance_buf, start_pos + iterations_remaining * xy_vector)
-            */
+            iterations_remaining := remaining_distance / base_dist
+            buffer_push(instance_buf, last_point_added + xy_step * f32(iterations_remaining))
             break
         }
     }

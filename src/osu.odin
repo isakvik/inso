@@ -308,7 +308,10 @@ osu_on_update :: proc(dt: f64) {
     
     // todo(isak): valid key presses system needs testing
     if valid_controller_press() {
-        for &hobj, i in hobj_it {            
+        for &hobj, i in hobj_it {
+            if .EXPIRED in hobj.flags {
+                continue
+            }
             hobj_pos := hitobject_pos(&hobj)
             if !point_in_circle(game.input.mouse_pos, hobj_pos, game.beatmap.circle_radius_osupx) {
                 continue

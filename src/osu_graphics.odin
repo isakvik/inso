@@ -503,9 +503,12 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Pat
     slider_snake_in_time_at := beatmap_music_time_ms(&game.beatmap) - hobj.start_time_ms + game.beatmap.preempt_ms
     slider_snake_instances := i32(f64(slider.instance_count) * clamp(slider_snake_in_time_at / slider_snake_in_time_ms, 0, 1))
     
+    // todo(isak): border_color should be the hitobject's combo color once combo colors are implemented
     command_push_draw_slider(Command_Draw_Slider{
         base_instance = u32(slider.first_instance_at),
-        instance_count = slider_snake_instances
+        instance_count = slider_snake_instances,
+        border_color  = {1.0, 1.0, 1.0, 0.9},
+        body_color    = {1.0, 1.0, 1.0, 0.7},
     })
     
     r_bind_framebuffer({ read = .SLIDERS })
@@ -522,7 +525,7 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Pat
     r_draw_rect_with_uv(&renderer.quad_geometry, 
                         slider_rect,
                         slider_uvs,
-                        with_alpha(color_white, 0.5), 
+                        color_white, 
                         builtin_texture(.SLIDER_FRAMEBUFFER))
     r_reset_scissor_mode()
 }

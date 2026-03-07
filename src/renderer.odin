@@ -21,7 +21,7 @@ MAX_TEXTURE_HANDLES :: 1024
 
 MAX_DRAW_CALLS_PER_LAYER :: 4096
 
-UNIT_CIRCLE_VERTEX_COUNT :: 30
+UNIT_CIRCLE_VERTEX_COUNT :: 48
 
 
 Quad :: struct {
@@ -177,6 +177,7 @@ renderer_init :: proc() {
     window.texture_buffer = sbo_init(u64, MAX_TEXTURE_HANDLES)
     
     window.shader_global_buffer = ubo_init(Shader_Globals, 1)
+    window.slider_param_buffer  = ubo_init(Slider_Globals, 1)
 
 
     window.pass_action = { 
@@ -236,6 +237,7 @@ renderer_init :: proc() {
 renderer_cleanup :: proc() {
     tbo_cleanup(&window.quad_store)
     tbo_cleanup(&window.text_store)
+    ubo_cleanup(&window.slider_param_buffer)
     
     sbo_cleanup(&window.fullscreen_store)
     sbo_cleanup(&window.circle_geo_buffer)
@@ -362,7 +364,9 @@ Command_Draw :: struct {
 
 Command_Draw_Slider :: struct {
     base_instance: u32,
-    instance_count: i32
+    instance_count: i32,
+    border_color: [4]f32,
+    body_color:   [4]f32,
 }
 
 Command_Bind_Pipeline :: struct {
@@ -676,10 +680,14 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 }
                 case .DRAW_SLIDER: {
                     cmd := _command_consume(&command_queue, Command_Draw_Slider)
-                                    
+
+                    slider_globals := Slider_Globals{cmd.border_color, cmd.body_color}
+                    gl.NamedBufferSubData(window.slider_param_buffer.id, 0, size_of(Slider_Globals), &slider_globals)
+                    ubo_bind(&window.slider_param_buffer, u32(Shader_SSBO_Bind_Slot.SLIDER_PARAMS))
+
                     gl.DrawArraysInstancedBaseInstance(
-                        gl.TRIANGLE_FAN, 
-                        0, 
+                        gl.TRIANGLE_FAN,
+                        0,
                         renderer.circle_geometry.count,
                         cmd.instance_count, cmd.base_instance)
 

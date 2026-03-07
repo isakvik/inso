@@ -51,6 +51,7 @@ window: struct {
     text_store: GL_Triple_Buffer(Glyph_Quad),
     
     shader_global_buffer: GL_Uniform_Buffer(Shader_Globals),
+    slider_param_buffer: GL_Uniform_Buffer(Slider_Globals),
     circle_geo_buffer: GL_Buffer(Slider_Vertex),
     texture_buffer: GL_Buffer(u64),
 

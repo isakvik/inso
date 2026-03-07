@@ -35,11 +35,11 @@ rendering
     
 gameplay
     score system
+    replays
     
     phase 2 visuals
         object dimming
         drop shadow
-        slider border
         proper snaking sliders
     
 lua 

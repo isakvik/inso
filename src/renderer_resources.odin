@@ -54,6 +54,13 @@ Shader_SSBO_Bind_Slot :: enum u32 {
     TRANSFORM,
     TEXTURES,
     INSTANCE_BUFFER,
+    SLIDER_PARAMS, // note(isak): UBO — separate namespace from SSBOs, no slot collision
+}
+
+// note(isak): per-draw slider colors, uploaded before each DRAW_SLIDER command
+Slider_Globals :: struct {
+    border_color: vec4,
+    body_color:   vec4,
 }
 
 

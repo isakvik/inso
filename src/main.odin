@@ -603,7 +603,7 @@ end_frame :: proc(renderer: ^Renderer) {
 process_builtin_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
     updated_systems := mapset_check_system_file_watch(watch)
     if updated_systems[.SHADERS] {
-        for &shader in window.shaders.data {
+        for &shader in window.shaders.data[:len(Builtin_Pipeline_Slot)] {
             shader_reinit(&shader)
         }
         fmt.println("reloaded builtin shaders")
@@ -611,5 +611,7 @@ process_builtin_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
         pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.QUAD)], quad_pipeline_desc())
         pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.SLIDER)], slider_pipeline_desc())
         pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.TEXT)], text_pipeline_desc())
+        
+        // todo(isak): need hot reloading for mapset shaders too
     }
 }

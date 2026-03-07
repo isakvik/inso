@@ -437,7 +437,7 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
         mu.layout_row(ctx, {54, -1}, 0)
         mu.label(ctx, "Time:")
         
-        timer_str := time_ms_to_string(game.beatmap.music_time_ms)
+        timer_str := time_ms_to_string(beatmap_music_time_ms(&game.beatmap))
         mu.label(ctx, timer_str)
         
         mu.layout_row(ctx, {54, -1}, 0)
@@ -454,11 +454,8 @@ write_debug_ui :: proc(ctx: ^mu.Context) {
         mu.label(ctx, game.input.mouse_keys_enabled ? "on" : "off")
         
         mu.layout_row(ctx, {80, 10, -1}, 0)
-        mu.label(ctx, "cur redline:")
-        mu.label(ctx, fmt.tprint(game.beatmap.current_timing_point_index_uninherited))
-        mu.layout_row(ctx, {80, 10, -1}, 0)
-        mu.label(ctx, "cur greenline:")
-        mu.label(ctx, fmt.tprint(game.beatmap.current_timing_point_index_inherited))
+        mu.label(ctx, "universal offset:")
+        mu.label(ctx, fmt.tprint(game.universal_offset_ms))
     }
 }
 
@@ -585,7 +582,7 @@ begin_frame :: proc(renderer: ^Renderer) {
     r_set_shader_globals({
         transform = identity_transform,
         circle_size_osupx = game.beatmap.circle_radius_osupx,
-        time = f32(game.beatmap.music_time_ms)
+        time = f32(beatmap_music_time_ms(&game.beatmap))
     })
 
     r_bind_layer(.BACKGROUND)

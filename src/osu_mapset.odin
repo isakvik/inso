@@ -374,6 +374,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                             result.audio_filename = strings.clone(value)
                             result.audio_filepath = strings.concatenate({mapset.folder_path, value})
                         case "AudioLeadIn": result.audio_lead_in, ok = strconv.parse_f64(value); assert(ok)
+                        case "PreviewTime": result.preview_time_ms, ok = strconv.parse_f64(value); assert(ok)
                         case "SampleSet": 
                             switch value {
                                 case "Normal": result.sample_set = .NORMAL
@@ -487,30 +488,37 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                                 is_slider    := type_flags & (1 << 1)
                                 is_nc        := type_flags & (1 << 2)
                                 is_spinner   := type_flags & (1 << 3)
-                                colorhax_inc := type_flags & (0b111 << 4)
 
-                                if is_circle > 0 { 
-                                    hobj.type = .CIRCLE 
+                                if is_circle > 0 {
+                                    hobj.type = .CIRCLE
                                 }
-                                else if is_slider > 0 { 
-                                    hobj.type = .SLIDER_HEAD 
+                                else if is_slider > 0 {
+                                    hobj.type = .SLIDER_HEAD
                                 }
-                                else if is_spinner > 0 { 
-                                    hobj.type = .SPINNER 
+                                else if is_spinner > 0 {
+                                    hobj.type = .SPINNER
                                 }
+
+                                if is_nc > 0 { hobj.flags |= {.NEW_COMBO} }
+                                hobj.combo_color_offset = u8((type_flags >> 4) & 0b111)
                             case 4:
-                                // hitsound flag
+                                hitsound, _ := strconv.parse_int(value)
+                                hobj.hitsound_flags = byte(hitsound)
+                                if hitsound & 2 != 0 { hobj.flags |= {.WHISTLE} }
+                                if hitsound & 4 != 0 { hobj.flags |= {.FINISH}  }
+                                if hitsound & 8 != 0 { hobj.flags |= {.CLAP}    }
                             case 5:
                                 hobj_extra_params = lines[i][from_i:]
                                 break
                         }
                     }
 
-                    if hobj.type != .SLIDER_HEAD {
-                        hobj.end_time_ms = hobj.start_time_ms
-                    }
-                    
-                    if hobj.type == .SLIDER_HEAD {
+                    #partial switch hobj.type {
+                    case .SPINNER:
+                        ok: bool
+                        hitsound_params_at := strings.index_byte(hobj_extra_params, ',')
+                        hobj.end_time_ms, ok = strconv.parse_f64(hobj_extra_params[:hitsound_params_at]); assert(ok)
+                    case .SLIDER_HEAD:
                         slider: Slider_Path = {
                             bounds_min = {math.F32_MAX, math.F32_MAX},
                             bounds_max = {math.F32_MIN, math.F32_MIN},
@@ -521,6 +529,8 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                                                       
                         hobj.slider_path_index = int(slider_temp_queue.len)
                         q.append(&slider_temp_queue, slider)
+                    case:
+                        hobj.end_time_ms = hobj.start_time_ms
                     }
                 }
 

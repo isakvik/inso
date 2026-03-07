@@ -13,7 +13,7 @@ Beatmap :: struct {
     // -- game data fields
     
     music: Sound,
-    music_time_ms: f64,
+    music_time_ms: f64, // note(isak): for game logic, don't refer to this directly, use beatmap_time_ms() instead
     music_time_uninterpolated_ms: f64,
     length_ms: f64,
     start_time_ms: f64,
@@ -196,8 +196,16 @@ beatmap_reload :: proc(beatmap: ^Beatmap, keep_song_position: bool = false) {
 }
 
 beatmap_seek :: proc(beatmap: ^Beatmap, pos: f64) {
-    game.beatmap.music_time_ms = pos
+    game.beatmap.music_time_ms = beatmap_game_time_to_music_time(beatmap, pos)
     sound_set_position_ms(&game.beatmap.music, pos)
+}
+
+beatmap_music_time_ms :: proc(beatmap: ^Beatmap) -> f64 {
+    return beatmap.music_time_ms + game.universal_offset_ms // + beatmap.local_offset_ms
+}
+
+beatmap_game_time_to_music_time :: proc(beatmap: ^Beatmap, game_time: f64) -> f64 {
+    return game_time - game.universal_offset_ms // - beatmap.local_offset_ms
 }
 
 
@@ -273,7 +281,7 @@ beatmap_pause :: proc(beatmap: ^Beatmap, pause: bool) {
 
 beatmap_update_current_timing_section :: proc(beatmap: ^Beatmap) -> (bpm_changed: bool) {
     for timing_point in game.active_map.timing_points[beatmap.current_timing_point_index_inherited:] {
-        if beatmap.music_time_ms < timing_point.time {
+        if beatmap_music_time_ms(beatmap) < timing_point.time {
             break
         }
         if timing_point.type == .UNINHERITED {
@@ -290,9 +298,10 @@ beatmap_update_current_timing_section :: proc(beatmap: ^Beatmap) -> (bpm_changed
 
 beatmap_check_new_beat :: proc(beatmap: ^Beatmap) {
     timing_point := &game.active_map.timing_points[beatmap.current_timing_point_index_uninherited]
-    if beatmap.music_time_ms >= timing_point.time {
+    game_time_ms := beatmap_music_time_ms(beatmap)
+    if game_time_ms >= timing_point.time {
         beat := timing_point.starts_at_beat + 
-            max(0, int((beatmap.music_time_ms - timing_point.time) / timing_point.beat_length))
+            max(0, int((game_time_ms - timing_point.time) / timing_point.beat_length))
         if beat != beatmap.current_beat {
             lua_beatmap_on_beat(beat)
         }
@@ -302,7 +311,8 @@ beatmap_check_new_beat :: proc(beatmap: ^Beatmap) {
 
 beatmap_check_timing_change :: proc(beatmap: ^Beatmap) {
     timing_point := &game.active_map.timing_points[beatmap.current_timing_point_index_uninherited]
-    beat := timing_point.starts_at_beat + int((beatmap.music_time_ms - timing_point.time) / timing_point.beat_length)
+    game_time_ms := beatmap_music_time_ms(beatmap)
+    beat := timing_point.starts_at_beat + int((game_time_ms - timing_point.time) / timing_point.beat_length)
     
     bpm := 60000 / max(timing_point.beat_length, 1)
     lua_beatmap_on_timing_change(beat, bpm)

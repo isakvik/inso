@@ -86,8 +86,8 @@ function _on_pause_change(paused)
     end
 end
 
-function _on_judgement(hobj, judgement, timing_error_ms) 
-    print(hobj:get_pos(), judgement, timing_error_ms)
+function on_judgement(hobj, judgement, timing_error_ms) 
+    print(timing_error_ms)
 end
 
 

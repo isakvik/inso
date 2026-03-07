@@ -441,10 +441,11 @@ render_drawable :: proc(e: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
 }
 
 process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Drawable_Handle)) {
+    map_time := beatmap_music_time_ms(&game.beatmap)
     for handle in expiring_gfx_refs.current {
         e := slotmap.get(&game.beatmap.drawables, handle) or_continue
         if .ACTIVE in e.flags {
-            still_alive := render_drawable(e, game.beatmap.music_time_ms)
+            still_alive := render_drawable(e, map_time)
             if still_alive {
                 sb.append_next(expiring_gfx_refs, handle)
             } else {
@@ -499,7 +500,7 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Pat
     r_clear()
     
     slider_snake_in_time_ms := game.beatmap.preempt_ms * (1.0/3.0)
-    slider_snake_in_time_at := game.beatmap.music_time_ms - hobj.start_time_ms + game.beatmap.preempt_ms
+    slider_snake_in_time_at := beatmap_music_time_ms(&game.beatmap) - hobj.start_time_ms + game.beatmap.preempt_ms
     slider_snake_instances := i32(f64(slider.instance_count) * clamp(slider_snake_in_time_at / slider_snake_in_time_ms, 0, 1))
     
     command_push_draw_slider(Command_Draw_Slider{

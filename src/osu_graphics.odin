@@ -16,7 +16,11 @@ skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
     .HIT_CIRCLE_OVERLAY = .HITCIRCLEOVERLAY,
     .APPROACH_CIRCLE = .APPROACHCIRCLE,
     .COMBO_NUMBER = .COMBO_1,
-    .JUDGEMENT = .LIGHTING,
+    
+    .JUDGEMENT_MISS = .HIT0,
+    .JUDGEMENT_OK = .HIT50,
+    .JUDGEMENT_GOOD = .HIT100,
+    .JUDGEMENT_MARVELOUS = .HIT300,
 }
 
 //////////////////////////////////////////////////////
@@ -113,7 +117,10 @@ Element_Type :: enum {
 
     CLICKED_HIT_CIRCLE,
     CLICKED_HIT_CIRCLE_OVERLAY,
-    JUDGEMENT,
+    JUDGEMENT_MISS,
+    JUDGEMENT_OK,
+    JUDGEMENT_GOOD,
+    JUDGEMENT_MARVELOUS,
     
     CUSTOM_ELEMENT
 }
@@ -237,7 +244,7 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
         })
     }
     
-    elements.data[builtin_element_slot(.JUDGEMENT)] = {
+    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS)] = {
         tex = skin_texture(.LIGHTING),
 
         animations = animation_new(anims, 
@@ -306,7 +313,7 @@ drawable_new_expiring :: proc(buf: ^sb.Swap_Buffer(Drawable_Handle), d: Drawable
     return result
 }
 
-clear_hitobject_drawables :: proc(hobj: ^Hit_Object) {
+clear_hitobject_drawables :: proc(hobj: ^Hitobject) {
     for handle in hobj.gfx_handles {
         slotmap.remove(&game.beatmap.drawables, handle)
     }
@@ -340,29 +347,33 @@ reserve_handles :: proc(buf: ^rb.Ring_Buffer(Drawable_Handle), #any_int n: int) 
 }
 
 write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
-    for &hobj in game.beatmap.hit_objects {
+    for &hobj in game.beatmap.hitobjects {
         hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
         hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, len(hit_circle_el_types)) or_continue
         #reverse for el_type, i in hit_circle_el_types {
-            e := Drawable{
+            d := Drawable{
                 flags = {.ACTIVE},
                 element = builtin_element_slot(el_type),
-                layer = .HIT_OBJECTS,
+                layer = .HITOBJECTS,
                 size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
                 color = with_alpha(color_white, 1),
                 start_time_ms = hobj.start_time_ms - game.beatmap.preempt_ms,
                 end_time_ms = hobj.start_time_ms,
             }
-            if el_type == .COMBO_NUMBER {
-                e.size.x *= 0.2
-                e.size.y *= 0.4
+            if el_type == .HIT_CIRCLE || el_type == .HIT_CIRCLE_OVERLAY || el_type == .COMBO_NUMBER {
+                d.end_time_ms += game.beatmap.timing_windows.ok
             }
             if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE {
-                e.color = color_purple
+                d.color = color_purple
             }
             
-            hobj.gfx_handles[i] = drawable_new(e)
+            if el_type == .COMBO_NUMBER {
+                d.size.x *= 0.2
+                d.size.y *= 0.4
+            }
+            
+            hobj.gfx_handles[i] = drawable_new(d)
         }
     }
 }
@@ -435,7 +446,7 @@ process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Dr
         if .ACTIVE in e.flags {
             still_alive := render_drawable(e, game.beatmap.music_time_ms)
             if still_alive {
-                append(expiring_gfx_refs.next, handle)
+                sb.append_next(expiring_gfx_refs, handle)
             } else {
                 slotmap.remove(&game.beatmap.drawables, handle)
             }
@@ -461,7 +472,7 @@ slider_screenspace_bounding_box :: proc(slider: ^Slider_Path) -> (result: Rect) 
     return result
 }
 
-render_slider :: proc(renderer: ^Renderer, hobj: ^Hit_Object, slider: ^Slider_Path) {
+render_slider :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Path) {
     pf_size: f32 = playfield_size_osupx / game.beatmap.circle_radius_osupx
 
     slider_translation := -hobj.script_pos_translation / 2

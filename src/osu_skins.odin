@@ -10,6 +10,11 @@ Skin_Element_Type :: enum u32 {
     HITCIRCLE,
     HITCIRCLEOVERLAY,
     LIGHTING,
+    
+    HIT0,
+    HIT50,
+    HIT100,
+    HIT300,
 
     COMBO_1,
 }
@@ -25,7 +30,13 @@ Skin_Element_Path := #partial [Skin_Element_Type]string {
     .APPROACHCIRCLE     = "approachcircle",
     .HITCIRCLE          = "hitcircle",
     .HITCIRCLEOVERLAY   = "hitcircleoverlay",
-    .LIGHTING           = "default-1",
+    .LIGHTING           = "lighting",
+    
+    .HIT0   = "hit0",
+    .HIT50  = "hit50",
+    .HIT100 = "hit100",
+    .HIT300 = "hit300",
+    
     .COMBO_1            = "default-1",
 }
 

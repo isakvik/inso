@@ -4,7 +4,7 @@ import sb "swap_buffer"
 import "slotmap"
 import rb "ring_buffer"
 
-import q "core:container/queue"
+import "core:container/queue"
 import "core:log"
 import "core:strings"
 
@@ -25,10 +25,15 @@ Beatmap :: struct {
     last_music_position_interpolation_check_time: f64,
     last_accurate_music_position_set_time: f64,
     
-    hit_objects: []Hit_Object,
+    hitobjects: []Hitobject,
     slider_paths: []Slider_Path,
     
-    visible_hit_object_state: Visibility_State,
+    judgements: queue.Queue(Judgement),
+    expiring_hitobjects: sb.Swap_Buffer(int), // note(isak): keeps track of objects that have been visible at some point
+    
+    timing_windows: Timing_Window,
+    
+    visible_hitobject_state: Visibility_State,
     preempt_ms: f64,
     circle_radius_osupx: f32,
     
@@ -46,8 +51,8 @@ Beatmap :: struct {
     
     // note(isak): drawables refer to an element, which in turn refer to a set of animations that determine
     // the final quad. the given element of an drawable can be overridden mid-map by scripts for effects
-    elements: q.Queue(Element),
-    animations: q.Queue(Animation),
+    elements: queue.Queue(Element),
+    animations: queue.Queue(Animation),
 }
 
 beatmap_on_init :: proc(beatmap: ^Beatmap) {
@@ -58,20 +63,25 @@ beatmap_on_init :: proc(beatmap: ^Beatmap) {
     
     beatmap.circle_radius_osupx = convert_circle_size_to_radius_osupx(game.active_map.diff_circle_size)
     beatmap.preempt_ms = convert_approach_rate_to_preempt_ms(game.active_map.diff_approach_rate)
+    beatmap.timing_windows = convert_overall_difficulty_to_timing_window(game.active_map.diff_overall_difficulty)
     
     beatmap.length_ms = sound_get_length_ms(&beatmap.music)
     beatmap.start_time_ms = -beatmap.preempt_ms
     beatmap.music_time_ms = beatmap.start_time_ms
     
-    beatmap.hit_objects = game.active_map.hit_objects
+    beatmap.hitobjects = game.active_map.hitobjects
     beatmap.slider_paths = game.active_map.slider_paths
+    
+    queue.init(&beatmap.judgements, 8192, memory.allocators[.JUDGEMENTS])
+    queue.append(&beatmap.judgements, null_judgement)
+    sb.init(&beatmap.expiring_hitobjects, 256, memory.allocators[.MAPSET])
     
     // map graphics init
     
     beatmap.next_drawable_id = 1
-    q.init(&beatmap.elements, 1024, memory.allocators[.MAPSET])
-    q.append(&beatmap.elements, null_element)
-    q.init(&beatmap.animations, 1024, memory.allocators[.MAPSET])
+    queue.init(&beatmap.elements, 1024, memory.allocators[.MAPSET])
+    queue.append(&beatmap.elements, null_element)
+    queue.init(&beatmap.animations, 1024, memory.allocators[.MAPSET])
 
     write_default_elements(&beatmap.elements, &beatmap.animations)
     
@@ -133,13 +143,16 @@ beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
     lua_cleanup()
     sound_destroy(&beatmap.music)
     
-    for &hobj in beatmap.hit_objects {
+    for &hobj in beatmap.hitobjects {
         hobj.gfx_handles = {}
     }
     
     rb.destroy(&beatmap.persistent_gfx)
+    sb.destroy(&beatmap.map_expiring_gfx)
     sb.destroy(&beatmap.gameplay_expiring_gfx)
+    sb.destroy(&beatmap.expiring_hitobjects)
     slotmap.destroy(&beatmap.drawables)
+    queue.destroy(&beatmap.judgements)
 }
 
 beatmap_load :: proc(beatmap: ^Beatmap) {
@@ -168,7 +181,7 @@ beatmap_reload :: proc(beatmap: ^Beatmap, keep_song_position: bool = false) {
     beatmap_on_destroy(beatmap)
     
     game.mode = .PLAY
-    beatmap.visible_hit_object_state = {}
+    beatmap.visible_hitobject_state = {}
     
     game.active_mapset = mapset_free_and_reload(game.active_mapset)
     game.active_map = &game.active_mapset.osu_map
@@ -177,12 +190,14 @@ beatmap_reload :: proc(beatmap: ^Beatmap, keep_song_position: bool = false) {
     
     if keep_song_position {
         if !game.paused do music_time_before_load += current_time_ms() - time_before_load_ms
-        
-        game.beatmap.music_time_ms = music_time_before_load
-        sound_set_position_ms(&game.beatmap.music, music_time_before_load)
-        
+        beatmap_seek(beatmap, music_time_before_load)        
         if !game.paused do sound_resume(&game.beatmap.music)
     }
+}
+
+beatmap_seek :: proc(beatmap: ^Beatmap, pos: f64) {
+    game.beatmap.music_time_ms = pos
+    sound_set_position_ms(&game.beatmap.music, pos)
 }
 
 

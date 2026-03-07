@@ -112,7 +112,9 @@ win32_watch_get_next_notify :: proc(watch: ^Win32_Directory_Watch, filename_buf:
     notify_at := rawptr(uintptr(&watch.notify_buffer) + uintptr(watch.notify_read_offset))
     notify := (^Win32_File_Notify_Info)(notify_at)
 
-    if notify.file_name_length > 0 {
+    // note(isak): for some reason, this sometimes gets filled with garbage during debug stepping and leads to a 
+    // buffer overrun
+    if notify.file_name_length > 0 && notify.file_name_length < MAX_PATH {
         filename_cs16 := ([^]u16)(&notify.file_name)
         filename_str_len := notify.file_name_length / size_of(windows.wchar_t)
 
@@ -124,5 +126,9 @@ win32_watch_get_next_notify :: proc(watch: ^Win32_Directory_Watch, filename_buf:
         watch.notify_read_offset += notify.next_entry_offset
         return notify, filename_str_len
     }
+    if notify.file_name_length > MAX_PATH {
+        assert(false, "notify was (probably) garbage. check the params")
+    }
+    
     return notify, 0
 }

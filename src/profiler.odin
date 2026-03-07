@@ -185,7 +185,7 @@ profiler_push_memory_diag_text :: proc(renderer: ^Renderer) {
     // note(isak): command buffer section
     x_inc = 0
     x_inc_max = min(f32)
-    pos_top_right.y += y_spacing * len(Memory_Arenas)
+    pos_top_right.y += y_spacing * len(Memory_Arena_Type)
 
     for layer in Layer {
         unit_i: int

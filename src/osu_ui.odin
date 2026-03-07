@@ -55,7 +55,7 @@ ui_update_timeline :: proc(ui: ^UI_Timeline, time_value: ^f64) -> (result: bool)
 
         result = true
         
-        game.beatmap.visible_hit_object_state = {}
+        game.beatmap.visible_hitobject_state = {}
 
         if !is_down(mouse.buttons[.LEFT]) {
             game.paused = ui.pause_on_release

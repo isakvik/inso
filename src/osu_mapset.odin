@@ -458,13 +458,13 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                     }
                 }
             case .HITOBJECTS:
-                result.hit_objects = make_slice([]Hit_Object, len(lines) - 1)
+                result.hitobjects = make_slice([]Hitobject, len(lines) - 1)
 
                 slider_temp_queue: q.Queue(Slider_Path)
                 q.init(&slider_temp_queue, 1024, context.temp_allocator)
                 
                 for i in 1..<len(lines) {
-                    hobj := &result.hit_objects[i - 1]
+                    hobj := &result.hitobjects[i - 1]
                     hobj_extra_params: string
 
                     // note(isak): parse base params - every hobj type has a differing set of params after these
@@ -482,7 +482,6 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                             case 2: hobj.start_time_ms, _ = strconv.parse_f64(value)
                             case 3: 
                                 type_flags, _ := strconv.parse_int(value)
-                                hobj.type_flags = type_flags
 
                                 is_circle    := type_flags & (1 << 0)
                                 is_slider    := type_flags & (1 << 1)
@@ -494,7 +493,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                                     hobj.type = .CIRCLE 
                                 }
                                 else if is_slider > 0 { 
-                                    hobj.type = .SLIDER 
+                                    hobj.type = .SLIDER_HEAD 
                                 }
                                 else if is_spinner > 0 { 
                                     hobj.type = .SPINNER 
@@ -507,11 +506,11 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                         }
                     }
 
-                    if hobj.type != .SLIDER {
+                    if hobj.type != .SLIDER_HEAD {
                         hobj.end_time_ms = hobj.start_time_ms
                     }
                     
-                    if hobj.type == .SLIDER {
+                    if hobj.type == .SLIDER_HEAD {
                         slider: Slider_Path = {
                             bounds_min = {math.F32_MAX, math.F32_MAX},
                             bounds_max = {math.F32_MIN, math.F32_MIN},
@@ -540,7 +539,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
 
 mapset_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
     
-    sort.quick_sort_proc(osu_map.hit_objects, proc(a, b: Hit_Object) -> int {
+    sort.quick_sort_proc(osu_map.hitobjects, proc(a, b: Hitobject) -> int {
         return int(a.start_time_ms) - int(b.start_time_ms)
     })
     
@@ -557,7 +556,7 @@ mapset_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
     current_timing_point_index_uninherited: int
     current_timing_point_index_inherited: int
     
-    for &hobj, i in osu_map.hit_objects {
+    for &hobj, i in osu_map.hitobjects {
         hobj.index = i
         
         // note(isak): millisecond lookup has to point to the first hitobject in case of 
@@ -588,7 +587,7 @@ mapset_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
         hobj.timing_point_index_uninherited = current_timing_point_index_uninherited
         hobj.timing_point_index_inherited = current_timing_point_index_inherited
         
-        if hobj.type == .SLIDER {
+        if hobj.type == .SLIDER_HEAD {
             slider_length := osu_map.slider_paths[hobj.slider_path_index].distance_osupx
             uninherited_beat_length := osu_map.timing_points[current_timing_point_index_uninherited].beat_length
             
@@ -604,7 +603,7 @@ mapset_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
     }
 }
 
-mapset_parse_osu_slider_params :: proc(hobj: ^Hit_Object, slider: ^Slider_Path, params: string, alloc: mem.Allocator = context.allocator) {
+mapset_parse_osu_slider_params :: proc(hobj: ^Hitobject, slider: ^Slider_Path, params: string, alloc: mem.Allocator = context.allocator) {
     from_i, s_len: int
     arg_i: int
     for from_i < len(params) && 0 <= s_len {
@@ -719,6 +718,15 @@ convert_approach_rate_to_preempt_ms :: proc(ar: f64) -> f64 {
 
 convert_circle_size_to_radius_osupx :: proc(cs: f64) -> f32 {
     return f32((54.4 - 4.48 * cs) * 1.00041)
+}
+
+convert_overall_difficulty_to_timing_window :: proc(od: f64) -> Timing_Window {
+    return {
+        marvelous = 80 - 6 * od,
+        good = 140 - 8 * od,
+        ok = 200 - 10 * od,
+        miss = 400,
+    }
 }
 
 

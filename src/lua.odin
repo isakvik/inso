@@ -119,7 +119,7 @@ luaapi_global_funcs := []lua.L_Reg {
 // note(isak): we use reflection to pull the names and associated enums directly to lua tables
 luaapi_enum_constants := [?]struct { t: typeid, name: cstring }{
     { Layer, "Layer" },
-    { Judgement, "Judgement" },
+    { Judgement_Type, "Judgement" },
     { Layout_Anchor, "Anchor" },
 }
 
@@ -450,10 +450,10 @@ lua_beatmap_on_cursor_moved :: proc(pos: vec2) {
     )
 }
 
-lua_beatmap_on_judgement :: proc(hobj_index: int, judgement: Judgement, timing_error_ms: f64) {
+lua_beatmap_on_judgement :: proc(hobj_index: int, judgement: Judgement_Type, timing_error_ms: f64) {
     Lua_Judgement_Result :: struct {
         hobj_index: int,
-        judgement: Judgement,
+        judgement: Judgement_Type,
         timing_error_ms: f64,
     }
     lua_call_beatmap_func(lua_beatmap_event_names[.ON_JUDGEMENT], Lua_Judgement_Result{hobj_index, judgement, timing_error_ms},
@@ -463,9 +463,9 @@ lua_beatmap_on_judgement :: proc(hobj_index: int, judgement: Judgement, timing_e
             switch judgement.judgement {
             case .NONE: judgement_name = "None"
             case .MISS: judgement_name = "Miss"
-            case .BAD: judgement_name = "Bad"
-            case .GOOD: judgement_name = "Good"
-            case .GREAT: judgement_name = "Great"
+            case .OK: judgement_name = "50"
+            case .GOOD: judgement_name = "100"
+            case .MARVELOUS: judgement_name = "300"
             case .SLIDER_SMALL_SCOREPOINT: judgement_name = "SliderSmallScorepoint"
             case .SLIDER_LARGE_SCOREPOINT: judgement_name = "SliderLargeScorepoint"
             case .IGNORED_HIT: judgement_name = "IgnoredHit"
@@ -970,7 +970,7 @@ luaapi_hitobject_get_in_range_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
     default_array_size: i32 = 64
     lua.createtable(L, default_array_size, 0)
     
-    for hobj, i in game.beatmap.hit_objects[hitobject_index:len(game.beatmap.hit_objects)] {
+    for hobj, i in game.beatmap.hitobjects[hitobject_index:len(game.beatmap.hitobjects)] {
         if hobj.start_time_ms < f64(from_ms) do continue
         if f64(to_ms) < hobj.start_time_ms do break
         
@@ -983,18 +983,18 @@ luaapi_hitobject_get_in_range_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
 
 _luaapi_hitobject_op :: proc "c" (
     L: ^lua.State, 
-    op: proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32
+    op: proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32
 ) -> (result: i32) {
     handle := cast(^int)lua.L_checkudata(L, 1, lua_classes[.HITOBJECT].name)
-    if handle^ < len(game.beatmap.hit_objects) {
-        hobj := &game.beatmap.hit_objects[handle^]
+    if handle^ < len(game.beatmap.hitobjects) {
+        hobj := &game.beatmap.hitobjects[handle^]
         result = op(L, hobj) + lua_return_self()
     }
     return result
 }
 
 luaapi_hitobject_hide :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32 {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         context = lua_beatmap.odin_context
         for handle in hobj.gfx_handles {
             d, found := slotmap.get(&game.beatmap.drawables, handle)
@@ -1005,7 +1005,7 @@ luaapi_hitobject_hide :: proc "c" (L: ^lua.State) -> (result: i32) {
 }
 
 luaapi_hitobject_unhide :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32 {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         context = lua_beatmap.odin_context
         for handle in hobj.gfx_handles {
             d, found := slotmap.get(&game.beatmap.drawables, handle)
@@ -1016,14 +1016,14 @@ luaapi_hitobject_unhide :: proc "c" (L: ^lua.State) -> (result: i32) {
 }
 
 luaapi_hitobject_get_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32 {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         lua.pushnumber(L, lua.Number(hobj.pos.x))
         lua.pushnumber(L, lua.Number(hobj.pos.y))
         return 2
     })
 }
 luaapi_hitobject_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32 {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         // note(isak): we forcibly make the translation non-relative. might not keep this?
         hobj.script_pos_translation.x = f32(lua_number(2)) - hobj.pos.x
         hobj.script_pos_translation.y = f32(lua_number(3)) - hobj.pos.y
@@ -1032,26 +1032,26 @@ luaapi_hitobject_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
 }
 
 luaapi_hitobject_get_start_time :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32 {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         lua.pushnumber(L, lua.Number(hobj.start_time_ms))
         return 1
     })
 }
 luaapi_hitobject_set_start_time :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32 {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         hobj.start_time_ms = f64(lua_number(2))
         return 0
     })
 }
 
 luaapi_hitobject_get_end_time :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32 {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         lua.pushnumber(L, lua.Number(hobj.end_time_ms))
         return 1
     })
 }
 luaapi_hitobject_set_end_time :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hit_Object) -> i32 {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         hobj.end_time_ms = f64(lua_number(2))
         return 0
     })

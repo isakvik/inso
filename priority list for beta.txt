@@ -6,6 +6,8 @@ scripting
     api
     versioning (version capabilities?)
         is this needed?
+    event system
+    messaging system
 
 game mechanics (not score, replays, etc)
     phase 1 visuals

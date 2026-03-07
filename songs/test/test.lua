@@ -58,7 +58,7 @@ function on_init()
     end
 end
 
-function on_update(time_ms)
+function _on_update(time_ms)
     for i, hobj in ipairs(list) do 
         x, y = hobj:get_pos()
         x = x + math.cos((time_ms*i*0.01) / 1000 + i*0.1)* 100
@@ -69,15 +69,15 @@ function on_update(time_ms)
     end
 end
 
-function on_beat(beat)
+function _on_beat(beat)
     -- every 1/1, index 1 meaning the first given timing section
     print("beat: " .. beat)
 end
-function on_timing_change(beat, bpm)
+function _on_timing_change(beat, bpm)
     -- every redline
     print("timing change: " .. beat .. " " .. bpm)
 end
-function on_pause_change(paused)
+function _on_pause_change(paused)
     -- boolean
     if paused then
         print("paused")
@@ -86,8 +86,8 @@ function on_pause_change(paused)
     end
 end
 
-function on_judgement(hobj, judgement, timing_error_ms) 
-    print(hobj, judgement, timing_error_ms)
+function _on_judgement(hobj, judgement, timing_error_ms) 
+    print(hobj:get_pos(), judgement, timing_error_ms)
 end
 
 

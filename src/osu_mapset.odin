@@ -357,35 +357,6 @@ mapset_reinit_custom_shaders :: proc(mapset: ^Mapset) {
     log.info("reloaded mapset custom shaders")
 }
 
-mapset_load_shader_entry :: proc(mapset: ^Mapset, name, vs, fs: string, blend_mode: Blend_Mode) {
-    if name == "" do return
-    if vs == "" || fs == "" {
-        log.errorf("mapset shader '{}': missing VertexShader or FragmentShader, skipping", name)
-        return
-    }
-    // note(isak): take ownership
-    vs := strings.clone(vs, memory.allocators[.MAPSET])
-    fs := strings.clone(fs, memory.allocators[.MAPSET])
-    shader, err := shader_init(vs, fs, context.temp_allocator)
-    if err != .NONE {
-        log.errorf("mapset shader '{}': compile error, skipping", name)
-        return
-    }
-    queue.push(&window.shaders, shader)
-    
-    name_key := strings.clone(name, memory.allocators[.MAPSET])
-    mapset.pipeline_slot_by_name[name_key] = u32(mapset.num_shaders)
-    append(&mapset.shader_blend_modes, blend_mode)
-    
-    desc := quad_pipeline_desc()
-    desc.shader = shader.shader
-    desc.colors[0].blend = blend_state_for_mode(blend_mode)
-    queue.push(&window.pipelines, sg.make_pipeline(desc))
-    
-    log.infof("mapset shader '{}' loaded (blend: {})", name, blend_mode)
-    mapset.num_shaders += 1
-}
-
 
 mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
     result: Osu_Map
@@ -603,6 +574,36 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
     
     return result
 }
+
+mapset_load_shader_entry :: proc(mapset: ^Mapset, name, vs, fs: string, blend_mode: Blend_Mode) {
+    if name == "" do return
+    if vs == "" || fs == "" {
+        log.errorf("mapset shader '{}': missing VertexShader or FragmentShader, skipping", name)
+        return
+    }
+    
+    vs := strings.clone(vs)
+    fs := strings.clone(fs)
+    shader, err := shader_init(vs, fs, context.temp_allocator)
+    if err != .NONE {
+        log.errorf("mapset shader '{}': compile error, skipping", name)
+        return
+    }
+    queue.push(&window.shaders, shader)
+    
+    name_key := strings.clone(name)
+    mapset.pipeline_slot_by_name[name_key] = u32(mapset.num_shaders)
+    append(&mapset.shader_blend_modes, blend_mode)
+    
+    desc := quad_pipeline_desc()
+    desc.shader = shader.shader
+    desc.colors[0].blend = blend_state_for_mode(blend_mode)
+    queue.push(&window.pipelines, sg.make_pipeline(desc))
+    
+    log.infof("mapset shader '{}' loaded (blend: {})", name, blend_mode)
+    mapset.num_shaders += 1
+}
+
 
 mapset_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
     

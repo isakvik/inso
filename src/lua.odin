@@ -2,6 +2,7 @@ package notosu
 
 import "base:runtime"
 import "base:intrinsics"
+import c "core:c"
 import "core:log"
 import os "core:os/os2"
 import "core:slice"
@@ -21,7 +22,8 @@ lua_beatmap: struct {
     state: ^lua.State,
     odin_context: runtime.Context,
     registered_events: bit_set[Lua_Beatmap_Event_Type],
-    
+    event_registrations: [dynamic]Lua_Event_Registration,
+
     last_rendered_timestamp_ms: f64,
 }
 
@@ -106,6 +108,7 @@ luaapi_global_funcs := []lua.L_Reg {
   { "controller_is_up", luaapi_controller_is_up },
   { "key_is_down", luaapi_key_is_down },
   { "key_is_up", luaapi_key_is_up },
+  { "trigger_event", luaapi_trigger_event },
   
   /* todo(isak) implement (maybe on Beatmap object):
   { "get_music_time", luaapi_get_music_time },
@@ -122,6 +125,14 @@ luaapi_enum_constants := [?]struct { t: typeid, name: cstring }{
     { Judgement_Type, "Judgement" },
     { Layout_Anchor, "Anchor" },
 }
+
+Lua_Event_Registration :: struct {
+    name:         string,   // points into Lua state memory - valid until Lua state is closed
+    callback_ref: lua.Ref,  // luaL_ref into LUA_REGISTRYINDEX
+    class:        Lua_Class_Type,
+    handle_key:   u64,      // raw handle bits used for GC identification
+}
+
 
 //////////////////////////////////////////////////////
 // note(isak): lua core
@@ -164,10 +175,10 @@ lua_create_beatmap_script_context :: proc(script_path: string) {
         lua_register_enum(L, e.t, e.name)
     }
     
-    if lua.L_dofile(L, strings.clone_to_cstring(script_path)) !=  lua.OK {
-        lua_log_error("Lua initialization error:")
-    } else {
+    if lua.L_dofile(L, strings.clone_to_cstring(script_path)) == lua.OK {
         lua_check_registered_events(L)
+    } else {
+        lua_log_error("Lua initialization error:")
     }
 }
 
@@ -175,6 +186,8 @@ lua_cleanup :: proc() {
     if lua_beatmap.state != nil {
         lua.close(lua_beatmap.state)
     }
+    clear(&lua_beatmap.event_registrations)
+    lua_beatmap = {}
 }
 
 lua_reload :: proc(script_path: string) {
@@ -294,6 +307,79 @@ lua_create_userdata :: proc "c" (L: ^lua.State, handle: $T, name: cstring) {
     data^ = handle
     lua.L_getmetatable(L, name)
     lua.setmetatable(L, -2)
+}
+
+//////////////////////////////////////////////////////
+// note(isak): custom event hook API
+
+// note(isak): pushes the object userdata for the given class + handle_key onto the Lua stack.
+// called at trigger time - we reconstruct the userdata rather than holding a ref to it,
+// so the object's GC can fire freely.
+_lua_push_event_target :: proc(L: ^lua.State, class: Lua_Class_Type, handle_key: u64) {
+switch class {
+    case .HITOBJECT: lua_create_userdata(L, int(handle_key), lua_classes[.HITOBJECT].name)
+    case .DRAWABLE: lua_create_userdata(L, transmute(Drawable_Handle)handle_key, lua_classes[.DRAWABLE].name)
+    case .ELEMENT: lua_create_userdata(L, Element_ID(handle_key), lua_classes[.ELEMENT].name)
+    case .ANIMATION, .TWEEN, .COLOR:
+        lua.pushnil(L)
+    }
+}
+
+// note(isak): called from each object's __gc to clean up its registered events
+// and release the callback refs back to the Lua registry.
+_unregister_events_for_handle :: proc(class: Lua_Class_Type, handle_key: u64) {
+    L := lua_beatmap.state
+    i := 0
+    for i < len(lua_beatmap.event_registrations) {
+        reg := lua_beatmap.event_registrations[i]
+        if reg.class == class && reg.handle_key == handle_key {
+            lua.L_unref(L, lua.REGISTRYINDEX, c.int(reg.callback_ref))
+            unordered_remove(&lua_beatmap.event_registrations, i)
+        } else {
+            i += 1
+        }
+    }
+}
+
+// note(isak): shared implementation for all three :register_event instance methods.
+// called after context is set and the class/handle_key are extracted from the userdata.
+//
+// also note that the handles are casted into a 64 byte key, so there's a limitation on handle types here
+_register_event :: proc(L: ^lua.State, class: Lua_Class_Type, handle_key: u64) -> i32 {
+    event_name := lua_string(2)
+    if !lua.isfunction(L, 3) {
+        return lua.L_error(L, "register_event: argument 3 must be a function")
+    }
+    lua.pushvalue(L, 3)
+    callback_ref := lua.L_ref(L, lua.REGISTRYINDEX)
+    append(&lua_beatmap.event_registrations, Lua_Event_Registration{
+        name         = event_name,
+        callback_ref = callback_ref,
+        class        = class,
+        handle_key   = handle_key,
+    })
+    return lua_return_self()
+}
+
+// trigger_event(name, ...) - fires all callbacks registered under 'name'.
+// each callback receives (object_handle, ...) where ... are any extra args passed to trigger_event.
+luaapi_trigger_event :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    event_name := lua_string(1)
+    n_extra_args := i32(lua.gettop(L)) - 1
+
+    for reg in lua_beatmap.event_registrations {
+        if reg.name != event_name do continue
+        lua.rawgeti(L, lua.REGISTRYINDEX, lua.Integer(reg.callback_ref))
+        _lua_push_event_target(L, reg.class, reg.handle_key)
+        for i in i32(0)..<n_extra_args {
+            lua.pushvalue(L, lua.Index(2 + i))
+        }
+        if lua.pcall(L, 1 + n_extra_args, 0, 0) != lua.OK {
+            lua_log_error("trigger_event error:")
+        }
+    }
+    return 0
 }
 
 //////////////////////////////////////////////////////
@@ -519,6 +605,7 @@ luaapi_element_static_funcs := []lua.L_Reg {
 @(private="file")
 luaapi_element_instance_funcs := []lua.L_Reg {
   { "__gc", luaapi_element_gc },
+  { "register_event", luaapi_element_register_event },
   { "set_tex", luaapi_element_set_tex },
   { "set_shader", luaapi_element_set_shader },
   { "set_animation", luaapi_element_set_animation },
@@ -527,8 +614,15 @@ luaapi_element_instance_funcs := []lua.L_Reg {
 
 luaapi_element_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_beatmap.odin_context
-    //log.info("GC triggered for drawable: ")
+    handle := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
+    _unregister_events_for_handle(.ELEMENT, u64(handle^))
     return result
+}
+
+luaapi_element_register_event :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    handle := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
+    return _register_event(L, .ELEMENT, u64(handle^))
 }
 
 luaapi_element_new :: proc "c" (L: ^lua.State) -> (result: i32) {
@@ -773,13 +867,15 @@ luaapi_drawable_static_funcs := []lua.L_Reg {
 @(private="file")
 luaapi_drawable_instance_funcs := []lua.L_Reg {
   { "__gc", luaapi_drawable_gc },
+  { "register_event", luaapi_drawable_register_event },
   { "clone", luaapi_drawable_clone },
   { "set_layer", luaapi_drawable_set_layer },
   { "set_pos", luaapi_drawable_set_pos },
   { "set_size", luaapi_drawable_set_size },
   { "set_anchor", luaapi_drawable_set_anchor },
   { "set_color", luaapi_drawable_set_color },
-  //{ "set_vel", luaapi_drawable_set_vel },
+  // todo(isak)
+  //{ "set_vel", luaapi_drawable_set_vel }, 
   //{ "set_accel", luaapi_drawable_set_accel },
   //{ "set_angle_vel", luaapi_drawable_set_angle_vel },
   { "set_start_time", luaapi_drawable_set_start_time },
@@ -791,9 +887,15 @@ luaapi_drawable_instance_funcs := []lua.L_Reg {
 luaapi_drawable_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_beatmap.odin_context
     handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
-    //log.debug("GC triggered for drawable:", handle.generation, handle.index)
     slotmap.remove(&game.beatmap.drawables, handle^)
+    _unregister_events_for_handle(.DRAWABLE, transmute(u64)handle^)
     return result
+}
+
+luaapi_drawable_register_event :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
+    return _register_event(L, .DRAWABLE, transmute(u64)handle^)
 }
 
 luaapi_drawable_new :: proc "c" (L: ^lua.State) -> (result: i32) {
@@ -927,6 +1029,7 @@ luaapi_hitobject_static_funcs := []lua.L_Reg {
 @(private="file")
 luaapi_hitobject_instance_funcs := []lua.L_Reg {
   { "__gc", luaapi_hitobject_gc },
+  { "register_event", luaapi_hitobject_register_event },
   { "hide", luaapi_hitobject_hide },
   { "unhide", luaapi_hitobject_unhide },
   { "get_pos", luaapi_hitobject_get_pos },
@@ -939,9 +1042,16 @@ luaapi_hitobject_instance_funcs := []lua.L_Reg {
 }
 
 luaapi_hitobject_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
     handle := cast(^int)lua.L_checkudata(L, 1, lua_classes[.HITOBJECT].name)
-    //log.debug("GC triggered for drawable:", handle.generation, handle.index)
+    _unregister_events_for_handle(.HITOBJECT, u64(handle^))
     return result
+}
+
+luaapi_hitobject_register_event :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    handle := cast(^int)lua.L_checkudata(L, 1, lua_classes[.HITOBJECT].name)
+    return _register_event(L, .HITOBJECT, u64(handle^))
 }
 
 luaapi_hitobject_get_at_ms :: proc "c" (L: ^lua.State) -> (result: i32) {

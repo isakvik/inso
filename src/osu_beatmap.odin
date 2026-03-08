@@ -317,3 +317,72 @@ beatmap_check_timing_change :: proc(beatmap: ^Beatmap) {
     bpm := 60000 / max(timing_point.beat_length, 1)
     lua_beatmap_on_timing_change(beat, bpm)
 }
+
+
+judgement_new :: proc(hobj: ^Hitobject, type: Judgement_Type, time_error_ms: f64) {
+    time := beatmap_music_time_ms(&game.beatmap)
+    hobj.judgement_index = int(game.beatmap.judgements.len)
+    queue.append(&game.beatmap.judgements, Judgement{ type, time })
+    
+    if lua_cares_about_event(.ON_JUDGEMENT) {
+        lua_beatmap_on_judgement(hobj.index, type, time_error_ms)
+    }
+}
+
+judgement_new_drawable :: proc(hobj: ^Hitobject) {
+    if hobj.judgement_index > 0 {
+        judgement := queue.get(&game.beatmap.judgements, hobj.judgement_index)
+        
+        el_type: Element_Type
+        switch judgement.result {
+        case .MISS: el_type = .JUDGEMENT_MISS
+        case .OK:   el_type = .JUDGEMENT_OK
+        case .GOOD: el_type = .JUDGEMENT_GOOD
+        case .MARVELOUS:    el_type = .JUDGEMENT_MARVELOUS
+        case .SLIDER_SMALL_SCOREPOINT:  el_type = .LIGHTING
+        case .SLIDER_LARGE_SCOREPOINT:  el_type = .LIGHTING
+            
+        case .NONE, .COMBO_BREAK, .IGNORED_HIT: 
+            return
+        }
+    
+        //--@temp
+        drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
+            flags = {.ACTIVE},
+            element = builtin_element_slot(el_type),
+            layer = .HITOBJECTS,
+            pos = hitobject_pos(hobj),
+            size = game.beatmap.circle_radius_osupx,
+            anchor = .CENTER,
+            color = color_white,
+            
+            angle_vel = 360.0,
+            
+            start_time_ms = judgement.time,
+            end_time_ms = judgement.time + 600
+        })
+        //--
+    }
+}
+
+process_expiring_hitobjects :: proc(expiring_hitobjects: ^sb.Swap_Buffer(int)) {
+    map_time := beatmap_music_time_ms(&game.beatmap)
+    
+    for hobj_index in expiring_hitobjects.current {
+        hobj := &game.beatmap.hitobjects[hobj_index]
+        
+        if .EXPIRED not_in hobj.flags {
+            end_time := hitobject_visible_end_time(hobj)
+            if end_time < map_time {
+                judgement_new(hobj, .MISS, end_time - hobj.end_time_ms)
+                judgement_new_drawable(hobj)
+                hobj.flags ~= {.VISIBLE}
+                hobj.flags |= {.EXPIRED}
+            }
+            else {
+                sb.append_next(expiring_hitobjects, hobj_index)
+            }
+        }
+    }
+    sb.swap(expiring_hitobjects)
+}

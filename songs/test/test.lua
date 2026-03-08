@@ -9,27 +9,23 @@ local rand = load_file("rand.lua")
 --   convert slider to table of positions
 --      hobj.slider.get_path_positions(point_sep_length[, offset])
 
--- todo(isak): should animations be relative? they're not in regular osu, so...
--- they SHOULD be relative cuz animation length as a tweakable parameter would be cool
--- and having them go from 0.0 to 1.0 is intuitive
--- an alternative to this could be animation rate on drawable... is it that good tho?
--- ultimately it's about conventions cuz both ways can get any result
-
 -- diffsettings per object!!
 -- custom AR per object is complicated... animation system should be able to handle this
 
--- custom events (observer)
--- trigger_event("blah")
--- register_event("blah", function () end )
 
 -- map runtime data
 -- Map.set_time_rate(1.5)
 
+
+-- custom events (observer)
+-- trigger_event("spellcard")
+-- register_event("spellcard", function () end )
+
 function on_init()
     a = Animation.new()
-        :color(2000, 3000, Color.rgb(255,0,0), Color.rgb(0,0,255))
-        :scale(0, 2000, 0,0, 2,2)
-        --:texture(2000, 2000, "nonexisting.jpg") -- throws error, but defaults to white pixel
+        :color(0, 0.5, Color.rgb(255,0,0), Color.rgb(0,0,255))
+        :scale(0, 1, 0,0, 2,2)
+        :texture(2000, 2000, "nonexisting.jpg") -- throws error, but defaults to white pixel
     
     el = Element.new()
         :set_tex("kawayabughorou.jpg")
@@ -40,10 +36,9 @@ function on_init()
         :set_size(100,100)
         :set_anchor(Anchor.CENTER)
         :set_layer(Layer.BACKGROUND)
-    
-    -- todo(isak) should be able to register custom events through a string here...
-    -- using an observer with a set of handles for an event
-    -- could be cool
+        :register_event("saft", function (d, beat_n) 
+            print("woah " .. beat_n) 
+        end)
     
     --hobj = Hitobject.get_at_ms(0) -- needs optional index param so we can get the next at ms 0
     
@@ -72,9 +67,11 @@ function _on_update(time_ms)
     end
 end
 
-function _on_beat(beat)
+function on_beat(beat)
     -- every 1/1, index 1 meaning the first given timing section
     print("beat: " .. beat)
+    
+    trigger_event("saft", beat)
 end
 function _on_timing_change(beat, bpm)
     -- every redline
@@ -89,7 +86,7 @@ function _on_pause_change(paused)
     end
 end
 
-function on_judgement(hobj, judgement, timing_error_ms) 
+function _on_judgement(hobj, judgement, timing_error_ms) 
     print(timing_error_ms)
 end
 

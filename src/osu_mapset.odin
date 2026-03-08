@@ -3,7 +3,7 @@ package notosu
 import "base:intrinsics"
 import "base:runtime"
 
-import q "core:container/queue"
+import "core:container/queue"
 import "core:fmt"
 import "core:log"
 import "core:math"
@@ -39,7 +39,8 @@ Mapset :: struct {
     notosu_map: Notosu_Map,
     
     num_shaders: int,
-    textures: q.Queue(Texture),
+    shader_blend_modes: [dynamic]Blend_Mode,
+    textures: queue.Queue(Texture),
     texture_slot_by_name: map[string]u32,
     pipeline_slot_by_name: map[string]u32,
     hitobject_index_by_ms: map[int]int,
@@ -54,7 +55,7 @@ mapset_texture :: proc(name: string) -> (result: ^Texture, found: bool) {
     assert(game.active_mapset != nil)
     index: u32
     index, found = game.active_mapset.texture_slot_by_name[name]
-    if found do result = q.get_ptr(&game.active_mapset.textures, index)
+    if found do result = queue.get_ptr(&game.active_mapset.textures, index)
     else do result = &game.active_mapset.textures.data[0]
     return result, found
 }
@@ -162,11 +163,10 @@ mapset_free_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
     return reloaded_mapset
 }
 
-// note(isak): clones given path into mapset allocator
 mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
     context.allocator = memory.allocators[.MAPSET]
     
-    mapset_path := strings.clone(path)
+    mapset_path := strings.clone(path, context.allocator)
     mapset, alloc_err := new(Mapset)
     assert(alloc_err == .None)
 
@@ -181,10 +181,11 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
     defer mem.free_all(context.temp_allocator)
     defer os.change_directory(app.base_dir)
     
-    q.init(&mapset.textures)
-    mapset.texture_slot_by_name = make(map[string]u32, 16)
+    queue.init(&mapset.textures)
+    mapset.texture_slot_by_name  = make(map[string]u32, 16)
     mapset.pipeline_slot_by_name = make(map[string]u32, 16)
     mapset.hitobject_index_by_ms = make(map[int]int, 128)
+    mapset.shader_blend_modes    = make([dynamic]Blend_Mode, 0, 8)
     
     walk_directory(mapset, path)
 
@@ -229,7 +230,7 @@ handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
             tex_key := strings.clone(file.name, memory.allocators[.MAPSET])
             tex, file_err := texture_from_file(file.name)
             mapset.texture_slot_by_name[tex_key] = u32(mapset.textures.len)
-            q.push_back(&mapset.textures, tex)
+            queue.push_back(&mapset.textures, tex)
         } 
         case ".gltf": {
             model_store := load_model(file.name)
@@ -240,45 +241,8 @@ handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
 mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map {
     result: Notosu_Map
     context.allocator = memory.allocators[.MAPSET]
-    
-    // -- @temp
-    // todo(isak): test code that should be replaced with notosu shader section reads
-    {
-        builtin_quad_vs_path := strings.concatenate({app.base_dir, "/", quad_vs_path}, context.allocator)
-        shader, err := shader_init(builtin_quad_vs_path, "quad_wave.fs.glsl")
-        assert(err == .NONE)
-        
-        mapset.pipeline_slot_by_name["wave"] = u32(mapset.num_shaders)
-        q.push(&window.shaders, shader)
-        
-        custom_desc := quad_pipeline_desc()
-        custom_desc.shader = shader.shader
-        q.push(&window.pipelines, sg.make_pipeline(custom_desc))
-    }
-    
-    mesh_desc := sg.Pipeline_Desc{
-        label = "builtin.quad",
-        shader = window.shaders.data[builtin_pipeline_slot(.QUAD)].shader,
-        //index_type = .UINT16,
-        cull_mode = .NONE,
-        blend_color = {1.0, 1.0, 1.0, 1.0},
-        colors = {
-            0 = { blend = {
-                enabled = true,
-                op_alpha = .SUBTRACT,
-                src_factor_rgb = .SRC_ALPHA,
-                src_factor_alpha = .SRC_ALPHA,
-                dst_factor_rgb = .ONE_MINUS_SRC_ALPHA,
-                dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
-            }}
-        },
-        depth = {compare = .LESS_EQUAL, write_enabled = true},
-    }
-    // --
-    
-    c: Consumer = {
-        str = notosu_file
-    }
+
+    c: Consumer = { str = notosu_file }
     
     section_index := 0
     section_loop: for {
@@ -318,8 +282,56 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
                 }
             }
         case .SHADERS:
-        
-        case: 
+            resolve_vs :: proc(value: string) -> string {
+                switch value {
+                case "builtin.quad":   return strings.concatenate({app.base_dir, "/", quad_vs_path})
+                case "builtin.slider": return strings.concatenate({app.base_dir, "/", slider_vs_path})
+                case "builtin.text":   return strings.concatenate({app.base_dir, "/", text_vs_path})
+                case: return value
+                }
+            }
+            resolve_fs :: proc(value: string) -> string {
+                switch value {
+                case "builtin.quad":   return strings.concatenate({app.base_dir, "/", quad_fs_path})
+                case "builtin.slider": return strings.concatenate({app.base_dir, "/", slider_fs_path})
+                case "builtin.text":   return strings.concatenate({app.base_dir, "/", text_fs_path})
+                case: return value
+                }
+            }
+            
+            shader_params: struct {
+                name: string,
+                vs_path, fs_path: string,
+                blend_mode: Blend_Mode,
+            }
+
+            for i in 1..<len(lines) {
+                line := lines[i]
+                if len(line) == 0 do continue
+                
+                if line[0:2] == "[[" && line[len(line)-2:] == "]]" {
+                    mapset_load_shader_entry(mapset, shader_params.name, shader_params.vs_path, shader_params.fs_path, shader_params.blend_mode)
+                    shader_params.name = line[2:len(line)-2]
+                } else {
+                    key, value := get_key_value(line)
+                    switch key {
+                    case "VertexShader":   shader_params.vs_path = resolve_vs(value)
+                    case "FragmentShader": shader_params.fs_path = resolve_fs(value)
+                    case "BlendMode":
+                        switch value {
+                        case "Alpha":    shader_params.blend_mode = .ALPHA
+                        case "Additive": shader_params.blend_mode = .ADDITIVE
+                        case "None":     shader_params.blend_mode = .NONE
+                        case: log.errorf("mapset shader '{}': unknown BlendMode '{}', defaulting to alpha", shader_params.name, value)
+                        }
+                    case: log.errorf("unknown/unhandled option: {}", key)
+                    }
+                }
+                
+            }
+            mapset_load_shader_entry(mapset, shader_params.name, shader_params.vs_path, shader_params.fs_path, shader_params.blend_mode)
+
+        case:
             unreachable()
         }
     }
@@ -327,14 +339,59 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
     return result
 }
 
+mapset_reinit_custom_shaders :: proc(mapset: ^Mapset) {
+    os.change_directory(mapset.folder_path)
+    defer os.change_directory(app.base_dir)
+    
+    base := len(Builtin_Pipeline_Slot)
+    for i in base..<base + mapset.num_shaders {
+        err := shader_reinit(&window.shaders.data[i])
+        if err != .NONE do continue
+        
+        blend_mode := mapset.shader_blend_modes[i - base]
+        desc := quad_pipeline_desc()
+        desc.shader = window.shaders.data[i].shader
+        desc.colors[0].blend = blend_state_for_mode(blend_mode)
+        pipeline_reinit(&window.pipelines.data[i], desc)
+    }
+    log.info("reloaded mapset custom shaders")
+}
+
+mapset_load_shader_entry :: proc(mapset: ^Mapset, name, vs, fs: string, blend_mode: Blend_Mode) {
+    if name == "" do return
+    if vs == "" || fs == "" {
+        log.errorf("mapset shader '{}': missing VertexShader or FragmentShader, skipping", name)
+        return
+    }
+    // note(isak): take ownership
+    vs := strings.clone(vs, memory.allocators[.MAPSET])
+    fs := strings.clone(fs, memory.allocators[.MAPSET])
+    shader, err := shader_init(vs, fs, context.temp_allocator)
+    if err != .NONE {
+        log.errorf("mapset shader '{}': compile error, skipping", name)
+        return
+    }
+    queue.push(&window.shaders, shader)
+    
+    name_key := strings.clone(name, memory.allocators[.MAPSET])
+    mapset.pipeline_slot_by_name[name_key] = u32(mapset.num_shaders)
+    append(&mapset.shader_blend_modes, blend_mode)
+    
+    desc := quad_pipeline_desc()
+    desc.shader = shader.shader
+    desc.colors[0].blend = blend_state_for_mode(blend_mode)
+    queue.push(&window.pipelines, sg.make_pipeline(desc))
+    
+    log.infof("mapset shader '{}' loaded (blend: {})", name, blend_mode)
+    mapset.num_shaders += 1
+}
+
 
 mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
     result: Osu_Map
     context.allocator = memory.allocators[.MAPSET]
     
-    c: Consumer = {
-        str = osu_file
-    }
+    c: Consumer = { str = osu_file }
     
     section_index := 0
     section_loop: for {
@@ -461,8 +518,8 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
             case .HITOBJECTS:
                 result.hitobjects = make_slice([]Hitobject, len(lines) - 1)
 
-                slider_temp_queue: q.Queue(Slider_Path)
-                q.init(&slider_temp_queue, 1024, context.temp_allocator)
+                slider_temp_queue: queue.Queue(Slider_Path)
+                queue.init(&slider_temp_queue, 1024, context.temp_allocator)
                 
                 for i in 1..<len(lines) {
                     hobj := &result.hitobjects[i - 1]
@@ -528,7 +585,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                             write_instances_from_path(&window.renderer.slider_instances, &slider)
                                                       
                         hobj.slider_path_index = int(slider_temp_queue.len)
-                        q.append(&slider_temp_queue, slider)
+                        queue.append(&slider_temp_queue, slider)
                     case:
                         hobj.end_time_ms = hobj.start_time_ms
                     }
@@ -740,7 +797,6 @@ convert_overall_difficulty_to_timing_window :: proc(od: f64) -> Timing_Window {
 }
 
 
-// todo(isak): this likes to crash sometimes on debug breaks, but it's not consistent...
 mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu_Map_System]bool {
     updated_systems: [Notosu_Map_System]bool
 
@@ -778,9 +834,7 @@ mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu
                 break
             }
         }
-
         watch.notify_bytes_written = 0
     }
-
     return updated_systems
 }

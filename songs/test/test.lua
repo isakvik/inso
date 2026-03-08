@@ -22,6 +22,9 @@ local rand = load_file("rand.lua")
 -- trigger_event("blah")
 -- register_event("blah", function () end )
 
+-- map runtime data
+-- Map.set_time_rate(1.5)
+
 function on_init()
     a = Animation.new()
         :color(2000, 3000, Color.rgb(255,0,0), Color.rgb(0,0,255))

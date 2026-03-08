@@ -38,6 +38,7 @@ rendering
     locking bugfix
     bindless textures fallback
     optimization
+    3d pipeline support
     
 gameplay
     score system
@@ -62,3 +63,4 @@ game
 platform
     lua profiling (nested profiler block support)
     input thread
+    builtin resource pack

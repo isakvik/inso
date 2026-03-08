@@ -277,13 +277,17 @@ osu_on_update :: proc(dt: f64) {
     game.dt = dt
 
     updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
-    if updated_systems[.OSU_FILE] {
+    if updated_systems[.OSU_FILE] || updated_systems[.NOTOSU_FILE] {
         beatmap_reload(&game.beatmap, true)
-    } else if updated_systems[.SCRIPTS] {
+    }
+    if updated_systems[.SCRIPTS] {
         lua_reload(game.active_notosu_map.lua_entry_point)
         if lua_cares_about_event(.ON_INIT) {
             lua_call_beatmap_func(lua_beatmap_event_names[.ON_INIT])
         }
+    } 
+    if updated_systems[.SHADERS] {
+        mapset_reinit_custom_shaders(game.active_mapset)
     }
     
     // note(isak): game logic - map

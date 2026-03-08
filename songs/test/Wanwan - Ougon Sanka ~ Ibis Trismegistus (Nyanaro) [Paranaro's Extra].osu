@@ -32,9 +32,9 @@ BeatmapSetID:2156940
 
 [Difficulty]
 HPDrainRate:4
-CircleSize:4
-OverallDifficulty:8
-ApproachRate:8
+CircleSize:2
+OverallDifficulty:4
+ApproachRate:0
 SliderMultiplier:1.4
 SliderTickRate:1
 

@@ -365,8 +365,8 @@ Command_Draw :: struct {
 Command_Draw_Slider :: struct {
     base_instance: u32,
     instance_count: i32,
-    border_color: [4]f32,
-    body_color:   [4]f32,
+    border_color: Color,
+    body_color:   Color,
 }
 
 Command_Bind_Pipeline :: struct {
@@ -681,7 +681,9 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 case .DRAW_SLIDER: {
                     cmd := _command_consume(&command_queue, Command_Draw_Slider)
 
-                    slider_globals := Slider_Globals{cmd.border_color, cmd.body_color}
+                    slider_globals := Slider_Globals{
+                        color_to_vec(cmd.border_color), 
+                        color_to_vec(cmd.body_color)}
                     gl.NamedBufferSubData(window.slider_param_buffer.id, 0, size_of(Slider_Globals), &slider_globals)
                     ubo_bind(&window.slider_param_buffer, u32(Shader_SSBO_Bind_Slot.SLIDER_PARAMS))
 

@@ -65,6 +65,10 @@ Memory_Arena_Type :: enum {
     // note(isak): judgements (unbounded). cleared on mapset reload/unload
     JUDGEMENTS,
     
+    // note(isak): skin data (names, paths)
+    // cleared on skin unload
+    SKIN,
+    
     // note(isak): temporary allocator. cleared on frame end
     FRAME,
 }
@@ -74,6 +78,7 @@ memory_arena_names := [?]string {
     "Mapset",
     "Entities",
     "Judgements",
+    "Skin",
     "Frame",
     "Command buffer[BACKGROUND]",
     "Command buffer[FOREGROUND]",
@@ -102,7 +107,6 @@ memory_init :: proc() -> runtime.Allocator_Error {
     for t in Memory_Arena_Type {
         init_tracked_growing_arena(&arenas[t], &allocators[t], &memory.backing_alloc[t], &memory.tracker[t]) or_return
     }
-
     for layer in Layer {
         init_growing_arena(&memory.command_buffer_arenas[layer], &memory.command_buffer_allocators[layer]) or_return
     }
@@ -129,54 +133,6 @@ debug_ui_init :: proc() {
     )
 }
 
-
-Mouse_Button :: enum {
-    LEFT,
-    RIGHT,
-    MIDDLE,
-}
-
-Button_State :: struct {
-    is_down, was_down: bool
-}
-
-mouse: struct {
-    pos: vec2,
-    buttons: [Mouse_Button]Button_State,
-    last_click_position: [Mouse_Button]vec2,
-}
-
-
-Keyboard_State :: #sparse [sdl.Scancode]bool
-
-keyboard: struct {
-    buttons: ^Keyboard_State,
-    buttons_prev_frame: ^Keyboard_State,
-
-    state: [2]Keyboard_State,
-    // note(isak): if there's a reason to add text input (that's not microui related), we might wanna add some locale
-    // info or state related to character translation messages
-}
-
-keyboard_init :: proc() {
-    keyboard.buttons = &keyboard.state[0]
-    keyboard.buttons_prev_frame = &keyboard.state[1]
-}
-
-keyboard_next_frame :: proc() {
-    keyboard.buttons, keyboard.buttons_prev_frame = keyboard.buttons_prev_frame, keyboard.buttons
-
-    num_keys: i32
-    sdl_state := sdl.GetKeyboardState(&num_keys)
-    mem.copy(keyboard.buttons, sdl_state, len(Keyboard_State))
-}
-
-rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
-    if (event.type == sdl.EventType.KEY_DOWN) {
-        rebind^ = event.key.scancode //TODO(yokes): this doesn't work, game.input.k1_key = event.key.scancode works
-        fmt.printfln("key set to {}", event.key.scancode)
-    }
-}
 
 main :: proc() {
     _program_start_tsc = sdl.GetPerformanceCounter()
@@ -217,7 +173,7 @@ main :: proc() {
     text_init()
     keyboard_init()
     
-    load_skin_textures("skins/gn/")
+    game.active_skin = skin_load("skins/gn/")
 
     shaders_watch := win32_init_directory_watch("shaders/")
 
@@ -426,6 +382,33 @@ main :: proc() {
     }
 }
 
+begin_frame :: proc(renderer: ^Renderer) {
+    sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
+    
+    batch_begin(renderer)
+
+    r_set_shader_globals({
+        transform = identity_transform,
+        circle_size_osupx = game.beatmap.circle_radius_osupx,
+        time = f32(beatmap_music_time_ms(&game.beatmap))
+    })
+
+    r_bind_layer(.BACKGROUND)
+    r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
+    r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
+    r_push_transform(identity_transform)
+    r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
+    
+    renderer.transform_queue.len = 0
+}
+
+end_frame :: proc(renderer: ^Renderer) {
+    text_submit_geometry(renderer)
+    profiler_collect_command_buffer_memory_data()
+    batch_end(renderer)
+}
+
+
 _debug_ui_initialized: int
 
 write_debug_ui :: proc(ctx: ^mu.Context) {
@@ -572,32 +555,6 @@ render_debug_ui :: proc(renderer: ^Renderer, ctx: ^mu.Context) {
         }
     }
     r_reset_scissor_mode()
-}
-
-begin_frame :: proc(renderer: ^Renderer) {
-    sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
-    
-    batch_begin(renderer)
-
-    r_set_shader_globals({
-        transform = identity_transform,
-        circle_size_osupx = game.beatmap.circle_radius_osupx,
-        time = f32(beatmap_music_time_ms(&game.beatmap))
-    })
-
-    r_bind_layer(.BACKGROUND)
-    r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
-    r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
-    r_push_transform(identity_transform)
-    r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
-    
-    renderer.transform_queue.len = 0
-}
-
-end_frame :: proc(renderer: ^Renderer) {
-    text_submit_geometry(renderer)
-    profiler_collect_command_buffer_memory_data()
-    batch_end(renderer)
 }
 
 process_builtin_shader_changes :: proc(watch: ^Win32_Directory_Watch) {

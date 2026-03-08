@@ -1,5 +1,6 @@
 package notosu
 
+import "core:mem/virtual"
 import os "core:os/os2"
 import "core:strings"
 
@@ -26,29 +27,35 @@ Skin_Element :: struct {
 }
 
 Skin_Element_Path := #partial [Skin_Element_Type]string {
-    .CURSOR             = "cursor",
-    .APPROACHCIRCLE     = "approachcircle",
-    .HITCIRCLE          = "hitcircle",
-    .HITCIRCLEOVERLAY   = "hitcircleoverlay",
-    .LIGHTING           = "lighting",
+    .CURSOR = "cursor",
+    .APPROACHCIRCLE = "approachcircle",
+    .HITCIRCLE = "hitcircle",
+    .HITCIRCLEOVERLAY = "hitcircleoverlay",
+    .LIGHTING = "lighting",
     
-    .HIT0   = "hit0",
-    .HIT50  = "hit50",
+    .HIT0 = "hit0",
+    .HIT50 = "hit50",
     .HIT100 = "hit100",
     .HIT300 = "hit300",
     
-    .COMBO_1            = "default-1",
+    .COMBO_1 = "default-1",
+}
+
+Skin :: struct {
+    path: string,
+    elements: [Skin_Element_Type]Skin_Element,
 }
 
 
 supported_image_extensions :: []string{".png", ".jpg"}
 
 
-// todo(isak): @leak: since we allocate strings here, reloading the skin results in path strings that are never freed
-// make a skin arena for unloading is probably easiest
-load_skin_textures :: proc(skin_path: string) {
+skin_load :: proc(skin_path: string) -> (result: ^Skin) {
+    context.allocator = memory.allocators[.SKIN]
+    result = new(Skin)
+    result.path, _ = strings.clone(skin_path)
     
-    os.change_directory(skin_path)
+    os.change_directory(result.path)
     defer os.change_directory(app.base_dir)
 
     for element in Skin_Element_Type {
@@ -56,7 +63,7 @@ load_skin_textures :: proc(skin_path: string) {
         for extension in supported_image_extensions {
             element_path := strings.concatenate({Skin_Element_Path[element], "@2x", extension})
             tex_store := &window.skin_textures[element]
-            tex := &game.active_skin[element]
+            tex := result.elements[element]
             
             tex_store^, tex_err = texture_from_file(element_path)
             if tex_err == os.General_Error.None {
@@ -78,12 +85,21 @@ load_skin_textures :: proc(skin_path: string) {
         // instead of asserting
         assert(tex_err == os.General_Error.None)
     }
+    return result
 }
 
-unload_skin_textures :: proc() {
+skin_unload :: proc() {
     texture_ids: [len(Skin_Element_Type)]u32
     for element in Skin_Element_Type {
         texture_ids[element] = window.skin_textures[element].tex_id
     }
     texture_free(texture_ids[:])
+    
+    virtual.arena_free_all(&memory.arenas[.SKIN])
+}
+
+skin_reload :: proc(skin: ^Skin) {
+    temp_path := strings.clone(skin.path, context.temp_allocator)
+    skin_unload()
+    skin_load(temp_path)
 }

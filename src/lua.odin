@@ -36,7 +36,7 @@ Lua_Beatmap_Event_Type :: enum {
     ON_KEY_DOWN,
     ON_KEY_UP,
     ON_CURSOR_MOVED,
-    /* todo(isak) hooks unimplemented */ ON_JUDGEMENT,
+    ON_JUDGEMENT,
 }
 lua_beatmap_event_names := [Lua_Beatmap_Event_Type]cstring {
     .ON_INIT = "on_init",

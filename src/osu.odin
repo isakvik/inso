@@ -26,7 +26,7 @@ game: struct {
     active_mapset: ^Mapset,
     active_notosu_map: ^Notosu_Map,
     active_map: ^Osu_Map,
-    active_skin: [Skin_Element_Type]Skin_Element,
+    active_skin: ^Skin,
     
     mode: Game_Mode,
     
@@ -366,6 +366,9 @@ osu_on_update :: proc(dt: f64) {
     // todo(isak): for the eventual rewrite here that takes object type into account, consider a
     // function pointer in the hitobject struct that renders (and maybe one that updates? continual
     // logic is necessary for sliders... hitting circles is a keyboard event kind of thing)
+    
+    // todo(isak) ALSO don't forget that sliders SHOULD go on top of hitobjects appearing later, so the 
+    // render hitobjects loop should be integrated into this
     for &hobj in hobj_it {
         if map_time < hobj.start_time_ms - game.beatmap.preempt_ms || hobj.end_time_ms < map_time {
             continue
@@ -381,7 +384,6 @@ osu_on_update :: proc(dt: f64) {
             r_draw_rect(&window.renderer.quad_geometry, sliderend_rect, with_alpha(color_white, 0.2), skin_texture(.HITCIRCLEOVERLAY))
         }
     }
-    //--
     
     r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
     r_push_transform(game.playfield_transform)
@@ -396,6 +398,7 @@ osu_on_update :: proc(dt: f64) {
             }
         }
     }
+    //--
     
     process_and_draw_expiring_gfx_refs(&game.beatmap.gameplay_expiring_gfx)
     

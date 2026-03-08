@@ -99,16 +99,21 @@ color_to_pixel :: proc {
     color_to_pixel_u8,
 }
 
-color_from_vec :: proc "contextless" (v: vec4) -> Color {
-    result: Color
+color_to_vec :: proc "contextless" (c: Color) -> (result: vec4) {
+    result[0] = f32(c.r) / 0xFF
+    result[1] = f32(c.g) / 0xFF
+    result[2] = f32(c.b) / 0xFF
+    result[3] = f32(c.a) / 0xFF
+    return result
+}
+color_from_vec :: proc "contextless" (v: vec4) -> (result: Color) {
     result[0] = u8(v.r * 0xFF)
     result[1] = u8(v.g * 0xFF)
     result[2] = u8(v.b * 0xFF)
     result[3] = u8(v.a * 0xFF)
     return result
 }
-color_from_pixel :: proc "contextless" (p: u32) -> Color {
-    result: Color
+color_from_pixel :: proc "contextless" (p: u32) -> (result: Color) {
     result[0] = u8((p & 0x000000FF) >> 0)
     result[1] = u8((p & 0x0000FF00) >> 8)
     result[2] = u8((p & 0x00FF0000) >> 16)

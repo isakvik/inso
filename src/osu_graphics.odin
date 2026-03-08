@@ -57,7 +57,7 @@ animation_variant :: proc(anim: Animation) -> (result: Animation_Variant) {
 
 Base_Animation :: struct {
     tween: Tween,
-    start_time, end_time: f64,
+    start_time, end_time: f64, // note(isak): [0,1] range
 }
 
 Animation :: union #align(4) {
@@ -150,6 +150,7 @@ user_element_slot :: proc(slot: u32) -> Element_ID {
 Drawable_Flags :: distinct bit_set[Drawable_Flag; u32]
 Drawable_Flag :: enum u32 {
     ACTIVE,
+    LOOP_ANIMATION,
 }
 
 // note(isak): graphical entity that is pushed to the renderer
@@ -168,6 +169,7 @@ Drawable :: struct {
     angle_deg: f32,
     anchor: Layout_Anchor,
     color: Color,
+    animation_rate: f64,
     
     // todo(isak): these are kinda intuitively made... not integrated into lua yet
     vel: vec2,
@@ -188,7 +190,7 @@ animation_new :: proc(buf: ^q.Queue(Animation), elems: ..Animation) -> []Animati
 }
 
 //////////////////////////////////////////////////////
-// note(isak): animation api
+// note(isak): element api
 
 element_new :: proc(el: Element) -> (result: Element_ID) {
     result = Element_ID(game.beatmap.elements.len)
@@ -199,8 +201,6 @@ element_new :: proc(el: Element) -> (result: Element_ID) {
 }
 
 write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Animation)) {
-    ar_ms := game.beatmap.preempt_ms
-
     q.reserve(elements, len(Element_Type))
     elements.len += len(Element_Type)
     
@@ -214,19 +214,19 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
         animations = animation_new(anims, 
             Animation_Scale{
                 start_time = 0,
-                end_time = ar_ms * 0.5,
+                end_time = 0.5,
                 start_scale = {1, 1}, 
                 end_scale = {4, 1}
             }, 
             Animation_Scale{
-                start_time = ar_ms * 0.5, 
-                end_time = ar_ms,
+                start_time = 0.5, 
+                end_time = 1,
                 start_scale = {4, 1}, 
                 end_scale = {0, 0}
             }, 
             Animation_Rotate{
                 start_time = 0, 
-                end_time = ar_ms,
+                end_time = 1,
                 start_angle = 0, 
                 end_angle = 180
             }, 
@@ -238,7 +238,7 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
 
         animations = animation_new(anims, Animation_Scale{
             start_time = 0, 
-            end_time = ar_ms,
+            end_time = 1,
             start_scale = {3, 3}, 
             end_scale = {0.9, 0.9}
         })
@@ -250,13 +250,13 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
         animations = animation_new(anims, 
             Animation_Scale{
                 start_time = 0, 
-                end_time = 600,
+                end_time = 1,
                 start_scale = {0.5, 0.5}, 
                 end_scale = {1.5, 1.5}
             },
             Animation_Alpha{
-                start_time = 300, 
-                end_time = 600,
+                start_time = 0.5, 
+                end_time = 1,
                 start_alpha = 1.0,
                 end_alpha = 0.0,
             }
@@ -267,13 +267,13 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
     click_animation := animation_new(anims, 
         Animation_Scale{
             start_time = 0,
-            end_time = 250,
+            end_time = 1,
             start_scale = {1, 1}, 
             end_scale = {1.5, 1.5}
         },
         Animation_Alpha{
             start_time = 0,
-            end_time = 250,
+            end_time = 1,
             start_alpha = 1.0,
             end_alpha = 0.0,
         }
@@ -378,64 +378,65 @@ write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
     }
 }
 
-render_drawable :: proc(e: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) -> bool {
-    if at_time < e.start_time_ms {
+render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) -> bool {
+    if at_time < d.start_time_ms {
         return true
     }
-    if e.end_time_ms < at_time {
+    if d.end_time_ms < at_time {
         return false
     }
-    rel_time := at_time - e.start_time_ms
+    relative_time_at := at_time - d.start_time_ms
 
-    element := &game.beatmap.elements.data[e.element]
+    element := &game.beatmap.elements.data[d.element]
     tex := element.tex
 
-    rect := Rect{e.pos.x + parent_pos.x, e.pos.y + parent_pos.y, e.size.x, e.size.y}
-    angle := e.angle_deg + e.angle_vel * f32(rel_time / 1000)
-    color := e.color
-    texture_override: bool
-    seen_animation_of_type: [Animation_Variant]bool
+    rect := Rect{d.pos.x + parent_pos.x, d.pos.y + parent_pos.y, d.size.x, d.size.y}
+    angle := d.angle_deg + d.angle_vel * f32(relative_time_at / 1000)
+    color := d.color
 
-    #reverse for &anim in game.beatmap.elements.data[e.element].animations {
-        base := cast(^Base_Animation)&anim
-        if rel_time < base.start_time || seen_animation_of_type[animation_variant(anim)] {
+    duration := d.end_time_ms - d.start_time_ms
+    seen_animation_of_type: [Animation_Variant]bool
+    #reverse for &animation in game.beatmap.elements.data[d.element].animations {
+        base := cast(^Base_Animation)&animation
+        anim_time_at := relative_time_at / duration
+        if anim_time_at < base.start_time || seen_animation_of_type[animation_variant(animation)] {
             continue
         }
 
-        t := f32((rel_time - base.start_time) / (base.end_time - base.start_time))
+        t := f32((anim_time_at - base.start_time) / (base.end_time - base.start_time))
         t = min(t, 1)
 
-        switch a in anim {
+        // note(isak): we don't set attributes directly the same way osu SBs work, but i don't like it
+        switch anim in animation {
             case Animation_Translate:
-                rect.x = linalg.lerp(a.start_pos.x, a.end_pos.x, t)
-                rect.y = linalg.lerp(a.start_pos.y, a.end_pos.y, t)
+                rect.x = d.pos.x * linalg.lerp(anim.start_pos.x, anim.end_pos.x, t)
+                rect.y = d.pos.y * linalg.lerp(anim.start_pos.y, anim.end_pos.y, t)
 
             case Animation_Scale:
-                rect.w = e.size.x * linalg.lerp(a.start_scale.x, a.end_scale.x, t)
-                rect.h = e.size.y * linalg.lerp(a.start_scale.y, a.end_scale.y, t)
+                rect.w = d.size.x * linalg.lerp(anim.start_scale.x, anim.end_scale.x, t)
+                rect.h = d.size.y * linalg.lerp(anim.start_scale.y, anim.end_scale.y, t)
 
             case Animation_Rotate:
-                angle = linalg.lerp(a.start_angle, a.end_angle, t)
+                angle = linalg.lerp(anim.start_angle, anim.end_angle, t)
 
             case Animation_Color:
-                color.r = u8(linalg.lerp(f32(a.start_color.r), f32(a.end_color.r), t))
-                color.g = u8(linalg.lerp(f32(a.start_color.g), f32(a.end_color.g), t))
-                color.b = u8(linalg.lerp(f32(a.start_color.b), f32(a.end_color.b), t))
-                color.a = u8(linalg.lerp(f32(a.start_color.a), f32(a.end_color.a), t))
+                color.r = u8(linalg.lerp(f32(anim.start_color.r), f32(anim.end_color.r), t))
+                color.g = u8(linalg.lerp(f32(anim.start_color.g), f32(anim.end_color.g), t))
+                color.b = u8(linalg.lerp(f32(anim.start_color.b), f32(anim.end_color.b), t))
+                color.a = u8(linalg.lerp(f32(anim.start_color.a), f32(anim.end_color.a), t))
                 
             case Animation_Alpha:
-                color.a = u8(linalg.lerp(a.start_alpha, a.end_alpha, t) * 0xFF)
+                color.a = u8(linalg.lerp(anim.start_alpha, anim.end_alpha, t) * 0xFF)
                 
             case Animation_Texture:
-                texture_override = true
-                tex = a.texture_id
+                tex = anim.texture_id
         }
-        seen_animation_of_type[animation_variant(anim)] = true
+        seen_animation_of_type[animation_variant(animation)] = true
     }
 
     r_check_and_bind_pipeline({element.shader})
-    r_check_and_bind_layer(e.layer)
-    r_draw_layout_rect(&window.renderer.quad_geometry, rect, e.anchor, color, tex, angle)
+    r_check_and_bind_layer(d.layer)
+    r_draw_layout_rect(&window.renderer.quad_geometry, rect, d.anchor, color, tex, angle)
     
     return true
 }
@@ -507,8 +508,8 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Pat
     command_push_draw_slider(Command_Draw_Slider{
         base_instance = u32(slider.first_instance_at),
         instance_count = slider_snake_instances,
-        border_color  = {1.0, 1.0, 1.0, 0.9},
-        body_color    = {1.0, 1.0, 1.0, 0.7},
+        border_color  = with_alpha(color_white, 0.9),
+        body_color    = with_alpha(color_white, 0.7),
     })
     
     r_bind_framebuffer({ read = .SLIDERS })

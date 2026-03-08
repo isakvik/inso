@@ -403,6 +403,9 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
             continue
         }
 
+        // todo(isak): doesn't look at drawable rate or loop_animation flag
+        // do we need an animation offset for stuff like approach time based animations? need a solution...
+        
         t := f32((anim_time_at - base.start_time) / (base.end_time - base.start_time))
         t = min(t, 1)
 
@@ -491,14 +494,14 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Pat
         slider_rect.h / window.rect.h,
     }
     
-    r_begin_scissor_mode(slider_rect)
+    r_set_scissor_mode(slider_rect)
     
     r_push_transform(slider_pf_transform)
     r_bind_pipeline({builtin_pipeline_slot(.SLIDER)})
     r_bind_framebuffer({ write = .SLIDERS })
     r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
     
-    r_clear()
+    r_clear(with_alpha(color_black, 0.0))
     
     slider_snake_in_time_ms := game.beatmap.preempt_ms * (1.0/3.0)
     slider_snake_in_time_at := beatmap_music_time_ms(&game.beatmap) - hobj.start_time_ms + game.beatmap.preempt_ms
@@ -521,7 +524,7 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Pat
         r_reset_scissor_mode()
         r_draw_rect_outline(&renderer.quad_geometry, slider_rect, color_cyan, 1)
     }
-    r_begin_scissor_mode(slider_rect)
+    r_set_scissor_mode(slider_rect)
     
     r_draw_rect_with_uv(&renderer.quad_geometry, 
                         slider_rect,

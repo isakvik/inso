@@ -25,6 +25,6 @@ void main() {
     vec2 ppos = vec2(v.pos.x, v.pos.y) + points[gl_BaseInstance + gl_InstanceID] / circleSizeOsupx;
     vec3 pos = t * vec3(ppos, 1.0);
 
-    color = v.pos.z;
+    color = 1.0 - length(v.pos.xy); // true radial distance: 0 at edge, 1 at center
     gl_Position = vec4(pos.x, pos.y, 1.0 - v.pos.z, 1.0);
 }

@@ -8,8 +8,11 @@ scripting
         is this needed?
     event system
     messaging system
+    kiai time hook
 
 game mechanics (not score, replays, etc)
+    per-hitobject size and approach rate
+        
     phase 1 visuals
         playfield scaling
         combocolors
@@ -25,6 +28,9 @@ gameplay
 rendering
     render to FBO
     lua frame object
+    
+fixes
+    reconsider entity ring buffer persistence
 
 -- POST MAPPER BETA RELEASE -- 
 
@@ -38,6 +44,9 @@ gameplay
     replays
     
     phase 2 visuals
+        cursortrail (mcosu uses a custom shader here)
+        followpoints
+        note stacking
         object dimming
         drop shadow
         proper snaking sliders

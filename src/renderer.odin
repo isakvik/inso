@@ -351,6 +351,10 @@ Command_Header :: struct {
     command_type: Command_Type
 }
 
+Command_Clear :: struct {
+    color: Color
+}
+
 Command_Push_Transform :: struct {
     transform: Transform
 }
@@ -387,7 +391,7 @@ Command_Scissor_Mode :: struct {
     x, y, w, h: i32
 }
 
-command_push_clear             :: proc() -> bool { return _command_push_header(.CLEAR) }
+command_push_clear             :: proc(cmd: Command_Clear) -> bool { return _command_push(cmd, .CLEAR) }
 command_push_push_transform    :: proc(cmd: Command_Push_Transform) -> bool { return _command_push(cmd, .PUSH_TRANSFORM) }
 command_push_pop_transform     :: proc() -> bool { return _command_push_header(.POP_TRANSFORM) }
 command_push_draw              :: proc(cmd: Command_Draw) -> bool { return _command_push(cmd, .DRAW) }
@@ -428,9 +432,9 @@ _command_consume :: proc(cmd_queue: ^queue.Queue(u8), $T: typeid) -> ^T {
 //////////////////////////////////////////////////////
 // note(isak): core renderer api
 
-r_clear :: proc() {
+r_clear :: proc(color: Color = color_black) {
     window.renderer.new_draw_on_next_push = true
-    command_push_clear()
+    command_push_clear({ color })
 }
 
 r_push_draw :: proc(index_offset: u32, index_count: i32, instance_count: i32 = 1, base_instance: u32 = 0) {
@@ -527,7 +531,7 @@ r_begin_scissor_mode_rect :: proc(r: Rect) {
     command_push_scissor_mode(cmd)
 }
 
-r_begin_scissor_mode :: proc {
+r_set_scissor_mode :: proc {
     r_begin_scissor_mode_pixels,
     r_begin_scissor_mode_rect
 }
@@ -647,7 +651,9 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
 
             switch Command_Type(cmd_type) {
                 case .CLEAR: {
-                    gl.ClearColor(0,0,0,0)
+                    cmd := _command_consume(&command_queue, Command_Clear)
+                    color := color_to_vec(cmd.color)
+                    gl.ClearColor(color.r, color.g, color.b, color.a)
                     gl.ClearDepth(1.0)
                     gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 

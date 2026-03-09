@@ -24,7 +24,7 @@ local rand = load_file("rand.lua")
 function on_init()
     a = Animation.new()
         :color(0, 0.5, Color.rgb(255,0,0), Color.rgb(0,0,255))
-        :scale(0, 1, 0,0, 2,2)
+        :scale(0, 1, 0,0, 2,2, Tween.QUINT_OUT)
         :texture(2000, 2000, "nonexisting.jpg") -- throws error, but defaults to white pixel
     
     el = Element.new()
@@ -68,10 +68,8 @@ function _on_update(time_ms)
 end
 
 function on_beat(beat)
-    -- every 1/1, index 1 meaning the first given timing section
+    -- every 1/1, index 0 meaning the first given timing section (most useful indexing for constructs like beat % 4)
     print("beat: " .. beat)
-    
-    trigger_event("saft", beat)
 end
 function _on_timing_change(beat, bpm)
     -- every redline

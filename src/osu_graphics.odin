@@ -2,6 +2,8 @@ package notosu
 
 import "base:intrinsics"
 import q "core:container/queue"
+import "core:math"
+import "core:math/ease"
 import "core:math/linalg"
 import "core:slice"
 
@@ -28,10 +30,37 @@ skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
 
 Tween :: enum {
     LINEAR,
-    ACCELERATE,
-    DECELERATE,
-    SMOOTH,
-    SLEEP
+    QUAD_IN,     QUAD_OUT,     QUAD_IN_OUT,
+    CUBIC_IN,    CUBIC_OUT,    CUBIC_IN_OUT,
+    SINE_IN,     SINE_OUT,     SINE_IN_OUT,
+    EXPO_IN,     EXPO_OUT,     EXPO_IN_OUT,
+    BACK_IN,     BACK_OUT,     BACK_IN_OUT,
+    ELASTIC_OUT,
+    BOUNCE_OUT,
+}
+
+tween_apply :: proc(tween: Tween, t: f32) -> f32 {
+    switch tween {
+    case .LINEAR:       return t
+    case .QUAD_IN:      return ease.quadratic_in(t)
+    case .QUAD_OUT:     return ease.quadratic_out(t)
+    case .QUAD_IN_OUT:  return ease.quadratic_in_out(t)
+    case .CUBIC_IN:     return ease.cubic_in(t)
+    case .CUBIC_OUT:    return ease.cubic_out(t)
+    case .CUBIC_IN_OUT: return ease.cubic_in_out(t)
+    case .SINE_IN:      return ease.sine_in(t)
+    case .SINE_OUT:     return ease.sine_out(t)
+    case .SINE_IN_OUT:  return ease.sine_in_out(t)
+    case .EXPO_IN:      return ease.exponential_in(t)
+    case .EXPO_OUT:     return ease.exponential_out(t)
+    case .EXPO_IN_OUT:  return ease.exponential_in_out(t)
+    case .BACK_IN:      return ease.back_in(t)
+    case .BACK_OUT:     return ease.back_out(t)
+    case .BACK_IN_OUT:  return ease.back_in_out(t)
+    case .ELASTIC_OUT:  return ease.elastic_out(t)
+    case .BOUNCE_OUT:   return ease.bounce_out(t)
+    }
+    return t
 }
 
 Animation_Variant :: enum {
@@ -390,24 +419,29 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
     element := &game.beatmap.elements.data[d.element]
     tex := element.tex
 
-    rect := Rect{d.pos.x + parent_pos.x, d.pos.y + parent_pos.y, d.size.x, d.size.y}
-    angle := d.angle_deg + d.angle_vel * f32(relative_time_at / 1000)
+    t_sec := f32(relative_time_at / 1000)
+    phys_x := d.vel.x * t_sec + 0.5 * d.accel.x * t_sec * t_sec
+    phys_y := d.vel.y * t_sec + 0.5 * d.accel.y * t_sec * t_sec
+    rect := Rect{d.pos.x + parent_pos.x + phys_x, d.pos.y + parent_pos.y + phys_y, d.size.x, d.size.y}
+    angle := d.angle_deg + d.angle_vel * t_sec
     color := d.color
 
     duration := d.end_time_ms - d.start_time_ms
+    effective_rate := d.animation_rate if d.animation_rate != 0 else 1.0
+    anim_time_at := relative_time_at / duration * effective_rate
+    if .LOOP_ANIMATION in d.flags {
+        anim_time_at = math.mod(anim_time_at, 1.0)
+    }
+
     seen_animation_of_type: [Animation_Variant]bool
     #reverse for &animation in game.beatmap.elements.data[d.element].animations {
         base := cast(^Base_Animation)&animation
-        anim_time_at := relative_time_at / duration
         if anim_time_at < base.start_time || seen_animation_of_type[animation_variant(animation)] {
             continue
         }
 
-        // todo(isak): doesn't look at drawable rate or loop_animation flag
-        // do we need an animation offset for stuff like approach time based animations? need a solution...
-        
         t := f32((anim_time_at - base.start_time) / (base.end_time - base.start_time))
-        t = min(t, 1)
+        t = tween_apply(base.tween, min(t, 1))
 
         // note(isak): we don't set attributes directly the same way osu SBs work, but i don't like it
         switch anim in animation {

@@ -642,7 +642,7 @@ mapset_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
             if timing_point.type == .UNINHERITED {
                 if current_timing_point_index_uninherited != current_timing_point_index_inherited {
                     old_timing_point := &osu_map.timing_points[current_timing_point_index_uninherited]
-                    timing_point.starts_at_beat = 1 + old_timing_point.starts_at_beat + 
+                    timing_point.starts_at_beat = old_timing_point.starts_at_beat + 
                         int((timing_point.time - old_timing_point.time) / old_timing_point.beat_length)
                 }
                 

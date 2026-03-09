@@ -15,8 +15,17 @@ import lua "luajit"
 import sdl "vendor:sdl3"
 
 
-// note(isak): implementation detail: we're using luajit, which in practice seems to be some kind of 
+// note(isak): implementation detail: we're using luajit, which in practice seems to be some kind of
 // wrapper of lua 5.1 that adds some extra stuff from 5.2 or so
+
+// todo(isak): Drawable:hide() / Drawable:show() — currently only exists on Hitobject
+// todo(isak): expose scoring state to lua (combo, score, accuracy)
+// todo(isak): UV sub-rect support on Element for sprite sheet / atlas workflows
+// todo(isak): schedule(delay_ms, fn) for deferred callbacks without on_update boilerplate
+// todo(isak): z-index within a layer (currently insertion-order only)
+// todo(isak): audio playback from lua
+// todo(isak): convenience constructor that creates element+animation+drawable in one call
+// todo(isak): animation list relocation is a silent footgun — ordering constraint should be enforced or surfaced clearly
 
 lua_beatmap: struct {
     state: ^lua.State,
@@ -62,6 +71,7 @@ Lua_Class_Type :: enum {
     TWEEN,
     HITOBJECT,
     COLOR,
+    BEATMAP,
 }
 
 Lua_Class :: struct {
@@ -99,6 +109,10 @@ lua_classes: [Lua_Class_Type]Lua_Class = {
         name            = "Color",
         static_funcs    = luaapi_color_static_funcs,
     },
+    .BEATMAP = {
+        name            = "Beatmap",
+        static_funcs    = luaapi_beatmap_static_funcs,
+    },
 }
 
 luaapi_global_funcs := []lua.L_Reg {
@@ -124,6 +138,7 @@ luaapi_enum_constants := [?]struct { t: typeid, name: cstring }{
     { Layer, "Layer" },
     { Judgement_Type, "Judgement" },
     { Layout_Anchor, "Anchor" },
+    { Tween, "Tween" },
 }
 
 Lua_Event_Registration :: struct {
@@ -320,7 +335,7 @@ switch class {
     case .HITOBJECT: lua_create_userdata(L, int(handle_key), lua_classes[.HITOBJECT].name)
     case .DRAWABLE: lua_create_userdata(L, transmute(Drawable_Handle)handle_key, lua_classes[.DRAWABLE].name)
     case .ELEMENT: lua_create_userdata(L, Element_ID(handle_key), lua_classes[.ELEMENT].name)
-    case .ANIMATION, .TWEEN, .COLOR:
+    case .ANIMATION, .TWEEN, .COLOR, .BEATMAP:
         lua.pushnil(L)
     }
 }
@@ -443,7 +458,7 @@ luaapi_key_is_down :: proc "c" (L: ^lua.State) -> i32 {
 luaapi_key_is_up :: proc "c" (L: ^lua.State) -> i32 {
     key_name := lua.L_checkstring(L, 1)
     scancode := sdl.GetScancodeFromName(key_name)
-    lua.pushboolean(L, b32(is_key_down(scancode)))
+    lua.pushboolean(L, b32(!is_key_down(scancode)))
     return 1
 }
 
@@ -738,7 +753,9 @@ luaapi_animation_move :: proc "c" (L: ^lua.State) -> i32 {
     start, end     := lua_number(2), lua_number(3)
     from_x, from_y := lua_number(4), lua_number(5)
     to_x, to_y     := lua_number(6), lua_number(7)
+    tween          := Tween(lua.L_optinteger(L, 8, 0))
     q.append(&game.beatmap.animations, Animation_Translate{
+        tween      = tween,
         start_time = f64(start),
         end_time   = f64(end),
         start_pos  = {f32(from_x), f32(from_y)},
@@ -757,7 +774,9 @@ luaapi_animation_scale :: proc "c" (L: ^lua.State) -> i32 {
     start, end := lua_number(2), lua_number(3)
     from       := vec2{f32(lua_number(4)), f32(lua_number(5))}
     to         := vec2{f32(lua_number(6)), f32(lua_number(7))}
+    tween      := Tween(lua.L_optinteger(L, 8, 0))
     q.append(&game.beatmap.animations, Animation_Scale{
+        tween       = tween,
         start_time  = f64(start),
         end_time    = f64(end),
         start_scale = from,
@@ -775,7 +794,9 @@ luaapi_animation_rotate :: proc "c" (L: ^lua.State) -> i32 {
     
     start, end := lua_number(2), lua_number(3)
     from, to   := f32(lua_number(4)), f32(lua_number(5))
+    tween      := Tween(lua.L_optinteger(L, 6, 0))
     q.append(&game.beatmap.animations, Animation_Rotate{
+        tween       = tween,
         start_time  = f64(start),
         end_time    = f64(end),
         start_angle = from,
@@ -793,8 +814,9 @@ luaapi_animation_color :: proc "c" (L: ^lua.State) -> i32 {
     
     start, end := lua_number(2), lua_number(3)
     from, to   := color_from_pixel(u32(lua_int(4))), color_from_pixel(u32(lua_int(5)))
-    
+    tween      := Tween(lua.L_optinteger(L, 6, 0))
     q.append(&game.beatmap.animations, Animation_Color{
+        tween       = tween,
         start_time  = f64(start),
         end_time    = f64(end),
         start_color = from,
@@ -812,7 +834,9 @@ luaapi_animation_alpha :: proc "c" (L: ^lua.State) -> i32 {
     
     start, end := lua_number(2), lua_number(3)
     from, to   := f32(lua_number(4)), f32(lua_number(5))
+    tween      := Tween(lua.L_optinteger(L, 6, 0))
     q.append(&game.beatmap.animations, Animation_Alpha{
+        tween       = tween,
         start_time  = f64(start),
         end_time    = f64(end),
         start_alpha = from,
@@ -853,7 +877,64 @@ luaapi_tween_static_funcs := []lua.L_Reg {
   { nil, nil },
 }
 
-// todo(isak)
+//////////////////////////////////////////////////////
+// note(isak): beatmap info API
+
+@(private="file")
+luaapi_beatmap_static_funcs := []lua.L_Reg {
+  { "get_music_time",     luaapi_beatmap_get_music_time },
+  { "get_length_ms",      luaapi_beatmap_get_length_ms },
+  { "get_bpm",            luaapi_beatmap_get_bpm },
+  { "get_beat_length_ms", luaapi_beatmap_get_beat_length_ms },
+  { "get_ar_ms",          luaapi_beatmap_get_ar_ms },
+  { "get_cs_osupx",       luaapi_beatmap_get_cs_osupx },
+  { "is_paused",          luaapi_beatmap_is_paused },
+  { nil, nil },
+}
+
+luaapi_beatmap_get_music_time :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua.pushnumber(L, lua.Number(beatmap_music_time_ms(&game.beatmap)))
+    return 1
+}
+
+luaapi_beatmap_get_length_ms :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua.pushnumber(L, lua.Number(game.beatmap.length_ms))
+    return 1
+}
+
+luaapi_beatmap_get_bpm :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    tp := game.active_map.timing_points[game.beatmap.current_timing_point_index_uninherited]
+    lua.pushnumber(L, lua.Number(60000 / max(tp.beat_length, 1)))
+    return 1
+}
+
+luaapi_beatmap_get_beat_length_ms :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    tp := game.active_map.timing_points[game.beatmap.current_timing_point_index_uninherited]
+    lua.pushnumber(L, lua.Number(tp.beat_length))
+    return 1
+}
+
+luaapi_beatmap_get_ar_ms :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua.pushnumber(L, lua.Number(game.beatmap.preempt_ms))
+    return 1
+}
+
+luaapi_beatmap_get_cs_osupx :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua.pushnumber(L, lua.Number(game.beatmap.circle_radius_osupx))
+    return 1
+}
+
+luaapi_beatmap_is_paused :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua.pushboolean(L, b32(game.paused))
+    return 1
+}
 
 //////////////////////////////////////////////////////
 // note(isak): drawable object API
@@ -870,15 +951,19 @@ luaapi_drawable_instance_funcs := []lua.L_Reg {
   { "register_event", luaapi_drawable_register_event },
   { "clone", luaapi_drawable_clone },
   { "set_layer", luaapi_drawable_set_layer },
+  { "get_pos", luaapi_drawable_get_pos },
   { "set_pos", luaapi_drawable_set_pos },
+  { "get_size", luaapi_drawable_get_size },
   { "set_size", luaapi_drawable_set_size },
   { "set_anchor", luaapi_drawable_set_anchor },
+  { "get_color", luaapi_drawable_get_color },
   { "set_color", luaapi_drawable_set_color },
-  // todo(isak)
-  //{ "set_vel", luaapi_drawable_set_vel }, 
-  //{ "set_accel", luaapi_drawable_set_accel },
-  //{ "set_angle_vel", luaapi_drawable_set_angle_vel },
+  { "set_vel", luaapi_drawable_set_vel },
+  { "set_accel", luaapi_drawable_set_accel },
+  { "set_angle_vel", luaapi_drawable_set_angle_vel },
+  { "get_start_time", luaapi_drawable_get_start_time },
   { "set_start_time", luaapi_drawable_set_start_time },
+  { "get_end_time", luaapi_drawable_get_end_time },
   { "set_end_time", luaapi_drawable_set_end_time },
   { "set_time", luaapi_drawable_set_time },
   { nil, nil },
@@ -1009,6 +1094,76 @@ luaapi_drawable_set_end_time :: proc "c" (L: ^lua.State) -> (result: i32) {
 luaapi_drawable_set_time :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         d.start_time_ms, d.end_time_ms = f64(lua_number(2)), f64(lua_number(3))
+        return 0
+    })
+}
+luaapi_drawable_get_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
+    d, found := slotmap.get(&game.beatmap.drawables, handle^)
+    if found {
+        lua.pushnumber(L, lua.Number(d.pos.x))
+        lua.pushnumber(L, lua.Number(d.pos.y))
+        result = 2
+    }
+    return result
+}
+luaapi_drawable_get_size :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
+    d, found := slotmap.get(&game.beatmap.drawables, handle^)
+    if found {
+        lua.pushnumber(L, lua.Number(d.size.x))
+        lua.pushnumber(L, lua.Number(d.size.y))
+        result = 2
+    }
+    return result
+}
+luaapi_drawable_get_color :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
+    d, found := slotmap.get(&game.beatmap.drawables, handle^)
+    if found {
+        lua.pushinteger(L, lua.Integer(color_to_pixel_u8(d.color)))
+        result = 1
+    }
+    return result
+}
+luaapi_drawable_get_start_time :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
+    d, found := slotmap.get(&game.beatmap.drawables, handle^)
+    if found {
+        lua.pushnumber(L, lua.Number(d.start_time_ms))
+        result = 1
+    }
+    return result
+}
+luaapi_drawable_get_end_time :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
+    d, found := slotmap.get(&game.beatmap.drawables, handle^)
+    if found {
+        lua.pushnumber(L, lua.Number(d.end_time_ms))
+        result = 1
+    }
+    return result
+}
+luaapi_drawable_set_vel :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        d.vel = vec2{f32(lua_number(2)), f32(lua_number(3))}
+        return 0
+    })
+}
+luaapi_drawable_set_accel :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        d.accel = vec2{f32(lua_number(2)), f32(lua_number(3))}
+        return 0
+    })
+}
+luaapi_drawable_set_angle_vel :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        d.angle_vel = f32(lua_number(2))
         return 0
     })
 }

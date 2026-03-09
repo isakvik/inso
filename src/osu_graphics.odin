@@ -110,9 +110,21 @@ Animation_Rotate :: struct {
     using base: Base_Animation,
     start_angle, end_angle: f32,
 }
+// note(isak): how an Animation_Color result is applied against the drawable's current color.
+// REPLACE (0, ZII): output = animated_color. ignores d.color entirely.
+// MULTIPLY:         output = d.color * animated_color / 255 per channel.
+//                   useful for tint/dim effects that should work regardless of the base color —
+//                   e.g. dimming approach circles before click time while preserving their combo color.
+//                   {255,255,255,255} is the identity (no effect).
+Animation_Color_Blend :: enum u8 {
+    REPLACE,
+    MULTIPLY,
+}
+
 Animation_Color :: struct {
     using base: Base_Animation,
     start_color, end_color: Color,
+    blend: Animation_Color_Blend,
 }
 Animation_Alpha :: struct {
     using base: Base_Animation,
@@ -376,7 +388,15 @@ reserve_handles :: proc(buf: ^rb.Ring_Buffer(Drawable_Handle), #any_int n: int) 
 }
 
 write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
+    combo_color_index := -1
     for &hobj in game.beatmap.hitobjects {
+        if .NEW_COMBO in hobj.flags || combo_color_index < 0 {
+            if osu_map.num_combo_colors > 0 {
+                combo_color_index = (combo_color_index + 1 + int(hobj.combo_color_offset)) % osu_map.num_combo_colors
+            }
+        }
+        combo_color := osu_map.num_combo_colors > 0 ? osu_map.combo_colors[combo_color_index] : color_purple
+
         hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
         hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, len(hit_circle_el_types)) or_continue
         #reverse for el_type, i in hit_circle_el_types {
@@ -394,20 +414,20 @@ write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
                 d.end_time_ms += game.beatmap.timing_windows.ok
             }
             if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE {
-                d.color = color_purple
+                d.color = combo_color
             }
-            
+
             if el_type == .COMBO_NUMBER {
                 d.size.x *= 0.2
                 d.size.y *= 0.4
             }
-            
+
             hobj.gfx_handles[i] = drawable_new(d)
         }
     }
 }
 
-render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) -> bool {
+render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}, alpha_mul: f32 = 1.0) -> bool {
     if at_time < d.start_time_ms {
         return true
     }
@@ -457,10 +477,21 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
                 angle = linalg.lerp(anim.start_angle, anim.end_angle, t)
 
             case Animation_Color:
-                color.r = u8(linalg.lerp(f32(anim.start_color.r), f32(anim.end_color.r), t))
-                color.g = u8(linalg.lerp(f32(anim.start_color.g), f32(anim.end_color.g), t))
-                color.b = u8(linalg.lerp(f32(anim.start_color.b), f32(anim.end_color.b), t))
-                color.a = u8(linalg.lerp(f32(anim.start_color.a), f32(anim.end_color.a), t))
+                lerped := Color{
+                    u8(linalg.lerp(f32(anim.start_color.r), f32(anim.end_color.r), t)),
+                    u8(linalg.lerp(f32(anim.start_color.g), f32(anim.end_color.g), t)),
+                    u8(linalg.lerp(f32(anim.start_color.b), f32(anim.end_color.b), t)),
+                    u8(linalg.lerp(f32(anim.start_color.a), f32(anim.end_color.a), t)),
+                }
+                switch anim.blend {
+                case .REPLACE:
+                    color = lerped
+                case .MULTIPLY:
+                    color.r = u8(f32(color.r) * f32(lerped.r) / 255)
+                    color.g = u8(f32(color.g) * f32(lerped.g) / 255)
+                    color.b = u8(f32(color.b) * f32(lerped.b) / 255)
+                    color.a = u8(f32(color.a) * f32(lerped.a) / 255)
+                }
                 
             case Animation_Alpha:
                 color.a = u8(linalg.lerp(anim.start_alpha, anim.end_alpha, t) * 0xFF)
@@ -470,6 +501,8 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
         }
         seen_animation_of_type[animation_variant(animation)] = true
     }
+
+    color.a = u8(f32(color.a) * alpha_mul)
 
     r_check_and_bind_pipeline({element.shader})
     r_check_and_bind_layer(d.layer)

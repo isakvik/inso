@@ -486,6 +486,29 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                         result.bg_filename = strings.clone(lines[i+1][path_from+1:path_to])
                     }
                 }
+            case .COLOURS:
+                for i in 1..<len(lines) {
+                    key, value := get_key_value(lines[i])
+                    if !strings.has_prefix(key, "Combo") { continue }
+                    combo_index, ok := strconv.parse_int(key[5:])
+                    if !ok || combo_index < 1 || combo_index > 8 { continue }
+
+                    c: Color = {0, 0, 0, 0xFF}
+                    channel := 0
+                    from_i, s_len: int
+                    for from_i < len(value) && channel < 3 {
+                        s_len = strings.index_byte(value[from_i:], ',')
+                        part := s_len >= 0 ? value[from_i:from_i + s_len] : value[from_i:]
+                        v, _ := strconv.parse_uint(strings.trim_space(part))
+                        c[channel] = u8(v)
+                        channel += 1
+                        if s_len < 0 { break }
+                        from_i += s_len + 1
+                    }
+
+                    result.combo_colors[combo_index - 1] = c
+                    result.num_combo_colors = max(result.num_combo_colors, combo_index)
+                }
             case .HITOBJECTS:
                 result.hitobjects = make_slice([]Hitobject, len(lines) - 1)
 

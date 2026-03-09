@@ -248,6 +248,9 @@ Osu_Map :: struct {
         diff_slider_tickrate: f64,
         
         bg_filename: string,
+
+        combo_colors: [8]Color,
+        num_combo_colors: int,
     },
     
     audio_filepath: string,
@@ -342,7 +345,7 @@ osu_on_update :: proc(dt: f64) {
                 anchor = .CENTER,
                 color = color_white,
                 start_time_ms = map_time,
-                end_time_ms = map_time + 600
+                end_time_ms = map_time + 250
             })
             hobj.gfx_handles[1] = drawable_new({
                 flags = {.ACTIVE},
@@ -352,7 +355,7 @@ osu_on_update :: proc(dt: f64) {
                 anchor = .CENTER,
                 color = color_purple,
                 start_time_ms = map_time,
-                end_time_ms = map_time + 600
+                end_time_ms = map_time + 250
             })
             
             judgement_new_drawable(&hobj)
@@ -394,11 +397,17 @@ osu_on_update :: proc(dt: f64) {
 
     // note(isak): we render hitobject elements back to front for correct blending
     // todo(isak): @speed - use persistent_gfx for visible set optimization
+    fade_in_ms := min(game.beatmap.preempt_ms * 0.4, 400.0)
     #reverse for &hobj in game.beatmap.hitobjects {
+        alpha_mul: f32 = 1.0
+        if hobj.judgement_index == 0 {
+            visible_start := hobj.start_time_ms - game.beatmap.preempt_ms
+            alpha_mul = f32(clamp((map_time - visible_start) / fade_in_ms, 0, 1))
+        }
         #reverse for handle in hobj.gfx_handles {
             e := slotmap.get(&game.beatmap.drawables, handle) or_continue
             if .ACTIVE in e.flags {
-                render_drawable(e, map_time, hitobject_pos(&hobj))
+                render_drawable(e, map_time, hitobject_pos(&hobj), alpha_mul)
             }
         }
     }
@@ -512,7 +521,7 @@ handle_play_input_events :: proc() {
     
     old_mouse_pos := game.input.mouse_pos
     game.input.mouse_pos = transform_point_space(pf_mouse,
-        transform_to_mat3(window.screenspace_transform), 
+        transform_to_mat3(window.screenspace_transform),
         transform_to_mat3(game.playfield_transform)
     )
     
@@ -560,12 +569,7 @@ valid_controller_press :: proc() -> bool {
 
 
 playfield_to_screenspace_transform :: proc() -> mat3 {
-    side := window.rect.h
-    offset_x := (window.rect.w - side) * 0.5
-    viewport_rect := vec4{offset_x, 0, side, side}
-    screen_to_ndc := transform_to_mat3(transform_from_bounds(viewport_rect, window.aspect_ratio))
-    
-    return transform_to_mat3(game.playfield_transform) * linalg.matrix3_inverse(screen_to_ndc)
+    return transform_to_mat3(game.playfield_transform) * linalg.matrix3_inverse(transform_to_mat3(window.screenspace_transform))
 }
 
 //////////////////////////////////////////////////////

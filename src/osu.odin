@@ -426,8 +426,12 @@ split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> 
 
 // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L878
 // note(yokes): "t" is for time which means we need to calculate the time it takes to get "d" distance beforehand
-calculate_bezier_point_from_time :: proc(t: f64, curve: Slider_Curve) {
-    
+calculate_bezier_point_from_time :: proc(t: f64, curve: Slider_Curve, base_slider_velocity: f64, slider_velocity: f64) {
+    //note(yokes): draw sliderball, move sliderball accordingly?
+    //note(yokes): quick test on stable, 1x sv 5/4 slider has 500 distance. i believe i understand how the math works now
+    //note(yokes): if a green line is in the middle of a slider, should it change the slider speed mid-slider? stable nor lazer does this but i believe this would leave more room... nvm not possible atm
+
+    slider_speed := base_slider_velocity * slider_velocity //base_sv is 1 when making a new map
     //int i := 0;
     for point in curve {
         
@@ -438,8 +442,6 @@ calculate_bezier_point_from_time :: proc(t: f64, curve: Slider_Curve) {
 
 base_dist : f32 = 2.5
 
-//todo(yokes): make a procedure for calculating points on bezier and arch sliders when the curve is too slight
-//check todos under circular_arc_to_piecewise_linear and bezier_to_piecewise_linear
 calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), output: ^q.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
     curr_distance : f64 = 0
     for point, i in output.data[:output.len] {
@@ -561,7 +563,7 @@ b_spline_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_
     output : q.Queue(vec2)
     q.init(&output, allocator = context.temp_allocator)
     
-    to_flatten : q.Queue([]vec2) //todo(yokes): should contain all curves which are not approximated well enough yet
+    to_flatten : q.Queue([]vec2)
     temp_points: q.Queue(vec2)
     q.init(&temp_points, allocator = context.temp_allocator)
     q.init(&to_flatten, allocator = context.temp_allocator) //todo(yokes): check capacity, default for now
@@ -746,8 +748,6 @@ write_instances_from_path :: proc(
         buffer_push(instance_buf, curve[0])
     }*/
 
-    // todo(yokes): test code with straight sliders (start- and endpoint)
-    //buffer_push(instance_buf, [[100,100], [200, 200]])
     if false {
         return instance_buf.count - instance_offset, instance_offset
     }

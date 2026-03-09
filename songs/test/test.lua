@@ -88,6 +88,10 @@ function _on_judgement(hobj, judgement, timing_error_ms)
     print(timing_error_ms)
 end
 
+function on_kiai_change(kiai) 
+    print("kiai time: ", kiai)
+end
+
 
 --function on_controller_pressed(key) 
 --    --can also use controller_is_down(key)

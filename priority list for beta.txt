@@ -6,9 +6,6 @@ scripting
     api
     versioning (version capabilities?)
         is this needed?
-    event system
-    messaging system
-    kiai time hook
 
 game mechanics (not score, replays, etc)
     per-hitobject size and approach rate
@@ -22,7 +19,6 @@ game mechanics (not score, replays, etc)
 gameplay
     hittesting
     notelock
-    judgements
     hitsounds
 
 rendering

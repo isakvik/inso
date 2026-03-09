@@ -48,6 +48,7 @@ Lua_Beatmap_Event_Type :: enum {
     ON_KEY_UP,
     ON_CURSOR_MOVED,
     ON_JUDGEMENT,
+    ON_KIAI_CHANGE,
 }
 lua_beatmap_event_names := [Lua_Beatmap_Event_Type]cstring {
     .ON_INIT = "on_init",
@@ -61,6 +62,7 @@ lua_beatmap_event_names := [Lua_Beatmap_Event_Type]cstring {
     .ON_KEY_UP = "on_key_released",
     .ON_CURSOR_MOVED = "on_cursor_moved",
     .ON_JUDGEMENT = "on_judgement",
+    .ON_KIAI_CHANGE = "on_kiai_change",
 }
 
 
@@ -502,6 +504,15 @@ lua_beatmap_on_pause_change :: proc(paused: bool) {
     lua_call_beatmap_func(lua_beatmap_event_names[.ON_PAUSE_CHANGE], paused,
         proc(paused: bool) -> i32 {
             lua.pushboolean(lua_beatmap.state, b32(paused))
+            return 1
+        }
+    )
+}
+
+lua_beatmap_on_kiai_change :: proc(kiai: bool) {
+    lua_call_beatmap_func(lua_beatmap_event_names[.ON_KIAI_CHANGE], kiai,
+        proc(kiai: bool) -> i32 {
+            lua.pushboolean(lua_beatmap.state, b32(kiai))
             return 1
         }
     )

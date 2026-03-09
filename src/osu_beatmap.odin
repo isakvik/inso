@@ -21,6 +21,7 @@ Beatmap :: struct {
     current_timing_point_index_uninherited: int,
     current_timing_point_index_inherited: int,
     current_beat: int,
+    current_kiai: bool,
     
     last_music_position_interpolation_check_time: f64,
     last_accurate_music_position_set_time: f64,
@@ -136,6 +137,9 @@ beatmap_on_update :: proc(beatmap: ^Beatmap) {
     }
     if lua_cares_about_event(.ON_BEAT) {
         beatmap_check_new_beat(beatmap)
+    }
+    if lua_cares_about_event(.ON_KIAI_CHANGE) {
+        beatmap_check_kiai_change(beatmap)
     }
 }
 
@@ -306,6 +310,14 @@ beatmap_check_new_beat :: proc(beatmap: ^Beatmap) {
             lua_beatmap_on_beat(beat)
         }
         beatmap.current_beat = beat
+    }
+}
+
+beatmap_check_kiai_change :: proc(beatmap: ^Beatmap) {
+    kiai := game.active_map.timing_points[beatmap.current_timing_point_index_inherited].kiai
+    if kiai != beatmap.current_kiai {
+        beatmap.current_kiai = kiai
+        lua_beatmap_on_kiai_change(kiai)
     }
 }
 

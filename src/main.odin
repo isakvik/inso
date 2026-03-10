@@ -167,7 +167,7 @@ main :: proc() {
     renderer := &window.renderer
     defer renderer_cleanup()
 
-    window_resize(i32(window.rect.w), i32(window.rect.h))
+    window_on_resize(i32(window.rect.w), i32(window.rect.h))
 
     debug_ui_init()
     text_init()
@@ -250,7 +250,7 @@ main :: proc() {
                     
                 case sdl.EventType.WINDOW_RESIZED:
                     cleanup_textures_for_rendering()
-                    window_resize(max(event.window.data1, 1), max(event.window.data2, 1))
+                    window_on_resize(max(event.window.data1, 1), max(event.window.data2, 1))
                     prepare_textures_for_rendering()
                         
                 case sdl.EventType.WINDOW_FOCUS_LOST:
@@ -291,7 +291,7 @@ main :: proc() {
             begin_frame(renderer)
         }
         
-        {   
+        {
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
             
             r_bind_layer_and_push_current_state(.DEBUG, transform = window.screenspace_transform)

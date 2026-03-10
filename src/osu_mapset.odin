@@ -32,20 +32,23 @@ todo(isak): missing functionality:
     - notosu definition and script running
 
 */
+Mapset_Buffer :: distinct GL_Buffer(u8)
+
 Mapset :: struct {
     open: bool,
     folder_path: string,
     osu_map: Osu_Map,
     notosu_map: Notosu_Map,
-    
+
     num_shaders: int,
     shader_blend_modes: [dynamic]Blend_Mode,
     textures: queue.Queue(Texture),
-    texture_slot_by_name: map[string]u32,
+    texture_slot_by_name:  map[string]u32,
     pipeline_slot_by_name: map[string]u32,
+    buffer_slot_by_name:   map[string]u32,
     hitobject_index_by_ms: map[int]int,
-    
-    model_store: ^GL_Buffer(Mesh_Vertex),
+
+    buffers: queue.Queue(Mapset_Buffer),
 
     watch: Win32_Directory_Watch
 }
@@ -95,12 +98,14 @@ Notosu_Section_Header_Types :: enum {
     HEADER,
     GENERAL,
     SHADERS,
+    BUFFERS,
 }
 
 notosu_section_headers := []string{
     "",
     "[General]",
     "[Shaders]",
+    "[Buffers]",
 }
 
 Osu_Section_Header_Types :: enum {
@@ -136,7 +141,7 @@ Osu_Sample_Set :: enum {
 
 mapset_free :: proc(mapset: ^Mapset) -> string {
     win32_close_directory_watch(&mapset.watch)
-    
+
     for &texture in mapset.textures.data {
         texture_cleanup(&texture)
     }
@@ -147,12 +152,16 @@ mapset_free :: proc(mapset: ^Mapset) -> string {
     window.pipelines.len = len(Builtin_Pipeline_Slot)
     window.shaders.len = len(Builtin_Pipeline_Slot)
     buffer_clear(&window.renderer.slider_instances)
-    
+
+    for &buf in mapset.buffers.data {
+        sbo_cleanup(cast(^GL_Buffer(u8))&buf)
+    }
+
     mapset_path := strings.clone(mapset.folder_path, context.temp_allocator)
-    
+
     virtual.arena_free_all(&memory.arenas[.DRAWABLES])
     virtual.arena_free_all(&memory.arenas[.MAPSET])
-    
+
     return mapset_path
 }
 
@@ -182,8 +191,10 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
     defer os.change_directory(app.base_dir)
     
     queue.init(&mapset.textures)
+    queue.init(&mapset.buffers)
     mapset.texture_slot_by_name  = make(map[string]u32, 16)
     mapset.pipeline_slot_by_name = make(map[string]u32, 16)
+    mapset.buffer_slot_by_name   = make(map[string]u32, 16)
     mapset.hitobject_index_by_ms = make(map[int]int, 128)
     mapset.shader_blend_modes    = make([dynamic]Blend_Mode, 0, 8)
     
@@ -232,9 +243,6 @@ handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
             mapset.texture_slot_by_name[tex_key] = u32(mapset.textures.len)
             queue.push_back(&mapset.textures, tex)
         } 
-        case ".gltf": {
-            model_store := load_model(file.name)
-        }
     }
 }
 
@@ -307,8 +315,6 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
 
             for i in 1..<len(lines) {
                 line := lines[i]
-                if len(line) == 0 do continue
-                
                 if line[0:2] == "[[" && line[len(line)-2:] == "]]" {
                     mapset_load_shader_entry(mapset, shader_params.name, shader_params.vs_path, shader_params.fs_path, shader_params.blend_mode)
                     shader_params.name = line[2:len(line)-2]
@@ -327,15 +333,42 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
                     case: log.errorf("unknown/unhandled option: {}", key)
                     }
                 }
-                
             }
             mapset_load_shader_entry(mapset, shader_params.name, shader_params.vs_path, shader_params.fs_path, shader_params.blend_mode)
+
+        case .BUFFERS:
+            buf_params: struct {
+                name:     string,
+                source:   string,
+                size:     int,
+            }
+
+            for i in 1..<len(lines) {
+                line := lines[i]
+                if line[0:2] == "[[" && line[len(line)-2:] == "]]" {
+                    mapset_load_buffer_entry(mapset, buf_params.name, buf_params.source, buf_params.size)
+                    buf_params = {}
+                    buf_params.name = line[2:len(line)-2]
+                } else {
+                    key, value := get_key_value(line)
+                    switch key {
+                    case "Source":
+                        buf_params.source = value
+                    case "Size":
+                        parsed, ok := strconv.parse_int(value)
+                        if ok do buf_params.size = parsed
+                        else do log.errorf("mapset buffer '{}': invalid Size value '{}'", buf_params.name, value)
+                    case: log.errorf("mapset buffer '{}': unknown option '{}'", buf_params.name, key)
+                    }
+                }
+            }
+            mapset_load_buffer_entry(mapset, buf_params.name, buf_params.source, buf_params.size)
 
         case:
             unreachable()
         }
     }
-    
+
     return result
 }
 
@@ -628,6 +661,42 @@ mapset_load_shader_entry :: proc(mapset: ^Mapset, name, vs, fs: string, blend_mo
 }
 
 
+mapset_load_buffer_entry :: proc(mapset: ^Mapset, name, source: string, size: int) {
+    if name == "" do return
+
+    buf: Mapset_Buffer
+
+    if source != "" {
+        // note(isak): file-backed buffer — load via GLTF, upload once, immutable on GPU
+        model := load_model(source)
+        if model == nil {
+            log.errorf("mapset buffer '{}': failed to load source '{}'", name, source)
+            return
+        }
+        buf.id   = model.id
+        buf.size = model.size
+    } else if size > 0 {
+        // note(isak): writable buffer — persistently mapped so Lua can write directly
+        buf = Mapset_Buffer(sbo_init(u8, size))
+    } else {
+        log.errorf("mapset buffer '{}': must specify either Source or Size, skipping", name)
+        return
+    }
+
+    name_key := strings.clone(name)
+    mapset.buffer_slot_by_name[name_key] = u32(mapset.buffers.len)
+    queue.push_back(&mapset.buffers, buf)
+    log.infof("mapset buffer '{}' loaded (size: {} bytes, writable: {})", name, buf.size, buf.data != nil)
+}
+
+mapset_buffer :: proc(name: string) -> (result: ^Mapset_Buffer, found: bool) {
+    assert(game.active_mapset != nil)
+    index: u32
+    index, found = game.active_mapset.buffer_slot_by_name[name]
+    if found do result = queue.get_ptr(&game.active_mapset.buffers, index)
+    return result, found
+}
+
 mapset_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
     
     sort.quick_sort_proc(osu_map.hitobjects, proc(a, b: Hitobject) -> int {
@@ -763,22 +832,44 @@ load_model :: proc(path: string) -> ^GL_Buffer(Mesh_Vertex) {
         return raw_data(buf)
     }
     cgltf_free :: proc "c" (user, ptr: rawptr) {}
-    
+
     options := cgltf.options{
         memory = {
             alloc_func = cgltf_alloc,
-            free_func = cgltf_free
+            free_func = cgltf_free,
         }
     }
-    
-    path_cstr := strings.clone_to_cstring(path)
+
+    path_cstr := strings.clone_to_cstring(path, context.temp_allocator)
     data, result := cgltf.parse_file(options, path_cstr)
-    assert(result == .success)
+    if result != .success {
+        log.errorf("load_model '{}': parse failed ({})", path, result)
+        return nil
+    }
     result = cgltf.load_buffers(options, data, path_cstr)
-    assert(result == .success)
-    
-    store := r_create_static_store(Mesh_Vertex, 36, memory.allocators[.MAPSET])
-    
+    if result != .success {
+        log.errorf("load_model '{}': load_buffers failed ({})", path, result)
+        return nil
+    }
+    if len(data.meshes) == 0 || len(data.meshes[0].primitives) == 0 {
+        log.errorf("load_model '{}': no meshes found", path)
+        return nil
+    }
+
+    vertex_count: int
+    for attrib in data.meshes[0].primitives[0].attributes {
+        if attrib.type == .position {
+            vertex_count = int(attrib.data.count)
+            break
+        }
+    }
+    if vertex_count == 0 {
+        log.errorf("load_model '{}': no position attribute found", path)
+        return nil
+    }
+
+    store := r_create_static_store(Mesh_Vertex, vertex_count, memory.allocators[.MAPSET])
+
     for primitive in data.meshes[0].primitives[:] {
         for attrib in primitive.attributes {
             attr_bufview := attrib.data.buffer_view
@@ -798,7 +889,8 @@ load_model :: proc(path: string) -> ^GL_Buffer(Mesh_Vertex) {
             }
         }
     }
-    
+
+    log.infof("load_model '{}': {} vertices loaded", path, vertex_count)
     return store
 }
 

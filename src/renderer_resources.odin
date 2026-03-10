@@ -55,6 +55,21 @@ Shader_SSBO_Bind_Slot :: enum u32 {
     TEXTURES,
     INSTANCE_BUFFER,
     SLIDER_PARAMS, // todo(isak): this is implemented as a UBO, should use its own slot namespace
+    USER_PARAMS,   // user-accessible f32[64] UBO, always bound; binding 7
+    USER_0,        // user-bindable SSBO slots; binding 8-15
+    USER_1,
+    USER_2,
+    USER_3,
+    USER_4,
+    USER_5,
+    USER_6,
+    USER_7,
+}
+
+// note(isak): always-bound UBO for Lua-accessible shader params.
+// shaders access it as: layout(std140, binding=7) uniform UserParams { float params[64]; };
+User_Shader_Params :: struct #align(16) {
+    data: [64]f32,
 }
 
 // note(isak): per-draw slider colors, uploaded before each DRAW_SLIDER command

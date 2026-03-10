@@ -481,6 +481,9 @@ hitobject_on_click :: proc(hobj: ^Hitobject) -> (result: Judgement_Type) {
     if result != .NONE {
         judgement_new(hobj, result, time_error_ms)
         hobj.flags |= {.EXPIRED}
+        
+        // todo(isak): handle hitsound flags, sample sets, hitsound volume
+        sample_play(&game.active_skin.hitsounds[.NORMAL][.HITNORMAL])
     }
     return result
 }

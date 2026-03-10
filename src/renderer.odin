@@ -178,6 +178,7 @@ renderer_init :: proc() {
     
     window.shader_global_buffer = ubo_init(Shader_Globals, 1)
     window.slider_param_buffer  = ubo_init(Slider_Globals, 1)
+    window.user_param_buffer    = ubo_init(User_Shader_Params, 1)
 
 
     window.pass_action = { 
@@ -238,7 +239,8 @@ renderer_cleanup :: proc() {
     tbo_cleanup(&window.quad_store)
     tbo_cleanup(&window.text_store)
     ubo_cleanup(&window.slider_param_buffer)
-    
+    ubo_cleanup(&window.user_param_buffer)
+
     sbo_cleanup(&window.fullscreen_store)
     sbo_cleanup(&window.circle_geo_buffer)
     sbo_cleanup(&window.texture_buffer)
@@ -341,6 +343,7 @@ Command_Type :: enum(u8) {
     CLEAR,
     DRAW,
     DRAW_SLIDER,
+    DRAW_MESH,
     BIND_PIPELINE,
     BIND_FRAMEBUFFER,
     BIND_SSBO,
@@ -387,6 +390,11 @@ Command_Bind_SSBO :: struct {
     size, offset: int
 }
 
+Command_Draw_Mesh :: struct {
+    vertex_count:   i32,
+    instance_count: i32,
+}
+
 Command_Scissor_Mode :: struct {
     x, y, w, h: i32
 }
@@ -396,6 +404,7 @@ command_push_push_transform    :: proc(cmd: Command_Push_Transform) -> bool { re
 command_push_pop_transform     :: proc() -> bool { return _command_push_header(.POP_TRANSFORM) }
 command_push_draw              :: proc(cmd: Command_Draw) -> bool { return _command_push(cmd, .DRAW) }
 command_push_draw_slider       :: proc(cmd: Command_Draw_Slider) -> bool { return _command_push(cmd, .DRAW_SLIDER) }
+command_push_draw_mesh         :: proc(cmd: Command_Draw_Mesh) -> bool { return _command_push(cmd, .DRAW_MESH) }
 command_push_bind_pipeline     :: proc(cmd: Command_Bind_Pipeline) -> bool { return _command_push(cmd, .BIND_PIPELINE) }
 command_push_bind_framebuffer  :: proc(cmd: Command_Bind_Framebuffer) -> bool { return _command_push(cmd, .BIND_FRAMEBUFFER) }
 command_push_bind_ssbo         :: proc(cmd: Command_Bind_SSBO) -> bool { return _command_push(cmd, .BIND_SSBO) }
@@ -494,6 +503,15 @@ r_bind_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_index: Shader_SSBO_Bind_Slot
 r_bind_ssbo :: proc {
     r_bind_sbo,
     r_bind_tbo
+}
+
+r_bind_ssbo_raw :: proc(id: u32, size: int, bind_slot: Shader_SSBO_Bind_Slot) {
+    _r_push_ssbo(Command_Bind_SSBO{ id, bind_slot, size, 0 })
+}
+
+r_push_draw_mesh :: proc(vertex_count: i32, instance_count: i32 = 1) {
+    window.renderer.new_draw_on_next_push = true
+    command_push_draw_mesh({ vertex_count = vertex_count, instance_count = instance_count })
 }
 
 /*
@@ -627,6 +645,7 @@ batch_end :: proc(renderer: ^Renderer) {
     sbo_bind(&window.texture_buffer, u32(Shader_SSBO_Bind_Slot.TEXTURES))
     ubo_bind(&window.shader_global_buffer, u32(Shader_SSBO_Bind_Slot.TRANSFORM))
     sbo_bind(&window.slider_instance_store, u32(Shader_SSBO_Bind_Slot.INSTANCE_BUFFER))
+    ubo_bind(&window.user_param_buffer, u32(Shader_SSBO_Bind_Slot.USER_PARAMS))
 
     batch_process_command_buffer(renderer)
 }
@@ -683,6 +702,12 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                     sg.draw(cmd.index_offset, cmd.index_count, cmd.instance_count)
 
                     if (trace) { fmt.println("  draw", cmd.index_offset, cmd.index_count, cmd.instance_count, cmd.base_instance ) }
+                }
+                case .DRAW_MESH: {
+                    cmd := _command_consume(&command_queue, Command_Draw_Mesh)
+                    gl.DrawArrays(gl.TRIANGLES, 0, cmd.vertex_count * cmd.instance_count)
+
+                    if (trace) { fmt.println("  draw_mesh", cmd.vertex_count, cmd.instance_count) }
                 }
                 case .DRAW_SLIDER: {
                     cmd := _command_consume(&command_queue, Command_Draw_Slider)

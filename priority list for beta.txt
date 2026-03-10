@@ -3,9 +3,7 @@ priority list for beta
 -- PRE BETA --
 
 scripting
-    api
-    versioning (version capabilities?)
-        is this needed?
+    draft more api
 
 game mechanics (not score, replays, etc)
     per-hitobject size and approach rate
@@ -24,9 +22,14 @@ gameplay
 rendering
     render to FBO
     lua frame object
-    
+
 fixes
     reconsider entity ring buffer persistence
+
+TEST
+    mouse buttons when keyboard held down and vice versa
+    notosu custom buffers
+    limit testing
 
 -- POST MAPPER BETA RELEASE -- 
 

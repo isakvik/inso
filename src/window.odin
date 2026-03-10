@@ -52,6 +52,7 @@ window: struct {
     
     shader_global_buffer: GL_Uniform_Buffer(Shader_Globals),
     slider_param_buffer: GL_Uniform_Buffer(Slider_Globals),
+    user_param_buffer: GL_Uniform_Buffer(User_Shader_Params),
     circle_geo_buffer: GL_Buffer(Slider_Vertex),
     texture_buffer: GL_Buffer(u64),
 
@@ -92,7 +93,7 @@ window_init :: proc(rect: Rect) {
     window.cursor_hidden = sdl.HideCursor()
 }
 
-window_resize :: proc(new_w, new_h: i32) {
+window_on_resize :: proc(new_w, new_h: i32) {
     window.rect.w = f32(new_w)
     window.rect.h = f32(new_h)
     window.swapchain.width = new_w

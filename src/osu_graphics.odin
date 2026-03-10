@@ -113,7 +113,7 @@ Animation_Rotate :: struct {
 // note(isak): how an Animation_Color result is applied against the drawable's current color.
 // REPLACE (0, ZII): output = animated_color. ignores d.color entirely.
 // MULTIPLY:         output = d.color * animated_color / 255 per channel.
-//                   useful for tint/dim effects that should work regardless of the base color —
+//                   useful for tint/dim effects that should work regardless of the base color -
 //                   e.g. dimming approach circles before click time while preserving their combo color.
 //                   {255,255,255,255} is the identity (no effect).
 Animation_Color_Blend :: enum u8 {
@@ -169,12 +169,13 @@ Element_Type :: enum {
 Element_ID :: u32
 Element :: struct {
     type: Element_Type, // note(isak): this is just for debug purposes
-    
+
     shader: Pipeline_ID,
     static_geometry: bool,
     ssbo: u32,
+    ssbo_size: int,
     index_count: u32,
-    
+
     tex: u32,
     animations: []Animation,
 }
@@ -506,8 +507,16 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}, al
 
     r_check_and_bind_pipeline({element.shader})
     r_check_and_bind_layer(d.layer)
-    r_draw_layout_rect(&window.renderer.quad_geometry, rect, d.anchor, color, tex, angle)
-    
+
+    if element.static_geometry {
+        r_bind_ssbo_raw(element.ssbo, element.ssbo_size, .VERTEX_BUFFER)
+        r_push_draw_mesh(i32(element.index_count))
+        // note(isak): restore quad VERTEX_BUFFER for subsequent quad draws
+        r_bind_tbo(&window.quad_store, .VERTEX_BUFFER)
+    } else {
+        r_draw_layout_rect(&window.renderer.quad_geometry, rect, d.anchor, color, tex, angle)
+    }
+
     return true
 }
 

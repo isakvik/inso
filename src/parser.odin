@@ -48,12 +48,29 @@ consume_until_next_section :: proc(c: ^Consumer) -> string {
     return result
 }
 
+// note(isak): returns true when the consumer is positioned at a [Section] header line.
+// [[Subgroup]] lines are NOT section headers and return false.
+_is_section_header_at :: proc(c: ^Consumer) -> bool {
+    if c.at >= len(c.str) do return false
+    if c.str[c.at] != '[' do return false
+    return c.at + 1 < len(c.str) && c.str[c.at + 1] != '['
+}
+
+// note(isak): collects lines from the current position until the next [Section] header (exclusive)
+// or EOF. blank lines are skipped. [[Subgroup]] lines are included as content.
+// the first line consumed is always included even if it looks like a header, so callers
+// get lines[0] = "[Section]" as the section identifier.
 consume_section :: proc(c: ^Consumer, alloc: runtime.Allocator = context.temp_allocator) -> [dynamic]string {
     arr := make([dynamic]string, alloc)
-    for {
-        str := consume_line(c)
-        if len(str) == 0 || str == "\n" || str == "\r\n" {
+    first := true
+    for c.at < len(c.str) {
+        if !first && _is_section_header_at(c) {
             break
+        }
+        str := consume_line(c)
+        first = false
+        if len(str) == 0 {
+            continue
         }
         append(&arr, str)
     }

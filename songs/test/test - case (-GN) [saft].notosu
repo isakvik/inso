@@ -8,3 +8,10 @@ LuaEntryPoint: test.lua
 VertexShader: builtin.quad
 FragmentShader: quad_wave.fs.glsl
 BlendMode: Alpha
+
+[Buffers]
+[[my_model]]
+Source: Crate1.gltf
+
+[[wave_data]]
+Size: 4096

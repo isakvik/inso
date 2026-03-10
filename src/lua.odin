@@ -12,20 +12,31 @@ import "core:reflect"
 
 import "slotmap"
 import lua "luajit"
+import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
 
 
 // note(isak): implementation detail: we're using luajit, which in practice seems to be some kind of
 // wrapper of lua 5.1 that adds some extra stuff from 5.2 or so
 
-// todo(isak): Drawable:hide() / Drawable:show() — currently only exists on Hitobject
+// note(isak): API versioning/compat policy
+// maps declare a target API version in their .notosu header. when making breaking changes:
+//   - prefer add-only (rename new, keep old) until a clean break is necessary
+//   - on a genuine break: write compat/vN.lua (loaded before the map script for old versions)
+//   - shims can patch static methods directly (Hitobject.old = Hitobject.new) and instance
+//     methods via get_class_meta("ClassName") -- see luaapi_get_class_meta
+//   - things shims can't fix: event arg order changes, removed enum values the engine no
+//     longer handles, structural drawable/hitobject relationship changes -- those need an
+//     odin-side version check at the call site
+
+// todo(isak): Drawable:hide() / Drawable:show() - currently only exists on Hitobject
 // todo(isak): expose scoring state to lua (combo, score, accuracy)
 // todo(isak): UV sub-rect support on Element for sprite sheet / atlas workflows
 // todo(isak): schedule(delay_ms, fn) for deferred callbacks without on_update boilerplate
 // todo(isak): z-index within a layer (currently insertion-order only)
 // todo(isak): audio playback from lua
 // todo(isak): convenience constructor that creates element+animation+drawable in one call
-// todo(isak): animation list relocation is a silent footgun — ordering constraint should be enforced or surfaced clearly
+// todo(isak): animation list relocation is a silent footgun - ordering constraint should be enforced or surfaced clearly
 
 lua_beatmap: struct {
     state: ^lua.State,
@@ -74,6 +85,7 @@ Lua_Class_Type :: enum {
     HITOBJECT,
     COLOR,
     BEATMAP,
+    BUFFER,
 }
 
 Lua_Class :: struct {
@@ -114,6 +126,11 @@ lua_classes: [Lua_Class_Type]Lua_Class = {
     .BEATMAP = {
         name            = "Beatmap",
         static_funcs    = luaapi_beatmap_static_funcs,
+    },
+    .BUFFER = {
+        name            = "Buffer",
+        static_funcs    = luaapi_buffer_static_funcs,
+        instance_funcs  = luaapi_buffer_instance_funcs,
     },
 }
 
@@ -185,9 +202,10 @@ lua_create_beatmap_script_context :: proc(script_path: string) {
         
     lua_beatmap.odin_context = context
     L:= lua_beatmap.state
-    
+
     lua_register_global_funcs(L)
     lua_register_classes(L)
+    lua_register_shader_global(L)
     for e in luaapi_enum_constants {
         lua_register_enum(L, e.t, e.name)
     }
@@ -337,7 +355,7 @@ switch class {
     case .HITOBJECT: lua_create_userdata(L, int(handle_key), lua_classes[.HITOBJECT].name)
     case .DRAWABLE: lua_create_userdata(L, transmute(Drawable_Handle)handle_key, lua_classes[.DRAWABLE].name)
     case .ELEMENT: lua_create_userdata(L, Element_ID(handle_key), lua_classes[.ELEMENT].name)
-    case .ANIMATION, .TWEEN, .COLOR, .BEATMAP:
+    case .ANIMATION, .TWEEN, .COLOR, .BEATMAP, .BUFFER:
         lua.pushnil(L)
     }
 }
@@ -635,6 +653,7 @@ luaapi_element_instance_funcs := []lua.L_Reg {
   { "set_tex", luaapi_element_set_tex },
   { "set_shader", luaapi_element_set_shader },
   { "set_animation", luaapi_element_set_animation },
+  { "set_mesh", luaapi_element_set_mesh },
   { nil, nil },
 }
 
@@ -707,10 +726,35 @@ luaapi_element_set_animation :: proc "c" (L: ^lua.State) -> (result: i32) {
     handle := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
     list := cast(^Script_Animation_List)lua.L_checkudata(L, 2, lua_classes[.ANIMATION].name)
     el_id := uint(handle^)
-    
+
     if el_id < game.beatmap.elements.len {
         el := q.get_ptr(&game.beatmap.elements, el_id)
         el.animations = game.beatmap.animations.data[list.at:list.at + list.num_animations]
+    }
+    return lua_return_self()
+}
+
+// element:set_mesh(buffer_name, vertex_count)
+// marks the element as mesh-drawn: the vertex shader receives geometry from the named SSBO
+// bound at VERTEX_BUFFER (binding 1), not from the quad batch.
+luaapi_element_set_mesh :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    handle := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
+    el_id := uint(handle^)
+    buffer_name  := lua_string(2)
+    vertex_count := int(lua_int(3))
+
+    buf, found := mapset_buffer(buffer_name)
+    if !found {
+        log.error("User error - buffer not found:", buffer_name)
+        return lua_return_self()
+    }
+    if el_id < game.beatmap.elements.len {
+        el := q.get_ptr(&game.beatmap.elements, el_id)
+        el.static_geometry = true
+        el.ssbo            = buf.id
+        el.ssbo_size       = buf.size
+        el.index_count     = u32(vertex_count)
     }
     return lua_return_self()
 }
@@ -945,6 +989,152 @@ luaapi_beatmap_is_paused :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     lua.pushboolean(L, b32(game.paused))
     return 1
+}
+
+//////////////////////////////////////////////////////
+// note(isak): Buffer object API
+
+@(private="file")
+luaapi_buffer_static_funcs := []lua.L_Reg {
+  { "get", luaapi_buffer_get },
+  { nil,   nil               },
+}
+
+@(private="file")
+luaapi_buffer_instance_funcs := []lua.L_Reg {
+  { "bind",       luaapi_buffer_bind       },
+  { "write_f32s", luaapi_buffer_write_f32s },
+  { "write_vec4", luaapi_buffer_write_vec4 },
+  { "size",       luaapi_buffer_size       },
+  { nil,          nil                      },
+}
+
+// Buffer.get(name) -> Buffer
+luaapi_buffer_get :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    name := lua_string(1)
+    _, found := mapset_buffer(name)
+    if !found {
+        log.error("User error - buffer not found:", name)
+        lua.pushnil(L)
+        return 1
+    }
+    slot := game.active_mapset.buffer_slot_by_name[name]
+    lua_create_userdata(L, slot, lua_classes[.BUFFER].name)
+    return 1
+}
+
+// buffer:bind(user_slot) -- user_slot is 0-7, maps to USER_0..USER_7
+luaapi_buffer_bind :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    slot_index := cast(^u32)lua.L_checkudata(L, 1, lua_classes[.BUFFER].name)
+    user_slot  := int(lua_int(2))
+    if user_slot < 0 || user_slot > 7 {
+        return lua.L_error(L, "Buffer:bind: user_slot must be 0-7")
+    }
+    buf := q.get_ptr(&game.active_mapset.buffers, uint(slot_index^))
+    bind_slot := Shader_SSBO_Bind_Slot(int(Shader_SSBO_Bind_Slot.USER_0) + user_slot)
+    r_bind_ssbo_raw(buf.id, buf.size, bind_slot)
+    return 0
+}
+
+// buffer:write_f32s(byte_offset, val, ...) -- write one or more f32s at byte_offset
+luaapi_buffer_write_f32s :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    slot_index  := cast(^u32)lua.L_checkudata(L, 1, lua_classes[.BUFFER].name)
+    byte_offset := int(lua_int(2))
+    n_args      := int(lua.gettop(L))
+
+    buf := q.get_ptr(&game.active_mapset.buffers, uint(slot_index^))
+    if buf.data == nil {
+        return lua.L_error(L, "Buffer:write_f32s: buffer is not writable")
+    }
+    for i in 3..=n_args {
+        val := f32(lua.L_checknumber(L, i32(i)))
+        write_at := byte_offset + (i - 3) * size_of(f32)
+
+        (cast(^f32)&buf.data[write_at])^ = val
+    }
+    return 0
+}
+
+// buffer:write_vec4(vec4_index, x, y, z, w) -- write 4 floats at vec4_index * 16 bytes
+luaapi_buffer_write_vec4 :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    slot_index := cast(^u32)lua.L_checkudata(L, 1, lua_classes[.BUFFER].name)
+    vec_index  := int(lua_int(2))
+    x := f32(lua.L_checknumber(L, 3))
+    y := f32(lua.L_checknumber(L, 4))
+    z := f32(lua.L_checknumber(L, 5))
+    w := f32(lua.L_checknumber(L, 6))
+
+    buf := q.get_ptr(&game.active_mapset.buffers, uint(slot_index^))
+    if buf.data == nil {
+        return lua.L_error(L, "Buffer:write_vec4: buffer is not writable")
+    }
+    byte_offset := vec_index * 16
+    if byte_offset + 16 > buf.size {
+        return lua.L_error(L, "Buffer:write_vec4: write out of bounds")
+    }
+    floats := cast(^[4]f32)&buf.data[byte_offset]
+    floats[0] = x; floats[1] = y; floats[2] = z; floats[3] = w
+    return 0
+}
+
+// buffer:size() -> int
+luaapi_buffer_size :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    slot_index := cast(^u32)lua.L_checkudata(L, 1, lua_classes[.BUFFER].name)
+    buf := q.get_ptr(&game.active_mapset.buffers, uint(slot_index^))
+    lua.pushinteger(L, lua.Integer(buf.size))
+    return 1
+}
+
+//////////////////////////////////////////////////////
+// note(isak): Shader global API
+
+@(private="file")
+luaapi_shader_funcs := []lua.L_Reg {
+  { "set_param", luaapi_shader_set_param },
+  { "set_vec4",  luaapi_shader_set_vec4  },
+  { nil,         nil                     },
+}
+
+lua_register_shader_global :: proc(L: ^lua.State) {
+    lua.newtable(L)
+    lua.L_setfuncs(L, raw_data(luaapi_shader_funcs), 0)
+    lua.setglobal(L, "Shader")
+}
+
+// Shader.set_param(index, value) -- write f32 at index (0-63) into the user param UBO
+luaapi_shader_set_param :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    index := int(lua_int(1))
+    value := f32(lua_number(2))
+    if index < 0 || index >= 64 {
+        return lua.L_error(L, "Shader.set_param: index must be 0-63")
+    }
+    val := value
+    gl.NamedBufferSubData(window.user_param_buffer.id,
+        index * size_of(f32), size_of(f32), &val)
+    return 0
+}
+
+// Shader.set_vec4(index, x, y, z, w) -- write 4 floats starting at index*4 (0-15)
+luaapi_shader_set_vec4 :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    index := int(lua_int(1))
+    x := f32(lua_number(2))
+    y := f32(lua_number(3))
+    z := f32(lua_number(4))
+    w := f32(lua_number(5))
+    if index < 0 || index >= 16 {
+        return lua.L_error(L, "Shader.set_vec4: index must be 0-15")
+    }
+    vals := [4]f32{x, y, z, w}
+    gl.NamedBufferSubData(window.user_param_buffer.id,
+        index * size_of([4]f32), size_of([4]f32), &vals)
+    return 0
 }
 
 //////////////////////////////////////////////////////

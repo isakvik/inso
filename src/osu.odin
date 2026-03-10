@@ -426,18 +426,21 @@ split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> 
 
 // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L878
 // note(yokes): "t" is for time which means we need to calculate the time it takes to get "d" distance beforehand
-calculate_bezier_point_from_time :: proc(t: f64, curve: Slider_Curve, base_slider_velocity: f64, slider_velocity: f64) {
+calculate_bezier_point_from_time :: proc(time_at: f64, time_start: f64, time_end: f64, curve: Slider_Curve, base_slider_velocity: f64, slider_velocity: f64) -> (point: vec2) {
     //note(yokes): draw sliderball, move sliderball accordingly?
     //note(yokes): quick test on stable, 1x sv 5/4 slider has 500 distance. i believe i understand how the math works now
     //note(yokes): if a green line is in the middle of a slider, should it change the slider speed mid-slider? stable nor lazer does this but i believe this would leave more room... nvm not possible atm
 
     slider_speed := base_slider_velocity * slider_velocity //base_sv is 1 when making a new map
-    //int i := 0;
-    for point in curve {
-        
+    distance_per_beat := 100 * slider_speed //base speed is 100 per 1/4
+    degree := max(1, len(curve) - 1)
+    t := (time_at - time_start) / time_end
+    for i in 0..<degree + 1 {
+        binom_coeff := f64(math.binomial(degree, i)) * math.pow_f64(1 - t, f64(degree - i)) * math.pow_f64(t, f64(i))
+        point.x += f32(binom_coeff) * (curve[i].x)
+        point.y += f32(binom_coeff) * (curve[i].y)
     }
-
-
+    return point
 }
 
 base_dist : f32 = 2.5

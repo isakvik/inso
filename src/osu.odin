@@ -147,7 +147,7 @@ Timing_Point :: struct {
     time: f64,
     beat_length: f64,
     meter: u8,
-    sample_set: Osu_Sample_Set,
+    sample_set: u8,
     volume: f64,
     type: Timing_Point_Type,
     kiai: bool,
@@ -482,8 +482,21 @@ hitobject_on_click :: proc(hobj: ^Hitobject) -> (result: Judgement_Type) {
         judgement_new(hobj, result, time_error_ms)
         hobj.flags |= {.EXPIRED}
         
-        // todo(isak): handle hitsound flags, sample sets, hitsound volume
-        sample_play(&game.active_skin.hitsounds[.NORMAL][.HITNORMAL])
+        timing_point := &game.active_map.timing_points[game.beatmap.current_timing_point_index_inherited]
+        sample_set := Skin_Sample_Set(timing_point.sample_set)
+        
+        // todo(isak): we don't handle custom sampleset timing sections, need to reserve some space and add indirection
+        sample_play(&game.active_skin.hitsounds[sample_set][.HITNORMAL])
+        
+        if .WHISTLE in hobj.flags {
+            sample_play(&game.active_skin.hitsounds[sample_set][.HITWHISTLE])
+        }
+        if .CLAP in hobj.flags {
+            sample_play(&game.active_skin.hitsounds[sample_set][.HITCLAP])
+        }
+        if .FINISH in hobj.flags {
+            sample_play(&game.active_skin.hitsounds[sample_set][.HITFINISH])
+        }
     }
     return result
 }

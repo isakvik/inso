@@ -334,9 +334,6 @@ sample_play :: proc(s: ^Sample, volume: f32 = 1.0, pan: f32 = 0.0) {
     bass.ChannelSetAttribute(channel, bass.ATTRIB_NORAMP, 1.0)
     bass.ChannelSetAttribute(channel, bass.ATTRIB_VOL, volume)
     bass.ChannelSetAttribute(channel, bass.ATTRIB_PAN, pan)
-    if !bass.Mixer_StreamAddChannel(audio.wasapi_output_mixer, channel, bass.MIXER_DOWNMIX | bass.MIXER_NORAMPIN) {
-        log.error("BASS sample mixer add error:", bass.ErrorGetCode())
-    }
     if !bass.ChannelPlay(channel, false) {
         log.error("BASS sample play error:", bass.ErrorGetCode())
     }

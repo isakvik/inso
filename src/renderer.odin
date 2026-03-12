@@ -29,10 +29,10 @@ Quad :: struct {
     pos_max:   vec2,
     uv_min:    vec2,
     uv_max:    vec2,
+    tex_layer: f32,
     color:     u32,
     tex_index: u32,
-    angle:     f32,
-    __padding:   [1]u32
+    angle:     f32
 }
 
 Slider_Vertex :: struct {
@@ -101,6 +101,7 @@ Texture_Handle :: u64
 Texture :: struct {
     path: string,
     w, h: i32,
+    layer_count: i32, // note(isak): depth of the GL_TEXTURE_2D_ARRAY; 1 for flat textures
     format, internal_format: u32,
     tex_id: u32, // note(isak): gl assigned texture id
     tex_handle: Texture_Handle, // note(isak): bindless handle
@@ -772,8 +773,8 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
 ///////////////////////////////////////////////////////////////////////////
 // note(isak): draw api - PS: we use our nice global window.renderer here to make the api easier
 
-r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2, 
-                          color: Color, tex_index: u32, angle: f32 = 0) {
+r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2,
+                          color: Color, tex_index: u32, angle: f32 = 0, layer: f32 = 0) {
     assert(window.renderer.current_draw != nil)
 
     if geometry.count + 1 > MAX_BATCH_VERTICES {
@@ -781,7 +782,7 @@ r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, u
     }
     if window.renderer.new_draw_on_next_push {
         r_push_draw(
-            index_offset = u32(geometry.count) * 6, 
+            index_offset = u32(geometry.count) * 6,
             index_count = 0
         )
     }
@@ -793,8 +794,9 @@ r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, u
         verts[vert_i] = {
             pos_min = pos_min,
             pos_max = pos_max,
-            uv_min = uv_min,
-            uv_max = uv_max,
+            uv_min = {uv_min.x, uv_min.y},
+            uv_max = {uv_max.x, uv_max.y},
+            tex_layer = layer,
             color = transmute(u32)color,
             tex_index = tex_index,
             angle = angle
@@ -805,29 +807,26 @@ r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, u
     }
 }
 
-r_draw_quad :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2, 
-                    color: Color, tex_index: u32 = 0, angle: f32 = 0) {
-    r_draw_quad_with_uv(geometry, 
-                      pos_min, pos_max, 
-                      uv_min, uv_max, 
-                      color, tex_index, angle)
+r_draw_quad :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2,
+                    color: Color, tex_index: u32 = 0, angle: f32 = 0, layer: f32 = 0) {
+    r_draw_quad_with_uv(geometry, pos_min, pos_max, uv_min, uv_max, color, tex_index, angle, layer)
 }
 
 r_draw_rect :: proc(geometry: ^Buffer(Quad), r: Rect,
-                    color: Color, tex_index: u32 = 0, angle: f32 = 0) {
-    r_draw_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h}, 
-                                {0, 0}, {1, 1}, color, tex_index, angle)
+                    color: Color, tex_index: u32 = 0, angle: f32 = 0, layer: f32 = 0) {
+    r_draw_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h},
+                                {0, 0}, {1, 1}, color, tex_index, angle, layer)
 }
 
-r_draw_rect_with_uv :: proc(geometry: ^Buffer(Quad), r, uv: Rect, 
-                            color: Color, tex_index: u32 = 0, angle: f32 = 0) {
-    r_draw_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h}, 
-                                {uv.x, uv.y}, {uv.x + uv.w, uv.y + uv.h}, color, tex_index, angle)
+r_draw_rect_with_uv :: proc(geometry: ^Buffer(Quad), r, uv: Rect,
+                            color: Color, tex_index: u32 = 0, angle: f32 = 0, layer: f32 = 0) {
+    r_draw_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h},
+                                {uv.x, uv.y}, {uv.x + uv.w, uv.y + uv.h}, color, tex_index, angle, layer)
 }
 
-r_draw_layout_rect :: proc(geometry: ^Buffer(Quad), rect: Rect, anchor: Layout_Anchor, 
-                           color: Color = color_white, tex_index: u32 = 0, angle: f32 = 0) {
-    r_draw_rect(geometry, rect_translate_by_anchor(rect, anchor), color, tex_index, angle) 
+r_draw_layout_rect :: proc(geometry: ^Buffer(Quad), rect: Rect, anchor: Layout_Anchor,
+                           color: Color = color_white, tex_index: u32 = 0, angle: f32 = 0, layer: f32 = 0) {
+    r_draw_rect(geometry, rect_translate_by_anchor(rect, anchor), color, tex_index, angle, layer)
 }
 
 

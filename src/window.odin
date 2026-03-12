@@ -3,7 +3,6 @@ package notosu
 import q "core:container/queue"
 import "core:sys/windows"
 
-import mu "vendor:microui"
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
@@ -23,9 +22,6 @@ window: struct {
     gl_context: sdl.GLContext,
     
     ui_enabled: bool,
-    ui_ctx: mu.Context,
-    ui_hovered: bool,
-    ui_dragging: bool,
     
     // note(isak): graphical resources used by the drawing context go here 
 
@@ -59,7 +55,7 @@ window: struct {
     white_texture: Texture,
     profiler_texture: Texture,
     font_atlas_texture: Texture,
-    ui_atlas_texture: Texture,
+
 
     skin_textures: [Skin_Element_Type]Texture,
     is_high_resolution: [Skin_Element_Type]bool

@@ -272,17 +272,17 @@ fbo_init :: proc(color_texture_count, depth_texture_count: u32, w, h: i32, color
     for i in 0..<color_texture_count {
         t := texture_create()
         result.color_textures[i] = t
-        gl.TextureStorage2D(t, 1, color_format, w, h)
-        gl.NamedFramebufferTexture(result.id, gl.COLOR_ATTACHMENT0 + i, t, 0)
+        gl.TextureStorage3D(t, 1, color_format, w, h, 1)
+        gl.NamedFramebufferTextureLayer(result.id, gl.COLOR_ATTACHMENT0 + i, t, 0, 0)
         result.color_texture_handles[i] = gl.GetTextureHandleARB(t)
     }
-    
+
     assert(depth_texture_count <= 1)
     if depth_texture_count > 0 {
         t := texture_create()
         result.depth_texture = t
-        gl.TextureStorage2D(t, 1, gl.DEPTH32F_STENCIL8, w, h)
-        gl.NamedFramebufferTexture(result.id, gl.DEPTH_ATTACHMENT, t, 0)
+        gl.TextureStorage3D(t, 1, gl.DEPTH32F_STENCIL8, w, h, 1)
+        gl.NamedFramebufferTextureLayer(result.id, gl.DEPTH_ATTACHMENT, t, 0, 0)
         result.depth_texture_handle = gl.GetTextureHandleARB(t)
     }
 

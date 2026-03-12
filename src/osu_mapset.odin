@@ -49,10 +49,20 @@ Mapset :: struct {
     hitobject_index_by_ms: map[int]int,
 
     buffers: queue.Queue(Mapset_Buffer),
+    samples: queue.Queue(Sample),
+    sample_slot_by_name: map[string]u32,
 
     watch: Win32_Directory_Watch
 }
 
+
+mapset_sample :: proc(name: string) -> (result: ^Sample, found: bool) {
+    assert(game.active_mapset != nil)
+    index: u32
+    index, found = game.active_mapset.sample_slot_by_name[name]
+    if found do result = queue.get_ptr(&game.active_mapset.samples, index)
+    return result, found
+}
 
 mapset_texture :: proc(name: string) -> (result: ^Texture, found: bool) {
     assert(game.active_mapset != nil)
@@ -99,6 +109,7 @@ Notosu_Section_Header_Types :: enum {
     GENERAL,
     SHADERS,
     BUFFERS,
+    TEXTURES,
 }
 
 notosu_section_headers := []string{
@@ -156,6 +167,9 @@ mapset_free :: proc(mapset: ^Mapset) -> string {
     for &buf in mapset.buffers.data {
         sbo_cleanup(cast(^GL_Buffer(u8))&buf)
     }
+    for &sample in mapset.samples.data {
+        sample_destroy(&sample)
+    }
 
     mapset_path := strings.clone(mapset.folder_path, context.temp_allocator)
 
@@ -192,9 +206,11 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
     
     queue.init(&mapset.textures)
     queue.init(&mapset.buffers)
+    queue.init(&mapset.samples)
     mapset.texture_slot_by_name  = make(map[string]u32, 16)
     mapset.pipeline_slot_by_name = make(map[string]u32, 16)
     mapset.buffer_slot_by_name   = make(map[string]u32, 16)
+    mapset.sample_slot_by_name   = make(map[string]u32, 16)
     mapset.hitobject_index_by_ms = make(map[int]int, 128)
     mapset.shader_blend_modes    = make([dynamic]Blend_Mode, 0, 8)
     
@@ -242,7 +258,15 @@ handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
             tex, file_err := texture_from_file(file.name)
             mapset.texture_slot_by_name[tex_key] = u32(mapset.textures.len)
             queue.push_back(&mapset.textures, tex)
-        } 
+        }
+        case ".wav", ".ogg": {
+            sample, ok := sample_load_file(file.name)
+            if ok {
+                sample_key := strings.clone(file.name, memory.allocators[.MAPSET])
+                mapset.sample_slot_by_name[sample_key] = u32(mapset.samples.len)
+                queue.push_back(&mapset.samples, sample)
+            }
+        }
     }
 }
 

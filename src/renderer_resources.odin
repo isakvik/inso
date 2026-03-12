@@ -83,7 +83,6 @@ Builtin_Texture_Slot :: enum u32 {
     WHITE,
     PROFILER,
     FONT_ATLAS,
-    UI_ATLAS,
     SLIDER_FRAMEBUFFER
 }
 
@@ -213,7 +212,6 @@ prepare_textures_for_rendering :: proc() {
     textures[Builtin_Texture_Slot.WHITE] = window.white_texture.tex_handle
     textures[Builtin_Texture_Slot.PROFILER] = window.profiler_texture.tex_handle
     textures[Builtin_Texture_Slot.FONT_ATLAS] = window.font_atlas_texture.tex_handle
-    textures[Builtin_Texture_Slot.UI_ATLAS] = window.ui_atlas_texture.tex_handle
     textures[Builtin_Texture_Slot.SLIDER_FRAMEBUFFER] = window.framebuffers[.SLIDERS].color_texture_handles[0]
     num_elements := len(Builtin_Texture_Slot)
 

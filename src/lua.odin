@@ -33,7 +33,6 @@ import sdl "vendor:sdl3"
 // todo(isak): UV sub-rect support on Element for sprite sheet / atlas workflows
 // todo(isak): schedule(delay_ms, fn) for deferred callbacks without on_update boilerplate
 // todo(isak): z-index within a layer (currently insertion-order only)
-// todo(isak): audio playback from lua
 // todo(isak): animation list relocation is a silent footgun - ordering constraint should be enforced or surfaced clearly
 
 lua_beatmap: struct {
@@ -84,6 +83,7 @@ Lua_Class_Type :: enum {
     COLOR,
     BEATMAP,
     BUFFER,
+    SOUND,
 }
 
 Lua_Class :: struct {
@@ -129,6 +129,10 @@ lua_classes: [Lua_Class_Type]Lua_Class = {
         name            = "Buffer",
         static_funcs    = luaapi_buffer_static_funcs,
         instance_funcs  = luaapi_buffer_instance_funcs,
+    },
+    .SOUND = {
+        name            = "Sound",
+        static_funcs    = luaapi_sound_static_funcs,
     },
 }
 
@@ -349,11 +353,11 @@ lua_create_userdata :: proc "c" (L: ^lua.State, handle: $T, name: cstring) {
 // called at trigger time - we reconstruct the userdata rather than holding a ref to it,
 // so the object's GC can fire freely.
 _lua_push_event_target :: proc(L: ^lua.State, class: Lua_Class_Type, handle_key: u64) {
-switch class {
+    #partial switch class {
     case .HITOBJECT: lua_create_userdata(L, int(handle_key), lua_classes[.HITOBJECT].name)
     case .DRAWABLE: lua_create_userdata(L, transmute(Drawable_Handle)handle_key, lua_classes[.DRAWABLE].name)
     case .ELEMENT: lua_create_userdata(L, Element_ID(handle_key), lua_classes[.ELEMENT].name)
-    case .ANIMATION, .TWEEN, .COLOR, .BEATMAP, .BUFFER:
+    case:
         lua.pushnil(L)
     }
 }
@@ -649,6 +653,7 @@ luaapi_element_instance_funcs := []lua.L_Reg {
   { "__gc", luaapi_element_gc },
   { "register_event", luaapi_element_register_event },
   { "set_tex", luaapi_element_set_tex },
+  { "set_uv", luaapi_element_set_uv },
   { "set_shader", luaapi_element_set_shader },
   { "set_animation", luaapi_element_set_animation },
   { "set_mesh", luaapi_element_set_mesh },
@@ -697,6 +702,22 @@ luaapi_element_set_tex :: proc "c" (L: ^lua.State) -> (result: i32) {
         }
     } else {
         log.error("User error - texture not found:", tex_name)
+    }
+    return lua_return_self()
+}
+
+// element:set_uv(x, y, w, h) — UV sub-rect in [0,1] space; picks a region of the texture
+luaapi_element_set_uv :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    userdata := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
+    el_id := uint(userdata^)
+    x := f32(lua_number(2))
+    y := f32(lua_number(3))
+    w := f32(lua_number(4))
+    h := f32(lua_number(5))
+    if el_id < game.beatmap.elements.len {
+        el := q.get_ptr(&game.beatmap.elements, el_id)
+        el.uv = {x, y, w, h}
     }
     return lua_return_self()
 }
@@ -774,6 +795,7 @@ luaapi_animation_instance_funcs := []lua.L_Reg {
   { "color", luaapi_animation_color },
   { "alpha", luaapi_animation_alpha },
   { "texture", luaapi_animation_texture },
+  { "frames",  luaapi_animation_frames  },
   { nil, nil },
 }
 
@@ -899,26 +921,69 @@ luaapi_animation_alpha :: proc "c" (L: ^lua.State) -> i32 {
     return lua_return_self()
 }
 
+// anim:texture(start, end, tex_name [, layer])
+// note(isak): layer is optional; defaults to 0. use for manually picking a frame in a texture array.
 luaapi_animation_texture :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
-    
+
     anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
     _lua_check_animation_list_and_potentially_relocate(anim_list)
-    
+
     start, end := lua_number(2), lua_number(3)
     tex_name := lua_string(4)
+    layer := f32(lua.L_optnumber(L, 5, 0))
     tex_id, found := mapset_texture_slot(tex_name)
     if !found {
         log.error("User error - texture not found:", tex_name)
         tex_id = builtin_texture(.WHITE)
     }
-    
+
     q.append(&game.beatmap.animations, Animation_Texture{
         start_time = f64(start),
         end_time   = f64(end),
-        texture_id = tex_id 
+        texture_id = tex_id,
+        layer      = layer,
     })
     anim_list.num_animations += 1
+    return lua_return_self()
+}
+
+// anim:frames(start, end, tex_name)
+// note(isak): distributes all layers of a texture array as evenly-spaced Animation_Texture keyframes
+// over [start, end]. start/end are normalized to [0,1] (drawable lifetime).
+luaapi_animation_frames :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+
+    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
+    _lua_check_animation_list_and_potentially_relocate(anim_list)
+
+    start    := f64(lua_number(2))
+    end      := f64(lua_number(3))
+    tex_name := lua_string(4)
+
+    tex_slot, found := game.active_mapset.texture_slot_by_name[tex_name]
+    if !found {
+        log.error("User error - texture not found:", tex_name)
+        return lua_return_self()
+    }
+
+    tex    := q.get_ptr(&game.active_mapset.textures, tex_slot)
+    tex_id := user_texture(tex_slot)
+    n      := int(tex.layer_count)
+    if n == 0 do n = 1
+    span   := f64(end - start)
+
+    for frame := 0; frame < n; frame += 1 {
+        frame_start := start + span * (f64(frame)   / f64(n))
+        frame_end   := start + span * (f64(frame+1) / f64(n))
+        q.append(&game.beatmap.animations, Animation_Texture{
+            start_time = frame_start,
+            end_time   = frame_end,
+            texture_id = tex_id,
+            layer      = f32(frame),
+        })
+        anim_list.num_animations += 1
+    }
     return lua_return_self()
 }
 
@@ -1089,6 +1154,30 @@ luaapi_buffer_size :: proc "c" (L: ^lua.State) -> i32 {
 }
 
 //////////////////////////////////////////////////////
+// note(isak): Sound API
+
+@(private="file")
+luaapi_sound_static_funcs := []lua.L_Reg {
+    { "play", luaapi_sound_play },
+    { nil, nil },
+}
+
+// Sound.play(name, volume=1.0, pan=0.0)
+luaapi_sound_play :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    name   := lua_string(1)
+    volume := f32(lua.L_optnumber(L, 2, 1.0))
+    pan    := f32(lua.L_optnumber(L, 3, 0.0))
+
+    sample, found := mapset_sample(name)
+    if !found {
+        log.error("User error - sound not found:", name)
+        return 0
+    }
+    sample_play(sample, volume, pan)
+    return 0
+}
+
 // note(isak): Shader global API
 
 @(private="file")

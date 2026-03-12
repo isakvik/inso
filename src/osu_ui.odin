@@ -3,6 +3,8 @@ package notosu
 import "core:math/ease"
 import "core:math/linalg"
 
+import imgui "./imgui"
+
 
 UI_Timeline :: struct {
     h_px: f32,
@@ -42,7 +44,7 @@ ui_update_timeline :: proc(ui: ^UI_Timeline, time_value: ^f64) -> (result: bool)
     ui.clicked = false
     ui.released = false
     
-    if !window.ui_hovered && is_pressed(mouse.buttons[.LEFT]) && point_in_rect(mouse.last_click_position[.LEFT], timeline_hitbox) {
+    if !imgui.GetIO().WantCaptureMouse && is_pressed(mouse.buttons[.LEFT]) && point_in_rect(mouse.last_click_position[.LEFT], timeline_hitbox) {
         ui.clicked = true
         ui.dragging = true
         ui.pause_on_release = game.paused

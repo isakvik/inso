@@ -4,44 +4,25 @@ import "base:runtime"
 import "core:container/queue"
 import "core:fmt"
 import "core:log"
-import "core:math"
+import "core:strings"
 import "core:math/linalg"
 import "core:mem"
-import os "core:os/os2"
 import "core:time"
 import vmem "core:mem/virtual"
 
-import mu "vendor:microui"
 import gl "vendor:OpenGL"
+import imgui "imgui"
+import imgui_gl3 "imgui/imgui_impl_opengl3"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
 
 /*
 todo(isak):
 
-communication layer:
-core runtime info such as map time and objects
-- state buffer
-- graphics buffer (will be uploaded to gpu, loaded pipelines (shaders) work with it)
-    are these just defined as lua metatables?
-- expose rendering and resource api
-
-
 general:
 ui core 
     map selector
     skin select
-    volume settings
-
-"full" .osu support (no sb, editor features, osu integration)
-
-play mode:
-audio play (miniaudio)
-    desync proofing (always wait for sound to be able to be played, like osu (so device errors will just freeze the game))
-    multiple channels, sound effects
-
-editor mode:
-(viewer mode only? edit functionality is probably low priority, osu can be used for the map)
 
 eventual YEAST on-scene features:
 local networking
@@ -114,23 +95,16 @@ memory_init :: proc() -> runtime.Allocator_Error {
 }
 
 debug_ui_init :: proc() {
-    mu.init(&window.ui_ctx)
-    window.ui_ctx.text_width = mu.default_atlas_text_width
-    window.ui_ctx.text_height = mu.default_atlas_text_height
+    imgui.CHECKVERSION()
+    imgui.CreateContext()
+    io := imgui.GetIO()
+    io.ConfigFlags += {.NavEnableKeyboard}
+    imgui_gl3.Init("#version 460")
+}
 
-    pixels := make([][4]u8, mu.DEFAULT_ATLAS_WIDTH*mu.DEFAULT_ATLAS_HEIGHT)
-    defer delete(pixels)
-    for alpha, i in mu.default_atlas_alpha {
-        pixels[i] = {0xff, 0xff, 0xff, alpha}
-    }
-    
-    window.ui_atlas_texture = texture_from_data(
-        width = mu.DEFAULT_ATLAS_WIDTH,
-        height = mu.DEFAULT_ATLAS_HEIGHT,
-        data = raw_data(pixels),
-        internal_format = gl.RGBA8,
-        format = gl.RGBA,
-    )
+debug_ui_cleanup :: proc() {
+    imgui_gl3.Shutdown()
+    imgui.DestroyContext()
 }
 
 
@@ -170,6 +144,7 @@ main :: proc() {
     window_on_resize(i32(window.rect.w), i32(window.rect.h))
 
     debug_ui_init()
+    defer debug_ui_cleanup()
     text_init()
     keyboard_init()
     
@@ -220,42 +195,54 @@ main :: proc() {
             for sdl.PollEvent(&event) {
                 #partial switch event.type {
                 case sdl.EventType.MOUSE_BUTTON_DOWN:
+                    io := imgui.GetIO()
                     switch event.button.button {
                         case sdl.BUTTON_LEFT:
                             mouse.buttons[.LEFT].is_down = true
                             mouse.last_click_position[.LEFT] = {event.button.x, event.button.y}
-                            mu.input_mouse_down(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .LEFT)
+                            imgui.IO_AddMouseButtonEvent(io, 0, true)
                         case sdl.BUTTON_MIDDLE:
                             mouse.buttons[.MIDDLE].is_down = true
                             mouse.last_click_position[.MIDDLE] = {event.button.x, event.button.y}
-                            mu.input_mouse_down(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .MIDDLE)
+                            imgui.IO_AddMouseButtonEvent(io, 2, true)
                         case sdl.BUTTON_RIGHT:
                             mouse.buttons[.RIGHT].is_down = true
                             mouse.last_click_position[.RIGHT] = {event.button.x, event.button.y}
-                            mu.input_mouse_down(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .RIGHT)
+                            imgui.IO_AddMouseButtonEvent(io, 1, true)
                     }
 
                 case sdl.EventType.MOUSE_BUTTON_UP:
+                    io := imgui.GetIO()
                     switch event.button.button {
                         case sdl.BUTTON_LEFT:
                             mouse.buttons[.LEFT].is_down = false
-                            mu.input_mouse_up(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .LEFT)
+                            imgui.IO_AddMouseButtonEvent(io, 0, false)
                         case sdl.BUTTON_MIDDLE:
                             mouse.buttons[.MIDDLE].is_down = false
-                            mu.input_mouse_up(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .MIDDLE)
+                            imgui.IO_AddMouseButtonEvent(io, 2, false)
                         case sdl.BUTTON_RIGHT:
                             mouse.buttons[.RIGHT].is_down = false
-                            mu.input_mouse_up(&window.ui_ctx, i32(event.button.x), i32(event.button.y), .RIGHT)
+                            imgui.IO_AddMouseButtonEvent(io, 1, false)
                     }
-                    
+
+                case sdl.EventType.MOUSE_WHEEL:
+                    imgui.IO_AddMouseWheelEvent(imgui.GetIO(), event.wheel.x, event.wheel.y)
+
+                case sdl.EventType.KEY_DOWN:
+                    imgui.IO_AddKeyEvent(imgui.GetIO(), sdl_scancode_to_imgui(event.key.scancode), true)
+                case sdl.EventType.KEY_UP:
+                    imgui.IO_AddKeyEvent(imgui.GetIO(), sdl_scancode_to_imgui(event.key.scancode), false)
+                case sdl.EventType.TEXT_INPUT:
+                    imgui.IO_AddInputCharactersUTF8(imgui.GetIO(), event.text.text)
+
                 case sdl.EventType.WINDOW_RESIZED:
                     cleanup_textures_for_rendering()
                     window_on_resize(max(event.window.data1, 1), max(event.window.data2, 1))
                     prepare_textures_for_rendering()
-                        
+
                 case sdl.EventType.WINDOW_FOCUS_LOST:
-                    window.ui_dragging = false
-                    
+                    imgui.IO_AddFocusEvent(imgui.GetIO(), false)
+
                 case sdl.EventType.QUIT:
                     running = false
                 }
@@ -277,15 +264,19 @@ main :: proc() {
 
             mouse.pos.x = mouse.pos.x - f32(xi)
             mouse.pos.y = mouse.pos.y - f32(yi)
-            
-            mu.input_mouse_move(&window.ui_ctx, i32(mouse.pos.x), i32(mouse.pos.y))
+
+            imgui.IO_AddMousePosEvent(imgui.GetIO(), mouse.pos.x, mouse.pos.y)
         }
 
         {
-            profiler_block_begin(.PREPARE_FRAME); defer profiler_block_end() 
-            
+            profiler_block_begin(.PREPARE_FRAME); defer profiler_block_end()
+
             time_last_frame = time_current_frame
             time_current_frame = current_time_s()
+
+            io := imgui.GetIO()
+            io.DisplaySize = {window.rect.w, window.rect.h}
+            io.DeltaTime   = f32(time_current_frame - time_last_frame)
 
             // prepare drawing
             begin_frame(renderer)
@@ -295,14 +286,6 @@ main :: proc() {
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
             
             r_bind_layer_and_push_current_state(.DEBUG, transform = window.screenspace_transform)
-            if window.ui_enabled {
-                r_push_transform(window.screenspace_transform)
-                mu.begin(&window.ui_ctx)
-                write_debug_ui(&window.ui_ctx)
-                mu.end(&window.ui_ctx)
-                handle_debug_ui_events(&window.ui_ctx)
-                render_debug_ui(renderer, &window.ui_ctx)
-            }
             
             dt_ms := (time_current_frame - time_last_frame) * 1000
 
@@ -351,7 +334,13 @@ main :: proc() {
             if app.debug_display_memory_profiler {
                 profiler_push_memory_diag_text(renderer)
             }
+
             end_frame(renderer)
+            
+            if window.ui_enabled {
+                imgui.Render()
+                imgui_gl3.RenderDrawData(imgui.GetDrawData())
+            }
         }
 
         {
@@ -398,8 +387,16 @@ begin_frame :: proc(renderer: ^Renderer) {
     r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
     r_push_transform(identity_transform)
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
+    r_reset_scissor_mode()
     
     renderer.transform_queue.len = 0
+    
+    if window.ui_enabled {
+        imgui_gl3.NewFrame()
+        imgui.NewFrame()
+        write_debug_ui()
+    }
+    handle_debug_ui_events()
 }
 
 end_frame :: proc(renderer: ^Renderer) {
@@ -409,40 +406,23 @@ end_frame :: proc(renderer: ^Renderer) {
 }
 
 
-_debug_ui_initialized: int
+write_debug_ui :: proc() {
+    imgui.Begin("饕餮尤魔 :3")
+    defer imgui.End()
 
-write_debug_ui :: proc(ctx: ^mu.Context) {
-    @static opts := mu.Options{.NO_CLOSE}
-    init_opts := _debug_ui_initialized < 2 ? mu.Options{.AUTO_SIZE} : {}
-    _debug_ui_initialized += 1
-    
-    if mu.window(ctx, "饕餮尤魔 :3", {}, opts + init_opts) {
-        mu.layout_row(ctx, {54, -1}, 0)
-        mu.label(ctx, "Time:")
-        
-        timer_str := time_ms_to_string(beatmap_music_time_ms(&game.beatmap))
-        mu.label(ctx, timer_str)
-        
-        mu.layout_row(ctx, {54, -1}, 0)
-        mu.label(ctx, "Time rate:")
-        mu.label(ctx, fmt.tprintf("%f%s", game.time_rate * (game.paused ? 0 : 1), game.paused ? " (paused)": ""))
-        
-        mu.layout_row(ctx, {100, 10, -1}, 0)
-        mu.label(ctx, "Visible hitobjects:")
-        hobj_visibility := game.beatmap.visible_hitobject_state
-        mu.label(ctx, fmt.tprintf("%i", hobj_visibility.latest_i - hobj_visibility.earliest_i - 1))
-        
-        mu.layout_row(ctx, {80, 10, -1}, 0)
-        mu.label(ctx, "Mouse keys:")
-        mu.label(ctx, game.input.mouse_keys_enabled ? "on" : "off")
-        
-        mu.layout_row(ctx, {80, 10, -1}, 0)
-        mu.label(ctx, "universal offset:")
-        mu.label(ctx, fmt.tprint(game.universal_offset_ms))
-    }
+    timer_str := strings.clone_to_cstring(time_ms_to_string(beatmap_music_time_ms(&game.beatmap)), context.temp_allocator)
+    imgui.Text("Time: %s", timer_str)
+    imgui.Text("Time rate: %.3f%s",
+        game.time_rate * (game.paused ? f32(0) : f32(1)),
+        game.paused ? cstring(" (paused)") : cstring(""))
+
+    hobj_visibility := game.beatmap.visible_hitobject_state
+    imgui.Text("Visible hitobjects: %d", i32(hobj_visibility.latest_i - hobj_visibility.earliest_i - 1))
+    imgui.Text("Mouse keys: %s", game.input.mouse_keys_enabled ? cstring("on") : cstring("off"))
+    imgui.Text("Universal offset: %d ms", i32(game.universal_offset_ms))
 }
 
-handle_debug_ui_events :: proc(ctx: ^mu.Context) {
+handle_debug_ui_events :: proc() {
     if is_key_pressed(.F1) {
         window.renderer.trace_frame = !window.renderer.trace_frame
     }
@@ -454,7 +434,7 @@ handle_debug_ui_events :: proc(ctx: ^mu.Context) {
     }
     if is_key_pressed(.F4) {
         app.debug_display_memory_profiler = !app.debug_display_memory_profiler
-        
+
         track := &memory.tracker[.GLOBAL]
         if len(track.alloc.allocation_map) > 0 {
             fmt.eprintf("=== global allocator - %v allocations not freed: ===\n", len(track.alloc.allocation_map))
@@ -464,97 +444,13 @@ handle_debug_ui_events :: proc(ctx: ^mu.Context) {
         }
     }
 
-    // note(isak): handle offscreen windows
-    if ctx.focus_id > 0 && is_down(mouse.buttons[.LEFT]) {
-        window.ui_dragging = true
+    // note(isak): cursor visibility - show OS cursor when imgui wants the mouse
+    want_mouse := imgui.GetIO().WantCaptureMouse
+    if window.cursor_hidden && want_mouse {
+        window.cursor_hidden = !sdl.ShowCursor()
+    } else if !window.cursor_hidden && !want_mouse {
+        window.cursor_hidden = sdl.HideCursor()
     }
-    if is_released(mouse.buttons[.LEFT]) {
-        for container in ctx.root_list.items[:ctx.root_list.idx] {
-            confined_rect := mu.Rect{ 
-                0,
-                0,
-                max(i32(window.rect.w) - container.rect.w, 0), 
-                max(i32(window.rect.h) - ctx.style.title_height, 0)
-            }
-            if container.rect.w > i32(window.rect.w) {
-                container.rect.w = min(i32(window.rect.w), container.rect.w)
-                container.rect.x = 0
-            }
-            if container.rect.h > i32(window.rect.h) {
-                container.rect.h = min(i32(window.rect.h), container.rect.h)
-                container.rect.y = 0
-            }
-            
-            if container.rect.x < confined_rect.x {
-                container.rect.x = max(confined_rect.x, container.rect.x)
-            } else if container.rect.x > confined_rect.w {
-                container.rect.x = min(confined_rect.w, container.rect.x)
-            }
-
-            if container.rect.y < confined_rect.y {
-                container.rect.y = max(confined_rect.y, container.rect.y)
-            } else if container.rect.y > confined_rect.h {
-                container.rect.y = min(confined_rect.h, container.rect.y)
-            }
-        }
-        window.ui_dragging = false
-    }
-    
-    window.ui_hovered = false
-    for container in ctx.root_list.items[:ctx.root_list.idx] {
-        if mu.rect_overlaps_vec2(container.rect, ctx.mouse_pos) {
-            window.ui_hovered = true
-            break
-        }
-    }
-    
-    // note(isak): handle cursor visibility inside ui rects
-    if window.cursor_hidden {
-        for container in ctx.root_list.items[:ctx.root_list.idx] {
-            if mu.rect_overlaps_vec2(container.rect, ctx.mouse_pos) {
-                window.cursor_hidden = !sdl.ShowCursor()
-                break
-            }
-        }
-    } else {
-        for container in ctx.root_list.items[:ctx.root_list.idx] {
-            if mu.rect_overlaps_vec2(container.rect, ctx.mouse_pos) {
-                continue
-            }
-            window.cursor_hidden = sdl.HideCursor()
-        }
-    }
-}
-
-render_debug_ui :: proc(renderer: ^Renderer, ctx: ^mu.Context) {
-    push_icon :: proc(renderer: ^Renderer, rect, icon_rect: mu.Rect, color: Color) {
-        pos := Rect{f32(rect.x + icon_rect.w/2), f32(rect.y + icon_rect.h/2), f32(icon_rect.w), f32(icon_rect.h)}
-        uv := Rect{
-            f32(icon_rect.x) / f32(window.ui_atlas_texture.w), 
-            f32(icon_rect.y) / f32(window.ui_atlas_texture.h), 
-            f32(icon_rect.w) / f32(window.ui_atlas_texture.w), 
-            f32(icon_rect.h) / f32(window.ui_atlas_texture.h)
-        }
-        r_draw_rect_with_uv(&renderer.quad_geometry, pos, uv, color, builtin_texture(.UI_ATLAS))
-    }
-
-    command_backing: ^mu.Command
-    for variant in mu.next_command_iterator(ctx, &command_backing) {
-        #partial switch cmd in variant {
-            case ^mu.Command_Text:
-                push_text(renderer, cmd.str, {f32(cmd.pos.x), f32(cmd.pos.y)}, size = 16, align_v = .Top )
-            case ^mu.Command_Clip:
-                r_begin_scissor_mode_pixels(cmd.rect.x, cmd.rect.y, cmd.rect.w, i32(window.rect.h) - cmd.rect.h)
-            case ^mu.Command_Rect:
-                r_draw_rect(&renderer.quad_geometry, 
-                    {f32(cmd.rect.x), f32(cmd.rect.y), f32(cmd.rect.w), f32(cmd.rect.h)}, 
-                    transmute(Color)cmd.color)
-            case ^mu.Command_Icon:
-                icon_rect := mu.default_atlas[cmd.id]
-                push_icon(renderer, cmd.rect, icon_rect, transmute(Color)cmd.color)
-        }
-    }
-    r_reset_scissor_mode()
 }
 
 process_builtin_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
@@ -573,4 +469,37 @@ process_builtin_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
         pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.TEXT)], text_pipeline_desc())
 
     }
+}
+
+sdl_scancode_to_imgui :: proc(sc: sdl.Scancode) -> imgui.Key {
+    #partial switch sc {
+    case .TAB:        return .Tab
+    case .LEFT:       return .LeftArrow
+    case .RIGHT:      return .RightArrow
+    case .UP:         return .UpArrow
+    case .DOWN:       return .DownArrow
+    case .PAGEUP:     return .PageUp
+    case .PAGEDOWN:   return .PageDown
+    case .HOME:       return .Home
+    case .END:        return .End
+    case .INSERT:     return .Insert
+    case .DELETE:     return .Delete
+    case .BACKSPACE:  return .Backspace
+    case .SPACE:      return .Space
+    case .RETURN:     return .Enter
+    case .ESCAPE:     return .Escape
+    case .LCTRL:      return .LeftCtrl
+    case .LSHIFT:     return .LeftShift
+    case .LALT:       return .LeftAlt
+    case .RCTRL:      return .RightCtrl
+    case .RSHIFT:     return .RightShift
+    case .RALT:       return .RightAlt
+    case .A:          return .A
+    case .C:          return .C
+    case .V:          return .V
+    case .X:          return .X
+    case .Y:          return .Y
+    case .Z:          return .Z
+    }
+    return .None
 }

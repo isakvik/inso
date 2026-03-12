@@ -133,6 +133,7 @@ Animation_Alpha :: struct {
 Animation_Texture :: struct {
     using base: Base_Animation,
     texture_id: u32,
+    layer: f32, // note(isak): array layer index; 0 for single-layer textures
 }
 
 Script_Animation_List :: struct {
@@ -177,6 +178,7 @@ Element :: struct {
     index_count: u32,
 
     tex: u32,
+    uv: Rect, // note(isak): UV sub-rect in [0,1] space; {0,0,1,1} = full texture
     animations: []Animation,
 }
 
@@ -439,6 +441,7 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}, al
 
     element := &game.beatmap.elements.data[d.element]
     tex := element.tex
+    uv_layer: f32
 
     t_sec := f32(relative_time_at / 1000)
     phys_x := d.vel.x * t_sec + 0.5 * d.accel.x * t_sec * t_sec
@@ -499,6 +502,7 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}, al
                 
             case Animation_Texture:
                 tex = anim.texture_id
+                uv_layer = anim.layer
         }
         seen_animation_of_type[animation_variant(animation)] = true
     }
@@ -514,7 +518,13 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}, al
         // note(isak): restore quad VERTEX_BUFFER for subsequent quad draws
         r_bind_tbo(&window.quad_store, .VERTEX_BUFFER)
     } else {
-        r_draw_layout_rect(&window.renderer.quad_geometry, rect, d.anchor, color, tex, angle)
+        uv_rect := element.uv
+        if uv_rect.w == 0 || uv_rect.h == 0 {
+            uv_rect = {0, 0, 1, 1}
+        }
+        r_draw_rect_with_uv(&window.renderer.quad_geometry,
+            rect_translate_by_anchor(rect, d.anchor),
+            uv_rect, color, tex, angle, uv_layer)
     }
 
     return true

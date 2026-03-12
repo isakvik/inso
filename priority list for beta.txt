@@ -10,9 +10,10 @@ game mechanics (not score, replays, etc)
         
     phase 1 visuals
         playfield scaling
-        combocolors
+        combocolors (start on color 3)
         combonumbers
-        animations
+        finish animations
+            texture array handling is kinda half baked
 
 gameplay
     hittesting
@@ -29,6 +30,7 @@ fixes
 TEST
     mouse buttons when keyboard held down and vice versa
     notosu custom buffers
+    custom animations
     limit testing
 
 -- POST MAPPER BETA RELEASE -- 

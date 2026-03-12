@@ -14,7 +14,7 @@ local rand = load_file("rand.lua")
 
 
 -- map runtime data
--- Map.set_time_rate(1.5)
+-- Beatmap.set_time_rate(1.5)
 
 
 -- custom events (observer)

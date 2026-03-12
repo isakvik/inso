@@ -29,13 +29,11 @@ import sdl "vendor:sdl3"
 //     longer handles, structural drawable/hitobject relationship changes -- those need an
 //     odin-side version check at the call site
 
-// todo(isak): Drawable:hide() / Drawable:show() - currently only exists on Hitobject
 // todo(isak): expose scoring state to lua (combo, score, accuracy)
 // todo(isak): UV sub-rect support on Element for sprite sheet / atlas workflows
 // todo(isak): schedule(delay_ms, fn) for deferred callbacks without on_update boilerplate
 // todo(isak): z-index within a layer (currently insertion-order only)
 // todo(isak): audio playback from lua
-// todo(isak): convenience constructor that creates element+animation+drawable in one call
 // todo(isak): animation list relocation is a silent footgun - ordering constraint should be enforced or surfaced clearly
 
 lua_beatmap: struct {
@@ -1167,7 +1165,22 @@ luaapi_drawable_instance_funcs := []lua.L_Reg {
   { "get_end_time", luaapi_drawable_get_end_time },
   { "set_end_time", luaapi_drawable_set_end_time },
   { "set_time", luaapi_drawable_set_time },
+  { "hide", luaapi_drawable_hide },
+  { "show", luaapi_drawable_show },
   { nil, nil },
+}
+
+luaapi_drawable_hide :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        d.flags &= ~{.ACTIVE}
+        return 0
+    })
+}
+luaapi_drawable_show :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        d.flags |= {.ACTIVE}
+        return 0
+    })
 }
 
 luaapi_drawable_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
@@ -1186,16 +1199,26 @@ luaapi_drawable_register_event :: proc "c" (L: ^lua.State) -> i32 {
 
 luaapi_drawable_new :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_beatmap.odin_context
-    
-    element := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
-    // todo(isak) what happens when element isnt found
-    
+
+    element_id: Element_ID
+    if lua.type(L, 1) == lua.TSTRING {
+        tex_name := lua_string(1)
+        tex_id, found := mapset_texture_slot(tex_name)
+        if !found {
+            log.error("User error - texture not found:", tex_name)
+            return 0
+        }
+        element_id = element_new({ shader = builtin_pipeline_slot(.QUAD), tex = tex_id })
+    } else {
+        element_id = (cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name))^
+    }
+
     start_time := f64(lua.L_optnumber(L, 2, lua.Number(game.beatmap.start_time_ms)))
     end_time   := f64(lua.L_optnumber(L, 3, lua.Number(game.beatmap.length_ms)))
     
     handle := cast(^Drawable_Handle)lua.newuserdata(L, size_of(Drawable_Handle))
     handle^ = drawable_new_expiring(&game.beatmap.map_expiring_gfx, {
-        element = element^,
+        element = element_id,
         flags = {.ACTIVE},
         layer = window.renderer.current_layer,
         anchor = .TOP_LEFT,

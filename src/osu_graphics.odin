@@ -63,6 +63,17 @@ tween_apply :: proc(tween: Tween, t: f32) -> f32 {
     return t
 }
 
+// note(isak): how an Animation_Color result is applied against the drawable's current color.
+// REPLACE (0, ZII): output = animated_color. ignores d.color entirely.
+// MULTIPLY:         output = d.color * animated_color / 255 per channel.
+//                   useful for tint/dim effects that should work regardless of the base color -
+//                   e.g. dimming approach circles before click time while preserving their combo color.
+//                   {255,255,255,255} is the identity (no effect).
+Color_Blend_Type :: enum u8 {
+    REPLACE,
+    MULTIPLY,
+}
+
 Animation_Variant :: enum {
     TRANSLATE,
     SCALE,
@@ -110,21 +121,10 @@ Animation_Rotate :: struct {
     using base: Base_Animation,
     start_angle, end_angle: f32,
 }
-// note(isak): how an Animation_Color result is applied against the drawable's current color.
-// REPLACE (0, ZII): output = animated_color. ignores d.color entirely.
-// MULTIPLY:         output = d.color * animated_color / 255 per channel.
-//                   useful for tint/dim effects that should work regardless of the base color -
-//                   e.g. dimming approach circles before click time while preserving their combo color.
-//                   {255,255,255,255} is the identity (no effect).
-Animation_Color_Blend :: enum u8 {
-    REPLACE,
-    MULTIPLY,
-}
-
 Animation_Color :: struct {
     using base: Base_Animation,
     start_color, end_color: Color,
-    blend: Animation_Color_Blend,
+    blend: Color_Blend_Type,
 }
 Animation_Alpha :: struct {
     using base: Base_Animation,

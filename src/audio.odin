@@ -313,7 +313,7 @@ _sound_get_channel_handle :: proc(sound: ^Sound) -> (result: Sound_Handle) {
 //////////////////////////////////////////////////////
 // note(isak): sample api
 
-sample_load :: proc(path: string, max_simultaneous: int = 8) -> (result: Sample, ok: bool) {
+sample_load_file :: proc(path: string, max_simultaneous: int = 8) -> (result: Sample, ok: bool) {
     path_cstr := strings.clone_to_cstring(path, context.temp_allocator)
     result.handle = bass.SampleLoad(0, rawptr(path_cstr), 0, 0, u32(max_simultaneous),
         bass.SAMPLE_FLOAT | bass.SAMPLE_OVER_POS)
@@ -324,8 +324,18 @@ sample_load :: proc(path: string, max_simultaneous: int = 8) -> (result: Sample,
     return result, true
 }
 
+sample_load_memory :: proc(data: rawptr, max_simultaneous: int = 8) -> (result: Sample, ok: bool) {
+    result.handle = bass.SampleLoad(bass.FILE_MEM, data, 0, 0, u32(max_simultaneous), 
+        bass.SAMPLE_FLOAT | bass.SAMPLE_OVER_POS)
+    if result.handle == 0 {
+        log.error("BASS sample load error:", bass.ErrorGetCode())
+        return result, false
+    }
+    return result, true
+}
+
 sample_play :: proc(s: ^Sample, volume: f32 = 1.0, pan: f32 = 0.0) {
-    if !audio.ready do return
+    if !audio.ready || s.handle == 0 do return
     channel := bass.SampleGetChannel(s.handle, 0)
     if channel == 0 {
         log.error("BASS sample get channel error:", bass.ErrorGetCode())

@@ -143,7 +143,7 @@ skin_load_hitsounds :: proc(skin: ^Skin) {
                     continue
                 }
                 
-                sample, ok := sample_load(path)
+                sample, ok := sample_load_file(path)
                 if ok {
                     skin.hitsounds[sample_set][hitsound_type] = sample
                     break

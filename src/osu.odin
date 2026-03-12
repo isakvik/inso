@@ -300,6 +300,7 @@ osu_on_update :: proc(dt: f64) {
     // todo(isak): this really handles a bunch of debug stuff too. fix up the modes and such
     #partial switch game.mode {
         case .PLAY: handle_play_input_events()
+        case .MENU: handle_menu_input_events()
     }
     
     map_time := beatmap_music_time_ms(&game.beatmap)
@@ -566,6 +567,14 @@ handle_play_input_events :: proc() {
         if is_released(game.input.k2) do lua_beatmap_on_controller_released("k2")
         if is_released(game.input.m1) do lua_beatmap_on_controller_released("m1")
         if is_released(game.input.m2) do lua_beatmap_on_controller_released("m2")
+    }
+}
+
+handle_menu_input_events :: proc() {
+    if is_key_pressed(.S) {
+        if is_key_down(.LCTRL) || is_key_down(.LSHIFT) || is_key_down(.LALT) {
+            skin_reload(game.active_skin)
+        }
     }
 }
 

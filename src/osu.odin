@@ -53,30 +53,6 @@ game: struct {
     sounds: slotmap.Slotmap(Sound),
 }
 
-game_play_sound :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0) -> slotmap.Handle {
-    channel, ok := sound_channel_init(s, loop)
-    if !ok do return {}
-
-    handle := slotmap.insert(&game.sounds, Sound(channel))
-    sound, _ := slotmap.get(&game.sounds, handle)
-    sound_play(sound, loop = loop, volume = volume)
-    return handle
-}
-
-game_stop_sound :: proc(handle: slotmap.Handle) {
-    sound, ok := slotmap.get(&game.sounds, handle)
-    if !ok do return
-    sound_destroy(sound)
-    slotmap.remove(&game.sounds, handle)
-}
-
-game_clear_sounds :: proc() {
-    for &s in game.sounds.values {
-        sound_destroy(&s)
-    }
-    slotmap.clear(&game.sounds)
-}
-
 // note(isak): we reserve the first slot for safety reasons, and we crash on modification for debug reasons
 @(rodata) null_drawable := Drawable{}
 @(rodata) null_element := Element{}
@@ -122,7 +98,8 @@ Hitobject :: struct {
     timing_point_index_uninherited: int,
     timing_point_index_inherited: int,
     hitsound_flags: byte,
-    combo_color_offset: u8, // note(isak): bits 4-6 of osu type byte; how many combo colors to skip on new combo
+    combo_color_skip_offset: u8, // note(isak): bits 4-6 of osu type byte; how many combo colors to skip on new combo
+    combo_color_index: u8,
 
     slider_path_index: int,
     slider_repeats, slider_repeat_at: int,
@@ -356,6 +333,9 @@ osu_on_update :: proc(dt: f64) {
             
             hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, 2) or_continue
             
+            color_array := &game.active_map.combo_colors
+            combo_color := game.active_map.num_combo_colors > 0 ? color_array[hobj.combo_color_index] : color_purple
+            
             hobj.gfx_handles[0] = drawable_new({
                 flags = {.ACTIVE},
                 element = builtin_element_slot(.CLICKED_HIT_CIRCLE_OVERLAY),
@@ -372,7 +352,7 @@ osu_on_update :: proc(dt: f64) {
                 layer = .HITOBJECTS,
                 size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
-                color = color_purple,
+                color = combo_color,
                 start_time_ms = map_time,
                 end_time_ms = map_time + 250
             })
@@ -613,6 +593,31 @@ valid_controller_press :: proc() -> bool {
 
 playfield_to_screenspace_transform :: proc() -> mat3 {
     return transform_to_mat3(game.playfield_transform) * linalg.matrix3_inverse(transform_to_mat3(window.screenspace_transform))
+}
+
+
+game_play_sound :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0) -> slotmap.Handle {
+    channel, ok := sound_channel_init(s, loop)
+    if !ok do return {}
+
+    handle := slotmap.insert(&game.sounds, Sound(channel))
+    sound, _ := slotmap.get(&game.sounds, handle)
+    sound_play(sound, loop = loop, volume = volume)
+    return handle
+}
+
+game_stop_sound :: proc(handle: slotmap.Handle) {
+    sound, ok := slotmap.get(&game.sounds, handle)
+    if !ok do return
+    sound_destroy(sound)
+    slotmap.remove(&game.sounds, handle)
+}
+
+game_clear_sounds :: proc() {
+    for &s in game.sounds.values {
+        sound_destroy(&s)
+    }
+    slotmap.clear(&game.sounds)
 }
 
 //////////////////////////////////////////////////////

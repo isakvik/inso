@@ -390,46 +390,6 @@ reserve_handles :: proc(buf: ^rb.Ring_Buffer(Drawable_Handle), #any_int n: int) 
     return slice.from_ptr(rb.at(buf, buf.cursor), 0), false
 }
 
-TEST_write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
-    combo_color_index := -1
-    for &hobj in game.beatmap.hitobjects {
-        if .NEW_COMBO in hobj.flags || combo_color_index < 0 {
-            if osu_map.num_combo_colors > 0 {
-                combo_color_index = (combo_color_index + 1 + int(hobj.combo_color_offset)) % osu_map.num_combo_colors
-            }
-        }
-        combo_color := osu_map.num_combo_colors > 0 ? osu_map.combo_colors[combo_color_index] : color_purple
-
-        hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
-        hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, len(hit_circle_el_types)) or_continue
-        #reverse for el_type, i in hit_circle_el_types {
-            d := Drawable{
-                flags = {.ACTIVE},
-                element = builtin_element_slot(el_type),
-                layer = .HITOBJECTS,
-                size = game.beatmap.circle_radius_osupx * 2,
-                anchor = .CENTER,
-                color = with_alpha(color_white, 1),
-                start_time_ms = hobj.start_time_ms - game.beatmap.preempt_ms,
-                end_time_ms = hobj.start_time_ms,
-            }
-            if el_type == .HIT_CIRCLE || el_type == .HIT_CIRCLE_OVERLAY || el_type == .COMBO_NUMBER {
-                d.end_time_ms += game.beatmap.timing_windows.ok
-            }
-            if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE {
-                d.color = combo_color
-            }
-
-            if el_type == .COMBO_NUMBER {
-                d.size.x *= 0.2
-                d.size.y *= 0.4
-            }
-
-            hobj.gfx_handles[i] = drawable_new(d)
-        }
-    }
-}
-
 render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}, alpha_mul: f32 = 1.0) -> bool {
     if at_time < d.start_time_ms {
         return true
@@ -618,6 +578,41 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Pat
                         color_white, 
                         builtin_texture(.SLIDER_FRAMEBUFFER))
     r_reset_scissor_mode()
+}
+
+
+TEST_write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
+    for &hobj in game.beatmap.hitobjects {
+        combo_color := osu_map.num_combo_colors > 0 ? osu_map.combo_colors[hobj.combo_color_index] : color_purple
+
+        hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
+        hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, len(hit_circle_el_types)) or_continue
+        #reverse for el_type, i in hit_circle_el_types {
+            d := Drawable{
+                flags = {.ACTIVE},
+                element = builtin_element_slot(el_type),
+                layer = .HITOBJECTS,
+                size = game.beatmap.circle_radius_osupx * 2,
+                anchor = .CENTER,
+                color = with_alpha(color_white, 1),
+                start_time_ms = hobj.start_time_ms - game.beatmap.preempt_ms,
+                end_time_ms = hobj.start_time_ms,
+            }
+            if el_type == .HIT_CIRCLE || el_type == .HIT_CIRCLE_OVERLAY || el_type == .COMBO_NUMBER {
+                d.end_time_ms += game.beatmap.timing_windows.ok
+            }
+            if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE {
+                d.color = combo_color
+            }
+
+            if el_type == .COMBO_NUMBER {
+                d.size.x *= 0.2
+                d.size.y *= 0.4
+            }
+
+            hobj.gfx_handles[i] = drawable_new(d)
+        }
+    }
 }
 
 TEST_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Handle) {

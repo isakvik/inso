@@ -17,7 +17,16 @@ Skin_Element_Type :: enum u32 {
     HIT100,
     HIT300,
 
+    COMBO_0,
     COMBO_1,
+    COMBO_2,
+    COMBO_3,
+    COMBO_4,
+    COMBO_5,
+    COMBO_6,
+    COMBO_7,
+    COMBO_8,
+    COMBO_9,
 }
 
 Skin_Sample_Set :: enum {
@@ -55,7 +64,16 @@ Skin_Element_Path := #partial [Skin_Element_Type]string {
     .HIT100  = "hit100",
     .HIT300  = "hit300",
 
+    .COMBO_0 = "default-0",
     .COMBO_1 = "default-1",
+    .COMBO_2 = "default-2",
+    .COMBO_3 = "default-3",
+    .COMBO_4 = "default-4",
+    .COMBO_5 = "default-5",
+    .COMBO_6 = "default-6",
+    .COMBO_7 = "default-7",
+    .COMBO_8 = "default-8",
+    .COMBO_9 = "default-9",
 }
 
 skin_sample_set_name := [Skin_Sample_Set]string {

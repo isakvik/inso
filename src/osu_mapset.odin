@@ -646,7 +646,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                                 }
 
                                 if is_nc > 0 { hobj.flags |= {.NEW_COMBO} }
-                                hobj.combo_color_offset = u8((type_flags >> 4) & 0b111)
+                                hobj.combo_color_skip_offset = u8((type_flags >> 4) & 0b111)
                             case 4:
                                 hitsound, _ := strconv.parse_int(value)
                                 hobj.hitsound_flags = byte(hitsound)
@@ -688,7 +688,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
         }
     }
     
-    mapset_postprocess(mapset, &result)
+    map_postprocess(mapset, &result)
     
     return result
 }
@@ -759,7 +759,7 @@ mapset_buffer :: proc(name: string) -> (result: ^Mapset_Buffer, found: bool) {
     return result, found
 }
 
-mapset_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
+map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
     
     sort.quick_sort_proc(osu_map.hitobjects, proc(a, b: Hitobject) -> int {
         return int(a.start_time_ms) - int(b.start_time_ms)
@@ -777,6 +777,8 @@ mapset_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
     
     current_timing_point_index_uninherited: int
     current_timing_point_index_inherited: int
+    
+    combo_color_index := 0 // note(isak): osu logic - starts at second combo color...
     
     for &hobj, i in osu_map.hitobjects {
         hobj.index = i
@@ -822,6 +824,13 @@ mapset_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
             slider_duration := slider_length / (hobj.slider_velocity * 100 * osu_map.diff_slider_velocity) * uninherited_beat_length
             hobj.end_time_ms = hobj.start_time_ms + (slider_duration * f64(hobj.slider_repeats))
         }
+        
+        if .NEW_COMBO in hobj.flags {
+            if osu_map.num_combo_colors > 0 {
+                combo_color_index = (combo_color_index + 1 + int(hobj.combo_color_skip_offset)) % osu_map.num_combo_colors
+            }
+        }
+        hobj.combo_color_index = u8(combo_color_index)
     }
 }
 

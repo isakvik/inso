@@ -50,8 +50,7 @@ Sound_Channel :: struct {
 }
 
 // note(isak): sample held in memory with a fixed channel pool; use for fire-and-forget
-// short sounds that may overlap (hitsounds). SAMPLE_OVER_POS drops the oldest instance
-// when the pool is exhausted.
+// short sounds that may overlap (hitsounds)
 Sample :: struct {
     handle: bass.HSAMPLE,
 }
@@ -68,6 +67,7 @@ bass_wasapi_proc :: proc "c" (buffer: rawptr, len: u32, user_data: rawptr) -> u3
 }
 
 // todo(isak): should probably call this device_init() or something
+// todo(isak): device selection
 audio_init :: proc(device: Device = -1) -> bool {
     init := bass.Init(device, 44100, bass.DEVICE_NOSPEAKER, nil, nil)
 
@@ -347,6 +347,8 @@ _sound_get_channel_handle :: proc(sound: ^Sound) -> (result: Sound_Handle) {
 
 sample_load_file :: proc(path: string, max_simultaneous: int = 8) -> (result: Sample, ok: bool) {
     path_cstr := strings.clone_to_cstring(path, context.temp_allocator)
+    
+    // note(isak): SAMPLE_OVER_POS drops the oldest instance when the pool is exhausted
     result.handle = bass.SampleLoad(0, rawptr(path_cstr), 0, 0, u32(max_simultaneous),
         bass.SAMPLE_FLOAT | bass.SAMPLE_OVER_POS)
     if result.handle == 0 {

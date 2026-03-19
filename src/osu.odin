@@ -5,12 +5,9 @@ import sb "swap_buffer"
 import "slotmap"
 import rb "ring_buffer"
 
-import "base:intrinsics"
-import "base:runtime"
-import "core:fmt"
-import "core:math"
+import "core:log"
 import "core:math/linalg"
-import "core:container/queue"
+import vmem "core:mem/virtual"
 
 import sdl "vendor:sdl3"
 
@@ -48,10 +45,36 @@ game: struct {
     input: struct {
         k1, k2, m1, m2: Button_State,
         k1_key, k2_key: sdl.Scancode, //TODO(yokes): add keybinding menu
-        
+
         mouse_keys_enabled: bool,
         mouse_pos: vec2,
+    },
+
+    sounds: slotmap.Slotmap(Sound),
+}
+
+game_play_sound :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0) -> slotmap.Handle {
+    channel, ok := sound_channel_init(s, loop)
+    if !ok do return {}
+
+    handle := slotmap.insert(&game.sounds, Sound(channel))
+    sound, _ := slotmap.get(&game.sounds, handle)
+    sound_play(sound, loop = loop, volume = volume)
+    return handle
+}
+
+game_stop_sound :: proc(handle: slotmap.Handle) {
+    sound, ok := slotmap.get(&game.sounds, handle)
+    if !ok do return
+    sound_destroy(sound)
+    slotmap.remove(&game.sounds, handle)
+}
+
+game_clear_sounds :: proc() {
+    for &s in game.sounds.values {
+        sound_destroy(&s)
     }
+    slotmap.clear(&game.sounds)
 }
 
 // note(isak): we reserve the first slot for safety reasons, and we crash on modification for debug reasons
@@ -131,11 +154,6 @@ hitobject_visible_end_time :: proc(hobj: ^Hitobject) -> (result: f64) {
     case .CIRCLE, .SLIDER_HEAD: end_time += game.beatmap.timing_windows.ok
     }
     return end_time
-}
-
-
-Slider_Hitobject :: struct {
-    
 }
 
 

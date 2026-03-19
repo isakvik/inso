@@ -1,5 +1,6 @@
 package notosu
 
+import "core:log"
 import "core:math/ease"
 import "core:math/linalg"
 
@@ -135,8 +136,9 @@ handle_and_render_timeline :: proc() {
             game.beatmap.music_time_ms = game.beatmap.start_time_ms + seek_to_fract * map_len_with_preempt
         } else {
             seek_to_music_fract := (seek_to_fract - leadin_fract) * (1 / (1.0 - leadin_fract))
-            sound_set_position_fract(&game.beatmap.music, seek_to_music_fract)
-            game.beatmap.music_time_ms = beatmap_music_position_interpolated_ms(&game.beatmap)
+            
+            seek_to_ms := seek_to_music_fract * sound_get_length_ms(&game.beatmap.music)
+            beatmap_seek(&game.beatmap, seek_to_ms)
         }
         
         if game.ui_timeline.clicked {

@@ -49,7 +49,10 @@ Memory_Arena_Type :: enum {
     // note(isak): skin data (names, paths)
     // cleared on skin unload
     SKIN,
-    
+
+    // note(isak): active sound channels (Sound_Channel slotmap). freed and reinited on game_clear_sounds
+    SOUND,
+
     // note(isak): temporary allocator. cleared on frame end
     FRAME,
 }
@@ -60,6 +63,7 @@ memory_arena_names := [?]string {
     "Entities",
     "Judgements",
     "Skin",
+    "Sound",
     "Frame",
     "Command buffer[BACKGROUND]",
     "Command buffer[FOREGROUND]",
@@ -434,7 +438,14 @@ write_debug_ui :: proc(map_dropdown: ^Debug_Dropdown) {
     imgui.Text("Visible hitobjects: %d", i32(hobj_visibility.latest_i - hobj_visibility.earliest_i - 1))
     imgui.Text("Mouse keys: %s", game.input.mouse_keys_enabled ? cstring("on") : cstring("off"))
     imgui.Text("Universal offset: %d ms", i32(game.universal_offset_ms))
-
+    
+    
+    imgui.Text("Music pos: %f ms", f32(game.beatmap.music_time_ms))
+    imgui.Text("Sound pos: %f ms", f32(sound_get_position_ms(&game.beatmap.music)))
+    
+    
+    
+    
     imgui.Separator()
     debug_dropdown_update(map_dropdown)
 }

@@ -5,6 +5,7 @@ import "slotmap"
 import rb "ring_buffer"
 
 import "core:container/queue"
+import "core:fmt"
 import "core:log"
 import "core:strings"
 
@@ -59,6 +60,8 @@ Beatmap :: struct {
 }
 
 beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
+    game_clear_sounds()
+
     beatmap^ = { map_reference = map_reference }
     beatmap_load(beatmap)
     
@@ -165,7 +168,7 @@ beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
 
 beatmap_load :: proc(beatmap: ^Beatmap) {
     ok: bool
-    beatmap.music, ok = sound_stream_init(game.active_map.audio_filepath)
+    beatmap.music, ok = sound_stream_init(game.active_map.audio_filepath, prescan = true)
     if ok {
         sound_play(&beatmap.music, start_paused = true, loop = true)
     } else {
@@ -178,14 +181,10 @@ beatmap_load :: proc(beatmap: ^Beatmap) {
 }
 
 beatmap_reload :: proc(beatmap: ^Beatmap, keep_song_position: bool = false) {
-    music_time_before_load, time_before_load_ms: f64
+    music_time_before_load, engine_time_before_load: f64
     if keep_song_position {
-        if game.beatmap.music_time_ms < 0 {
-            music_time_before_load = game.beatmap.music_time_ms
-        } else {
-            music_time_before_load = sound_get_position_ms(&game.beatmap.music)
-        }
-        time_before_load_ms = current_time_ms()
+        music_time_before_load = game.beatmap.music_time_ms
+        engine_time_before_load = current_time_ms()
     } 
     
     beatmap_on_destroy(beatmap)
@@ -200,8 +199,16 @@ beatmap_reload :: proc(beatmap: ^Beatmap, keep_song_position: bool = false) {
     beatmap_on_init(beatmap.map_reference, beatmap)
     
     if keep_song_position {
-        beatmap_seek(beatmap, music_time_before_load)        
-        if !game.paused do sound_resume(&game.beatmap.music)
+        if music_time_before_load >= 0 {
+            beatmap_seek(beatmap, music_time_before_load)        
+        } else {
+            game.beatmap.music_time_ms = music_time_before_load
+        }
+        
+        sound_set_speed(&game.beatmap.music, game.time_rate)
+        if !game.paused {
+            sound_resume(&game.beatmap.music)
+        } 
     }
 }
 
@@ -229,8 +236,8 @@ osu_switch_map :: proc(ref: Map_Reference) {
 }
 
 beatmap_seek :: proc(beatmap: ^Beatmap, pos: f64) {
-    game.beatmap.music_time_ms = beatmap_game_time_to_music_time(beatmap, pos)
     sound_set_position_ms(&game.beatmap.music, pos)
+    beatmap.music_time_ms = beatmap_music_position_interpolated_ms(beatmap)
 }
 
 beatmap_music_time_ms :: proc(beatmap: ^Beatmap) -> f64 {
@@ -268,6 +275,7 @@ beatmap_music_position_interpolated_ms :: proc(beatmap: ^Beatmap) -> (result: f6
         if abs(delta) > interpolation_delta_limit * 2 {
             // big time discrepancy, defer to song_time
             result = song_time
+            
         } else if delta < -interpolation_delta_limit {
             // undershooting, try to catch up
             result = ip_pos_to_reach_ms + interpolation_delta_ms
@@ -286,10 +294,6 @@ beatmap_music_position_interpolated_ms :: proc(beatmap: ^Beatmap) -> (result: f6
         result = song_time
         beatmap.last_accurate_music_position_set_time = real_time
     }
-    
-    //fmt.println("song_time", song_time)
-    //fmt.println("  result", result)
-    //fmt.println("  delta", result - song_time)
     
     beatmap.music_time_uninterpolated_ms = song_time
     beatmap.last_music_position_interpolation_check_time = real_time

@@ -44,6 +44,10 @@ append :: proc(m: ^$M/Swap_Buffer($T), el: T) {
     builtin.append(m.current, el)
 }
 
+append_next :: proc(m: ^$M/Swap_Buffer($T), el: T) {
+    builtin.append(m.next, el)
+}
+
 /*
 import "core:fmt"
 

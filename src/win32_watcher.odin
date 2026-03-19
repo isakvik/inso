@@ -75,6 +75,7 @@ win32_get_directory_changes :: proc(watch_dir: ^Win32_Directory_Watch) {
     )
 
     if has_result {
+        watch_dir.notify_read_offset = 0
         win32_start_directory_change_io(watch_dir)
     } else {
         watch_dir.notify_bytes_written = 0
@@ -112,7 +113,7 @@ win32_watch_get_next_notify :: proc(watch: ^Win32_Directory_Watch, filename_buf:
     notify_at := rawptr(uintptr(&watch.notify_buffer) + uintptr(watch.notify_read_offset))
     notify := (^Win32_File_Notify_Info)(notify_at)
 
-    if notify.file_name_length > 0 {
+    if notify.file_name_length > 0 && notify.file_name_length < MAX_PATH {
         filename_cs16 := ([^]u16)(&notify.file_name)
         filename_str_len := notify.file_name_length / size_of(windows.wchar_t)
 
@@ -124,5 +125,6 @@ win32_watch_get_next_notify :: proc(watch: ^Win32_Directory_Watch, filename_buf:
         watch.notify_read_offset += notify.next_entry_offset
         return notify, filename_str_len
     }
+    
     return notify, 0
 }

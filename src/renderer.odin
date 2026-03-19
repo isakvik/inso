@@ -16,12 +16,12 @@ import slog "vendor:sokol/log"
 
 
 MAX_BATCH_VERTICES :: 64*1024
-MAX_SLIDER_INSTANCES :: 64*1024
+MAX_SLIDER_INSTANCES :: 16 * 1024 * 1024
 MAX_TEXTURE_HANDLES :: 1024
 
 MAX_DRAW_CALLS_PER_LAYER :: 4096
 
-UNIT_CIRCLE_VERTEX_COUNT :: 30
+UNIT_CIRCLE_VERTEX_COUNT :: 48
 
 
 Quad :: struct {
@@ -29,10 +29,10 @@ Quad :: struct {
     pos_max:   vec2,
     uv_min:    vec2,
     uv_max:    vec2,
+    tex_layer: f32,
     color:     u32,
     tex_index: u32,
-    angle:     f32,
-    __padding:   [1]u32
+    angle:     f32
 }
 
 Slider_Vertex :: struct {
@@ -101,6 +101,7 @@ Texture_Handle :: u64
 Texture :: struct {
     path: string,
     w, h: i32,
+    layer_count: i32, // note(isak): depth of the GL_TEXTURE_2D_ARRAY; 1 for flat textures
     format, internal_format: u32,
     tex_id: u32, // note(isak): gl assigned texture id
     tex_handle: Texture_Handle, // note(isak): bindless handle
@@ -123,7 +124,7 @@ Rect :: struct {
 }
 
 rect_to_array :: proc(r: Rect) -> [4]f32 {
-    return {r.x, r.y, r.w, r.h}
+    return transmute([4]f32)r
 }
 
 //////////////////////////////////////////////////////
@@ -172,11 +173,13 @@ renderer_init :: proc() {
     window.quad_store = tbo_init(Quad, MAX_BATCH_VERTICES)
     window.text_store = tbo_init(Glyph_Quad, MAX_BATCH_VERTICES)
 
-    window.slider_instance_store = sbo_init(vec2, MAX_BATCH_VERTICES)
+    window.slider_instance_store = sbo_init(vec2, megabytes(256))
     window.fullscreen_store = sbo_init(Quad, 4)
     window.texture_buffer = sbo_init(u64, MAX_TEXTURE_HANDLES)
     
     window.shader_global_buffer = ubo_init(Shader_Globals, 1)
+    window.slider_param_buffer  = ubo_init(Slider_Globals, 1)
+    window.user_param_buffer    = ubo_init(User_Shader_Params, 1)
 
 
     window.pass_action = { 
@@ -211,7 +214,6 @@ renderer_init :: proc() {
 
     populate_slider_circle_vertices(&renderer.circle_geometry)
     
-    renderer.slider_instances.size = MAX_BATCH_VERTICES
 
     //
 
@@ -237,7 +239,9 @@ renderer_init :: proc() {
 renderer_cleanup :: proc() {
     tbo_cleanup(&window.quad_store)
     tbo_cleanup(&window.text_store)
-    
+    ubo_cleanup(&window.slider_param_buffer)
+    ubo_cleanup(&window.user_param_buffer)
+
     sbo_cleanup(&window.fullscreen_store)
     sbo_cleanup(&window.circle_geo_buffer)
     sbo_cleanup(&window.texture_buffer)
@@ -340,6 +344,7 @@ Command_Type :: enum(u8) {
     CLEAR,
     DRAW,
     DRAW_SLIDER,
+    DRAW_MESH,
     BIND_PIPELINE,
     BIND_FRAMEBUFFER,
     BIND_SSBO,
@@ -348,6 +353,10 @@ Command_Type :: enum(u8) {
 
 Command_Header :: struct {
     command_type: Command_Type
+}
+
+Command_Clear :: struct {
+    color: Color
 }
 
 Command_Push_Transform :: struct {
@@ -363,7 +372,9 @@ Command_Draw :: struct {
 
 Command_Draw_Slider :: struct {
     base_instance: u32,
-    instance_count: i32
+    instance_count: i32,
+    border_color: Color,
+    body_color:   Color,
 }
 
 Command_Bind_Pipeline :: struct {
@@ -380,15 +391,21 @@ Command_Bind_SSBO :: struct {
     size, offset: int
 }
 
-Command_Scissor_Mode :: struct {
-    x, y, width, height: i32
+Command_Draw_Mesh :: struct {
+    vertex_count:   i32,
+    instance_count: i32,
 }
 
-command_push_clear             :: proc() -> bool { return _command_push_header(.CLEAR) }
+Command_Scissor_Mode :: struct {
+    x, y, w, h: i32
+}
+
+command_push_clear             :: proc(cmd: Command_Clear) -> bool { return _command_push(cmd, .CLEAR) }
 command_push_push_transform    :: proc(cmd: Command_Push_Transform) -> bool { return _command_push(cmd, .PUSH_TRANSFORM) }
 command_push_pop_transform     :: proc() -> bool { return _command_push_header(.POP_TRANSFORM) }
 command_push_draw              :: proc(cmd: Command_Draw) -> bool { return _command_push(cmd, .DRAW) }
 command_push_draw_slider       :: proc(cmd: Command_Draw_Slider) -> bool { return _command_push(cmd, .DRAW_SLIDER) }
+command_push_draw_mesh         :: proc(cmd: Command_Draw_Mesh) -> bool { return _command_push(cmd, .DRAW_MESH) }
 command_push_bind_pipeline     :: proc(cmd: Command_Bind_Pipeline) -> bool { return _command_push(cmd, .BIND_PIPELINE) }
 command_push_bind_framebuffer  :: proc(cmd: Command_Bind_Framebuffer) -> bool { return _command_push(cmd, .BIND_FRAMEBUFFER) }
 command_push_bind_ssbo         :: proc(cmd: Command_Bind_SSBO) -> bool { return _command_push(cmd, .BIND_SSBO) }
@@ -425,9 +442,9 @@ _command_consume :: proc(cmd_queue: ^queue.Queue(u8), $T: typeid) -> ^T {
 //////////////////////////////////////////////////////
 // note(isak): core renderer api
 
-r_clear :: proc() {
+r_clear :: proc(color: Color = color_black) {
     window.renderer.new_draw_on_next_push = true
-    command_push_clear()
+    command_push_clear({ color })
 }
 
 r_push_draw :: proc(index_offset: u32, index_count: i32, instance_count: i32 = 1, base_instance: u32 = 0) {
@@ -489,6 +506,15 @@ r_bind_ssbo :: proc {
     r_bind_tbo
 }
 
+r_bind_ssbo_raw :: proc(id: u32, size: int, bind_slot: Shader_SSBO_Bind_Slot) {
+    _r_push_ssbo(Command_Bind_SSBO{ id, bind_slot, size, 0 })
+}
+
+r_push_draw_mesh :: proc(vertex_count: i32, instance_count: i32 = 1) {
+    window.renderer.new_draw_on_next_push = true
+    command_push_draw_mesh({ vertex_count = vertex_count, instance_count = instance_count })
+}
+
 /*
     note(isak): 2D transforms are tricky - we use them to define the coordinate system that spans the
     window without distortion. we do these calculations on the GPU using the bounds rect and the 
@@ -509,15 +535,29 @@ r_pop_transform :: proc() {
     // todo(isak) implement
 }
 
-r_begin_scissor_mode :: proc(x, y, width, height: i32) {
-    cmd := Command_Scissor_Mode{x, y, width, height}
+r_begin_scissor_mode_pixels :: proc(x, y, w, h: i32) {
+    cmd := Command_Scissor_Mode{x, y, w, h}
     window.renderer.new_draw_on_next_push = true
     window.renderer.current_scissor = cmd
     command_push_scissor_mode(cmd)
 }
 
-r_end_scissor_mode :: proc() {
-    r_begin_scissor_mode(0, 0, i32(window.rect.w), i32(window.rect.h))
+r_begin_scissor_mode_rect :: proc(r: Rect) {
+    // note(isak): y value convention is flipped here
+    cmd := Command_Scissor_Mode{i32(r.x), i32(r.y), i32(r.w), i32(r.h)}
+    window.renderer.new_draw_on_next_push = true
+    window.renderer.current_scissor = cmd
+    command_push_scissor_mode(cmd)
+}
+
+r_set_scissor_mode :: proc {
+    r_begin_scissor_mode_pixels,
+    r_begin_scissor_mode_rect
+}
+
+r_reset_scissor_mode :: proc() {
+    r_begin_scissor_mode_pixels(0, 0, i32(window.rect.w), i32(window.rect.h))
+    window.renderer.new_draw_on_next_push = true
 }
 
 /*
@@ -556,7 +596,7 @@ r_push_current_state :: proc(
     r_bind_framebuffer(cmd_framebuffer)
     r_bind_pipeline(cmd_pipeline)
     r_push_transform(transform)
-    r_begin_scissor_mode(scissor_region.x, scissor_region.y, scissor_region.width, scissor_region.height)
+    r_begin_scissor_mode_pixels(scissor_region.x, scissor_region.y, scissor_region.w, scissor_region.h)
 
     for ssbo_slot in Shader_SSBO_Bind_Slot {
         _r_push_ssbo(window.renderer.current_ssbo_binds[ssbo_slot])
@@ -606,6 +646,7 @@ batch_end :: proc(renderer: ^Renderer) {
     sbo_bind(&window.texture_buffer, u32(Shader_SSBO_Bind_Slot.TEXTURES))
     ubo_bind(&window.shader_global_buffer, u32(Shader_SSBO_Bind_Slot.TRANSFORM))
     sbo_bind(&window.slider_instance_store, u32(Shader_SSBO_Bind_Slot.INSTANCE_BUFFER))
+    ubo_bind(&window.user_param_buffer, u32(Shader_SSBO_Bind_Slot.USER_PARAMS))
 
     batch_process_command_buffer(renderer)
 }
@@ -630,7 +671,9 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
 
             switch Command_Type(cmd_type) {
                 case .CLEAR: {
-                    gl.ClearColor(0,0,0,0)
+                    cmd := _command_consume(&command_queue, Command_Clear)
+                    color := color_to_vec(cmd.color)
+                    gl.ClearColor(color.r, color.g, color.b, color.a)
                     gl.ClearDepth(1.0)
                     gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
@@ -661,12 +704,24 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
 
                     if (trace) { fmt.println("  draw", cmd.index_offset, cmd.index_count, cmd.instance_count, cmd.base_instance ) }
                 }
+                case .DRAW_MESH: {
+                    cmd := _command_consume(&command_queue, Command_Draw_Mesh)
+                    gl.DrawArrays(gl.TRIANGLES, 0, cmd.vertex_count * cmd.instance_count)
+
+                    if (trace) { fmt.println("  draw_mesh", cmd.vertex_count, cmd.instance_count) }
+                }
                 case .DRAW_SLIDER: {
                     cmd := _command_consume(&command_queue, Command_Draw_Slider)
-                                    
+
+                    slider_globals := Slider_Globals{
+                        color_to_vec(cmd.border_color), 
+                        color_to_vec(cmd.body_color)}
+                    gl.NamedBufferSubData(window.slider_param_buffer.id, 0, size_of(Slider_Globals), &slider_globals)
+                    ubo_bind(&window.slider_param_buffer, u32(Shader_SSBO_Bind_Slot.SLIDER_PARAMS))
+
                     gl.DrawArraysInstancedBaseInstance(
-                        gl.TRIANGLE_FAN, 
-                        0, 
+                        gl.TRIANGLE_FAN,
+                        0,
                         renderer.circle_geometry.count,
                         cmd.instance_count, cmd.base_instance)
 
@@ -700,10 +755,10 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 }
                 case .SCISSOR_MODE: {
                     cmd := _command_consume(&command_queue, Command_Scissor_Mode)
+                    // note(isak): GL expects y=0 to be the bottom, but our convention is the top, so we transform
+                    gl.Scissor(cmd.x, i32(window.rect.h) - cmd.y - cmd.h, max(cmd.w, 0), max(cmd.h, 0))
                     
-                    gl.Scissor(cmd.x, cmd.y, max(cmd.width, 0), max(cmd.height, 0))
-                    
-                    if (trace) { fmt.println("  scissor", cmd.x, cmd.y, cmd.width, cmd.height) }
+                    if (trace) { fmt.println("  scissor", cmd.x, cmd.y, cmd.w, cmd.h) }
                 }
             }
         }
@@ -718,8 +773,8 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
 ///////////////////////////////////////////////////////////////////////////
 // note(isak): draw api - PS: we use our nice global window.renderer here to make the api easier
 
-r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2, 
-                          color: Color, tex_index: u32, angle: f32 = 0) {
+r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2,
+                          color: Color, tex_index: u32, angle: f32 = 0, layer: f32 = 0) {
     assert(window.renderer.current_draw != nil)
 
     if geometry.count + 1 > MAX_BATCH_VERTICES {
@@ -727,7 +782,7 @@ r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, u
     }
     if window.renderer.new_draw_on_next_push {
         r_push_draw(
-            index_offset = u32(geometry.count) * 6, 
+            index_offset = u32(geometry.count) * 6,
             index_count = 0
         )
     }
@@ -739,8 +794,9 @@ r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, u
         verts[vert_i] = {
             pos_min = pos_min,
             pos_max = pos_max,
-            uv_min = uv_min,
-            uv_max = uv_max,
+            uv_min = {uv_min.x, uv_min.y},
+            uv_max = {uv_max.x, uv_max.y},
+            tex_layer = layer,
             color = transmute(u32)color,
             tex_index = tex_index,
             angle = angle
@@ -751,29 +807,26 @@ r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, u
     }
 }
 
-r_draw_quad :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2, 
-                    color: Color, tex_index: u32 = 0, angle: f32 = 0) {
-    r_draw_quad_with_uv(geometry, 
-                      pos_min, pos_max, 
-                      uv_min, uv_max, 
-                      color, tex_index, angle)
+r_draw_quad :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2,
+                    color: Color, tex_index: u32 = 0, angle: f32 = 0, layer: f32 = 0) {
+    r_draw_quad_with_uv(geometry, pos_min, pos_max, uv_min, uv_max, color, tex_index, angle, layer)
 }
 
 r_draw_rect :: proc(geometry: ^Buffer(Quad), r: Rect,
-                    color: Color, tex_index: u32 = 0, angle: f32 = 0) {
-    r_draw_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h}, 
-                                {0, 0}, {1, 1}, color, tex_index, angle)
+                    color: Color, tex_index: u32 = 0, angle: f32 = 0, layer: f32 = 0) {
+    r_draw_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h},
+                                {0, 0}, {1, 1}, color, tex_index, angle, layer)
 }
 
-r_draw_rect_with_uv :: proc(geometry: ^Buffer(Quad), r, uv: Rect, 
-                            color: Color, tex_index: u32 = 0, angle: f32 = 0) {
-    r_draw_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h}, 
-                                {uv.x, uv.y}, {uv.x + uv.w, uv.y + uv.h}, color, tex_index, angle)
+r_draw_rect_with_uv :: proc(geometry: ^Buffer(Quad), r, uv: Rect,
+                            color: Color, tex_index: u32 = 0, angle: f32 = 0, layer: f32 = 0) {
+    r_draw_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h},
+                                {uv.x, uv.y}, {uv.x + uv.w, uv.y + uv.h}, color, tex_index, angle, layer)
 }
 
-r_draw_layout_rect :: proc(geometry: ^Buffer(Quad), rect: Rect, anchor: Layout_Anchor, 
-                           color: Color = color_white, tex_index: u32 = 0, angle: f32 = 0) {
-    r_draw_rect(geometry, rect_translate_by_anchor(rect, anchor), color, tex_index, angle) 
+r_draw_layout_rect :: proc(geometry: ^Buffer(Quad), rect: Rect, anchor: Layout_Anchor,
+                           color: Color = color_white, tex_index: u32 = 0, angle: f32 = 0, layer: f32 = 0) {
+    r_draw_rect(geometry, rect_translate_by_anchor(rect, anchor), color, tex_index, angle, layer)
 }
 
 
@@ -817,6 +870,55 @@ r_draw_rect_outline_fill :: proc(geometry: ^Buffer(Quad), rect: Rect, color_outl
 //////////////////////////////////////////////////////
 // note(isak): layout api
 
+transform_point_space :: proc(pt: vec2, source_to_common: mat3, dest_to_common: mat3) -> vec2 {
+    h_pt := vec3{pt.x, pt.y, 1.0}
+    h_pt = h_pt * source_to_common * linalg.matrix3_inverse(dest_to_common)
+    return h_pt.xy
+}
+
+// note(isak): this is still very specific but my transform math makes my brain hurt
+transform_playfield_rect_to_screenspace :: proc(r: Rect) -> Rect {
+    tl_pt := vec3{r.x, r.y, 1.0}
+    br_pt := vec3{r.x + r.w, r.y + r.h, 1.0}
+    
+    xform := playfield_to_screenspace_transform()
+    tl_xform := xform * tl_pt
+    br_xform := xform * br_pt
+    
+    return {
+        (window.rect.w - window.rect.h) / 2 + tl_xform.x, tl_xform.y,
+        br_xform.x - tl_xform.x, br_xform.y - tl_xform.y
+    }
+}
+
+/*
+transform_rect_to_screen_corners :: proc(r: Rect, playfield_to_ndc: mat3, screen_to_ndc: mat3) -> [4]vec2 {
+    corners := [4]vec2{
+        {r.x,       r.y},
+        {r.x + r.w, r.y},
+        {r.x + r.w, r.y + r.h},
+        {r.x,       r.y + r.h},
+    }
+    for i in 0..<4 {
+        corners[i] = transform_point_space(corners[i], playfield_to_ndc, screen_to_ndc)
+    }
+    return corners
+}
+
+calculate_aabb_from_corners :: proc(corners: [4]vec2) -> Rect {
+    min_pt := corners[0]
+    max_pt := corners[0]
+    for i in 1..<4 {
+        min_pt.x = min(min_pt.x, corners[i].x)
+        min_pt.y = min(min_pt.y, corners[i].y)
+        max_pt.x = max(max_pt.x, corners[i].x)
+        max_pt.y = max(max_pt.y, corners[i].y)
+    }
+    return {min_pt.x, min_pt.y, max_pt.x - min_pt.x, max_pt.y - min_pt.y}
+}
+*/
+
+
 rect_translate_by_anchor :: proc(rect: Rect, anchor: Layout_Anchor) -> Rect {
     result := Rect {
         w = rect.w,
@@ -838,20 +940,4 @@ rect_translate_by_anchor :: proc(rect: Rect, anchor: Layout_Anchor) -> Rect {
         result.y = rect.y
     }
     return result
-}
-
-rect_translate_to_inner :: proc(inner, outer: Rect) -> Rect {
-    if outer.w <= 0 || outer.h <= 0 {
-        return {
-            x = outer.x,
-            y = outer.y
-        }
-    }
-
-    return {
-        x = outer.x + (inner.x * outer.w),
-        y = outer.y + (inner.y * outer.h),
-        w = inner.w * outer.w,
-        h = inner.h * outer.h
-    }
 }

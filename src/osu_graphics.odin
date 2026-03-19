@@ -2,6 +2,8 @@ package notosu
 
 import "base:intrinsics"
 import q "core:container/queue"
+import "core:math"
+import "core:math/ease"
 import "core:math/linalg"
 import "core:slice"
 
@@ -16,7 +18,11 @@ skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
     .HIT_CIRCLE_OVERLAY = .HITCIRCLEOVERLAY,
     .APPROACH_CIRCLE = .APPROACHCIRCLE,
     .COMBO_NUMBER = .COMBO_1,
-    .JUDGEMENT = .LIGHTING,
+    
+    .JUDGEMENT_MISS = .HIT0,
+    .JUDGEMENT_OK = .HIT50,
+    .JUDGEMENT_GOOD = .HIT100,
+    .JUDGEMENT_MARVELOUS = .HIT300,
 }
 
 //////////////////////////////////////////////////////
@@ -24,10 +30,48 @@ skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
 
 Tween :: enum {
     LINEAR,
-    ACCELERATE,
-    DECELERATE,
-    SMOOTH,
-    SLEEP
+    QUAD_IN,     QUAD_OUT,     QUAD_IN_OUT,
+    CUBIC_IN,    CUBIC_OUT,    CUBIC_IN_OUT,
+    SINE_IN,     SINE_OUT,     SINE_IN_OUT,
+    EXPO_IN,     EXPO_OUT,     EXPO_IN_OUT,
+    BACK_IN,     BACK_OUT,     BACK_IN_OUT,
+    ELASTIC_OUT,
+    BOUNCE_OUT,
+}
+
+tween_apply :: proc(tween: Tween, t: f32) -> f32 {
+    switch tween {
+    case .LINEAR:       return t
+    case .QUAD_IN:      return ease.quadratic_in(t)
+    case .QUAD_OUT:     return ease.quadratic_out(t)
+    case .QUAD_IN_OUT:  return ease.quadratic_in_out(t)
+    case .CUBIC_IN:     return ease.cubic_in(t)
+    case .CUBIC_OUT:    return ease.cubic_out(t)
+    case .CUBIC_IN_OUT: return ease.cubic_in_out(t)
+    case .SINE_IN:      return ease.sine_in(t)
+    case .SINE_OUT:     return ease.sine_out(t)
+    case .SINE_IN_OUT:  return ease.sine_in_out(t)
+    case .EXPO_IN:      return ease.exponential_in(t)
+    case .EXPO_OUT:     return ease.exponential_out(t)
+    case .EXPO_IN_OUT:  return ease.exponential_in_out(t)
+    case .BACK_IN:      return ease.back_in(t)
+    case .BACK_OUT:     return ease.back_out(t)
+    case .BACK_IN_OUT:  return ease.back_in_out(t)
+    case .ELASTIC_OUT:  return ease.elastic_out(t)
+    case .BOUNCE_OUT:   return ease.bounce_out(t)
+    }
+    return t
+}
+
+// note(isak): how an Animation_Color result is applied against the drawable's current color.
+// REPLACE (0, ZII): output = animated_color. ignores d.color entirely.
+// MULTIPLY:         output = d.color * animated_color / 255 per channel.
+//                   useful for tint/dim effects that should work regardless of the base color -
+//                   e.g. dimming approach circles before click time while preserving their combo color.
+//                   {255,255,255,255} is the identity (no effect).
+Color_Blend_Type :: enum u8 {
+    REPLACE,
+    MULTIPLY,
 }
 
 Animation_Variant :: enum {
@@ -53,7 +97,7 @@ animation_variant :: proc(anim: Animation) -> (result: Animation_Variant) {
 
 Base_Animation :: struct {
     tween: Tween,
-    start_time, end_time: f64,
+    start_time, end_time: f64, // note(isak): [0,1] range
 }
 
 Animation :: union #align(4) {
@@ -80,6 +124,7 @@ Animation_Rotate :: struct {
 Animation_Color :: struct {
     using base: Base_Animation,
     start_color, end_color: Color,
+    blend: Color_Blend_Type,
 }
 Animation_Alpha :: struct {
     using base: Base_Animation,
@@ -88,6 +133,7 @@ Animation_Alpha :: struct {
 Animation_Texture :: struct {
     using base: Base_Animation,
     texture_id: u32,
+    layer: f32, // note(isak): array layer index; 0 for single-layer textures
 }
 
 Script_Animation_List :: struct {
@@ -113,7 +159,10 @@ Element_Type :: enum {
 
     CLICKED_HIT_CIRCLE,
     CLICKED_HIT_CIRCLE_OVERLAY,
-    JUDGEMENT,
+    JUDGEMENT_MISS,
+    JUDGEMENT_OK,
+    JUDGEMENT_GOOD,
+    JUDGEMENT_MARVELOUS,
     
     CUSTOM_ELEMENT
 }
@@ -121,13 +170,15 @@ Element_Type :: enum {
 Element_ID :: u32
 Element :: struct {
     type: Element_Type, // note(isak): this is just for debug purposes
-    
+
     shader: Pipeline_ID,
     static_geometry: bool,
     ssbo: u32,
+    ssbo_size: int,
     index_count: u32,
-    
+
     tex: u32,
+    uv: Rect, // note(isak): UV sub-rect in [0,1] space; {0,0,1,1} = full texture
     animations: []Animation,
 }
 
@@ -143,6 +194,7 @@ user_element_slot :: proc(slot: u32) -> Element_ID {
 Drawable_Flags :: distinct bit_set[Drawable_Flag; u32]
 Drawable_Flag :: enum u32 {
     ACTIVE,
+    LOOP_ANIMATION,
 }
 
 // note(isak): graphical entity that is pushed to the renderer
@@ -161,6 +213,7 @@ Drawable :: struct {
     angle_deg: f32,
     anchor: Layout_Anchor,
     color: Color,
+    animation_rate: f64,
     
     // todo(isak): these are kinda intuitively made... not integrated into lua yet
     vel: vec2,
@@ -181,7 +234,7 @@ animation_new :: proc(buf: ^q.Queue(Animation), elems: ..Animation) -> []Animati
 }
 
 //////////////////////////////////////////////////////
-// note(isak): animation api
+// note(isak): element api
 
 element_new :: proc(el: Element) -> (result: Element_ID) {
     result = Element_ID(game.beatmap.elements.len)
@@ -192,8 +245,6 @@ element_new :: proc(el: Element) -> (result: Element_ID) {
 }
 
 write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Animation)) {
-    ar_ms := game.beatmap.preempt_ms
-
     q.reserve(elements, len(Element_Type))
     elements.len += len(Element_Type)
     
@@ -207,19 +258,19 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
         animations = animation_new(anims, 
             Animation_Scale{
                 start_time = 0,
-                end_time = ar_ms * 0.5,
+                end_time = 0.5,
                 start_scale = {1, 1}, 
                 end_scale = {4, 1}
             }, 
             Animation_Scale{
-                start_time = ar_ms * 0.5, 
-                end_time = ar_ms,
+                start_time = 0.5, 
+                end_time = 1,
                 start_scale = {4, 1}, 
                 end_scale = {0, 0}
             }, 
             Animation_Rotate{
                 start_time = 0, 
-                end_time = ar_ms,
+                end_time = 1,
                 start_angle = 0, 
                 end_angle = 180
             }, 
@@ -231,25 +282,25 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
 
         animations = animation_new(anims, Animation_Scale{
             start_time = 0, 
-            end_time = ar_ms,
+            end_time = 1,
             start_scale = {3, 3}, 
             end_scale = {0.9, 0.9}
         })
     }
     
-    elements.data[builtin_element_slot(.JUDGEMENT)] = {
+    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS)] = {
         tex = skin_texture(.LIGHTING),
 
         animations = animation_new(anims, 
             Animation_Scale{
                 start_time = 0, 
-                end_time = 600,
+                end_time = 1,
                 start_scale = {0.5, 0.5}, 
                 end_scale = {1.5, 1.5}
             },
             Animation_Alpha{
-                start_time = 300, 
-                end_time = 600,
+                start_time = 0.5, 
+                end_time = 1,
                 start_alpha = 1.0,
                 end_alpha = 0.0,
             }
@@ -260,13 +311,13 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
     click_animation := animation_new(anims, 
         Animation_Scale{
             start_time = 0,
-            end_time = 250,
+            end_time = 1,
             start_scale = {1, 1}, 
             end_scale = {1.5, 1.5}
         },
         Animation_Alpha{
             start_time = 0,
-            end_time = 250,
+            end_time = 1,
             start_alpha = 1.0,
             end_alpha = 0.0,
         }
@@ -306,7 +357,7 @@ drawable_new_expiring :: proc(buf: ^sb.Swap_Buffer(Drawable_Handle), d: Drawable
     return result
 }
 
-clear_hitobject_drawables :: proc(hobj: ^Hit_Object) {
+clear_hitobject_drawables :: proc(hobj: ^Hitobject) {
     for handle in hobj.gfx_handles {
         slotmap.remove(&game.beatmap.drawables, handle)
     }
@@ -339,103 +390,114 @@ reserve_handles :: proc(buf: ^rb.Ring_Buffer(Drawable_Handle), #any_int n: int) 
     return slice.from_ptr(rb.at(buf, buf.cursor), 0), false
 }
 
-write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
-    for &hobj in game.beatmap.hit_objects {
-        hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
-        hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, len(hit_circle_el_types)) or_continue
-        #reverse for el_type, i in hit_circle_el_types {
-            e := Drawable{
-                flags = {.ACTIVE},
-                element = builtin_element_slot(el_type),
-                layer = .HIT_OBJECTS,
-                size = game.beatmap.circle_radius_osupx * 2,
-                anchor = .CENTER,
-                color = with_alpha(color_white, 1),
-                start_time_ms = hobj.start_time_ms - game.beatmap.preempt_ms,
-                end_time_ms = hobj.start_time_ms,
-            }
-            if el_type == .COMBO_NUMBER {
-                e.size.x *= 0.2
-                e.size.y *= 0.4
-            }
-            if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE {
-                e.color = color_purple
-            }
-            
-            hobj.gfx_handles[i] = drawable_new(e)
-        }
-    }
-}
-
-render_drawable :: proc(e: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) -> bool {
-    if at_time < e.start_time_ms {
+render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}, alpha_mul: f32 = 1.0) -> bool {
+    if at_time < d.start_time_ms {
         return true
     }
-    if e.end_time_ms < at_time {
+    if d.end_time_ms < at_time {
         return false
     }
-    rel_time := at_time - e.start_time_ms
+    relative_time_at := at_time - d.start_time_ms
 
-    element := &game.beatmap.elements.data[e.element]
+    element := &game.beatmap.elements.data[d.element]
     tex := element.tex
+    uv_layer: f32
 
-    rect := Rect{e.pos.x + parent_pos.x, e.pos.y + parent_pos.y, e.size.x, e.size.y}
-    angle := e.angle_deg + e.angle_vel * f32(rel_time / 1000)
-    color := e.color
-    texture_override: bool
+    t_sec := f32(relative_time_at / 1000)
+    phys_x := d.vel.x * t_sec + 0.5 * d.accel.x * t_sec * t_sec
+    phys_y := d.vel.y * t_sec + 0.5 * d.accel.y * t_sec * t_sec
+    rect := Rect{d.pos.x + parent_pos.x + phys_x, d.pos.y + parent_pos.y + phys_y, d.size.x, d.size.y}
+    angle := d.angle_deg + d.angle_vel * t_sec
+    color := d.color
+
+    duration := d.end_time_ms - d.start_time_ms
+    effective_rate := d.animation_rate if d.animation_rate != 0 else 1.0
+    anim_time_at := relative_time_at / duration * effective_rate
+    if .LOOP_ANIMATION in d.flags {
+        anim_time_at = math.mod(anim_time_at, 1.0)
+    }
+
     seen_animation_of_type: [Animation_Variant]bool
-
-    #reverse for &anim in game.beatmap.elements.data[e.element].animations {
-        base := cast(^Base_Animation)&anim
-        if rel_time < base.start_time || seen_animation_of_type[animation_variant(anim)] {
+    #reverse for &animation in game.beatmap.elements.data[d.element].animations {
+        base := cast(^Base_Animation)&animation
+        if anim_time_at < base.start_time || seen_animation_of_type[animation_variant(animation)] {
             continue
         }
 
-        t := f32((rel_time - base.start_time) / (base.end_time - base.start_time))
-        t = min(t, 1)
+        t := f32((anim_time_at - base.start_time) / (base.end_time - base.start_time))
+        t = tween_apply(base.tween, min(t, 1))
 
-        switch a in anim {
+        // note(isak): we don't set attributes directly the same way osu SBs work, but i don't like it
+        switch anim in animation {
             case Animation_Translate:
-                rect.x = linalg.lerp(a.start_pos.x, a.end_pos.x, t)
-                rect.y = linalg.lerp(a.start_pos.y, a.end_pos.y, t)
+                rect.x = d.pos.x * linalg.lerp(anim.start_pos.x, anim.end_pos.x, t)
+                rect.y = d.pos.y * linalg.lerp(anim.start_pos.y, anim.end_pos.y, t)
 
             case Animation_Scale:
-                rect.w = e.size.x * linalg.lerp(a.start_scale.x, a.end_scale.x, t)
-                rect.h = e.size.y * linalg.lerp(a.start_scale.y, a.end_scale.y, t)
+                rect.w = d.size.x * linalg.lerp(anim.start_scale.x, anim.end_scale.x, t)
+                rect.h = d.size.y * linalg.lerp(anim.start_scale.y, anim.end_scale.y, t)
 
             case Animation_Rotate:
-                angle = linalg.lerp(a.start_angle, a.end_angle, t)
+                angle = linalg.lerp(anim.start_angle, anim.end_angle, t)
 
             case Animation_Color:
-                color.r = u8(linalg.lerp(f32(a.start_color.r), f32(a.end_color.r), t))
-                color.g = u8(linalg.lerp(f32(a.start_color.g), f32(a.end_color.g), t))
-                color.b = u8(linalg.lerp(f32(a.start_color.b), f32(a.end_color.b), t))
-                color.a = u8(linalg.lerp(f32(a.start_color.a), f32(a.end_color.a), t))
+                lerped := Color{
+                    u8(linalg.lerp(f32(anim.start_color.r), f32(anim.end_color.r), t)),
+                    u8(linalg.lerp(f32(anim.start_color.g), f32(anim.end_color.g), t)),
+                    u8(linalg.lerp(f32(anim.start_color.b), f32(anim.end_color.b), t)),
+                    u8(linalg.lerp(f32(anim.start_color.a), f32(anim.end_color.a), t)),
+                }
+                switch anim.blend {
+                case .REPLACE:
+                    color = lerped
+                case .MULTIPLY:
+                    color.r = u8(f32(color.r) * f32(lerped.r) / 255)
+                    color.g = u8(f32(color.g) * f32(lerped.g) / 255)
+                    color.b = u8(f32(color.b) * f32(lerped.b) / 255)
+                    color.a = u8(f32(color.a) * f32(lerped.a) / 255)
+                }
                 
             case Animation_Alpha:
-                color.a = u8(linalg.lerp(a.start_alpha, a.end_alpha, t) * 0xFF)
+                color.a = u8(linalg.lerp(anim.start_alpha, anim.end_alpha, t) * 0xFF)
                 
             case Animation_Texture:
-                texture_override = true
-                tex = a.texture_id
+                tex = anim.texture_id
+                uv_layer = anim.layer
         }
-        seen_animation_of_type[animation_variant(anim)] = true
+        seen_animation_of_type[animation_variant(animation)] = true
     }
 
+    color.a = u8(f32(color.a) * alpha_mul)
+
     r_check_and_bind_pipeline({element.shader})
-    r_check_and_bind_layer(e.layer)
-    r_draw_layout_rect(&window.renderer.quad_geometry, rect, e.anchor, color, tex, angle)
-    
+    r_check_and_bind_layer(d.layer)
+
+    if element.static_geometry {
+        r_bind_ssbo_raw(element.ssbo, element.ssbo_size, .VERTEX_BUFFER)
+        r_push_draw_mesh(i32(element.index_count))
+        // note(isak): restore quad VERTEX_BUFFER for subsequent quad draws
+        r_bind_tbo(&window.quad_store, .VERTEX_BUFFER)
+    } else {
+        uv_rect := element.uv
+        if uv_rect.w == 0 || uv_rect.h == 0 {
+            uv_rect = {0, 0, 1, 1}
+        }
+        r_draw_rect_with_uv(&window.renderer.quad_geometry,
+            rect_translate_by_anchor(rect, d.anchor),
+            uv_rect, color, tex, angle, uv_layer)
+    }
+
     return true
 }
 
 process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Drawable_Handle)) {
+    map_time := beatmap_music_time_ms(&game.beatmap)
     for handle in expiring_gfx_refs.current {
         e := slotmap.get(&game.beatmap.drawables, handle) or_continue
         if .ACTIVE in e.flags {
-            still_alive := render_drawable(e, game.beatmap.music_time_ms)
+            still_alive := render_drawable(e, map_time)
             if still_alive {
-                append(expiring_gfx_refs.next, handle)
+                sb.append_next(expiring_gfx_refs, handle)
             } else {
                 slotmap.remove(&game.beatmap.drawables, handle)
             }
@@ -446,36 +508,114 @@ process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Dr
     sb.swap(expiring_gfx_refs)
 }
 
-render_slider :: proc(renderer: ^Renderer, hobj: ^Hit_Object) {
-    // todo(isak): generate partial instance draws (snaking) and the bounding quads like the smart cookie you are
+slider_screenspace_bounding_box :: proc(slider: ^Slider_Path) -> (result: Rect) {
+    r := game.beatmap.circle_radius_osupx
+    pad := f32(2)
+    result = {
+        slider.bounds_min.x - r,
+        slider.bounds_min.y - r,
+        slider.bounds_max.x - slider.bounds_min.x + r * 2,
+        slider.bounds_max.y - slider.bounds_min.y + r * 2,
+    }
+    result = transform_playfield_rect_to_screenspace(result)
+    result.x, result.y = result.x - pad, result.y - pad
+    result.w, result.h = result.w + pad*2, result.h + pad*2
+    return result
+}
 
-    slider := &game.beatmap.slider_paths[hobj.slider_path_index]
-    
-    r_bind_pipeline({builtin_pipeline_slot(.SLIDER)})
-    r_bind_framebuffer({ write = .SLIDERS })    
-    r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
-    r_clear()
-
+render_slider :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Path) {
     pf_size: f32 = playfield_size_osupx / game.beatmap.circle_radius_osupx
 
     slider_translation := -hobj.script_pos_translation / 2
     x, y := slider_translation.x / pf_size, slider_translation.y / pf_size
-    r_push_transform(transform_from_bounds({x, y, pf_size,pf_size}, window.aspect_ratio))
-
+    
+    pf_rect := Rect{x, y, pf_size,pf_size}
+    slider_pf_transform := transform_from_bounds(rect_to_array(pf_rect), window.aspect_ratio)
+    
+    slider_rect := slider_screenspace_bounding_box(slider)
+    slider_uvs := Rect{
+        slider_rect.x / window.rect.w,
+        slider_rect.y / window.rect.h,
+        slider_rect.w / window.rect.w,
+        slider_rect.h / window.rect.h,
+    }
+    
+    r_set_scissor_mode(slider_rect)
+    
+    r_push_transform(slider_pf_transform)
+    r_bind_pipeline({builtin_pipeline_slot(.SLIDER)})
+    r_bind_framebuffer({ write = .SLIDERS })
+    r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
+    
+    r_clear(with_alpha(color_black, 0.0))
+    
+    slider_snake_in_time_ms := game.beatmap.preempt_ms * (1.0/3.0)
+    slider_snake_in_time_at := beatmap_music_time_ms(&game.beatmap) - hobj.start_time_ms + game.beatmap.preempt_ms
+    slider_snake_instances := i32(f64(slider.instance_count) * clamp(slider_snake_in_time_at / slider_snake_in_time_ms, 0, 1))
+    
+    // todo(isak): border_color should be the hitobject's combo color once combo colors are implemented
     command_push_draw_slider(Command_Draw_Slider{
         base_instance = u32(slider.first_instance_at),
-        instance_count = i32(slider.instance_count)
+        instance_count = slider_snake_instances,
+        border_color  = with_alpha(color_white, 0.9),
+        body_color    = with_alpha(color_white, 0.7),
     })
     
     r_bind_framebuffer({ read = .SLIDERS })
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
     r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
     
-    r_push_transform(fullscreen_transform)
-    r_draw_rect(&renderer.quad_geometry, {0, 0, 1, 1}, with_alpha(color_white, 0.4), builtin_texture(.SLIDER_FRAMEBUFFER))
+    r_push_transform(window.screenspace_transform)
+    if app.debug_display_slider_bounds {
+        r_reset_scissor_mode()
+        r_draw_rect_outline(&renderer.quad_geometry, slider_rect, color_cyan, 1)
+    }
+    r_set_scissor_mode(slider_rect)
+    
+    r_draw_rect_with_uv(&renderer.quad_geometry, 
+                        slider_rect,
+                        slider_uvs,
+                        color_white, 
+                        builtin_texture(.SLIDER_FRAMEBUFFER))
+    r_reset_scissor_mode()
 }
 
-test_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Handle) {
+
+TEST_write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
+    for &hobj in game.beatmap.hitobjects {
+        combo_color := osu_map.num_combo_colors > 0 ? osu_map.combo_colors[hobj.combo_color_index] : color_purple
+
+        hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
+        hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, len(hit_circle_el_types)) or_continue
+        #reverse for el_type, i in hit_circle_el_types {
+            d := Drawable{
+                flags = {.ACTIVE},
+                element = builtin_element_slot(el_type),
+                layer = .HITOBJECTS,
+                size = game.beatmap.circle_radius_osupx * 2,
+                anchor = .CENTER,
+                color = with_alpha(color_white, 1),
+                start_time_ms = hobj.start_time_ms - game.beatmap.preempt_ms,
+                end_time_ms = hobj.start_time_ms,
+            }
+            if el_type == .HIT_CIRCLE || el_type == .HIT_CIRCLE_OVERLAY || el_type == .COMBO_NUMBER {
+                d.end_time_ms += game.beatmap.timing_windows.ok
+            }
+            if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE {
+                d.color = combo_color
+            }
+
+            if el_type == .COMBO_NUMBER {
+                d.size.x *= 0.2
+                d.size.y *= 0.4
+            }
+
+            hobj.gfx_handles[i] = drawable_new(d)
+        }
+    }
+}
+
+TEST_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Handle) {
     tex, ok := mapset_texture(bg_path)
     if ok {
         bg_aspect_ratio := f32(tex.h) / f32(tex.w)

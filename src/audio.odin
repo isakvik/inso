@@ -37,14 +37,22 @@ Sound :: union {
     Sound_Channel,
 }
 
+// note(isak): BASS handled stream IO, suitable for large files
 Sound_Stream :: struct {
     using base: Base_Sound,
     handle: bass.HSTREAM,
 }
 
+// note(isak): files held in memory, suitable for short repeating sounds
 Sound_Channel :: struct {
     using base: Base_Sound,
     handle: bass.HCHANNEL,
+}
+
+// note(isak): sample held in memory with a fixed channel pool; use for fire-and-forget
+// short sounds that may overlap (hitsounds)
+Sample :: struct {
+    handle: bass.HSAMPLE,
 }
 
 //////////////////////////////////////////////////////
@@ -59,6 +67,7 @@ bass_wasapi_proc :: proc "c" (buffer: rawptr, len: u32, user_data: rawptr) -> u3
 }
 
 // todo(isak): should probably call this device_init() or something
+// todo(isak): device selection
 audio_init :: proc(device: Device = -1) -> bool {
     init := bass.Init(device, 44100, bass.DEVICE_NOSPEAKER, nil, nil)
 
@@ -143,6 +152,18 @@ sound_stream_init :: proc(path: string, prescan: bool = false) -> (result: Sound
     return result, true
 }
 
+sound_channel_init :: proc(s: ^Sample, loop: bool = false) -> (result: Sound_Channel, ok: bool) {
+    if !audio.ready || s.handle == 0 do return
+    channel := bass.SampleGetChannel(s.handle, loop ? bass.SAMPLE_LOOP : 0)
+    if channel == 0 {
+        log.error("BASS sample get channel error:", bass.ErrorGetCode())
+        return result, false
+    }
+    result.handle = channel
+    if loop do result.flags |= {.LOOP}
+    return result, true
+}
+
 sound_destroy :: proc(sound: ^Sound) {
     switch s in sound {
     case Sound_Stream:  bass.StreamFree(s.handle)
@@ -173,7 +194,7 @@ sound_is_paused :: proc(sound: ^Sound) -> bool {
 
 sound_is_finished :: proc(sound: ^Sound) -> (result: bool) {
     if audio.ready { 
-        handle := _sound_get_handle(sound)
+        handle := _sound_get_channel_handle(sound)
         state := bass.ChannelIsActive(handle)
         result = state == bass.ACTIVE_STOPPED
     }
@@ -182,7 +203,7 @@ sound_is_finished :: proc(sound: ^Sound) -> (result: bool) {
 
 sound_get_length_ms :: proc(sound: ^Sound) -> (result: f64) {
     if audio.ready { 
-        handle := _sound_get_handle(sound)
+        handle := _sound_get_channel_handle(sound)
         length := bass.ChannelGetLength(handle, bass.POS_BYTE)
         result = bass.ChannelBytes2Seconds(handle, length) * 1000
     }
@@ -191,21 +212,33 @@ sound_get_length_ms :: proc(sound: ^Sound) -> (result: f64) {
 
 sound_get_position_ms :: proc(sound: ^Sound) -> (result: f64) {
     if audio.ready { 
-        handle := _sound_get_handle(sound)
-        length := bass.ChannelGetPosition(handle, bass.POS_BYTE)
-        result = bass.ChannelBytes2Seconds(handle, length) * 1000
+        handle := _sound_get_channel_handle(sound)
+        pos := bass.ChannelGetPosition(handle, bass.POS_BYTE)
+        result = bass.ChannelBytes2Seconds(handle, pos) * 1000
+    }
+    return result
+}
+
+sound_get_position_fract :: proc(sound: ^Sound) -> (result: f64) {
+    if audio.ready { 
+        handle := _sound_get_channel_handle(sound)
+        
+        pos := bass.ChannelGetPosition(handle, bass.POS_BYTE)
+        length := bass.ChannelGetLength(handle, bass.POS_BYTE)
+        
+        result = f64(pos) / f64(length)
     }
     return result
 }
 
 sound_set_position_ms :: proc(sound: ^Sound, ms: f64) {
     if audio.ready { 
-        handle := _sound_get_handle(sound)
+        handle := _sound_get_channel_handle(sound)
         // note(isak): small epsilon here; setting the position to somewhere after this fails
         ms := clamp(ms, 0, sound_get_length_ms(sound) - 0.01)
         
         pos_bytes := bass.ChannelSeconds2Bytes(handle, ms / 1000)
-        if !bass.ChannelSetPosition(handle, pos_bytes, bass.POS_BYTE) {
+        if !bass.Mixer_ChannelSetPosition(handle, pos_bytes, bass.POS_BYTE) {
             log.error("BASS channel set position error:", bass.ErrorGetCode())
         }
     }
@@ -213,21 +246,28 @@ sound_set_position_ms :: proc(sound: ^Sound, ms: f64) {
 
 sound_set_position_fract :: proc(sound: ^Sound, fract: f64) {
     if audio.ready { 
-        handle := _sound_get_handle(sound)
+        handle := _sound_get_channel_handle(sound)
         sound_length := sound_get_length_ms(sound)
         // note(isak): small epsilon here; setting the position to somewhere after this fails 
         ms := clamp(fract * sound_length, 0, sound_length - 0.01)
         
         pos_bytes := bass.ChannelSeconds2Bytes(handle, ms / 1000)
-        if !bass.ChannelSetPosition(handle, pos_bytes, bass.POS_BYTE) {
+        if !bass.Mixer_ChannelSetPosition(handle, pos_bytes, bass.POS_BYTE) {
             log.error("BASS channel set position error:", bass.ErrorGetCode())
         }
     }
 }
 
+sound_set_volume :: proc(sound: ^Sound, volume: f32) {
+    if audio.ready {
+        handle := _sound_get_channel_handle(sound)
+        bass.ChannelSetAttribute(handle, bass.ATTRIB_VOL, volume)
+    }
+}
+
 sound_set_speed :: proc(sound: ^Sound, rate: f32) {
     if audio.ready { 
-        handle := _sound_get_handle(sound)
+        handle := _sound_get_channel_handle(sound)
         rate := clamp(rate, 1/50, 50)
         compensate_pitch := true
         
@@ -243,12 +283,13 @@ sound_set_speed :: proc(sound: ^Sound, rate: f32) {
     }
 }
 
-sound_play :: proc(sound: ^Sound, start_paused: bool = false, loop: bool = false) {
-    if audio.ready { 
+sound_play :: proc(sound: ^Sound, start_paused: bool = false, loop: bool = false, volume: f32 = 1.0) {
+    if audio.ready {
         base := cast(^Base_Sound)sound
-        handle := _sound_get_handle(sound)
-        
+        handle := _sound_get_channel_handle(sound)
+
         bass.ChannelSetAttribute(handle, bass.ATTRIB_NORAMP, 1.0) // see https://github.com/ppy/osu-framework/pull/3146
+        bass.ChannelSetAttribute(handle, bass.ATTRIB_VOL, volume)
         
         if bass.Mixer_ChannelGetMixer(handle) == 0 {
             flags: u32 = bass.MIXER_DOWNMIX | bass.MIXER_NORAMPIN
@@ -278,7 +319,7 @@ sound_play :: proc(sound: ^Sound, start_paused: bool = false, loop: bool = false
 sound_resume :: proc(sound: ^Sound) {
     if audio.ready { 
         base := cast(^Base_Sound)sound
-        handle := _sound_get_handle(sound)
+        handle := _sound_get_channel_handle(sound)
         bass.Mixer_ChannelFlags(handle, 0, bass.MIXER_CHAN_PAUSE)
         base.flags &= ~{.PAUSED}
     }
@@ -287,16 +328,62 @@ sound_resume :: proc(sound: ^Sound) {
 sound_pause :: proc(sound: ^Sound) {
     if audio.ready { 
         base := cast(^Base_Sound)sound
-        handle := _sound_get_handle(sound)
+        handle := _sound_get_channel_handle(sound)
         bass.Mixer_ChannelFlags(handle, bass.MIXER_CHAN_PAUSE, bass.MIXER_CHAN_PAUSE)
         base.flags |= {.PAUSED}
     }
 }
 
-_sound_get_handle :: proc(sound: ^Sound) -> (result: Sound_Handle) {
+_sound_get_channel_handle :: proc(sound: ^Sound) -> (result: Sound_Handle) {
     switch s in sound {
     case Sound_Stream:  result = s.handle
     case Sound_Channel: result = s.handle
     }
     return result
+}
+
+//////////////////////////////////////////////////////
+// note(isak): sample api
+
+sample_load_file :: proc(path: string, max_simultaneous: int = 8) -> (result: Sample, ok: bool) {
+    path_cstr := strings.clone_to_cstring(path, context.temp_allocator)
+    
+    // note(isak): SAMPLE_OVER_POS drops the oldest instance when the pool is exhausted
+    result.handle = bass.SampleLoad(0, rawptr(path_cstr), 0, 0, u32(max_simultaneous),
+        bass.SAMPLE_FLOAT | bass.SAMPLE_OVER_POS)
+    if result.handle == 0 {
+        log.error("BASS sample load error:", bass.ErrorGetCode())
+        return result, false
+    }
+    return result, true
+}
+
+sample_load_memory :: proc(data: rawptr, max_simultaneous: int = 8) -> (result: Sample, ok: bool) {
+    result.handle = bass.SampleLoad(bass.FILE_MEM, data, 0, 0, u32(max_simultaneous), 
+        bass.SAMPLE_FLOAT | bass.SAMPLE_OVER_POS)
+    if result.handle == 0 {
+        log.error("BASS sample load error:", bass.ErrorGetCode())
+        return result, false
+    }
+    return result, true
+}
+
+sample_play :: proc(s: ^Sample, volume: f32 = 1.0, pan: f32 = 0.0) {
+    if !audio.ready || s.handle == 0 do return
+    channel := bass.SampleGetChannel(s.handle, 0)
+    if channel == 0 {
+        log.error("BASS sample get channel error:", bass.ErrorGetCode())
+        return
+    }
+    bass.ChannelSetAttribute(channel, bass.ATTRIB_NORAMP, 1.0)
+    bass.ChannelSetAttribute(channel, bass.ATTRIB_VOL, volume)
+    bass.ChannelSetAttribute(channel, bass.ATTRIB_PAN, pan)
+    if !bass.ChannelPlay(channel, false) {
+        log.error("BASS sample play error:", bass.ErrorGetCode())
+    }
+}
+
+sample_destroy :: proc(s: ^Sample) {
+    bass.SampleFree(s.handle)
+    s.handle = 0
 }

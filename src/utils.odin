@@ -2,10 +2,12 @@ package notosu
 
 import "base:runtime"
 import "core:fmt"
+import "core:log"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:mem/virtual"
+import "core:sys/windows"
 
 import sdl "vendor:sdl3"
 
@@ -20,11 +22,13 @@ _program_start_tsc: u64
 tsc_to_ms :: proc(tsc: u64) -> f64 {
     return f64(tsc) / f64(_rdtsc_frequency / 1000)
 }
-
 tsc_to_s :: proc(tsc: u64) -> f64 {
     return f64(tsc) / f64(_rdtsc_frequency)
 }
 
+current_time_ms :: proc() -> f64 {
+    return tsc_to_ms(sdl.GetPerformanceCounter())
+}
 current_time_s :: proc() -> f64 {
     return tsc_to_s(sdl.GetPerformanceCounter())
 }
@@ -62,6 +66,7 @@ color_black         :: Color{0x00, 0x00, 0x00, 0xFF}
 color_red           :: Color{0xFF, 0x00, 0x00, 0xFF}
 color_green         :: Color{0x00, 0xFF, 0x00, 0xFF}
 color_blue          :: Color{0x00, 0x00, 0xFF, 0xFF}
+color_cyan          :: Color{0x00, 0xFF, 0xFF, 0xFF}
 color_orange        :: Color{0xFF, 0x80, 0x00, 0xFF}
 color_lime_green    :: Color{0x80, 0xFF, 0x00, 0xFF}
 color_yellow        :: Color{0xFF, 0xFF, 0x00, 0xFF}
@@ -94,16 +99,21 @@ color_to_pixel :: proc {
     color_to_pixel_u8,
 }
 
-color_from_vec :: proc "contextless" (v: vec4) -> Color {
-    result: Color
+color_to_vec :: proc "contextless" (c: Color) -> (result: vec4) {
+    result[0] = f32(c.r) / 0xFF
+    result[1] = f32(c.g) / 0xFF
+    result[2] = f32(c.b) / 0xFF
+    result[3] = f32(c.a) / 0xFF
+    return result
+}
+color_from_vec :: proc "contextless" (v: vec4) -> (result: Color) {
     result[0] = u8(v.r * 0xFF)
     result[1] = u8(v.g * 0xFF)
     result[2] = u8(v.b * 0xFF)
     result[3] = u8(v.a * 0xFF)
     return result
 }
-color_from_pixel :: proc "contextless" (p: u32) -> Color {
-    result: Color
+color_from_pixel :: proc "contextless" (p: u32) -> (result: Color) {
     result[0] = u8((p & 0x000000FF) >> 0)
     result[1] = u8((p & 0x0000FF00) >> 8)
     result[2] = u8((p & 0x00FF0000) >> 16)
@@ -135,14 +145,14 @@ init_growing_arena :: proc(arena: ^virtual.Arena, alloc: ^runtime.Allocator, siz
 }
 
 init_tracked_growing_arena :: proc(
-    arena: ^virtual.Arena, alloc: ^runtime.Allocator, backing: ^runtime.Allocator, track: ^mem.Tracking_Allocator, size_mb: int = 1
+    arena: ^virtual.Arena, alloc: ^runtime.Allocator, backing: ^runtime.Allocator, track: ^Guarding_Allocator, size_mb: int = 1
 ) -> runtime.Allocator_Error {
     alloc_err := virtual.arena_init_growing(arena, reserved = 1)
     assert(alloc_err == .None)
     
     backing^ = virtual.arena_allocator(arena)
-    mem.tracking_allocator_init(track, backing^)
-    alloc^ = mem.tracking_allocator(track)
+    mem.tracking_allocator_init(&track.alloc, backing^)
+    alloc^ = guarding_allocator(track)
     
     return alloc_err
 }
@@ -153,6 +163,49 @@ init_static_arena :: proc(arena: ^virtual.Arena, alloc: ^runtime.Allocator, size
     alloc^ = virtual.arena_allocator(arena)
     return alloc_err
 }
+
+
+Guarding_Allocator :: struct {
+    alloc: mem.Tracking_Allocator,
+}
+
+@(require_results, no_sanitize_address)
+guarding_allocator :: proc(data: ^Guarding_Allocator) -> mem.Allocator {
+	return mem.Allocator{
+		data = data,
+		procedure = guarding_allocator_proc,
+	}
+}
+
+@(no_sanitize_address)
+guarding_allocator_proc :: proc(
+	allocator_data: rawptr,
+	mode: mem.Allocator_Mode,
+	size, alignment: int,
+	old_memory: rawptr,
+	old_size: int,
+	loc := #caller_location,
+) -> (result: []byte, err: mem.Allocator_Error) {
+    data := (^Guarding_Allocator)(allocator_data)
+    
+    buffer_guard := int(get_free_phys_memory()) - gigabytes(1)
+    assert(int(data.alloc.current_memory_allocated) + size < buffer_guard, "memory guard triggered: less than 1GB memory left on computer")
+    if int(data.alloc.current_memory_allocated) + size >= buffer_guard {
+        log.error("memory guard triggered: less than 1GB memory left on computer")
+        return nil, mem.Allocator_Error.Out_Of_Memory
+    }    
+    return mem.tracking_allocator_proc(allocator_data, mode, size, alignment, old_memory, old_size, loc)
+}
+
+get_free_phys_memory :: proc() -> u64 {
+    stat: windows.MEMORYSTATUSEX
+    stat.dwLength = size_of(windows.MEMORYSTATUSEX)
+    if windows.GlobalMemoryStatusEx(&stat) {
+        return stat.ullAvailPhys
+    }
+    return 0
+}
+
 
 //////////////////////////////////////////////////////
 // note(isak): collision utils

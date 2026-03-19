@@ -1,15 +1,13 @@
 package notosu
 
+import "core:time"
 import sb "swap_buffer"
 import "slotmap"
 import rb "ring_buffer"
 
-import "base:intrinsics"
-import "base:runtime"
-import "core:fmt"
-import "core:math"
+import "core:log"
 import "core:math/linalg"
-import q "core:container/queue"
+import vmem "core:mem/virtual"
 
 import sdl "vendor:sdl3"
 
@@ -25,13 +23,17 @@ game: struct {
     active_mapset: ^Mapset,
     active_notosu_map: ^Notosu_Map,
     active_map: ^Osu_Map,
-    active_skin: [Skin_Element_Type]Skin_Element,
+    active_map_ref: Map_Reference,
+    active_skin: ^Skin,
     
     mode: Game_Mode,
+    
+    universal_offset_ms: f64,
     
     // note(isak): map game logic fields
     
     beatmap: Beatmap,
+    playfield_transform: Transform,
     
     paused: bool,
     time_rate: f32,
@@ -43,15 +45,18 @@ game: struct {
     input: struct {
         k1, k2, m1, m2: Button_State,
         k1_key, k2_key: sdl.Scancode, //TODO(yokes): add keybinding menu
-        
+
         mouse_keys_enabled: bool,
         mouse_pos: vec2,
-    }
+    },
+
+    sounds: slotmap.Slotmap(Sound),
 }
 
 // note(isak): we reserve the first slot for safety reasons, and we crash on modification for debug reasons
 @(rodata) null_drawable := Drawable{}
 @(rodata) null_element := Element{}
+@(rodata) null_judgement := Judgement{}
 
 // note(isak): core types
 
@@ -59,31 +64,91 @@ Visibility_State :: struct {
     earliest_i, latest_i: int,
 }
 
-Hit_Object_Type :: enum {
+Hitobject_Type :: enum u32 {
     NONE,
     CIRCLE,
-    SLIDER,
+    SLIDER_HEAD,
+    SLIDER_PATH,
+    SLIDER_TICK,
+    SLIDER_REPEAT,
     SPINNER,
     // CUSTOM // note(isak) big plans?
 }
 
-Hit_Object :: struct {
+
+Hitobject_Flags :: distinct bit_set[Hitobject_Flag; u32]
+Hitobject_Flag :: enum u32 {
+    VISIBLE,
+    EXPIRED,
+    
+    NEW_COMBO,
+    WHISTLE,
+    FINISH,
+    CLAP,
+}
+
+Hitobject :: struct {
+    type: Hitobject_Type,
+    flags: Hitobject_Flags,
     index: int,
-    type: Hit_Object_Type,
+    
     start_time_ms, end_time_ms: f64,
     pos, script_pos_translation: vec2,
     
-    type_flags: int,
+    timing_point_index_uninherited: int,
+    timing_point_index_inherited: int,
     hitsound_flags: byte,
+    combo_color_skip_offset: u8, // note(isak): bits 4-6 of osu type byte; how many combo colors to skip on new combo
+    combo_color_index: u8,
 
     slider_path_index: int,
     slider_repeats, slider_repeat_at: int,
+    slider_velocity: f64,
     
+    judgement_index: int, 
     gfx_handles: []Drawable_Handle,
 }
 
-hit_object_pos :: proc(hobj: ^Hit_Object) -> vec2 {
+hitobject_pos :: proc(hobj: ^Hitobject) -> vec2 {
     return hobj.pos + hobj.script_pos_translation
+}
+
+hitobject_duration :: proc(hobj: ^Hitobject) -> (result: f64) {
+    return hobj.end_time_ms - hobj.start_time_ms
+}
+
+hitobject_visible_start_time :: proc(hobj: ^Hitobject) -> (result: f64) {
+    start_time := hobj.start_time_ms
+    #partial switch hobj.type {
+    case .CIRCLE, .SLIDER_HEAD: start_time -= game.beatmap.preempt_ms
+    }
+    return start_time
+}
+
+hitobject_visible_end_time :: proc(hobj: ^Hitobject) -> (result: f64) {
+    end_time := hobj.end_time_ms        
+    #partial switch hobj.type {
+    case .CIRCLE, .SLIDER_HEAD: end_time += game.beatmap.timing_windows.ok
+    }
+    return end_time
+}
+
+
+Timing_Point_Type :: enum {
+    UNINHERITED, // red lines
+    INHERITED,   // green lines
+}
+
+Timing_Point :: struct {
+    time: f64,
+    beat_length: f64,
+    meter: u8,
+    sample_set: u8,
+    volume: f64,
+    type: Timing_Point_Type,
+    kiai: bool,
+    
+    starts_at_beat: int,
 }
 
 
@@ -99,44 +164,58 @@ Slider_Node :: vec2
 Slider_Curve :: []Slider_Node
 
 Slider_Path :: struct {
-    pos: vec2,
+    pos, end_pos: vec2,
     type: Slider_Path_Type,
     distance_osupx: f64,
 
     nodes: []Slider_Node, // note(isak): slice into our array of all nodes
     curves: []Slider_Curve, // note(isak): slice into mapset arena
     
+    bounds_min, bounds_max: vec2,
+    
     instance_count, first_instance_at: i32, // note(isak): this could be a slice, but data reads are probs unnecessary
 }
 
 Game_Mode :: enum {
     UNINITIALIZED,
-    MENU,
+    MAIN_MENU,
     PLAY,
+    EDITOR,
 }
 
 Layer :: enum {
     BACKGROUND,
     FOREGROUND,
-    HIT_OBJECTS,
+    HITOBJECTS,
     OVERLAY,
     UI,
     DEBUG
 }
 
-Judgement :: enum {
+
+Timing_Window :: struct {
+    marvelous, good, ok, miss: f64
+}
+
+Judgement_Type :: enum {
     NONE,
     
     MISS,
-    BAD,
+    OK,
     GOOD,
-    GREAT,
+    MARVELOUS,
     
     SLIDER_SMALL_SCOREPOINT, // 10
     SLIDER_LARGE_SCOREPOINT, // 30
     
-    IGNORED_HIT, // note(isak): used when we need a result that doesn't affect score 
+    IGNORED_HIT, // note(isak): used when we need a result that doesn't affect score
     COMBO_BREAK, // note(isak): intended for scripted misses
+}
+
+// note(isak): need to handle (min_result, max_result) somehow
+Judgement :: struct {
+    result: Judgement_Type,
+    time: f64,
 }
 
 Notosu_Map :: struct {
@@ -148,6 +227,7 @@ Osu_Map :: struct {
     using Osu_Map_File_Data: struct {
         audio_filename: string,
         audio_lead_in: f64,
+        preview_time_ms: f64,
         sample_set: Osu_Sample_Set,
     
         title: string,
@@ -162,14 +242,18 @@ Osu_Map :: struct {
         diff_overall_difficulty: f64,
         diff_approach_rate: f64,
         diff_slider_velocity: f64,
-        diff_slider_tickrate: int,
+        diff_slider_tickrate: f64,
         
         bg_filename: string,
+
+        combo_colors: [8]Color,
+        num_combo_colors: int,
     },
     
     audio_filepath: string,
-    hit_objects: []Hit_Object,
+    hitobjects: []Hitobject,
     slider_paths: []Slider_Path,
+    timing_points: []Timing_Point,
 }
 
 osu_on_init :: proc() {
@@ -181,7 +265,11 @@ osu_on_init :: proc() {
     game.input.k1_key = sdl.Scancode.Z
     game.input.k2_key = sdl.Scancode.X
 
-    beatmap_on_init(&game.beatmap)
+    beatmap_on_init(game.active_map_ref, &game.beatmap)
+    game.playfield_transform = transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
+    
+    // todo(isak): universal offset sync interface
+    game.universal_offset_ms = -28
 }
 
 
@@ -189,11 +277,17 @@ osu_on_update :: proc(dt: f64) {
     game.dt = dt
 
     updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
-    if updated_systems[.OSU_FILE] {
-        beatmap_reload(&game.beatmap)
-    } else if updated_systems[.SCRIPTS] {
+    if updated_systems[.OSU_FILE] || updated_systems[.NOTOSU_FILE] {
+        beatmap_reload(&game.beatmap, true)
+    }
+    if updated_systems[.SCRIPTS] {
         lua_reload(game.active_notosu_map.lua_entry_point)
-        lua_call_beatmap_func("on_init")
+        if lua_cares_about_event(.ON_INIT) {
+            lua_call_beatmap_func(lua_beatmap_event_names[.ON_INIT])
+        }
+    } 
+    if updated_systems[.SHADERS] {
+        mapset_reinit_custom_shaders(game.active_mapset)
     }
     
     // note(isak): game logic - map
@@ -203,23 +297,35 @@ osu_on_update :: proc(dt: f64) {
     // todo(isak): this really handles a bunch of debug stuff too. fix up the modes and such
     #partial switch game.mode {
         case .PLAY: handle_play_input_events()
+        case .MAIN_MENU: handle_menu_input_events()
     }
     
-    map_time := game.beatmap.music_time_ms
-    hobj_it := get_visible_hobj_iterator(&game.beatmap.visible_hit_object_state, map_time)
+    map_time := beatmap_music_time_ms(&game.beatmap)
+    hobj_it := get_visible_hobj_iterator(&game.beatmap.visible_hitobject_state, map_time)
     
-    playfield_transform := transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
+    for &hobj in hobj_it {
+        if .VISIBLE not_in hobj.flags && .EXPIRED not_in hobj.flags {
+            if hitobject_visible_start_time(&hobj) < map_time && map_time < hitobject_visible_end_time(&hobj) {
+                hobj.flags |= {.VISIBLE}
+                sb.append(&game.beatmap.expiring_hitobjects, hobj.index)
+            }
+        }
+    }
+    process_expiring_hitobjects(&game.beatmap.expiring_hitobjects)
+
     
-    //-- @temp
     // todo(isak): valid key presses system needs testing
-    if valid_key_press() {
+    if valid_controller_press() {
         for &hobj, i in hobj_it {
-            if len(hobj.gfx_handles) == 2 {
+            if .EXPIRED in hobj.flags {
                 continue
             }
-            
-            hobj_pos := hit_object_pos(&hobj)
+            hobj_pos := hitobject_pos(&hobj)
             if !point_in_circle(game.input.mouse_pos, hobj_pos, game.beatmap.circle_radius_osupx) {
+                continue
+            }
+            judgement := hitobject_on_click(&hobj)
+            if judgement == .NONE {
                 continue
             }
             
@@ -227,105 +333,88 @@ osu_on_update :: proc(dt: f64) {
             
             hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, 2) or_continue
             
+            color_array := &game.active_map.combo_colors
+            combo_color := game.active_map.num_combo_colors > 0 ? color_array[hobj.combo_color_index] : color_purple
+            
             hobj.gfx_handles[0] = drawable_new({
                 flags = {.ACTIVE},
                 element = builtin_element_slot(.CLICKED_HIT_CIRCLE_OVERLAY),
-                layer = .HIT_OBJECTS,
+                layer = .HITOBJECTS,
                 size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
                 color = color_white,
                 start_time_ms = map_time,
-                end_time_ms = map_time + 600
+                end_time_ms = map_time + 250
             })
             hobj.gfx_handles[1] = drawable_new({
                 flags = {.ACTIVE},
                 element = builtin_element_slot(.CLICKED_HIT_CIRCLE),
-                layer = .HIT_OBJECTS,
+                layer = .HITOBJECTS,
                 size = game.beatmap.circle_radius_osupx * 2,
                 anchor = .CENTER,
-                color = color_purple,
+                color = combo_color,
                 start_time_ms = map_time,
-                end_time_ms = map_time + 600
+                end_time_ms = map_time + 250
             })
             
-            drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
-                flags = {.ACTIVE},
-                element = builtin_element_slot(.JUDGEMENT),
-                layer = .HIT_OBJECTS,
-                pos = hobj_pos,
-                size = [2]f32{0.5, 1} * game.beatmap.circle_radius_osupx,
-                anchor = .CENTER,
-                color = color_sky_blue,
-                
-                angle_vel = 360.0,
-                
-                start_time_ms = map_time,
-                end_time_ms = map_time + 600
-            })
+            judgement_new_drawable(&hobj)
+            
+            break
         } 
     }
     //--
     
-    
-    if lua_cares_about_event(.ON_KEY_DOWN) {
-        for code in sdl.Scancode {
-            if is_key_pressed(code) do lua_beatmap_on_key_pressed(code)
-        }
-    }
-    if lua_cares_about_event(.ON_KEY_UP) {
-        for code in sdl.Scancode {
-            if is_key_released(code) do lua_beatmap_on_key_released(code)
-        }
-    }
-    if lua_cares_about_event(.ON_CONTROLLER_PRESSED) {
-        if is_pressed(game.input.k1) do lua_beatmap_on_controller_pressed("k1")
-        if is_pressed(game.input.k2) do lua_beatmap_on_controller_pressed("k2")
-        if is_pressed(game.input.m1) do lua_beatmap_on_controller_pressed("m1")
-        if is_pressed(game.input.m2) do lua_beatmap_on_controller_pressed("m2")
-    }
-    if lua_cares_about_event(.ON_CONTROLLER_RELEASED) {
-        if is_released(game.input.k1) do lua_beatmap_on_controller_released("k1")
-        if is_released(game.input.k2) do lua_beatmap_on_controller_released("k2")
-        if is_released(game.input.m1) do lua_beatmap_on_controller_released("m1")
-        if is_released(game.input.m2) do lua_beatmap_on_controller_released("m2")
-    }
-    
-    
     // beatmap render
     
-    r_bind_layer_and_push_current_state(.HIT_OBJECTS)
+    r_bind_layer_and_push_current_state(.HITOBJECTS)
     
     //-- @temp
     // todo(isak): for the eventual rewrite here that takes object type into account, consider a
     // function pointer in the hitobject struct that renders (and maybe one that updates? continual
     // logic is necessary for sliders... hitting circles is a keyboard event kind of thing)
+    
+    // todo(isak) ALSO don't forget that sliders SHOULD go on top of hitobjects appearing later, so the 
+    // render hitobjects loop should be integrated into this
     for &hobj in hobj_it {
         if map_time < hobj.start_time_ms - game.beatmap.preempt_ms || hobj.end_time_ms < map_time {
             continue
         }
-        if hobj.type == .SLIDER {
-            render_slider(&window.renderer, &hobj)
+        if hobj.type == .SLIDER_HEAD {
+            slider := &game.beatmap.slider_paths[hobj.slider_path_index]
+            render_slider(&window.renderer, &hobj, slider)
+            
+            r_push_transform(game.playfield_transform)
+            
+            cs := game.beatmap.circle_radius_osupx
+            sliderend_rect := Rect{ slider.end_pos.x - cs, slider.end_pos.y - cs, cs * 2, cs * 2 }
+            r_draw_rect(&window.renderer.quad_geometry, sliderend_rect, with_alpha(color_white, 0.2), skin_texture(.HITCIRCLEOVERLAY))
+        }
+    }
+    
+    r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
+    r_push_transform(game.playfield_transform)
+
+    // note(isak): we render hitobject elements back to front for correct blending
+    // todo(isak): @speed - use persistent_gfx for visible set optimization
+    fade_in_ms := min(game.beatmap.preempt_ms * 0.4, 400.0)
+    #reverse for &hobj in game.beatmap.hitobjects {
+        alpha_mul: f32 = 1.0
+        if hobj.judgement_index == 0 {
+            visible_start := hobj.start_time_ms - game.beatmap.preempt_ms
+            alpha_mul = f32(clamp((map_time - visible_start) / fade_in_ms, 0, 1))
+        }
+        #reverse for handle in hobj.gfx_handles {
+            e := slotmap.get(&game.beatmap.drawables, handle) or_continue
+            if .ACTIVE in e.flags {
+                render_drawable(e, map_time, hitobject_pos(&hobj), alpha_mul)
+            }
         }
     }
     //--
     
-    r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
-    r_push_transform(playfield_transform)
-
-    // note(isak): we render hitobject elements back to front for correct blending
-    // todo(isak): @speed - use persistent_gfx for visible set optimization
-    #reverse for &hobj in game.beatmap.hit_objects {
-        #reverse for handle in hobj.gfx_handles {
-            e := slotmap.get(&game.beatmap.drawables, handle) or_continue
-            if .ACTIVE in e.flags {
-                render_drawable(e, map_time, hit_object_pos(&hobj))
-            }
-        }
-    }
-    
     process_and_draw_expiring_gfx_refs(&game.beatmap.gameplay_expiring_gfx)
     
-    r_bind_layer_and_push_current_state(.BACKGROUND, transform = playfield_transform)
+    r_bind_layer_and_push_current_state(.BACKGROUND, transform = game.playfield_transform)
     
     process_and_draw_expiring_gfx_refs(&game.beatmap.map_expiring_gfx)
     
@@ -338,25 +427,24 @@ osu_on_update :: proc(dt: f64) {
 
 // note(isak): this function assumes the start times of objects are sorted, but doesn't require end times to be.
 // a pathological case might be a 2B element that stretches from the beginning of the map to the end
-// todo(isak): latest object state is not implemented
-get_visible_hobj_iterator :: proc(state: ^Visibility_State, time: f64) -> []Hit_Object {
-    result: []Hit_Object
+get_visible_hobj_iterator :: proc(state: ^Visibility_State, time: f64) -> []Hitobject {
+    result: []Hitobject
     updated_from_index := state.earliest_i
 
-    hit_objects := game.beatmap.hit_objects
-    if len(hit_objects) > 0 {
+    hitobjects := game.beatmap.hitobjects
+    if len(hitobjects) > 0 {
         looking_for_finished_objects := true
         count_until_next_unstarted_hobj: int
         includes_final_index := 1
 
-        for hobj, i in hit_objects[state.earliest_i:] {
+        for &hobj, i in hitobjects[state.earliest_i:] {
             count_until_next_unstarted_hobj = i
-            if time < hobj.start_time_ms - game.beatmap.preempt_ms {
+            if time < hitobject_visible_start_time(&hobj) {
                 includes_final_index = 0
                 break
             }
             if looking_for_finished_objects {
-                if hobj.end_time_ms < time {
+                if hitobject_visible_end_time(&hobj) < time {
                     updated_from_index += 1
                 } else {
                     looking_for_finished_objects = false
@@ -365,17 +453,60 @@ get_visible_hobj_iterator :: proc(state: ^Visibility_State, time: f64) -> []Hit_
         }
         state.latest_i = updated_from_index + count_until_next_unstarted_hobj + includes_final_index
         state.earliest_i = updated_from_index
-        result = hit_objects[state.earliest_i:min(state.latest_i, len(hit_objects))]
+        result = hitobjects[state.earliest_i:min(state.latest_i, len(hitobjects))]
     }
     return result
 }
+
+hitobject_on_click :: proc(hobj: ^Hitobject) -> (result: Judgement_Type) {
+    // todo(isak): input timings should be threaded, should be more granular that way during heavy load
+    click_time := beatmap_music_time_ms(&game.beatmap)
+    time_error_ms: f64
+    
+    #partial switch hobj.type {
+    case .CIRCLE, .SLIDER_HEAD:
+        time_error_ms = click_time - hobj.start_time_ms
+        if abs(time_error_ms) < game.beatmap.timing_windows.marvelous {
+            result = .MARVELOUS
+        } else if abs(time_error_ms) < game.beatmap.timing_windows.good {
+            result = .GOOD
+        } else if abs(time_error_ms) < game.beatmap.timing_windows.ok {
+            result = .OK
+        } else if abs(time_error_ms) < game.beatmap.timing_windows.miss {
+            result = .MISS
+        }
+    }
+    
+    if result != .NONE {
+        judgement_new(hobj, result, time_error_ms)
+        hobj.flags |= {.EXPIRED}
+        
+        timing_point := &game.active_map.timing_points[game.beatmap.current_timing_point_index_inherited]
+        sample_set := Skin_Sample_Set(timing_point.sample_set)
+        
+        // todo(isak): we don't handle custom sampleset timing sections, need to reserve some space and add indirection
+        sample_play(&game.active_skin.hitsounds[sample_set][.HITNORMAL])
+        
+        if .WHISTLE in hobj.flags {
+            sample_play(&game.active_skin.hitsounds[sample_set][.HITWHISTLE])
+        }
+        if .CLAP in hobj.flags {
+            sample_play(&game.active_skin.hitsounds[sample_set][.HITCLAP])
+        }
+        if .FINISH in hobj.flags {
+            sample_play(&game.active_skin.hitsounds[sample_set][.HITFINISH])
+        }
+    }
+    return result
+}
+
 
 handle_play_input_events :: proc() {
     if is_key_pressed(.ESCAPE) || is_key_pressed(.SPACE) {
         beatmap_pause(&game.beatmap, !game.paused)
     }
     if is_key_pressed(.R) {
-        beatmap_reload(&game.beatmap)
+        beatmap_reload(&game.beatmap, true)
     }
     if is_key_pressed(.HOME) {
         game.time_rate = 1
@@ -399,9 +530,53 @@ handle_play_input_events :: proc() {
     game.input.k2.was_down = keyboard.buttons_prev_frame[game.input.k2_key]
     game.input.m1 = mouse.buttons[.LEFT]
     game.input.m2 = mouse.buttons[.RIGHT]
+    
+    pf_mouse := vec2{mouse.pos.x, mouse.pos.y}
+    pf_mouse.x -= (window.rect.w - window.rect.h) / 2
+    
+    old_mouse_pos := game.input.mouse_pos
+    game.input.mouse_pos = transform_point_space(pf_mouse,
+        transform_to_mat3(window.screenspace_transform),
+        transform_to_mat3(game.playfield_transform)
+    )
+    
+    if lua_cares_about_event(.ON_CURSOR_MOVED) && game.input.mouse_pos != old_mouse_pos {
+        lua_beatmap_on_cursor_moved(game.input.mouse_pos)
+    }
+    
+    if lua_cares_about_event(.ON_KEY_DOWN) {
+        for code in sdl.Scancode {
+            if is_key_pressed(code) do lua_beatmap_on_key_pressed(code)
+        }
+    }
+    if lua_cares_about_event(.ON_KEY_UP) {
+        for code in sdl.Scancode {
+            if is_key_released(code) do lua_beatmap_on_key_released(code)
+        }
+    }
+    if lua_cares_about_event(.ON_CONTROLLER_PRESSED) {
+        if is_pressed(game.input.k1) do lua_beatmap_on_controller_pressed("k1")
+        if is_pressed(game.input.k2) do lua_beatmap_on_controller_pressed("k2")
+        if is_pressed(game.input.m1) do lua_beatmap_on_controller_pressed("m1")
+        if is_pressed(game.input.m2) do lua_beatmap_on_controller_pressed("m2")
+    }
+    if lua_cares_about_event(.ON_CONTROLLER_RELEASED) {
+        if is_released(game.input.k1) do lua_beatmap_on_controller_released("k1")
+        if is_released(game.input.k2) do lua_beatmap_on_controller_released("k2")
+        if is_released(game.input.m1) do lua_beatmap_on_controller_released("m1")
+        if is_released(game.input.m2) do lua_beatmap_on_controller_released("m2")
+    }
 }
 
-valid_key_press :: proc() -> bool {
+handle_menu_input_events :: proc() {
+    if is_key_pressed(.S) {
+        if is_key_down(.LCTRL) || is_key_down(.LSHIFT) || is_key_down(.LALT) {
+            skin_reload(game.active_skin)
+        }
+    }
+}
+
+valid_controller_press :: proc() -> bool {
     if game.input.mouse_keys_enabled {
         if is_pressed(game.input.k1) && !is_down(game.input.m1) ||
             is_pressed(game.input.k2) && !is_down(game.input.m2) {
@@ -416,369 +591,35 @@ valid_key_press :: proc() -> bool {
 }
 
 
-split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> []Slider_Curve {
-    // todo(isak): we just make a curve for each node here for testing, but we have to read nodes to figure out 
-    // which ones are red nodes and split by those
-    result := make_slice([]Slider_Curve, 1)
-    result[0] = path.nodes[:]
-    return result
+playfield_to_screenspace_transform :: proc() -> mat3 {
+    return transform_to_mat3(game.playfield_transform) * linalg.matrix3_inverse(transform_to_mat3(window.screenspace_transform))
 }
 
-// https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L878
-// note(yokes): "t" is for time which means we need to calculate the time it takes to get "d" distance beforehand
-calculate_bezier_point_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, time_start: f64, time_end: f64, curve: Slider_Curve, base_slider_velocity: f64, slider_velocity: f64) -> (point: vec2) {
-    //note(yokes): draw sliderball, move sliderball accordingly?
-    //note(yokes): quick test on stable, 1x sv 5/4 slider has 500 distance. i believe i understand how the math works now
-    //note(yokes): if a green line is in the middle of a slider, should it change the slider speed mid-slider? stable nor lazer does this but i believe this would leave more room... nvm not possible atm
+game_play_sound :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0) -> slotmap.Handle {
+    channel, ok := sound_channel_init(s, loop)
+    if !ok do return {}
 
-    slider_speed := base_slider_velocity * slider_velocity //base_sv is 1 when making a new map
-    distance_per_beat := 100 * slider_speed //base speed is 100 per 1/4
-    degree := max(1, len(curve) - 1)
-    t := (time_at - time_start) / time_end
-    for i in 0..<degree + 1 {
-        binom_coeff := f64(math.binomial(degree, i)) * math.pow_f64(1 - t, f64(degree - i)) * math.pow_f64(t, f64(i))
-        point.x += f32(binom_coeff) * (curve[i].x)
-        point.y += f32(binom_coeff) * (curve[i].y)
-    }
-    buffer_push(instance_buf, point)
-    return point
+    handle := slotmap.insert(&game.sounds, Sound(channel))
+    sound, _ := slotmap.get(&game.sounds, handle)
+    sound_play(sound, loop = loop, volume = volume)
+    return handle
 }
 
-base_dist : f32 = 2.5
-
-calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), output: ^q.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
-    curr_distance : f64 = 0
-    for point, i in output.data[:output.len] {
-        if i < int(output.len) - 1 {
-            curr_distance = f64(linalg.vector_length(q.get(output, i + 1) - q.get(output, i)))
-            total_distance += curr_distance
-
-            if f32(curr_distance) > base_dist {
-                //todo(yokes): at the moment the end point overlaps an instance with the start point of the next output.data
-                write_instances_from_straight(instance_buf, q.get(output, i), q.get(output, i + 1), curr_distance)
-            } else {
-                buffer_push(instance_buf, point)
-            }
-
-        } else {
-            buffer_push(instance_buf, point)
-        }
-    }
-    return curve_distance
-}
-
-Circular_Arc_Properties :: struct {
-    is_valid: bool,
-    theta_start, theta_range, theta_end: f64,
-    direction: f64,
-    radius: f32,
-    center: vec2,
-}
-
-circular_arc_tol : f32 = 0.1
-// https://github.com/ppy/osu-framework/blob/ca40f0a4d314b2acbad09f63e63824ae2670aa29/osu.Framework/Utils/PathApproximator.cs#L175
-circular_arc_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, curve_distance: f64) -> (total_distance: f64) {
-    pr : Circular_Arc_Properties = circular_arc_properties_from_triangle(curve)
-    if !pr.is_valid {
-        instance_count, instances_at : i32
-        instance_count, instances_at, total_distance = bezier_to_piecewise_linear(instance_buf, curve, curve_distance)
-        return total_distance
-    }
-
-    amount_points := 2 * pr.radius <= circular_arc_tol ? 2 : max(2, int(math.ceil(f32(pr.theta_range) / (2 * math.acos_f32(1 - circular_arc_tol / pr.radius)))))
-
-    output : q.Queue(vec2)
-    q.init(&output, allocator = context.temp_allocator)
-
-    for i in 0..<amount_points {
-        fract := f64(i) / f64(amount_points - 1)
-        theta := pr.theta_start + pr.direction * fract * pr.theta_range
-        o : vec2 = {math.cos(f32(theta)), math.sin(f32(theta))} * pr.radius
-        q.push(&output, pr.center + o)
-    }
-
-    total_distance = calculate_points_between_instances(instance_buf, &output, curve_distance)
-    return total_distance
-}
-
-circular_arc_properties_from_triangle :: proc(curve: Slider_Curve) -> (result: Circular_Arc_Properties) {
-    a : vec2 = curve[0]
-    b : vec2 = curve[1]
-    c : vec2 = curve[2]
-
-    if abs((b.y - a.y) * (c.x - a.x) - (b.x - a.x) * (c.y - a.y)) < 0.001 {
-        result.is_valid = false
-        return
-    }
-
-    d := 2 * (a.x * (b - c).y + b.x * (c - a).y + c.x * (a - b).y)
-    a_sq := linalg.vector_length2(a)
-    b_sq := linalg.vector_length2(b)
-    c_sq := linalg.vector_length2(c)
-
-    result.center = {
-        a_sq * (b - c).y + b_sq * (c - a).y + c_sq * (a - b).y,
-        a_sq * (c - b).x + b_sq * (a - c).x + c_sq * (b - a).x} / d
-
-    d_a := a - result.center
-    d_c := c - result.center
-
-    result.radius = linalg.vector_length(d_a)
-
-    result.theta_start = math.atan2(f64(d_a.y), f64(d_a.x))
-    result.theta_end = math.atan2(f64(d_c.y), f64(d_c.x))
-
-    for result.theta_end < result.theta_start {
-        result.theta_end += 2 * math.PI
-    }
-
-    result.direction = 1
-    result.theta_range = result.theta_end - result.theta_start
-
-    ortho_a_to_c := c - a
-    ortho_a_to_c = {ortho_a_to_c.y, -ortho_a_to_c.x}
-
-    if linalg.vector_dot(ortho_a_to_c, b - a) < 0 {
-        result.direction = -result.direction
-        result.theta_range = 2 * math.PI - result.theta_range
-    }
-
-    result.is_valid = true
-    return
-}
-
-bezier_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, curve_distance: f64) -> (instance_count, instances_at: i32, total_distance: f64) {
-    return b_spline_to_piecewise_linear(instance_buf, curve, max(1, len(curve) - 1), curve_distance)
-    
-}
-
-b_spline_to_piecewise_linear :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, degree: int, curve_distance: f64) -> (instance_count, instances_at: i32, total_distance: f64) {
-    assert(degree >= 1, fmt.tprintfln("curve degree error: lower than 1 ::", degree))
-
-    // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L86
-    if len(curve) < 2 {
-        return 0, instance_buf.count, 0
-    }
-
-    // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L91
-    point_count : int = len(curve) - 1
-    degree := min(degree, point_count)
-
-    output : q.Queue(vec2)
-    q.init(&output, allocator = context.temp_allocator)
-    
-    to_flatten : q.Queue([]vec2)
-    temp_points: q.Queue(vec2)
-    q.init(&temp_points, allocator = context.temp_allocator)
-    q.init(&to_flatten, allocator = context.temp_allocator) //todo(yokes): check capacity, default for now
-    q.append_elems(&to_flatten, b_spline_to_bezier_internal(&temp_points, curve, degree))
-    free_buffers : q.Queue([]vec2)
-    q.init(&free_buffers, allocator = context.temp_allocator) //todo(yokes): check capacity, default for now
-
-    // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L102
-
-    subdivision_buffer_1 := make([]vec2, degree + 1, allocator = context.temp_allocator)
-    subdivision_buffer_2 := make([]vec2, degree * 2 + 1, allocator = context.temp_allocator)
-
-    left_child : []vec2 = subdivision_buffer_2
-
-    for to_flatten.len > 0 {
-        parent : []vec2 = q.pop_back(&to_flatten)
-        
-        // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L119
-        if bezier_is_flat_enough(parent) {
-            bezier_approximate(parent, &output, subdivision_buffer_1, subdivision_buffer_2, degree + 1)
-
-            q.push(&free_buffers, parent)
-            continue
-        }
-
-        // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L129
-        right_child : []vec2 = free_buffers.len > 0 ? q.pop_back(&free_buffers) : make([]vec2, degree + 1, context.temp_allocator)
-        bezier_subdivide(parent, left_child, right_child, subdivision_buffer_1, degree + 1)
-
-        for i in 0..<degree + 1 {
-            parent[i] = left_child[i]
-        }
-
-        q.push(&to_flatten, right_child)
-        q.push(&to_flatten, parent)
-    }
-
-    //main goal is to edit the curve such that the instances pushed are the new coordinates where the slider is drawn
-    instances_at = instance_buf.count
-    total_distance = calculate_points_between_instances(instance_buf, &output, curve_distance)
-    return i32(output.len), instances_at, total_distance
-}
-
-bezier_tolerance : f32 = 0.25
-bezier_is_flat_enough :: proc(curve: Slider_Curve) -> bool {
-    for i in 1..<len(curve) - 1 {
-        if linalg.vector_length2((curve[i - 1] - 2 * curve[i] + curve[i + 1])) > bezier_tolerance * bezier_tolerance * 4 {
-            return false
-        }
-    }
-    return true
-}
-
-//todo(yokes): this can be optimized by buffer_pushing instances instead of storing coordinates to an output
-bezier_approximate :: proc(curve: Slider_Curve, output: ^q.Queue(vec2), subdivision_buffer_1: []vec2, subdivision_buffer_2: []vec2, count: int) {
-    l := subdivision_buffer_2
-    r := subdivision_buffer_1
-
-    bezier_subdivide(curve, l, r, subdivision_buffer_1, count)
-
-    for i in 0..<count - 1 {
-        l[count + i] = r[i + 1]
-    }
-
-    q.push_back(output, curve[0])
-    
-    for i in 1..<count - 1 {
-        index := 2 * i
-        p := 0.25 * (l[index - 1] + 2 * l[index] + l[index + 1])
-        q.push_back(output, p)
-    }
-}
-
-bezier_subdivide :: proc(curve: Slider_Curve, l: []vec2, r: []vec2, subdivision_buffer: []vec2, count: int) {
-    midpoints := subdivision_buffer
-
-    for i in 0..<count {
-        midpoints[i] = curve[i]
-    }
-
-    for i in 0..<count {
-        l[i] = midpoints[0]
-        r[count - i - 1] = midpoints[count - i - 1]
-
-        for j in 0..<count - i - 1 {
-            midpoints[j] = (midpoints[j] + midpoints[j + 1]) / 2
-        }
-    }
+game_stop_sound :: proc(handle: slotmap.Handle) {
+    sound, ok := slotmap.get(&game.sounds, handle)
+    if !ok do return
+    sound_destroy(sound)
+    slotmap.remove(&game.sounds, handle)
 
 }
 
-b_spline_to_bezier_internal :: proc(result: ^q.Queue(vec2), curve: Slider_Curve, degree: int) -> []vec2 {
-    point_count := len(curve) - 1
-    local_degree := min(degree, point_count)
-
-    if degree == point_count {
-        q.push_back_elems(result, ..curve[:]) // Uses push_back to avoid reversing the stack later
-        return curve[:]
-    }
-    else
-    {
-        for i in 0..<point_count - degree {
-            sub_bezier := make([]vec2, degree + 1, allocator = context.temp_allocator)
-            sub_bezier[0] = curve[i]
-
-            for j in 0..<degree - 1 {
-                sub_bezier[j + 1] = curve[i + 1]
-
-                for k in 1..<degree - j {
-                    l := f32(min(k, point_count - degree - i))
-                    curve[i + k] = (l * curve[i + k] + curve[i + k + 1]) / (l + 1)
-                }
-            }
-            sub_bezier[degree] = curve[i + 1]
-            q.push_back_elems(result, ..sub_bezier[:])
-        }
-        q.push_back_elems(result, ..curve[(point_count - degree):])
-        return curve[(point_count - degree):]
-    }
-}
-
-write_instances_from_straight :: proc(instance_buf: ^Buffer(vec2), start_pos: vec2, end_pos: vec2, curve_distance: f64) -> f64 {
-    remaining_distance := curve_distance
-    curr_distance : f32 = 0
-    xy_vector : vec2 = end_pos - start_pos
-    iterations := linalg.length(xy_vector) / base_dist
-
-    for i in 0..<iterations {
-        curr_distance += base_dist
-        buffer_push(instance_buf, start_pos + i * xy_vector / iterations)
-        
-        if (curr_distance + base_dist) > f32(remaining_distance) {
-            remaining_distance = remaining_distance - f64(curr_distance)
-            iterations_remaining := f32(remaining_distance) / base_dist
-            buffer_push(instance_buf, start_pos + iterations_remaining * xy_vector)
-            break
-        }
+game_clear_sounds :: proc() {
+    for &s in game.sounds.values {
+        sound_destroy(&s)
     }
 
-    travelled_distance := math.pow(math.pow(end_pos.y - start_pos.y, 2) + math.pow(end_pos.x - start_pos.x, 2), 0.5)
-    remaining_distance = curve_distance - f64(travelled_distance)
-    if remaining_distance < 0.01 {
-        return 0
-    }
-    return f64(travelled_distance)
-}
+    slotmap.clear(&game.sounds)
 
-write_instances_from_curve :: proc(instance_buf: ^Buffer(vec2), curve: Slider_Curve, type: Slider_Path_Type, curve_distance: f64) -> f64 {
-    remaining_distance := curve_distance
-    instance_count, instances_at : i32
-    if type == .ARC {
-        //todo(yokes): copy the tolerance from lazer code to check if a slider is parallell
-        is_parallel: bool
-
-        if is_parallel {
-            remaining_distance = write_instances_from_straight(instance_buf, curve[0], curve[2], curve_distance)
-        } else {
-            remaining_distance = circular_arc_to_piecewise_linear(instance_buf, curve, curve_distance)
-        }
-    } else if type == .LINEAR || len(curve) < 3 {
-        remaining_distance = write_instances_from_straight(instance_buf, curve[0], curve[1], curve_distance)
-    } else {
-        instance_count, instances_at, remaining_distance = b_spline_to_piecewise_linear(instance_buf, curve, max(1, len(curve)), curve_distance)
-    }
-
-    return remaining_distance
-}
-
-/*
-    note(isak): calculates and writes slider instances, or positions used for rendering to the screen, based on a 
-    given path. it should write instances into the bounds of [0, playfield_size]
-*/
-write_instances_from_path :: proc(
-    instance_buf: ^Buffer(vec2), path: ^Slider_Path, alloc: runtime.Allocator = context.allocator
-) -> (i32, i32) {
-    instance_offset := instance_buf.count
-
-    // todo(isak): test code that just pushes a point for each node
-    path.curves = split_path_into_curves(path, alloc)
-    /*
-    for curve in path.curves {
-        buffer_push(instance_buf, curve[0])
-    }*/
-
-    if false {
-        return instance_buf.count - instance_offset, instance_offset
-    }
-
-    distance_to_cover := path.distance_osupx
-    for curve in path.curves {
-        if distance_to_cover > 0 {
-            distance_covered_by_curve := 
-                write_instances_from_curve(instance_buf, 
-                                           curve, 
-                                           path.type,
-                                           distance_to_cover)
-            distance_to_cover -= distance_covered_by_curve
-        }
-    }
-    if true {
-        return instance_buf.count - instance_offset, instance_offset
-    }
-    
-
-    // todo(yokes): if we still have distance left over but zero curves, a linear path needs to cover
-    // the remaining distance. maybe mcosu has something neat for this?
-    if distance_to_cover > 0 {
-
-    }
-
-    return 0, 0
 }
 
 //////////////////////////////////////////////////////

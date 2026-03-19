@@ -4,7 +4,14 @@ notosu file format v1
 LuaEntryPoint: test.lua
 
 [Shaders]
-wave
- VertexShader: builtin.quad
- FragmentShader: quad_wave.fs.glsl
- SSBO: builtin.quad
+[[wave]]
+VertexShader: builtin.quad
+FragmentShader: quad_wave.fs.glsl
+BlendMode: Alpha
+
+[Buffers]
+[[my_model]]
+Source: Crate1.gltf
+
+[[wave_data]]
+Size: 4096

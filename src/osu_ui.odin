@@ -1,8 +1,35 @@
 package notosu
 
+import "core:log"
 import "core:math/ease"
 import "core:math/linalg"
 
+import imgui "./imgui"
+
+
+Debug_Dropdown :: struct {
+    label:    cstring,
+    items:    ^[dynamic]cstring,
+    selected: int,
+    changed:  bool, // note(isak): set to true for one frame when selection changes
+}
+
+debug_dropdown_update :: proc(dropdown: ^Debug_Dropdown) {
+    dropdown.changed = false
+    if len(dropdown.items^) == 0 do return
+    preview := dropdown.items^[dropdown.selected]
+    if !imgui.BeginCombo(dropdown.label, preview) do return
+    defer imgui.EndCombo()
+
+    for item, i in dropdown.items^ {
+        is_selected := i == dropdown.selected
+        if imgui.Selectable(item, is_selected) && !is_selected {
+            dropdown.selected = i
+            dropdown.changed  = true
+        }
+        if is_selected do imgui.SetItemDefaultFocus()
+    }
+}
 
 UI_Timeline :: struct {
     h_px: f32,
@@ -42,7 +69,7 @@ ui_update_timeline :: proc(ui: ^UI_Timeline, time_value: ^f64) -> (result: bool)
     ui.clicked = false
     ui.released = false
     
-    if !window.ui_hovered && is_pressed(mouse.buttons[.LEFT]) && point_in_rect(mouse.last_click_position[.LEFT], timeline_hitbox) {
+    if !imgui.GetIO().WantCaptureMouse && is_pressed(mouse.buttons[.LEFT]) && point_in_rect(mouse.last_click_position[.LEFT], timeline_hitbox) {
         ui.clicked = true
         ui.dragging = true
         ui.pause_on_release = game.paused
@@ -55,7 +82,7 @@ ui_update_timeline :: proc(ui: ^UI_Timeline, time_value: ^f64) -> (result: bool)
 
         result = true
         
-        game.beatmap.visible_hit_object_state = {}
+        game.beatmap.visible_hitobject_state = {}
 
         if !is_down(mouse.buttons[.LEFT]) {
             game.paused = ui.pause_on_release
@@ -87,7 +114,7 @@ ui_update_timeline :: proc(ui: ^UI_Timeline, time_value: ^f64) -> (result: bool)
 }
 
 render_timeline :: proc(ui: ^UI_Timeline, beatmap_leadin_fract, beatmap_finish_fract: f32) {
-    r_push_transform(window_get_clipspace_transform())
+    r_push_transform(clipspace_transform)
     
     r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, 1, ui.display_h_px / window.rect.h}, 
                      .BOTTOM_LEFT, with_alpha(color_white, 0.1))
@@ -109,8 +136,9 @@ handle_and_render_timeline :: proc() {
             game.beatmap.music_time_ms = game.beatmap.start_time_ms + seek_to_fract * map_len_with_preempt
         } else {
             seek_to_music_fract := (seek_to_fract - leadin_fract) * (1 / (1.0 - leadin_fract))
-            sound_set_position_fract(&game.beatmap.music, seek_to_music_fract)
-            game.beatmap.music_time_ms = beatmap_music_position_interpolated_ms(&game.beatmap)
+            
+            seek_to_ms := seek_to_music_fract * sound_get_length_ms(&game.beatmap.music)
+            beatmap_seek(&game.beatmap, seek_to_ms)
         }
         
         if game.ui_timeline.clicked {

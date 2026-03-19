@@ -1,8 +1,8 @@
-#version 460 
+#version 460
 #extension GL_ARB_bindless_texture : require
 
 layout(binding = 4, std430) readonly buffer textureHandles {
-    sampler2D textures[];
+    sampler2DArray textures[];
 };
 
 in vec2 uv;
@@ -13,6 +13,6 @@ out vec4 frag_color;
 
 void main() {
     frag_color = color;
-    frag_color.a *= texture(textures[texIndex], uv).r;
+    frag_color.a *= texture(textures[texIndex], vec3(uv, 0.0)).r;
     //frag_color = vec4(uv, 0.0, 1.0) * color;
 }

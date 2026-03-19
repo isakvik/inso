@@ -10,7 +10,7 @@ layout(binding = 4, std430) readonly buffer textureHandles {
     sampler2D textures[];
 };
 
-in vec2 uv;
+in vec3 uv;
 in vec4 color;
 flat in uint texIndex;
 
@@ -42,7 +42,7 @@ void main() {
 
     polar.x = sin((polar.x-s*0.01) * 20)*0.5+0.5;
     
-    vec2 coords = uv + rotateZAxis(polar, s)*0.05;
+    vec2 coords = uv.xy + rotateZAxis(polar, s)*0.05;
     frag_color = texture(textures[texIndex], clamp(coords, 0.001, 1.0)) * color;
     //frag_color = vec4(rotateZAxis(polar, s), 0, 1);
 }

@@ -12,6 +12,7 @@ local rand = load_file("rand.lua")
 -- diffsettings per object!!
 -- custom AR per object is complicated... animation system should be able to handle this
 
+-- Sound.loop("normal-sliderslide.wav")
 
 -- map runtime data
 -- Beatmap.set_time_rate(1.5)
@@ -37,60 +38,64 @@ function on_init()
         :set_anchor(Anchor.CENTER)
         :set_layer(Layer.BACKGROUND)
         :register_event("saft", function (d, beat_n) 
-            print("woah " .. beat_n) 
+            print("custom event @ beat: " .. beat_n) 
         end)
     
     --hobj = Hitobject.get_at_ms(0) -- needs optional index param so we can get the next at ms 0
     
-    
     -- todo(isak) this has some off by one bug now...
-    list = Hitobject.get_in_range_ms(0, 4250)
+    list = Hitobject.get_in_range_ms(0, 425000)
     
-    table = {}
-    for i, hobj in ipairs(list) do 
-        hobj:hide()
-        t = hobj:get_start_time()
-        table[i] = dd:clone()
-            :set_pos(hobj:get_pos())
-            :set_time(t-1200, t)
-    end
+    --table = {}
+    --for i, hobj in ipairs(list) do 
+    --    --hobj:hide()
+    --    t = hobj:get_start_time()
+    --    table[i] = dd:clone()
+    --        :set_pos(hobj:get_pos())
+    --        :set_time(t-1200, t)
+    --end
 end
 
-function _on_update(time_ms)
+function on_update(time_ms)
     for i, hobj in ipairs(list) do 
         x, y = hobj:get_pos()
-        x = x + math.cos((time_ms*i*0.01) / 1000 + i*0.1)* 100
-        y = y + math.sin((time_ms*i*0.01) / 1000 + i*0.1)* 100
+        x = x + math.cos((time_ms*i*0.01) / 1000 + i*0.1)* 10
+        y = y + math.sin((time_ms*i*0.01) / 1000 + i*0.1)* 10
         
         hobj:set_pos(x,y) -- todo(isak) broken on sliders cuz bounding box doesnt move
-        table[i]:set_pos(x,y)
+        --table[i]:set_pos(x,y)
     end
 end
 
 function on_beat(beat)
     -- every 1/1, index 0 meaning the first given timing section (most useful indexing for constructs like beat % 4)
-    print("beat: " .. beat)
-end
-function _on_timing_change(beat, bpm)
-    -- every redline
-    print("timing change: " .. beat .. " " .. bpm)
-end
-function _on_pause_change(paused)
-    -- boolean
-    if paused then
-        print("paused")
-    else 
-        print("unpaused")
+    trigger_event("saft", beat)
+    
+    if beat % 4 == 0 then
+        Sound.play("nightcore-kick.wav")
     end
 end
 
-function _on_judgement(hobj, judgement, timing_error_ms) 
-    print(timing_error_ms)
-end
+--function on_timing_change(beat, bpm)
+--    -- every redline
+--    print("timing change: " .. beat .. " " .. bpm)
+--end
+--function on_pause_change(paused)
+--    -- boolean
+--    if paused then
+--        print("paused")
+--    else 
+--        print("unpaused")
+--    end
+--end
 
-function on_kiai_change(kiai) 
-    print("kiai time: ", kiai)
-end
+--function on_judgement(hobj, judgement, timing_error_ms) 
+--    print(timing_error_ms)
+--end
+--
+--function on_kiai_change(kiai) 
+--    print("kiai time: ", kiai)
+--end
 
 
 --function on_controller_pressed(key) 
@@ -112,6 +117,6 @@ end
 --end
 --
 --function on_cursor_moved(x, y)
---    --returns mouse IN PLAYFIELD SPACE, can also use get_cursor_pos()
+--    --returns mouse in playfield space, can also use get_cursor_pos()
 --    print(get_cursor_pos())
 --end

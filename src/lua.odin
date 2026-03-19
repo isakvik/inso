@@ -398,7 +398,7 @@ _register_event :: proc(L: ^lua.State, class: Lua_Class_Type, handle_key: u64) -
     return lua_return_self()
 }
 
-// trigger_event(name, ...) - fires all callbacks registered under 'name'.
+// note(isak): trigger_event(name, ...) - fires all callbacks registered under 'name'.
 // each callback receives (object_handle, ...) where ... are any extra args passed to trigger_event.
 luaapi_trigger_event :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context

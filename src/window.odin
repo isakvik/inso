@@ -22,6 +22,7 @@ window: struct {
     gl_context: sdl.GLContext,
     
     ui_enabled: bool,
+    map_dropdown: Debug_Dropdown,
     
     // note(isak): graphical resources used by the drawing context go here 
 

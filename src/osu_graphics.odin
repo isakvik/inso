@@ -390,7 +390,7 @@ reserve_handles :: proc(buf: ^rb.Ring_Buffer(Drawable_Handle), #any_int n: int) 
     return slice.from_ptr(rb.at(buf, buf.cursor), 0), false
 }
 
-write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
+TEST_write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
     combo_color_index := -1
     for &hobj in game.beatmap.hitobjects {
         if .NEW_COMBO in hobj.flags || combo_color_index < 0 {
@@ -620,7 +620,7 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Pat
     r_reset_scissor_mode()
 }
 
-test_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Handle) {
+TEST_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Handle) {
     tex, ok := mapset_texture(bg_path)
     if ok {
         bg_aspect_ratio := f32(tex.h) / f32(tex.w)

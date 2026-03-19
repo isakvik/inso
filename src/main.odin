@@ -99,7 +99,14 @@ debug_ui_init :: proc() {
     imgui.CreateContext()
     io := imgui.GetIO()
     io.ConfigFlags += {.NavEnableKeyboard}
+    imgui.FontAtlas_AddFontFromFileTTF(io.Fonts, "data/segoeui.ttf", 16)
     imgui_gl3.Init("#version 460")
+    
+    window.map_dropdown = Debug_Dropdown{
+        label    = "Map",
+        items    = &app.map_reference_names,
+        selected = 0,
+    }
 }
 
 debug_ui_cleanup :: proc() {
@@ -152,21 +159,27 @@ main :: proc() {
 
     shaders_watch := win32_init_directory_watch("shaders/")
 
+    songs_discover_maps("songs/")
+
+    //-- @temp
     {
         ok: bool
-        test_mapset_path := "songs/test/"
-        
-        game.active_mapset, ok = mapset_open_for_editing(test_mapset_path)
+        initial_map_ref := 
+            len(app.map_references) > 0 ? app.map_references[0] : Map_Reference{ folder_path = "songs/test/" }
+
+        game.active_mapset, ok = mapset_open_for_editing(initial_map_ref.folder_path, initial_map_ref.osu_filename)
         game.active_notosu_map = &game.active_mapset.notosu_map
         game.active_map = &game.active_mapset.osu_map
-        if !ok {
-            log.error("tried to open mapset, but failed:", test_mapset_path)
-        }
+        game.active_map_ref = initial_map_ref
         
-        // todo(isak): dependent on map load... make a more granular api for map load purposes
+        if !ok {
+            log.error("tried to open mapset, but failed:", initial_map_ref.folder_path)
+        }
+
         prepare_textures_for_rendering()
     }
-    
+    //--
+   
 
     osu_on_init()
 
@@ -285,6 +298,8 @@ main :: proc() {
         {
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
             
+            handle_debug_ui_events(&window.map_dropdown)
+            
             r_bind_layer_and_push_current_state(.DEBUG, transform = window.screenspace_transform)
             
             dt_ms := (time_current_frame - time_last_frame) * 1000
@@ -373,7 +388,7 @@ main :: proc() {
 
 begin_frame :: proc(renderer: ^Renderer) {
     sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
-    
+
     batch_begin(renderer)
 
     r_set_shader_globals({
@@ -388,15 +403,14 @@ begin_frame :: proc(renderer: ^Renderer) {
     r_push_transform(identity_transform)
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
     r_reset_scissor_mode()
-    
+
     renderer.transform_queue.len = 0
-    
+
     if window.ui_enabled {
         imgui_gl3.NewFrame()
         imgui.NewFrame()
-        write_debug_ui()
+        write_debug_ui(&window.map_dropdown)
     }
-    handle_debug_ui_events()
 }
 
 end_frame :: proc(renderer: ^Renderer) {
@@ -406,7 +420,7 @@ end_frame :: proc(renderer: ^Renderer) {
 }
 
 
-write_debug_ui :: proc() {
+write_debug_ui :: proc(map_dropdown: ^Debug_Dropdown) {
     imgui.Begin("饕餮尤魔 :3")
     defer imgui.End()
 
@@ -420,9 +434,15 @@ write_debug_ui :: proc() {
     imgui.Text("Visible hitobjects: %d", i32(hobj_visibility.latest_i - hobj_visibility.earliest_i - 1))
     imgui.Text("Mouse keys: %s", game.input.mouse_keys_enabled ? cstring("on") : cstring("off"))
     imgui.Text("Universal offset: %d ms", i32(game.universal_offset_ms))
+
+    imgui.Separator()
+    debug_dropdown_update(map_dropdown)
 }
 
-handle_debug_ui_events :: proc() {
+handle_debug_ui_events :: proc(map_dropdown: ^Debug_Dropdown) {
+    if map_dropdown.changed && map_dropdown.selected < len(app.map_references) {
+        osu_switch_map(app.map_references[map_dropdown.selected])
+    }
     if is_key_pressed(.F1) {
         window.renderer.trace_frame = !window.renderer.trace_frame
     }

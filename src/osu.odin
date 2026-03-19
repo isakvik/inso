@@ -26,6 +26,7 @@ game: struct {
     active_mapset: ^Mapset,
     active_notosu_map: ^Notosu_Map,
     active_map: ^Osu_Map,
+    active_map_ref: Map_Reference,
     active_skin: ^Skin,
     
     mode: Game_Mode,
@@ -182,8 +183,9 @@ Slider_Path :: struct {
 
 Game_Mode :: enum {
     UNINITIALIZED,
-    MENU,
+    MAIN_MENU,
     PLAY,
+    EDITOR,
 }
 
 Layer :: enum {
@@ -211,7 +213,7 @@ Judgement_Type :: enum {
     SLIDER_SMALL_SCOREPOINT, // 10
     SLIDER_LARGE_SCOREPOINT, // 30
     
-    IGNORED_HIT, // note(isak): used when we need a result that doesn't affect score 
+    IGNORED_HIT, // note(isak): used when we need a result that doesn't affect score
     COMBO_BREAK, // note(isak): intended for scripted misses
 }
 
@@ -268,7 +270,7 @@ osu_on_init :: proc() {
     game.input.k1_key = sdl.Scancode.Z
     game.input.k2_key = sdl.Scancode.X
 
-    beatmap_on_init(&game.beatmap)
+    beatmap_on_init(game.active_map_ref, &game.beatmap)
     game.playfield_transform = transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
     
     // todo(isak): universal offset sync interface
@@ -300,7 +302,7 @@ osu_on_update :: proc(dt: f64) {
     // todo(isak): this really handles a bunch of debug stuff too. fix up the modes and such
     #partial switch game.mode {
         case .PLAY: handle_play_input_events()
-        case .MENU: handle_menu_input_events()
+        case .MAIN_MENU: handle_menu_input_events()
     }
     
     map_time := beatmap_music_time_ms(&game.beatmap)
@@ -315,9 +317,7 @@ osu_on_update :: proc(dt: f64) {
         }
     }
     process_expiring_hitobjects(&game.beatmap.expiring_hitobjects)
-    
-    
-    // todo(isak) off by one error here. makes hitting the final object impossible
+
     
     // todo(isak): valid key presses system needs testing
     if valid_controller_press() {

@@ -12,6 +12,8 @@ import "core:strings"
 Beatmap :: struct {
     // -- game data fields
     
+    map_reference: Map_Reference,
+    
     music: Sound,
     music_time_ms: f64, // note(isak): for game logic, don't refer to this directly, use beatmap_time_ms() instead
     music_time_uninterpolated_ms: f64,
@@ -56,8 +58,8 @@ Beatmap :: struct {
     animations: queue.Queue(Animation),
 }
 
-beatmap_on_init :: proc(beatmap: ^Beatmap) {
-    beatmap^ = {}
+beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
+    beatmap^ = { map_reference = map_reference }
     beatmap_load(beatmap)
     
     // map logic init
@@ -67,7 +69,7 @@ beatmap_on_init :: proc(beatmap: ^Beatmap) {
     beatmap.timing_windows = convert_overall_difficulty_to_timing_window(game.active_map.diff_overall_difficulty)
     
     beatmap.length_ms = sound_get_length_ms(&beatmap.music)
-    beatmap.start_time_ms = -beatmap.preempt_ms
+    beatmap.start_time_ms = beatmap_game_time_to_music_time(beatmap, -beatmap.preempt_ms)
     beatmap.music_time_ms = beatmap.start_time_ms
     
     beatmap.hitobjects = game.active_map.hitobjects
@@ -97,8 +99,8 @@ beatmap_on_init :: proc(beatmap: ^Beatmap) {
     //-- @temp
     // todo(isak): opinionated drawable pushing; needs to be rewritten to take scriptable objects and skin metrics
     // into account
-    write_default_drawables_from_map(game.active_map)
-    bg_handle := test_bg_drawable(game.active_map.bg_filename, "wave")
+    TEST_write_default_drawables_from_map(game.active_map)
+    bg_handle := TEST_bg_drawable(game.active_map.bg_filename, "wave")
     //--
     
     if lua_cares_about_event(.ON_INIT) {
@@ -120,6 +122,8 @@ beatmap_on_update :: proc(beatmap: ^Beatmap) {
             sound_set_position_ms(&beatmap.music, 0)
             
             beatmap.music_time_ms = beatmap_music_position_interpolated_ms(beatmap)
+        } else {
+            sound_pause(&beatmap.music)
         }
     } else {
         // note(isak): map play time is determined by the sound library (and whether we were able to play music or not), 
@@ -168,7 +172,9 @@ beatmap_load :: proc(beatmap: ^Beatmap) {
         log.error("tried to open map sound file, but failed:", game.active_map.audio_filepath)
     }
     
-    lua_create_beatmap_script_context(game.active_notosu_map.lua_entry_point)
+    if game.active_notosu_map.lua_entry_point != "" {
+        lua_create_beatmap_script_context(game.active_notosu_map.lua_entry_point)
+    }
 }
 
 beatmap_reload :: proc(beatmap: ^Beatmap, keep_song_position: bool = false) {
@@ -184,19 +190,42 @@ beatmap_reload :: proc(beatmap: ^Beatmap, keep_song_position: bool = false) {
     
     beatmap_on_destroy(beatmap)
     
-    game.mode = .PLAY
-    beatmap.visible_hitobject_state = {}
+    mapset_path := mapset_free(game.active_mapset)
+    ok: bool
+    game.active_mapset, ok = mapset_open_for_editing(beatmap.map_reference.folder_path, beatmap.map_reference.osu_filename)
+    assert(ok)
     
-    game.active_mapset = mapset_free_and_reload(game.active_mapset)
     game.active_map = &game.active_mapset.osu_map
     game.active_notosu_map = &game.active_mapset.notosu_map
-    beatmap_on_init(beatmap)
+    beatmap_on_init(beatmap.map_reference, beatmap)
     
     if keep_song_position {
-        if !game.paused do music_time_before_load += current_time_ms() - time_before_load_ms
         beatmap_seek(beatmap, music_time_before_load)        
         if !game.paused do sound_resume(&game.beatmap.music)
     }
+}
+
+osu_switch_map :: proc(ref: Map_Reference) {
+    beatmap_on_destroy(&game.beatmap)
+    cleanup_textures_for_rendering()
+
+    mapset_path := mapset_free(game.active_mapset)
+    ok: bool
+    game.active_map_ref = ref
+    for r, i in app.map_references {
+        if r.folder_path == ref.folder_path && r.osu_filename == ref.osu_filename {
+            window.map_dropdown.selected = i
+            break
+        }
+    }
+    game.active_mapset, ok = mapset_open_for_editing(ref.folder_path, ref.osu_filename)
+    assert(ok)
+    
+    game.active_map = &game.active_mapset.osu_map
+    game.active_notosu_map = &game.active_mapset.notosu_map
+
+    prepare_textures_for_rendering()
+    beatmap_on_init(ref, &game.beatmap)
 }
 
 beatmap_seek :: proc(beatmap: ^Beatmap, pos: f64) {

@@ -36,7 +36,8 @@ Mapset_Buffer :: distinct GL_Buffer(u8)
 
 Mapset :: struct {
     open: bool,
-    folder_path: string,
+    folder_path:  string,
+    osu_filename: string, // note(isak): which .osu file was loaded
     osu_map: Osu_Map,
     notosu_map: Notosu_Map,
 
@@ -109,7 +110,6 @@ Notosu_Section_Header_Types :: enum {
     GENERAL,
     SHADERS,
     BUFFERS,
-    TEXTURES,
 }
 
 notosu_section_headers := []string{
@@ -186,9 +186,9 @@ mapset_free_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
     return reloaded_mapset
 }
 
-mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
+mapset_open_for_editing :: proc(path: string, osu_filename: string = "") -> (^Mapset, bool) {
     context.allocator = memory.allocators[.MAPSET]
-    
+
     mapset_path := strings.clone(path, context.allocator)
     mapset, alloc_err := new(Mapset)
     assert(alloc_err == .None)
@@ -197,7 +197,8 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
         return mapset, false
     }
 
-    mapset.folder_path = mapset_path
+    mapset.folder_path  = mapset_path
+    mapset.osu_filename = strings.clone(osu_filename, context.allocator)
     
 
     // note(isak): file contents cannot exit this function, don't leave strings allocated here
@@ -214,16 +215,52 @@ mapset_open_for_editing :: proc(path: string) -> (^Mapset, bool) {
     mapset.hitobject_index_by_ms = make(map[int]int, 128)
     mapset.shader_blend_modes    = make([dynamic]Blend_Mode, 0, 8)
     
-    walk_directory(mapset, path)
+    mapset_walk_directory(mapset, path)
 
-    cur_path, err := os.get_working_directory(context.temp_allocator)
-    mapset.watch = win32_init_directory_watch(cur_path)
-    log.info("initialized directory watch for path:", cur_path)
+    mapset.watch = win32_init_directory_watch(path)
+    log.info("initialized directory watch for path:", path)
     
     return mapset, true
 }
 
-walk_directory :: proc(mapset: ^Mapset, path: string) {
+// note(isak): register every .osu file found in mapset subdirectories
+songs_discover_maps :: proc(songs_dir: string) {
+    dir_handle, err := os.open(songs_dir)
+    if err != nil {
+        log.errorf("discover_maps: couldn't open '{}': {}", songs_dir, err)
+        return
+    }
+    dirs, _ := os.read_dir(dir_handle, 1024, context.temp_allocator)
+
+    count := 0
+    for dir in dirs {
+        if dir.type != .Directory do continue
+
+        folder_path := strings.concatenate({songs_dir, dir.name, "/"}, context.allocator)
+
+        sub_handle, sub_err := os.open(folder_path)
+        if sub_err != nil do continue
+        sub_files, _ := os.read_dir(sub_handle, 256, context.temp_allocator)
+
+        for sub_file in sub_files {
+            if filepath.ext(sub_file.name) != ".osu" do continue
+
+            osu_filename  := strings.clone(sub_file.name, context.allocator)
+            stem          := filepath.stem(sub_file.name)
+            display_cstr  := fmt.caprintf("%s / %s", dir.name, stem)
+
+            append(&app.map_references, Map_Reference{
+                folder_path  = folder_path,
+                osu_filename = osu_filename,
+            })
+            append(&app.map_reference_names, display_cstr)
+            count += 1
+        }
+    }
+    log.infof("discover_maps: found {} maps in '{}'", count, songs_dir)
+}
+
+mapset_walk_directory :: proc(mapset: ^Mapset, path: string) {
     cwd, _ := os.get_working_directory(context.temp_allocator)
     defer os.change_directory(cwd)
     
@@ -235,14 +272,14 @@ walk_directory :: proc(mapset: ^Mapset, path: string) {
 
     for file in files {
         if file.type == .Directory {
-            walk_directory(mapset, file.name)
+            mapset_walk_directory(mapset, file.name)
         } else {
-            handle_file(mapset, file)
+            mapset_handle_file(mapset, file)
         }
     }
 }
 
-handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
+mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
     extension := filepath.ext(file.name)
     switch extension {
         case ".notosu": {
@@ -250,6 +287,7 @@ handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
             mapset.notosu_map = mapset_parse_notosu(mapset, filedata)
         }
         case ".osu": {
+            if mapset.osu_filename != "" && file.name != mapset.osu_filename do break
             filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
             mapset.osu_map = mapset_parse_osu(mapset, filedata)
         }
@@ -442,7 +480,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
 
         expected_happy_case := section_index
         for lines[0] != osu_section_headers[section_index] {
-            section_index = (section_index + 1) % int(max(Osu_Section_Header_Types))
+            section_index = (section_index + 1) % (int(max(Osu_Section_Header_Types)) + 1)
             if section_index == expected_happy_case {
                 fmt.println(osu_section_headers[expected_happy_case], ":: unhandled section")
                 continue section_loop

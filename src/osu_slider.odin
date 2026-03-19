@@ -44,6 +44,26 @@ split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> 
     return result
 }
 
+calculate_curve_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, Timing_Point, hobj: ^Hitobject, slider: ^Slider_Path, osu_map: ^Osu_Map) {
+    //time stuff: osu_mapset.odin ~#L825
+    if hobj.type != .SLIDER_HEAD {
+        return
+    }
+    //todo(yokes): find which slider and curve is currently active using time_at
+    //done for sliders without repeats, need to check for repeats
+    if slider.type == .BEZIER {
+        slider_duration := (hobj.end_time_ms - hobj.start_time_ms) / f64(hobj.slider_repeats)
+        distance_duration : f64 = 0
+        for curve in slider.curves {
+            _, _, distance := bezier_to_piecewise_linear(instance_buf, slider, curve, slider.distance_osupx)
+            distance_duration += slider_duration * distance / slider.distance_osupx
+            if hobj.start_time_ms + distance_duration > time_at {
+                calculate_bezier_point_from_time(instance_buf, time_at, hobj.start_time_ms, hobj.start_time_ms + distance_duration, curve, osu_map.diff_slider_velocity, hobj.slider_velocity)
+            }
+        }
+    }
+}
+
 // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L878
 // note(yokes): "t" is for time which means we need to calculate the time it takes to get "d" distance beforehand
 calculate_bezier_point_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, time_start: f64, time_end: f64, curve: Slider_Curve, base_slider_velocity: f64, slider_velocity: f64) -> (point: vec2) {

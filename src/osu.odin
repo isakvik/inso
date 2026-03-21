@@ -67,7 +67,7 @@ Visibility_State :: struct {
 Hitobject_Type :: enum u32 {
     NONE,
     CIRCLE,
-    SLIDER_HEAD,
+    SLIDER,
     SLIDER_PATH,
     SLIDER_TICK,
     SLIDER_REPEAT,
@@ -87,14 +87,31 @@ Hitobject_Flag :: enum u32 {
     CLAP,
 }
 
+Slider_State :: struct {
+    head_hit:            bool,    // player clicked head within any window
+    head_checked:        bool,    // miss window for head has passed
+    tracking:            bool,    // cursor currently in follow circle
+    
+    velocity: f64,
+    distance, duration_ms: f64,
+    
+    tick_interval_ms: f64,
+    tick_count: int,
+    
+    repeat_count, current_repeat_at: int,
+    hit_judgement_count, total_judgement_count: int,
+    
+    next_expected_judgement_at_ms: f64
+}
+
 Hitobject :: struct {
     type: Hitobject_Type,
     flags: Hitobject_Flags,
     index: int,
-    
+
     start_time_ms, end_time_ms: f64,
     pos, script_pos_translation: vec2,
-    
+
     timing_point_index_uninherited: int,
     timing_point_index_inherited: int,
     hitsound_flags: byte,
@@ -102,10 +119,9 @@ Hitobject :: struct {
     combo_color_index: u8,
 
     slider_path_index: int,
-    slider_repeats, slider_repeat_at: int,
-    slider_velocity: f64,
-    
-    judgement_index: int, 
+    slider_state: Slider_State,
+
+    judgement_index: int,
     gfx_handles: []Drawable_Handle,
 }
 
@@ -120,7 +136,7 @@ hitobject_duration :: proc(hobj: ^Hitobject) -> (result: f64) {
 hitobject_visible_start_time :: proc(hobj: ^Hitobject) -> (result: f64) {
     start_time := hobj.start_time_ms
     #partial switch hobj.type {
-    case .CIRCLE, .SLIDER_HEAD: start_time -= game.beatmap.preempt_ms
+    case .CIRCLE, .SLIDER: start_time -= game.beatmap.preempt_ms
     }
     return start_time
 }
@@ -128,7 +144,7 @@ hitobject_visible_start_time :: proc(hobj: ^Hitobject) -> (result: f64) {
 hitobject_visible_end_time :: proc(hobj: ^Hitobject) -> (result: f64) {
     end_time := hobj.end_time_ms        
     #partial switch hobj.type {
-    case .CIRCLE, .SLIDER_HEAD: end_time += game.beatmap.timing_windows.ok
+    case .CIRCLE, .SLIDER: end_time += game.beatmap.timing_windows.ok
     }
     return end_time
 }
@@ -268,7 +284,7 @@ osu_on_init :: proc() {
     beatmap_on_init(game.active_map_ref, &game.beatmap)
     game.playfield_transform = transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
     
-    // todo(isak): universal offset sync interface
+    // todo(isak): @beta universal offset sync interface
     game.universal_offset_ms = -28
 }
 
@@ -375,11 +391,14 @@ osu_on_update :: proc(dt: f64) {
     
     // todo(isak) ALSO don't forget that sliders SHOULD go on top of hitobjects appearing later, so the 
     // render hitobjects loop should be integrated into this
+    
+    
+    
     for &hobj in hobj_it {
         if map_time < hobj.start_time_ms - game.beatmap.preempt_ms || hobj.end_time_ms < map_time {
             continue
         }
-        if hobj.type == .SLIDER_HEAD {
+        if hobj.type == .SLIDER {
             slider := &game.beatmap.slider_paths[hobj.slider_path_index]
             render_slider(&window.renderer, &hobj, slider)
             
@@ -388,6 +407,17 @@ osu_on_update :: proc(dt: f64) {
             cs := game.beatmap.circle_radius_osupx
             sliderend_rect := Rect{ slider.end_pos.x - cs, slider.end_pos.y - cs, cs * 2, cs * 2 }
             r_draw_rect(&window.renderer.quad_geometry, sliderend_rect, with_alpha(color_white, 0.2), skin_texture(.HITCIRCLEOVERLAY))
+            
+            // note(isak) slider ball
+            if hobj.start_time_ms <= map_time && map_time < hobj.end_time_ms {
+                color_array := &game.active_map.combo_colors
+                combo_color := game.active_map.num_combo_colors > 0 ? color_array[hobj.combo_color_index] : color_purple
+
+                ball_pos := slider_ball_pos_at(&hobj, map_time)
+                ball_rect := rect_at_pos(ball_pos, {cs*2, cs*2})
+                
+                r_draw_layout_rect(&window.renderer.quad_geometry, ball_rect, .CENTER, combo_color, skin_texture(.HITCIRCLEOVERLAY))
+            }
         }
     }
     
@@ -395,7 +425,7 @@ osu_on_update :: proc(dt: f64) {
     r_push_transform(game.playfield_transform)
 
     // note(isak): we render hitobject elements back to front for correct blending
-    // todo(isak): @speed - use persistent_gfx for visible set optimization
+    // todo(isak): @speed @beta - use persistent_gfx for visible set optimization
     fade_in_ms := min(game.beatmap.preempt_ms * 0.4, 400.0)
     #reverse for &hobj in game.beatmap.hitobjects {
         alpha_mul: f32 = 1.0
@@ -464,7 +494,7 @@ hitobject_on_click :: proc(hobj: ^Hitobject) -> (result: Judgement_Type) {
     time_error_ms: f64
     
     #partial switch hobj.type {
-    case .CIRCLE, .SLIDER_HEAD:
+    case .CIRCLE, .SLIDER:
         time_error_ms = click_time - hobj.start_time_ms
         if abs(time_error_ms) < game.beatmap.timing_windows.marvelous {
             result = .MARVELOUS
@@ -478,9 +508,15 @@ hitobject_on_click :: proc(hobj: ^Hitobject) -> (result: Judgement_Type) {
     }
     
     if result != .NONE {
-        judgement_new(hobj, result, time_error_ms)
-        hobj.flags |= {.EXPIRED}
-        
+        if hobj.type == .SLIDER {
+            // note(isak): slider head click is recorded; final judgement is deferred to slider_on_expire
+            hobj.slider_state.head_hit = true
+            hobj.slider_state.head_checked = true
+        } else {
+            judgement_new(hobj, result, time_error_ms)
+            hobj.flags |= {.EXPIRED}
+        }
+
         timing_point := &game.active_map.timing_points[game.beatmap.current_timing_point_index_inherited]
         sample_set := Skin_Sample_Set(timing_point.sample_set)
         
@@ -506,7 +542,7 @@ handle_play_input_events :: proc() {
         beatmap_pause(&game.beatmap, !game.paused)
     }
     if is_key_pressed(.R) {
-        beatmap_reload(&game.beatmap, true)
+        beatmap_reload(&game.beatmap, !is_key_down(.LSHIFT))
     }
     if is_key_pressed(.HOME) {
         game.time_rate = 1
@@ -596,13 +632,19 @@ playfield_to_screenspace_transform :: proc() -> mat3 {
 }
 
 
-game_play_sound :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0) -> slotmap.Handle {
-    channel, ok := sound_channel_init(s, loop)
-    if !ok do return {}
+game_play_sound :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0) -> (result: slotmap.Handle) {
+    sound: Sound
+    ok: bool
+    if loop {
+        sound, ok = sound_loop_stream_init(game.active_mapset.folder_path, s.filepath)
+    } else {
+        sound, ok = sound_channel_init(s)
+    }
+    if !ok do return
 
-    handle := slotmap.insert(&game.sounds, Sound(channel))
-    sound, _ := slotmap.get(&game.sounds, handle)
-    sound_play(sound, loop = loop, volume = volume)
+    handle := slotmap.insert(&game.sounds, sound)
+    snd := slotmap.get(&game.sounds, handle) or_else {}
+    sound_play(snd, loop = loop, volume = volume)
     return handle
 }
 

@@ -331,7 +331,7 @@ main :: proc() {
             /*
                 todo(isak): state of the renderer:
                 usage:
-                - batch overrun has not been tested
+                - batch overrun has not been tested @beta
                 - transforms should be a dynamic stack that we just write as we process the frame; can save a bunch
                     of draw calls
             */

@@ -29,6 +29,7 @@ import sdl "vendor:sdl3"
 //     longer handles, structural drawable/hitobject relationship changes -- those need an
 //     odin-side version check at the call site
 
+// @beta
 // todo(isak): expose scoring state to lua (combo, score, accuracy)
 // todo(isak): UV sub-rect support on Element for sprite sheet / atlas workflows
 // todo(isak): schedule(delay_ms, fn) for deferred callbacks without on_update boilerplate
@@ -133,6 +134,7 @@ lua_classes: [Lua_Class_Type]Lua_Class = {
     .SOUND = {
         name            = "Sound",
         static_funcs    = luaapi_sound_static_funcs,
+        instance_funcs  = luaapi_sound_instance_funcs,
     },
 }
 
@@ -1158,7 +1160,15 @@ luaapi_buffer_size :: proc "c" (L: ^lua.State) -> i32 {
 
 @(private="file")
 luaapi_sound_static_funcs := []lua.L_Reg {
-    { "play", luaapi_sound_play },
+    { "play",      luaapi_sound_play },
+    { "play_loop", luaapi_sound_play_loop },
+    { nil, nil },
+}
+
+@(private="file")
+luaapi_sound_instance_funcs := []lua.L_Reg {
+    { "__gc", luaapi_sound_gc },
+    { "stop", luaapi_sound_stop },
     { nil, nil },
 }
 
@@ -1175,6 +1185,38 @@ luaapi_sound_play :: proc "c" (L: ^lua.State) -> i32 {
         return 0
     }
     sample_play(sample, volume, pan)
+    return 0
+}
+
+// Sound.play_loop(name, volume=1.0) -> handle
+luaapi_sound_play_loop :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    name   := lua_string(1)
+    volume := f32(lua.L_optnumber(L, 2, 1.0))
+
+    sample, found := mapset_sample(name)
+    if !found {
+        log.error("User error - sound not found:", name)
+        return 0
+    }
+    handle := game_play_sound(sample, loop = true, volume = volume)
+    lua_create_userdata(L, handle, lua_classes[.SOUND].name)
+    return 1
+}
+
+// handle:stop()
+luaapi_sound_stop :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    handle := cast(^slotmap.Handle)lua.L_checkudata(L, 1, lua_classes[.SOUND].name)
+    game_stop_sound(handle^)
+    handle^ = {}
+    return 0
+}
+
+luaapi_sound_gc :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    handle := cast(^slotmap.Handle)lua.L_checkudata(L, 1, lua_classes[.SOUND].name)
+    game_stop_sound(handle^)
     return 0
 }
 
@@ -1483,9 +1525,6 @@ luaapi_drawable_set_angle_vel :: proc "c" (L: ^lua.State) -> (result: i32) {
 
 //////////////////////////////////////////////////////
 // note(isak): hitobject object API
-
-// todo(isak): Slider object, get_path
-
 
 @(private="file")
 luaapi_hitobject_static_funcs := []lua.L_Reg {

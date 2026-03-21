@@ -64,11 +64,10 @@ tween_apply :: proc(tween: Tween, t: f32) -> f32 {
 }
 
 // note(isak): how an Animation_Color result is applied against the drawable's current color.
-// REPLACE (0, ZII): output = animated_color. ignores d.color entirely.
-// MULTIPLY:         output = d.color * animated_color / 255 per channel.
-//                   useful for tint/dim effects that should work regardless of the base color -
-//                   e.g. dimming approach circles before click time while preserving their combo color.
-//                   {255,255,255,255} is the identity (no effect).
+// REPLACE:  output = animated_color. ignores drawable.color entirely
+// MULTIPLY: output = drawable.color * animated_color / 255 per channel.
+//           useful for tint/dim effects that should work regardless of the base color -
+//           e.g. dimming approach circles before click time while preserving their combo color
 Color_Blend_Type :: enum u8 {
     REPLACE,
     MULTIPLY,

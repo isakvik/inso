@@ -1,5 +1,6 @@
 package notosu
 
+import "core:math/linalg"
 import sb "swap_buffer"
 import "slotmap"
 import rb "ring_buffer"
@@ -99,7 +100,7 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     slotmap.init(&beatmap.drawables, 8192, memory.allocators[.DRAWABLES])
     _ = slotmap.insert(&beatmap.drawables, null_drawable)
     
-    //-- @temp
+    //-- @temp @beta
     // todo(isak): opinionated drawable pushing; needs to be rewritten to take scriptable objects and skin metrics
     // into account
     TEST_write_default_drawables_from_map(game.active_map)
@@ -412,22 +413,113 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
 
 process_expiring_hitobjects :: proc(expiring_hitobjects: ^sb.Swap_Buffer(int)) {
     map_time := beatmap_music_time_ms(&game.beatmap)
-    
+
     for hobj_index in expiring_hitobjects.current {
         hobj := &game.beatmap.hitobjects[hobj_index]
-        
-        if .EXPIRED not_in hobj.flags {
+
+        if .EXPIRED in hobj.flags do continue
+
+        #partial switch hobj.type {
+        case .SLIDER:
+            slider_process(hobj, map_time, expiring_hitobjects)
+        case:
             end_time := hitobject_visible_end_time(hobj)
             if end_time < map_time {
                 judgement_new(hobj, .MISS, end_time - hobj.end_time_ms)
                 judgement_new_drawable(hobj)
-                hobj.flags ~= {.VISIBLE}
+                hobj.flags &~= {.VISIBLE}
                 hobj.flags |= {.EXPIRED}
-            }
-            else {
+            } else {
                 sb.append_next(expiring_hitobjects, hobj_index)
             }
         }
     }
     sb.swap(expiring_hitobjects)
+}
+
+// note(isak): returns slider ball position in playfield space at the given map time
+slider_ball_pos_at :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
+    path := &game.beatmap.slider_paths[hobj.slider_path_index]
+
+    duration := hobj.end_time_ms - hobj.start_time_ms
+    elapsed  := clamp(map_time - hobj.start_time_ms, 0, duration)
+
+    // t_passes goes from 0 to slider_repeats over the full duration
+    repeat_count := hobj.slider_state.repeat_count
+    t_passes  := (elapsed / duration) * f64(repeat_count)
+    pass_idx  := min(int(t_passes), repeat_count - 1)
+    pass_frac := t_passes - f64(pass_idx)
+
+    // even passes go forward (0->1), odd passes go backward (1->0)
+    t_on_path := pass_frac if pass_idx % 2 == 0 else 1.0 - pass_frac
+
+    return linalg.lerp(path.pos, path.end_pos, vec2{f32(t_on_path), f32(t_on_path)})
+}
+
+
+SLIDER_FOLLOW_CIRCLE_RADIUS_MULT :: 2.4
+
+// note(isak): update ball tracking and fire tick scorepoints each frame
+slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
+    slider := &hobj.slider_state
+
+    ball_pos      := slider_ball_pos_at(hobj, map_time)
+    follow_radius := game.beatmap.circle_radius_osupx * SLIDER_FOLLOW_CIRCLE_RADIUS_MULT
+    slider.tracking = point_in_circle(game.input.mouse_pos, ball_pos, follow_radius)
+
+    /*
+    for slider.next_expected_judgement_at_ms <= map_time && slider.next_checkpoint_time_ms < hobj.end_time_ms {
+        if slider.tracking {
+            judgement_new(hobj, .SLIDER_SMALL_SCOREPOINT, 0)
+            slider.n_checkpoints_hit += 1
+        }
+        slider.next_expected_judgement_at_ms += slider.tick_interval_ms
+    }
+    */
+}
+
+// note(isak): called when the slider reaches end_time_ms; fires the tail scorepoint and deferred head judgement
+slider_expire :: proc(hobj: ^Hitobject) {
+    slider := &hobj.slider_state
+
+    if slider.tracking {
+        judgement_new(hobj, .SLIDER_LARGE_SCOREPOINT, 0)
+        slider.hit_judgement_count += 1
+    }
+
+    all_hit := slider.hit_judgement_count + (1 if slider.head_hit else 0)
+    total   := max(slider.total_judgement_count + 1, 1) // +1 for head
+
+    result: Judgement_Type
+    ratio := f64(all_hit) / f64(total)
+    switch {
+    case ratio >= 1.0: result = .MARVELOUS
+    case ratio >= 0.5: result = .GOOD
+    case ratio > 0:    result = .OK
+    case:              result = .MISS
+    }
+
+    judgement_new(hobj, result, 0)
+    judgement_new_drawable(hobj)
+    hobj.flags &~= {.VISIBLE}
+    hobj.flags |= {.EXPIRED}
+}
+
+slider_process :: proc(hobj: ^Hitobject, map_time: f64, buf: ^sb.Swap_Buffer(int)) {
+    state := &hobj.slider_state
+
+    // note(isak): one-time head miss check once the miss window has passed without a click
+    if !state.head_checked && map_time > hobj.start_time_ms + game.beatmap.timing_windows.miss {
+        state.head_checked = true
+    }
+
+    if map_time >= hobj.start_time_ms {
+        slider_update(hobj, map_time)
+    }
+
+    if map_time > hobj.end_time_ms {
+        slider_expire(hobj)
+    } else {
+        sb.append_next(buf, hobj.index)
+    }
 }

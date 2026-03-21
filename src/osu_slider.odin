@@ -51,7 +51,7 @@ calculate_curve_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, Tim
     }
     //todo(yokes): find which slider and curve is currently active using time_at
     //done for beziers
-    //done for arc but need reverse logic
+    //done for arc
     slider_duration := (hobj.end_time_ms - hobj.start_time_ms) / f64(hobj.slider_repeats)
     current_repeat := int(math.floor_f64((time_at - hobj.start_time_ms) / slider_duration))
     time_ref := time_at - slider_duration * f64(current_repeat)
@@ -74,6 +74,8 @@ calculate_curve_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, Tim
         } else {
             calculate_arc_point_from_time(instance_buf, time_ref, hobj.start_time_ms, hobj.end_time_ms, curve, true)
         }
+    } else if slider.type == .LINEAR {
+        //t := (time_at - hobj.start_time_ms) / (hobj.end_time_ms - hobj.start_time_ms)
     }
 }
 

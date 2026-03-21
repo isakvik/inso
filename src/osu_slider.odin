@@ -44,52 +44,55 @@ split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> 
     return result
 }
 
-calculate_curve_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, Timing_Point, hobj: ^Hitobject, slider: ^Slider_Path, osu_map: ^Osu_Map) {
+calculate_curve_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, Timing_Point, hobj: ^Hitobject, slider: ^Slider_Path) {
     //time stuff: osu_mapset.odin ~#L825
     if hobj.type != .SLIDER_HEAD {
         return
     }
     //todo(yokes): find which slider and curve is currently active using time_at
-    //done for beziers without repeats, need to check for repeats
-    //if a slider without repeats is 0, every odd repeat needs to check for distance in the opposite direction
-    //however, the coordinates for the last curve aren't accurate because the can slider end before it reaches the last coordinate
+    //done for beziers
+    //done for arc but need reverse logic
+    slider_duration := (hobj.end_time_ms - hobj.start_time_ms) / f64(hobj.slider_repeats)
+    current_repeat := int(math.floor_f64((time_at - hobj.start_time_ms) / slider_duration))
+    time_ref := time_at - slider_duration * f64(current_repeat)
+
     if slider.type == .BEZIER {
-        slider_duration := (hobj.end_time_ms - hobj.start_time_ms) / f64(hobj.slider_repeats)
-        current_repeat := math.floor_f64((time_at - hobj.start_time_ms) / slider_duration) 
         distance_duration : f64 = 0
         for curve in slider.curves {
             _, _, distance := bezier_to_piecewise_linear(instance_buf, slider, curve, slider.distance_osupx)
             distance_duration += slider_duration * distance / slider.distance_osupx
-            //if hobj.slider_repeats
-            if hobj.start_time_ms + distance_duration > time_at {
-                calculate_bezier_point_from_time(instance_buf, time_at, hobj.start_time_ms, hobj.start_time_ms + distance_duration, curve, osu_map.diff_slider_velocity, hobj.slider_velocity)
+            if current_repeat % 2 == 0 && hobj.start_time_ms + distance_duration > time_ref {
+                calculate_bezier_point_from_time(instance_buf, time_ref, hobj.start_time_ms, hobj.start_time_ms + distance_duration, curve, false)
+            } else if current_repeat % 2 == 1 && hobj.end_time_ms - distance_duration < time_ref {
+                calculate_bezier_point_from_time(instance_buf, time_ref, hobj.start_time_ms, hobj.start_time_ms + distance_duration, curve, true)
             }
         }
     } else if slider.type == .ARC {
-        slider_duration := (hobj.end_time_ms - hobj.start_time_ms) / f64(hobj.slider_repeats)
-        distance_duration : f64 = 0
-        for curve in slider.curves {
-            _, _, distance := circular_arc_to_piecewise_linear(instance_buf, slider, curve, slider.distance_osupx)
-            distance_duration += slider_duration * distance / slider.distance_osupx
-            if hobj.start_time_ms + distance_duration > time_at {
-                //todo(yokes): calculate point on arc from time
-                calculate_bezier_point_from_time(instance_buf, time_at, hobj.start_time_ms, hobj.start_time_ms + distance_duration, curve, osu_map.diff_slider_velocity, hobj.slider_velocity)
-            }
+        curve := slider.curves[0]
+        if current_repeat % 2 == 0 {
+            calculate_arc_point_from_time(instance_buf, time_ref, hobj.start_time_ms, hobj.end_time_ms, curve, false)
+        } else {
+            calculate_arc_point_from_time(instance_buf, time_ref, hobj.start_time_ms, hobj.end_time_ms, curve, true)
         }
     }
 }
 
 // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L878
 // note(yokes): "t" is for time which means we need to calculate the time it takes to get "d" distance beforehand
-calculate_bezier_point_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, time_start: f64, time_end: f64, curve: Slider_Curve, base_slider_velocity: f64, slider_velocity: f64) -> (point: vec2) {
+calculate_bezier_point_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, time_start: f64, time_end: f64, curve: Slider_Curve, reversed: bool) -> (point: vec2) {
     //note(yokes): draw sliderball, move sliderball accordingly?
     //note(yokes): quick test on stable, 1x sv 5/4 slider has 500 distance. i believe i understand how the math works now
     //note(yokes): if a green line is in the middle of a slider, should it change the slider speed mid-slider? stable nor lazer does this but i believe this would leave more room... nvm not possible atm
 
-    slider_speed := base_slider_velocity * slider_velocity //base_sv is 1 when making a new map
-    distance_per_beat := 100 * slider_speed //base speed is 100 per 1/4
+    //slider_speed := base_slider_velocity * slider_velocity //base_sv is 1 when making a new map
+    //distance_per_beat := 100 * slider_speed //base speed is 100 per 1/4
+    //not using this right now but i'm pretty sure it's needed because right now this does not take into account that sliders can end before the last coordinate
+
     degree := max(1, len(curve) - 1)
-    t := (time_at - time_start) / time_end
+    t := (time_at - time_start) / (time_end - time_start)
+    if reversed {
+        t = 1 - t
+    }
     for i in 0..<degree + 1 {
         binom_coeff := f64(math.binomial(degree, i)) * math.pow_f64(1 - t, f64(degree - i)) * math.pow_f64(t, f64(i))
         point.x += f32(binom_coeff) * (curve[i].x)
@@ -99,10 +102,17 @@ calculate_bezier_point_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f
     return point
 }
 
-calculate_arc_point_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, time_start: f64, time_end: f64, curve: Slider_Curve, base_slider_velocity: f64, slider_velocity: f64) -> (point: vec2) {
-    //note(yokes): circumference = 2pi*r
+calculate_arc_point_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, time_start: f64, time_end: f64, curve: Slider_Curve, reversed: bool) -> (point: vec2) {
+    pr : Circular_Arc_Properties = circular_arc_properties_from_triangle(curve)
 
-
+    t := (time_at - time_start) / (time_end - time_start)
+    if reversed {
+    t = 1 - t
+    }
+    theta := pr.theta_start + pr.direction * t * pr.theta_range
+    o : vec2 = {math.cos(f32(theta)), math.sin(f32(theta))} * pr.radius
+    buffer_push(instance_buf, o)
+    return point
 }
 
 base_dist : f64 = 2.5

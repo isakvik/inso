@@ -52,7 +52,8 @@ Sound_Channel :: struct {
 // note(isak): sample held in memory with a fixed channel pool; use for fire-and-forget
 // short sounds that may overlap (hitsounds)
 Sample :: struct {
-    handle: bass.HSAMPLE,
+    handle:   bass.HSAMPLE,
+    filepath: string, // note(isak): filename only (no dir); join with mapset.folder_path for full path
 }
 
 //////////////////////////////////////////////////////
@@ -154,13 +155,29 @@ sound_stream_init :: proc(path: string, prescan: bool = false) -> (result: Sound
 
 sound_channel_init :: proc(s: ^Sample, loop: bool = false) -> (result: Sound_Channel, ok: bool) {
     if !audio.ready || s.handle == 0 do return
-    channel := bass.SampleGetChannel(s.handle, loop ? bass.SAMPLE_LOOP : 0)
+    channel := bass.SampleGetChannel(s.handle, (loop ? bass.SAMPLE_LOOP : 0) | bass.STREAM_DECODE)
     if channel == 0 {
         log.error("BASS sample get channel error:", bass.ErrorGetCode())
         return result, false
     }
     result.handle = channel
     if loop do result.flags |= {.LOOP}
+    return result, true
+}
+
+// note(isak): creates a decode stream suitable for adding to the WASAPI mixer.
+// use for managed looping sounds where a sample channel (SampleGetChannel) can't be
+// used as a decode channel reliably.
+sound_loop_stream_init :: proc(folder_path, filename: string) -> (result: Sound_Stream, ok: bool) {
+    full_path := strings.concatenate({folder_path, filename}, context.temp_allocator)
+    path_cstr := strings.clone_to_cstring(full_path, context.temp_allocator)
+    result.handle = bass.StreamCreateFile(0, rawptr(path_cstr), 0, 0,
+        bass.STREAM_DECODE | bass.SAMPLE_FLOAT | bass.SAMPLE_LOOP)
+    if result.handle == 0 {
+        log.error("BASS loop stream create error:", bass.ErrorGetCode())
+        return result, false
+    }
+    result.flags = {.STREAM, .LOOP}
     return result, true
 }
 

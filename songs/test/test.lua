@@ -12,7 +12,7 @@ local rand = load_file("rand.lua")
 -- diffsettings per object!!
 -- custom AR per object is complicated... animation system should be able to handle this
 
--- Sound.loop("normal-sliderslide.wav")
+-- Sound.play_loop("normal-sliderslide.wav")
 
 -- map runtime data
 -- Beatmap.set_time_rate(1.5)
@@ -43,7 +43,7 @@ function on_init()
     
     --hobj = Hitobject.get_at_ms(0) -- needs optional index param so we can get the next at ms 0
     
-    -- todo(isak) this has some off by one bug now...
+    -- todo(isak) @beta if there is no hitobject at the ms of the first argument, 0 is returned...
     list = Hitobject.get_in_range_ms(0, 425000)
     
     --table = {}
@@ -62,7 +62,7 @@ function on_update(time_ms)
         x = x + math.cos((time_ms*i*0.01) / 1000 + i*0.1)* 10
         y = y + math.sin((time_ms*i*0.01) / 1000 + i*0.1)* 10
         
-        hobj:set_pos(x,y) -- todo(isak) broken on sliders cuz bounding box doesnt move
+        hobj:set_pos(x,y) -- todo(isak) @beta broken on sliders cuz bounding box doesnt move
         --table[i]:set_pos(x,y)
     end
 end
@@ -71,9 +71,15 @@ function on_beat(beat)
     -- every 1/1, index 0 meaning the first given timing section (most useful indexing for constructs like beat % 4)
     trigger_event("saft", beat)
     
-    if beat % 4 == 0 then
-        Sound.play("nightcore-kick.wav")
-    end
+    --if beat % 4 == 0 and s == nil then
+    --    s = Sound.play_loop("soft-sliderslide.wav")
+    --end
+    --
+    --if beat % 4 == 2 and s ~= nil then
+    --    s:stop()
+    --    s = nil
+    --end
+    
 end
 
 --function on_timing_change(beat, bpm)
@@ -96,7 +102,6 @@ end
 --function on_kiai_change(kiai) 
 --    print("kiai time: ", kiai)
 --end
-
 
 --function on_controller_pressed(key) 
 --    --can also use controller_is_down(key)

@@ -96,6 +96,14 @@ mapset_pipeline_slot_or_else :: proc(name: string, default: u32) -> u32 {
     return mapset_pipeline_slot(name) or_else default
 }
 
+mapset_buffer :: proc(name: string) -> (result: ^Mapset_Buffer, found: bool) {
+    assert(game.active_mapset != nil)
+    index: u32
+    index, found = game.active_mapset.buffer_slot_by_name[name]
+    if found do result = queue.get_ptr(&game.active_mapset.buffers, index)
+    return result, found
+}
+
 
 Notosu_Map_System :: enum {
     OSU_FILE,
@@ -302,6 +310,7 @@ mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
             if ok {
                 sample_key := strings.clone(file.name, memory.allocators[.MAPSET])
                 mapset.sample_slot_by_name[sample_key] = u32(mapset.samples.len)
+                sample.filepath = sample_key
                 queue.push_back(&mapset.samples, sample)
             }
         }
@@ -639,7 +648,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                                     hobj.type = .CIRCLE
                                 }
                                 else if is_slider > 0 {
-                                    hobj.type = .SLIDER_HEAD
+                                    hobj.type = .SLIDER
                                 }
                                 else if is_spinner > 0 {
                                     hobj.type = .SPINNER
@@ -664,7 +673,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                         ok: bool
                         hitsound_params_at := strings.index_byte(hobj_extra_params, ',')
                         hobj.end_time_ms, ok = strconv.parse_f64(hobj_extra_params[:hitsound_params_at]); assert(ok)
-                    case .SLIDER_HEAD:
+                    case .SLIDER:
                         slider: Slider_Path = {
                             bounds_min = {math.F32_MAX, math.F32_MAX},
                             bounds_max = {math.F32_MIN, math.F32_MIN},
@@ -751,14 +760,6 @@ mapset_load_buffer_entry :: proc(mapset: ^Mapset, name, source: string, size: in
     log.infof("mapset buffer '{}' loaded (size: {} bytes, writable: {})", name, buf.size, buf.data != nil)
 }
 
-mapset_buffer :: proc(name: string) -> (result: ^Mapset_Buffer, found: bool) {
-    assert(game.active_mapset != nil)
-    index: u32
-    index, found = game.active_mapset.buffer_slot_by_name[name]
-    if found do result = queue.get_ptr(&game.active_mapset.buffers, index)
-    return result, found
-}
-
 map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
     
     sort.quick_sort_proc(osu_map.hitobjects, proc(a, b: Hitobject) -> int {
@@ -811,20 +812,37 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
         hobj.timing_point_index_uninherited = current_timing_point_index_uninherited
         hobj.timing_point_index_inherited = current_timing_point_index_inherited
         
-        if hobj.type == .SLIDER_HEAD {
-            slider_length := osu_map.slider_paths[hobj.slider_path_index].distance_osupx
-            uninherited_beat_length := osu_map.timing_points[current_timing_point_index_uninherited].beat_length
+        // note(isak): slider timing state
+        if hobj.type == .SLIDER {
+            slider := &hobj.slider_state
             
-            hobj.slider_velocity = 1.0
+            slider.distance = osu_map.slider_paths[hobj.slider_path_index].distance_osupx
+            slider.velocity = 1.0
+            
+            uninherited_tp := osu_map.timing_points[current_timing_point_index_uninherited]
+            uninherited_beat_length := uninherited_tp.beat_length
+            
             if current_timing_point_index_uninherited != current_timing_point_index_inherited {
-                inherited_beat_length := osu_map.timing_points[current_timing_point_index_inherited].beat_length
-                hobj.slider_velocity = -1 / (inherited_beat_length / 100)
+                inherited_tp := osu_map.timing_points[current_timing_point_index_inherited]
+                inherited_beat_length := inherited_tp.beat_length
+                
+                slider.velocity = -1 / (inherited_beat_length / 100)
             }
             
-            slider_duration := slider_length / (hobj.slider_velocity * 100 * osu_map.diff_slider_velocity) * uninherited_beat_length
-            hobj.end_time_ms = hobj.start_time_ms + (slider_duration * f64(hobj.slider_repeats))
+            slider.duration_ms = slider.distance / (slider.velocity * 100 * osu_map.diff_slider_velocity) * uninherited_beat_length
+            hobj.end_time_ms = hobj.start_time_ms + (slider.duration_ms * f64(slider.repeat_count))
+            
+            slider.tick_interval_ms = uninherited_tp.beat_length / osu_map.diff_slider_tickrate
+            slider.tick_count = int(slider.duration_ms / slider.tick_interval_ms) * slider.repeat_count
+            
+            if slider.tick_count == 0 {
+                slider.next_expected_judgement_at_ms = hobj.start_time_ms + slider.duration_ms
+            } else {
+                slider.next_expected_judgement_at_ms = hobj.start_time_ms + slider.tick_interval_ms
+            }
         }
         
+        // note(isak): combo colors
         if .NEW_COMBO in hobj.flags {
             if osu_map.num_combo_colors > 0 {
                 combo_color_index = (combo_color_index + 1 + int(hobj.combo_color_skip_offset)) % osu_map.num_combo_colors
@@ -859,7 +877,7 @@ mapset_parse_osu_slider_params :: proc(hobj: ^Hitobject, slider: ^Slider_Path, p
                     slider.nodes[0] = hobj.pos
                 }
             case 1:
-                hobj.slider_repeats, ok = strconv.parse_int(value); assert(ok)
+                hobj.slider_state.repeat_count, ok = strconv.parse_int(value); assert(ok)
             case 2:
                 slider.distance_osupx, ok = strconv.parse_f64(value); assert(ok)
             case 3:

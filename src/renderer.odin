@@ -127,6 +127,10 @@ rect_to_array :: proc(r: Rect) -> [4]f32 {
     return transmute([4]f32)r
 }
 
+rect_at_pos :: proc(pos: vec2, size: vec2) -> Rect {
+    return {pos.x, pos.y, size.x, size.y}
+}
+
 //////////////////////////////////////////////////////
 // note(isak): core
 

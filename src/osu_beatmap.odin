@@ -418,24 +418,53 @@ process_expiring_hitobjects :: proc(expiring_hitobjects: ^sb.Swap_Buffer(int)) {
         hobj := &game.beatmap.hitobjects[hobj_index]
 
         if .EXPIRED in hobj.flags do continue
-
+        
+        expired: bool
         #partial switch hobj.type {
         case .SLIDER:
-            slider_process(hobj, map_time, expiring_hitobjects)
+            expired = slider_process(hobj, map_time)
         case:
-            end_time := hitobject_visible_end_time(hobj)
-            if end_time < map_time {
-                judgement_new(hobj, .MISS, end_time - hobj.end_time_ms)
-                judgement_new_drawable(hobj)
-                hobj.flags &~= {.VISIBLE}
-                hobj.flags |= {.EXPIRED}
-            } else {
-                sb.append_next(expiring_hitobjects, hobj_index)
-            }
+            expired = hitcircle_process(hobj, map_time)
+        }
+        
+        if !expired {
+            sb.append_next(expiring_hitobjects, hobj_index)
         }
     }
     sb.swap(expiring_hitobjects)
 }
+
+hitcircle_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
+    end_time := hitobject_visible_end_time(hobj)
+    if end_time < map_time {
+        judgement_new(hobj, .MISS, end_time - hobj.end_time_ms)
+        judgement_new_drawable(hobj)
+        hobj.flags &~= {.VISIBLE}
+        hobj.flags |= {.EXPIRED}
+        expired = true
+    }
+    return expired
+}   
+    
+slider_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
+    state := &hobj.slider_state
+
+    // note(isak): one-time head miss check once the miss window has passed without a click
+    if !state.head_checked && map_time > hobj.start_time_ms + game.beatmap.timing_windows.miss {
+        state.head_checked = true
+    }
+
+    if map_time >= hobj.start_time_ms {
+        slider_update(hobj, map_time)
+    }
+
+    if map_time > hobj.end_time_ms {
+        slider_expire(hobj)
+        expired = true
+    }
+    return expired
+}
+
 
 // note(isak): returns slider ball position in playfield space at the given map time
 slider_ball_pos_at :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
@@ -503,23 +532,4 @@ slider_expire :: proc(hobj: ^Hitobject) {
     judgement_new_drawable(hobj)
     hobj.flags &~= {.VISIBLE}
     hobj.flags |= {.EXPIRED}
-}
-
-slider_process :: proc(hobj: ^Hitobject, map_time: f64, buf: ^sb.Swap_Buffer(int)) {
-    state := &hobj.slider_state
-
-    // note(isak): one-time head miss check once the miss window has passed without a click
-    if !state.head_checked && map_time > hobj.start_time_ms + game.beatmap.timing_windows.miss {
-        state.head_checked = true
-    }
-
-    if map_time >= hobj.start_time_ms {
-        slider_update(hobj, map_time)
-    }
-
-    if map_time > hobj.end_time_ms {
-        slider_expire(hobj)
-    } else {
-        sb.append_next(buf, hobj.index)
-    }
 }

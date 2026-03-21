@@ -44,15 +44,15 @@ split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> 
     return result
 }
 
-calculate_curve_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, Timing_Point, hobj: ^Hitobject, slider: ^Slider_Path) {
+calculate_curve_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, hobj: ^Hitobject, slider: ^Slider_Path) {
     //time stuff: osu_mapset.odin ~#L825
-    if hobj.type != .SLIDER_HEAD {
+    if hobj.type != .SLIDER {
         return
     }
     //todo(yokes): find which slider and curve is currently active using time_at
     //done for beziers
     //done for arc
-    slider_duration := (hobj.end_time_ms - hobj.start_time_ms) / f64(hobj.slider_repeats)
+    slider_duration := (hobj.end_time_ms - hobj.start_time_ms) / f64(hobj.slider_state.repeat_count)
     current_repeat := int(math.floor_f64((time_at - hobj.start_time_ms) / slider_duration))
     time_ref := time_at - slider_duration * f64(current_repeat)
 
@@ -75,7 +75,7 @@ calculate_curve_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, Tim
             calculate_arc_point_from_time(instance_buf, time_ref, hobj.start_time_ms, hobj.end_time_ms, curve, true)
         }
     } else if slider.type == .LINEAR {
-        //t := (time_at - hobj.start_time_ms) / (hobj.end_time_ms - hobj.start_time_ms)
+        calculate_straight_point_from_time(instance_buf, hobj, time_at, slider)
     }
 }
 
@@ -115,6 +115,22 @@ calculate_arc_point_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64,
     o : vec2 = {math.cos(f32(theta)), math.sin(f32(theta))} * pr.radius
     buffer_push(instance_buf, o)
     return point
+}
+
+calculate_straight_point_from_time :: proc(instance_buf: ^Buffer(vec2), hobj: ^Hitobject, time_at: f64, slider: ^Slider_Path) -> (point: vec2) {
+    duration := hobj.end_time_ms - hobj.start_time_ms
+    elapsed  := clamp(time_at - hobj.start_time_ms, 0, duration)
+
+    // t_passes goes from 0 to slider_repeats over the full duration
+    repeat_count := hobj.slider_state.repeat_count
+    t_passes  := (elapsed / duration) * f64(repeat_count)
+    pass_idx  := min(int(t_passes), repeat_count - 1)
+    pass_frac := t_passes - f64(pass_idx)
+
+    // even passes go forward (0->1), odd passes go backward (1->0)
+    t_on_path := pass_frac if pass_idx % 2 == 0 else 1.0 - pass_frac
+
+    return linalg.lerp(slider.pos, slider.end_pos, vec2{f32(t_on_path), f32(t_on_path)})
 }
 
 base_dist : f64 = 2.5

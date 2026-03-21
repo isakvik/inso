@@ -119,15 +119,14 @@ skin_load :: proc(skin_path: string) -> (result: ^Skin) {
 
 skin_load_elements :: proc(skin: ^Skin) {
     for element in Skin_Element_Type {
+        tex_store := &window.skin_textures[element]
         tex_err: os.Error
+
         for extension in supported_image_extensions {
             element_path := strings.concatenate({Skin_Element_Path[element], "@2x", extension})
-            tex_store := &window.skin_textures[element]
-            tex := skin.elements[element]
-
             tex_store^, tex_err = texture_from_file(element_path)
             if tex_err == os.General_Error.None {
-                tex.is_high_resolution = true
+                skin.elements[element].is_high_resolution = true
                 break
             }
 
@@ -144,6 +143,10 @@ skin_load_elements :: proc(skin: ^Skin) {
         // todo(isak): we handle as much as we handle here, but can supply a default skin like osu here
         // instead of asserting
         assert(tex_err == os.General_Error.None)
+
+        // note(isak): natural display size. @2x textures are double-resolution for the same visual size
+        display_scale: f32 = skin.elements[element].is_high_resolution ? 0.5 : 1.0
+        skin.elements[element].metrics = {0, 0, f32(tex_store.w) * display_scale, f32(tex_store.h) * display_scale}
     }
 }
 

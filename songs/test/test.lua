@@ -56,7 +56,7 @@ function on_init()
     --end
 end
 
-function on_update(time_ms)
+function _on_update(time_ms)
     for i, hobj in ipairs(list) do 
         x, y = hobj:get_pos()
         x = x + math.cos((time_ms*i*0.01) / 1000 + i*0.1)* 10
@@ -67,18 +67,18 @@ function on_update(time_ms)
     end
 end
 
-function on_beat(beat)
+function _on_beat(beat)
     -- every 1/1, index 0 meaning the first given timing section (most useful indexing for constructs like beat % 4)
     trigger_event("saft", beat)
     
-    --if beat % 4 == 0 and s == nil then
-    --    s = Sound.play_loop("soft-sliderslide.wav")
-    --end
-    --
-    --if beat % 4 == 2 and s ~= nil then
-    --    s:stop()
-    --    s = nil
-    --end
+    if beat % 4 == 0 and s == nil then
+        s = Sound.play_loop("soft-sliderslide.wav")
+    end
+    
+    if beat % 4 == 2 and s ~= nil then
+        s:stop()
+        s = nil
+    end
     
 end
 

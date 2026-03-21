@@ -198,6 +198,7 @@ beatmap_reload :: proc(beatmap: ^Beatmap, keep_song_position: bool = false) {
     game.active_map = &game.active_mapset.osu_map
     game.active_notosu_map = &game.active_mapset.notosu_map
     beatmap_on_init(beatmap.map_reference, beatmap)
+    sound_set_speed(&game.beatmap.music, game.time_rate)
     
     if keep_song_position {
         if music_time_before_load >= 0 {
@@ -206,7 +207,6 @@ beatmap_reload :: proc(beatmap: ^Beatmap, keep_song_position: bool = false) {
             game.beatmap.music_time_ms = music_time_before_load
         }
         
-        sound_set_speed(&game.beatmap.music, game.time_rate)
         if !game.paused {
             sound_resume(&game.beatmap.music)
         } 
@@ -408,7 +408,9 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
             end_time_ms = judgement.time + 600
         })
         //--
+        fmt.println("judgement", fmt.enum_value_to_string(judgement.result))
     }
+    
 }
 
 process_expiring_hitobjects :: proc(expiring_hitobjects: ^sb.Swap_Buffer(int)) {
@@ -445,7 +447,7 @@ hitcircle_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
     }
     return expired
 }   
-    
+
 slider_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
     state := &hobj.slider_state
 
@@ -466,7 +468,6 @@ slider_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
 }
 
 
-// note(isak): returns slider ball position in playfield space at the given map time
 slider_ball_pos_at :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
     path := &game.beatmap.slider_paths[hobj.slider_path_index]
 
@@ -474,7 +475,7 @@ slider_ball_pos_at :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
     elapsed  := clamp(map_time - hobj.start_time_ms, 0, duration)
 
     // t_passes goes from 0 to slider_repeats over the full duration
-    repeat_count := hobj.slider_state.repeat_count
+    repeat_count := hobj.slider_state.path_travel_count
     t_passes  := (elapsed / duration) * f64(repeat_count)
     pass_idx  := min(int(t_passes), repeat_count - 1)
     pass_frac := t_passes - f64(pass_idx)
@@ -488,26 +489,33 @@ slider_ball_pos_at :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
 
 SLIDER_FOLLOW_CIRCLE_RADIUS_MULT :: 2.4
 
-// note(isak): update ball tracking and fire tick scorepoints each frame
 slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
     slider := &hobj.slider_state
 
+    // todo(isak):
+    // - tracking must take (valid) key presses into account
+    // - tracking must take into account the 36ms magic ending 
+    // - follow circle/tracking must only activate when ball is hovered over
+    //      OR when ball has travelled less than the follow circle radius and head is clicked
+    // - create tick judgements (and revise the num_ticks_hit or whatever part of judgement)
+    // - spawn judgement drawable at end position (or head if repeated)
+    
     ball_pos      := slider_ball_pos_at(hobj, map_time)
     follow_radius := game.beatmap.circle_radius_osupx * SLIDER_FOLLOW_CIRCLE_RADIUS_MULT
     slider.tracking = point_in_circle(game.input.mouse_pos, ball_pos, follow_radius)
 
-    /*
-    for slider.next_expected_judgement_at_ms <= map_time && slider.next_checkpoint_time_ms < hobj.end_time_ms {
+    slider_time_at := (map_time - hobj.start_time_ms) - f64(slider.hit_repeats_count) * slider.duration_ms
+    
+    if slider_time_at >= slider.duration_ms && slider.hit_repeats_count < (slider.path_travel_count - 1) {
+        slider.hit_repeats_count += 1
         if slider.tracking {
-            judgement_new(hobj, .SLIDER_SMALL_SCOREPOINT, 0)
-            slider.n_checkpoints_hit += 1
+            judgement_new(hobj, .SLIDER_LARGE_SCOREPOINT, 0)
+            slider.hit_judgement_count += 1
         }
-        slider.next_expected_judgement_at_ms += slider.tick_interval_ms
     }
-    */
+    
 }
 
-// note(isak): called when the slider reaches end_time_ms; fires the tail scorepoint and deferred head judgement
 slider_expire :: proc(hobj: ^Hitobject) {
     slider := &hobj.slider_state
 
@@ -517,7 +525,7 @@ slider_expire :: proc(hobj: ^Hitobject) {
     }
 
     all_hit := slider.hit_judgement_count + (1 if slider.head_hit else 0)
-    total   := max(slider.total_judgement_count + 1, 1) // +1 for head
+    total   := max(slider.tick_count + slider.path_travel_count + 1, 1) // include tail
 
     result: Judgement_Type
     ratio := f64(all_hit) / f64(total)

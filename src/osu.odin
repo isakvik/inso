@@ -98,9 +98,10 @@ Slider_State :: struct {
     tick_interval_ms: f64,
     tick_count: int,
     
-    repeat_count, current_repeat_at: int,
+    path_travel_count, hit_repeats_count: int,
     hit_judgement_count, total_judgement_count: int,
     
+    judgements_checked_count: int,
     next_expected_judgement_at_ms: f64
 }
 
@@ -117,6 +118,7 @@ Hitobject :: struct {
     hitsound_flags: byte,
     combo_color_skip_offset: u8, // note(isak): bits 4-6 of osu type byte; how many combo colors to skip on new combo
     combo_color_index: u8,
+    combo_number: u16, // note(isak): 1-based position within the current combo sequence
 
     slider_path_index: int,
     slider_state: Slider_State,
@@ -373,7 +375,9 @@ osu_on_update :: proc(dt: f64) {
                 end_time_ms = map_time + 250
             })
             
-            judgement_new_drawable(&hobj)
+            if hobj.type == .CIRCLE {
+                judgement_new_drawable(&hobj)
+            }
             
             break
         } 

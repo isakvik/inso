@@ -44,10 +44,10 @@ split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> 
     return result
 }
 
-calculate_curve_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, hobj: ^Hitobject, slider: ^Slider_Path) {
+calculate_curve_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, hobj: ^Hitobject, path: ^Slider_Path) -> (pos_at: vec2) {
     //time stuff: osu_mapset.odin ~#L825
     if hobj.type != .SLIDER {
-        return
+        return hobj.pos
     }
     //todo(yokes): find which slider and curve is currently active using time_at
     //done for beziers
@@ -56,39 +56,114 @@ calculate_curve_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, hob
     current_repeat := int(math.floor_f64((time_at - hobj.start_time_ms) / slider_duration))
     time_ref := time_at - slider_duration * f64(current_repeat)
 
-    if slider.type == .BEZIER {
+    if path.type == .BEZIER {
         distance_duration : f64 = 0
-        for curve in slider.curves {
-            _, _, distance := bezier_to_piecewise_linear(instance_buf, slider, curve, slider.distance_osupx)
-            distance_duration += slider_duration * distance / slider.distance_osupx
+        total_distance : f64 = 0
+        for curve in path.curves {
+            distance := calculate_bezier_curve_distance(hobj, path, curve)
+
+            // note(yokes): makes sure the slider position doesn't go beyond the end position
+            if total_distance + distance > path.distance_osupx {
+                distance = path.distance_osupx - distance
+            }
+
+            total_distance += distance
+            distance_duration += slider_duration * distance / path.distance_osupx
+
             if current_repeat % 2 == 0 && hobj.start_time_ms + distance_duration > time_ref {
-                calculate_bezier_point_from_time(instance_buf, time_ref, hobj.start_time_ms, hobj.start_time_ms + distance_duration, curve, false)
+                pos_at = calculate_bezier_point_from_time(time_ref, hobj.start_time_ms, hobj.start_time_ms + distance_duration, curve, false)
             } else if current_repeat % 2 == 1 && hobj.end_time_ms - distance_duration < time_ref {
-                calculate_bezier_point_from_time(instance_buf, time_ref, hobj.start_time_ms, hobj.start_time_ms + distance_duration, curve, true)
+                pos_at = calculate_bezier_point_from_time(time_ref, hobj.start_time_ms, hobj.start_time_ms + distance_duration, curve, true)
             }
         }
-    } else if slider.type == .ARC {
-        curve := slider.curves[0]
+    } else if path.type == .ARC {
+        curve := path.curves[0]
         if current_repeat % 2 == 0 {
-            calculate_arc_point_from_time(instance_buf, time_ref, hobj.start_time_ms, hobj.end_time_ms, curve, false)
+            pos_at = calculate_arc_point_from_time(time_ref, hobj.start_time_ms, hobj.end_time_ms, curve, false)
         } else {
-            calculate_arc_point_from_time(instance_buf, time_ref, hobj.start_time_ms, hobj.end_time_ms, curve, true)
+            pos_at = calculate_arc_point_from_time(time_ref, hobj.start_time_ms, hobj.end_time_ms, curve, true)
         }
-    } else if slider.type == .LINEAR {
-        calculate_straight_point_from_time(instance_buf, hobj, time_at, slider)
+    } else if path.type == .LINEAR {
+        pos_at = calculate_straight_point_from_time(hobj, time_at, path)
     }
+    return pos_at
+}
+
+calculate_bezier_curve_distance :: proc(hobj: ^Hitobject, path: ^Slider_Path, curve: Slider_Curve) -> (distance: f64) {
+
+    // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L86
+    if len(curve) < 2 {
+        return 0
+    }
+
+    // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L91
+    point_count : int = len(curve) - 1
+    degree := min(1, point_count)
+
+    output : queue.Queue(vec2)
+    queue.init(&output, allocator = context.temp_allocator)
+    
+    to_flatten : queue.Queue([]vec2) //todo(yokes): should contain all curves which are not approximated well enough yet
+    temp_points: queue.Queue(vec2)
+    queue.init(&temp_points, allocator = context.temp_allocator)
+    queue.init(&to_flatten, allocator = context.temp_allocator) //todo(yokes): check capacity, default for now
+    queue.append_elems(&to_flatten, b_spline_to_bezier_internal(&temp_points, curve, degree))
+    free_buffers : queue.Queue([]vec2)
+    queue.init(&free_buffers, allocator = context.temp_allocator) //todo(yokes): check capacity, default for now
+
+    // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L102
+
+    subdivision_buffer_1 := make([]vec2, degree + 1, allocator = context.temp_allocator)
+    subdivision_buffer_2 := make([]vec2, degree * 2 + 1, allocator = context.temp_allocator)
+
+    left_child : []vec2 = subdivision_buffer_2
+
+    for to_flatten.len > 0 {
+        parent : []vec2 = queue.pop_back(&to_flatten)
+        
+        // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L119
+        if bezier_is_flat_enough(parent) {
+            bezier_approximate(parent, &output, subdivision_buffer_1, subdivision_buffer_2, degree + 1)
+
+            queue.push(&free_buffers, parent)
+            continue
+        }
+
+        // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L129
+        right_child : []vec2 = free_buffers.len > 0 ? queue.pop_back(&free_buffers) : make([]vec2, degree + 1, context.temp_allocator)
+        bezier_subdivide(parent, left_child, right_child, subdivision_buffer_1, degree + 1)
+
+        for i in 0..<degree + 1 {
+            parent[i] = left_child[i]
+        }
+
+        queue.push(&to_flatten, right_child)
+        queue.push(&to_flatten, parent)
+    }
+
+    distance = calculate_distance_from_piecewise(path, &output, hobj.slider_state.distance)
+    return distance
+}
+
+calculate_distance_from_piecewise :: proc(path: ^Slider_Path, output: ^queue.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
+    for point, i in output.data[:output.len] {
+        if i < int(output.len) - 1 {
+            curr_distance := f64(linalg.vector_length(queue.get(output, i + 1) - queue.get(output, i)))
+            total_distance += curr_distance
+        }
+        
+        path.bounds_min.x, path.bounds_min.y = min(path.bounds_min.x, point.x), min(path.bounds_min.y, point.y)
+        path.bounds_max.x, path.bounds_max.y = max(path.bounds_max.x, point.x), max(path.bounds_max.y, point.y)
+    }
+    return total_distance
 }
 
 // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L878
 // note(yokes): "t" is for time which means we need to calculate the time it takes to get "d" distance beforehand
-calculate_bezier_point_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, time_start: f64, time_end: f64, curve: Slider_Curve, reversed: bool) -> (point: vec2) {
-    //note(yokes): draw sliderball, move sliderball accordingly?
-    //note(yokes): quick test on stable, 1x sv 5/4 slider has 500 distance. i believe i understand how the math works now
-    //note(yokes): if a green line is in the middle of a slider, should it change the slider speed mid-slider? stable nor lazer does this but i believe this would leave more room... nvm not possible atm
-
-    //slider_speed := base_slider_velocity * slider_velocity //base_sv is 1 when making a new map
-    //distance_per_beat := 100 * slider_speed //base speed is 100 per 1/4
-    //not using this right now but i'm pretty sure it's needed because right now this does not take into account that sliders can end before the last coordinate
+calculate_bezier_point_from_time :: proc(time_at: f64, time_start: f64, time_end: f64, curve: Slider_Curve, reversed: bool) -> (point: vec2) {
+    // note(yokes): draw sliderball, move sliderball accordingly?
+    // note(yokes): quick test on stable, 1x sv 5/4 slider has 500 distance. i believe i understand how the math works now
+    // note(yokes): if a green line is in the middle of a slider, should it change the slider speed mid-slider? stable nor lazer does this but i believe this would leave more room... nvm not possible atm
 
     degree := max(1, len(curve) - 1)
     t := (time_at - time_start) / (time_end - time_start)
@@ -100,11 +175,10 @@ calculate_bezier_point_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f
         point.x += f32(binom_coeff) * (curve[i].x)
         point.y += f32(binom_coeff) * (curve[i].y)
     }
-    buffer_push(instance_buf, point)
     return point
 }
 
-calculate_arc_point_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64, time_start: f64, time_end: f64, curve: Slider_Curve, reversed: bool) -> (point: vec2) {
+calculate_arc_point_from_time :: proc(time_at: f64, time_start: f64, time_end: f64, curve: Slider_Curve, reversed: bool) -> (point: vec2) {
     pr : Circular_Arc_Properties = circular_arc_properties_from_triangle(curve)
 
     t := (time_at - time_start) / (time_end - time_start)
@@ -113,11 +187,10 @@ calculate_arc_point_from_time :: proc(instance_buf: ^Buffer(vec2), time_at: f64,
     }
     theta := pr.theta_start + pr.direction * t * pr.theta_range
     o : vec2 = {math.cos(f32(theta)), math.sin(f32(theta))} * pr.radius
-    buffer_push(instance_buf, o)
     return point
 }
 
-calculate_straight_point_from_time :: proc(instance_buf: ^Buffer(vec2), hobj: ^Hitobject, time_at: f64, slider: ^Slider_Path) -> (point: vec2) {
+calculate_straight_point_from_time :: proc(hobj: ^Hitobject, time_at: f64, path: ^Slider_Path) -> (point: vec2) {
     duration := hobj.end_time_ms - hobj.start_time_ms
     elapsed  := clamp(time_at - hobj.start_time_ms, 0, duration)
 
@@ -130,7 +203,7 @@ calculate_straight_point_from_time :: proc(instance_buf: ^Buffer(vec2), hobj: ^H
     // even passes go forward (0->1), odd passes go backward (1->0)
     t_on_path := pass_frac if pass_idx % 2 == 0 else 1.0 - pass_frac
 
-    return linalg.lerp(slider.pos, slider.end_pos, vec2{f32(t_on_path), f32(t_on_path)})
+    return linalg.lerp(path.pos, path.end_pos, vec2{f32(t_on_path), f32(t_on_path)})
 }
 
 base_dist : f64 = 2.5

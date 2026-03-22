@@ -8,6 +8,7 @@ import rb "ring_buffer"
 import "core:log"
 import "core:math/linalg"
 import vmem "core:mem/virtual"
+import "core:strings"
 
 import sdl "vendor:sdl3"
 
@@ -87,24 +88,6 @@ Hitobject_Flag :: enum u32 {
     CLAP,
 }
 
-Slider_State :: struct {
-    head_hit:            bool,    // player clicked head within any window
-    head_checked:        bool,    // miss window for head has passed
-    tracking:            bool,    // cursor currently in follow circle
-    
-    velocity: f64,
-    distance, duration_ms: f64,
-    
-    tick_interval_ms: f64,
-    tick_count: int,
-    
-    path_travel_count, hit_repeats_count: int,
-    hit_judgement_count, total_judgement_count: int,
-    
-    judgements_checked_count: int,
-    next_expected_judgement_at_ms: f64
-}
-
 Hitobject :: struct {
     type: Hitobject_Type,
     flags: Hitobject_Flags,
@@ -125,6 +108,26 @@ Hitobject :: struct {
 
     judgement_index: int,
     gfx_handles: []Drawable_Handle,
+}
+
+Slider_State :: struct {
+    head_hit:            bool,    // player clicked head within any window
+    head_checked:        bool,    // miss window for head has passed
+    tracking:            bool,    // cursor currently in follow circle
+    
+    velocity: f64,
+    distance, duration_ms: f64,
+    
+    tick_interval_ms: f64,
+    tick_count: int,
+    
+    path_travel_count, hit_repeats_count: int,
+    hit_judgement_count, total_judgement_count: int,
+    
+    judgements_checked_count: int,
+    next_expected_judgement_at_ms: f64,
+
+    slide_sound: slotmap.Handle,
 }
 
 hitobject_pos :: proc(hobj: ^Hitobject) -> vec2 {
@@ -419,8 +422,14 @@ osu_on_update :: proc(dt: f64) {
 
                 ball_pos := slider_ball_pos_at(&hobj, map_time)
                 ball_rect := rect_at_pos(ball_pos, {cs*2, cs*2})
-                
+
                 r_draw_layout_rect(&window.renderer.quad_geometry, ball_rect, .CENTER, combo_color, skin_texture(.HITCIRCLEOVERLAY))
+
+                if hobj.slider_state.tracking {
+                    follow_size := cs * 2 * SLIDER_FOLLOW_CIRCLE_RADIUS_MULT
+                    follow_rect := rect_at_pos(ball_pos, {follow_size, follow_size})
+                    r_draw_layout_rect(&window.renderer.quad_geometry, follow_rect, .CENTER, color_white, skin_texture(.SLIDER_FOLLOW_CIRCLE))
+                }
             }
         }
     }
@@ -640,7 +649,7 @@ game_play_sound :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0) -> (r
     sound: Sound
     ok: bool
     if loop {
-        sound, ok = sound_loop_stream_init(game.active_mapset.folder_path, s.filepath)
+        sound, ok = sound_stream_init_from_memory(s.file_data, loop = true)
     } else {
         sound, ok = sound_channel_init(s)
     }

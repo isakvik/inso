@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:container/queue"
 import "core:math"
 import "core:math/linalg"
+import "core:slice"
 
 split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> (result: []Slider_Curve) {
     

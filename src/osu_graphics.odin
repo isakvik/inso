@@ -14,14 +14,16 @@ import "slotmap"
 
 // note(isak): texture id lookup table for skin elements
 skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
-    .HIT_CIRCLE = .HITCIRCLE,
+    .HIT_CIRCLE         = .HITCIRCLE,
     .HIT_CIRCLE_OVERLAY = .HITCIRCLEOVERLAY,
-    .APPROACH_CIRCLE = .APPROACHCIRCLE,
-    .COMBO_NUMBER = .COMBO_1,
-    
-    .JUDGEMENT_MISS = .HIT0,
-    .JUDGEMENT_OK = .HIT50,
-    .JUDGEMENT_GOOD = .HIT100,
+    .APPROACH_CIRCLE    = .APPROACHCIRCLE,
+    .COMBO_NUMBER       = .COMBO_1,
+
+    .SLIDER_FOLLOW_CIRCLE = .SLIDER_FOLLOW_CIRCLE,
+
+    .JUDGEMENT_MISS      = .HIT0,
+    .JUDGEMENT_OK        = .HIT50,
+    .JUDGEMENT_GOOD      = .HIT100,
     .JUDGEMENT_MARVELOUS = .HIT300,
 }
 

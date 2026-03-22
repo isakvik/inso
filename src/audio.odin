@@ -3,6 +3,7 @@ package notosu
 import "core:strings"
 import "core:log"
 import "core:math"
+import os "core:os/os2"
 
 import "bass"
 
@@ -52,8 +53,9 @@ Sound_Channel :: struct {
 // note(isak): sample held in memory with a fixed channel pool; use for fire-and-forget
 // short sounds that may overlap (hitsounds)
 Sample :: struct {
-    handle:   bass.HSAMPLE,
-    filepath: string, // note(isak): filename only (no dir); join with mapset.folder_path for full path
+    handle:    bass.HSAMPLE,
+    filepath:  string, // note(isak): filename only (no dir); join with mapset.folder_path for full path
+    file_data: []byte, // note(isak): raw file bytes kept alive for in-memory stream creation
 }
 
 //////////////////////////////////////////////////////
@@ -130,14 +132,16 @@ audio_set_volume :: proc(volume: f32) {
 //////////////////////////////////////////////////////
 // note(isak): sound api
 
-sound_stream_init :: proc(path: string, prescan: bool = false) -> (result: Sound_Stream, ok: bool) {
+sound_stream_init :: proc(path: string, prescan: bool = false, loop: bool = false) -> (result: Sound_Stream, ok: bool) {
     // bass.UNICODE for wstring
-    init_flags: u32 = bass.STREAM_DECODE | bass.SAMPLE_FLOAT | (prescan ? bass.STREAM_PRESCAN : 0)
+    init_flags: u32 = bass.STREAM_DECODE | bass.SAMPLE_FLOAT
+    init_flags |= prescan ? bass.STREAM_PRESCAN : 0
+    init_flags |= loop ? bass.SAMPLE_LOOP : 0
     
     path_cstr := strings.clone_to_cstring(path, context.temp_allocator)
     result.handle = bass.StreamCreateFile(0, rawptr(path_cstr), 0, 0, init_flags)
     if result.handle == 0 {
-        log.error("BASS stream create error:", bass.ErrorGetCode())
+        log.error("BASS stream create error:", bass.ErrorGetCode(), "::", path)
         return result, false
     }
     
@@ -149,6 +153,7 @@ sound_stream_init :: proc(path: string, prescan: bool = false) -> (result: Sound
     
     result.flags = { .STREAM, .TEMPO }
     result.flags |= prescan ? {.PRESCAN} : {}
+    result.flags |= loop ? {.LOOP} : {}
     
     return result, true
 }
@@ -168,9 +173,8 @@ sound_channel_init :: proc(s: ^Sample, loop: bool = false) -> (result: Sound_Cha
 // note(isak): creates a decode stream suitable for adding to the WASAPI mixer.
 // use for managed looping sounds where a sample channel (SampleGetChannel) can't be
 // used as a decode channel reliably.
-sound_loop_stream_init :: proc(folder_path, filename: string) -> (result: Sound_Stream, ok: bool) {
-    full_path := strings.concatenate({folder_path, filename}, context.temp_allocator)
-    path_cstr := strings.clone_to_cstring(full_path, context.temp_allocator)
+sound_loop_stream_init :: proc(path: string) -> (result: Sound_Stream, ok: bool) {
+    path_cstr := strings.clone_to_cstring(path, context.temp_allocator)
     result.handle = bass.StreamCreateFile(0, rawptr(path_cstr), 0, 0,
         bass.STREAM_DECODE | bass.SAMPLE_FLOAT | bass.SAMPLE_LOOP)
     if result.handle == 0 {
@@ -178,6 +182,19 @@ sound_loop_stream_init :: proc(folder_path, filename: string) -> (result: Sound_
         return result, false
     }
     result.flags = {.STREAM, .LOOP}
+    return result, true
+}
+
+sound_stream_init_from_memory :: proc(data: []byte, loop: bool = false) -> (result: Sound_Stream, ok: bool) {
+    flags: u32 = bass.STREAM_DECODE | bass.SAMPLE_FLOAT
+    flags |= loop ? bass.SAMPLE_LOOP : 0
+    result.handle = bass.StreamCreateFile(bass.FILE_MEM, raw_data(data), 0, u64(len(data)), flags)
+    if result.handle == 0 {
+        log.error("BASS stream from memory error:", bass.ErrorGetCode())
+        return result, false
+    }
+    result.flags = {.STREAM}
+    if loop do result.flags |= {.LOOP}
     return result, true
 }
 
@@ -363,13 +380,27 @@ _sound_get_channel_handle :: proc(sound: ^Sound) -> (result: Sound_Handle) {
 // note(isak): sample api
 
 sample_load_file :: proc(path: string, max_simultaneous: int = 8) -> (result: Sample, ok: bool) {
+    result.filepath = path
+
+    file_data, file_err := os.read_entire_file(path, context.allocator)
+    if file_err != nil {
+        log.error("sample_load_file: could not read file:", path, file_err)
+        return result, false
+    }
+    result.file_data = file_data
+
     path_cstr := strings.clone_to_cstring(path, context.temp_allocator)
     
     // note(isak): SAMPLE_OVER_POS drops the oldest instance when the pool is exhausted
     result.handle = bass.SampleLoad(0, rawptr(path_cstr), 0, 0, u32(max_simultaneous),
         bass.SAMPLE_FLOAT | bass.SAMPLE_OVER_POS)
     if result.handle == 0 {
-        log.error("BASS sample load error:", bass.ErrorGetCode())
+        err := bass.ErrorGetCode()        
+        if err == bass.ERROR_EMPTY {
+            log.warn("BASS sample load warning: no samples in file", path)
+        } else {
+            log.error("BASS sample load error:", bass.ErrorGetCode(), "::", path)
+        }
         return result, false
     }
     return result, true

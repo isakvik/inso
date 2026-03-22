@@ -1,5 +1,6 @@
 package notosu
 
+import "core:log"
 import "core:mem/virtual"
 import os "core:os/os2"
 import "core:strings"
@@ -27,6 +28,8 @@ Skin_Element_Type :: enum u32 {
     COMBO_7,
     COMBO_8,
     COMBO_9,
+
+    SLIDER_FOLLOW_CIRCLE,
 }
 
 Skin_Sample_Set :: enum {
@@ -74,6 +77,8 @@ Skin_Element_Path := #partial [Skin_Element_Type]string {
     .COMBO_7 = "default-7",
     .COMBO_8 = "default-8",
     .COMBO_9 = "default-9",
+
+    .SLIDER_FOLLOW_CIRCLE = "sliderfollowcircle",
 }
 
 skin_sample_set_name := [Skin_Sample_Set]string {
@@ -159,7 +164,8 @@ skin_load_hitsounds :: proc(skin: ^Skin) {
             }, context.temp_allocator)
 
             for extension in supported_audio_extensions {
-                path := strings.concatenate({stem, extension}, context.temp_allocator)
+                // note(isak): path is persisted
+                path := strings.concatenate({stem, extension}, context.allocator)
                 if !os.exists(path) {
                     continue
                 }

@@ -60,17 +60,24 @@ calculate_curve_from_time :: proc(time_at: f64, hobj: ^Hitobject, path: ^Slider_
 
     if path.type == .BEZIER {
         distance_duration : f64 = 0
-        total_distance : f64 = 0
+        distance : f64 = 0
+        // note(yokes): i believe total distance resets every frame, so it doesn't actually check future curves
+        distance_to_travel : f64 = path.distance_osupx
 
         for curve in path.curves {
-            distance := calculate_bezier_curve_distance(hobj, path, curve)
-
-            // note(yokes): makes sure the slider position doesn't go beyond the end position
-            if total_distance + distance > path.distance_osupx {
-                distance = 2 * path.distance_osupx - distance
+            if len(curve) == 2 {
+                //todo(yokes): make this function work, using path is limited as path.end_pos can't be used
+                distance = calculate_distance_of_straight_bezier(hobj, path, curve[0], curve[1], distance_to_travel)
+            } else {
+                distance = calculate_bezier_curve_distance(hobj, path, curve)
             }
 
-            total_distance += distance
+            // note(yokes): makes sure the slider position doesn't go beyond the end position
+            if distance_to_travel - distance < 0 {
+                distance_to_travel = path.distance_osupx
+            }
+
+            distance_to_travel -= distance
             distance_duration += slider_duration * distance / path.distance_osupx
 
             if current_repeat % 2 == 0 && hobj.start_time_ms + distance_duration > time_ref {
@@ -215,6 +222,44 @@ calculate_straight_point_from_time :: proc(hobj: ^Hitobject, time_at: f64, path:
     t_on_path := pass_frac if pass_idx % 2 == 0 else 1.0 - pass_frac
 
     return linalg.lerp(path.pos, path.end_pos, vec2{f32(t_on_path), f32(t_on_path)})
+}
+
+calculate_distance_of_straight_bezier :: proc(
+    hobj: ^Hitobject, path: ^Slider_Path, start_pos: vec2, end_pos: vec2, curve_distance: f64
+) -> f64 {
+    remaining_distance := curve_distance
+    curr_distance : f64 = 0
+    xy_vector : vec2 = end_pos - start_pos
+    
+    iterations := linalg.length(xy_vector) / f32(base_dist)
+    xy_step := xy_vector / iterations
+    last_point_added := start_pos
+
+    for i in 0..<iterations {
+        curr_distance += base_dist
+        last_point_added = start_pos + i * xy_step
+        
+        if (curr_distance + base_dist) > remaining_distance {
+            remaining_distance = remaining_distance - f64(curr_distance)
+            iterations_remaining := remaining_distance / base_dist
+            last_point_added += xy_step * f32(iterations_remaining)
+
+            break
+        }
+    }
+    
+    pts := [?]vec2{start_pos, last_point_added}
+    for point in pts {
+        path.bounds_min.x, path.bounds_min.y = min(path.bounds_min.x, point.x), min(path.bounds_min.y, point.y)
+        path.bounds_max.x, path.bounds_max.y = max(path.bounds_max.x, point.x), max(path.bounds_max.y, point.y)
+    }
+
+    travelled_distance := math.pow(math.pow(end_pos.y - start_pos.y, 2) + math.pow(end_pos.x - start_pos.x, 2), 0.5)
+    remaining_distance = curve_distance - f64(travelled_distance)
+    if remaining_distance < 0.01 {
+        return 0
+    }
+    return f64(travelled_distance)
 }
 
 base_dist : f64 = 2.5

@@ -66,9 +66,10 @@ calculate_curve_from_time :: proc(time_at: f64, hobj: ^Hitobject, path: ^Slider_
 
         for curve in path.curves {
             if len(curve) == 2 {
-                //todo(yokes): make this function work, using path is limited as path.end_pos can't be used
+                // note(yokes): works? i think it's calculate_bezier_point_from_time that is failing
                 distance = calculate_distance_of_straight_bezier(hobj, path, curve[0], curve[1], distance_to_travel)
             } else {
+                //todo(yokes): i didn't take into account if the distance calculated is bigger than path.distance_osupx
                 distance = calculate_bezier_curve_distance(hobj, path, curve)
             }
 
@@ -80,6 +81,7 @@ calculate_curve_from_time :: proc(time_at: f64, hobj: ^Hitobject, path: ^Slider_
             distance_to_travel -= distance
             distance_duration += slider_duration * distance / path.distance_osupx
 
+            // note(yokes): don't think this is wrong either
             if current_repeat % 2 == 0 && hobj.start_time_ms + distance_duration > time_ref {
                 pos_at = calculate_bezier_point_from_time(time_ref, hobj.start_time_ms, hobj.start_time_ms + distance_duration, curve, false)
                 break
@@ -254,7 +256,7 @@ calculate_distance_of_straight_bezier :: proc(
         path.bounds_max.x, path.bounds_max.y = max(path.bounds_max.x, point.x), max(path.bounds_max.y, point.y)
     }
 
-    travelled_distance := math.pow(math.pow(end_pos.y - start_pos.y, 2) + math.pow(end_pos.x - start_pos.x, 2), 0.5)
+    travelled_distance := math.pow(math.pow(last_point_added.y - start_pos.y, 2) + math.pow(last_point_added.x - start_pos.x, 2), 0.5)
     remaining_distance = curve_distance - f64(travelled_distance)
     if remaining_distance < 0.01 {
         return 0

@@ -317,13 +317,13 @@ main :: proc() {
             
             cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 80, 80 }
             r_draw_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture(.CURSOR),
-                f32(time_s_since_beginning_of_program()*20))
+                f32(time_s_since_beginning_of_program()))
             
             r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
             
             pf_cur_rect: Rect = { game.input.mouse_pos.x, game.input.mouse_pos.y, 20, 20 }
             r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, builtin_texture(.WHITE),
-                f32(time_s_since_beginning_of_program()*20))
+                f32(time_s_since_beginning_of_program()))
             r_draw_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
         }
         

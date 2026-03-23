@@ -51,6 +51,9 @@ game: struct {
         mouse_pos: vec2,
     },
 
+    // note(isak): managed sounds to be used with the game_sound_* api. we create BASS streams from samples, and then
+    // BASS handles the rest - not quite sure if we can further reuse sound data instead of creating multiple BASS handles,
+    // but i think it's fine.
     sounds: slotmap.Slotmap(Sound),
 }
 
@@ -58,6 +61,7 @@ game: struct {
 @(rodata) null_drawable := Drawable{}
 @(rodata) null_element := Element{}
 @(rodata) null_judgement := Judgement{}
+@(rodata) null_sound := Sound{}
 
 // note(isak): core types
 
@@ -80,6 +84,7 @@ Hitobject_Type :: enum u32 {
 Hitobject_Flags :: distinct bit_set[Hitobject_Flag; u32]
 Hitobject_Flag :: enum u32 {
     VISIBLE,
+    HIT,
     EXPIRED,
     
     NEW_COMBO,
@@ -193,8 +198,13 @@ Slider_Path :: struct {
     curves: []Slider_Curve, // note(isak): slice into mapset arena
     
     bounds_min, bounds_max: vec2,
-    
+
     instance_count, first_instance_at: i32, // note(isak): this could be a slice, but data reads are probs unnecessary
+
+    // note(isak): angles at the two endpoints, in radians (0 = pointing right).
+    // head_angle_rad: direction from head toward the path interior (first -> second instance)
+    // tail_angle_rad: direction of travel arriving at tail (second-to-last -> last instance)
+    head_angle_rad, end_angle_rad: f32,
 }
 
 Game_Mode :: enum {
@@ -281,6 +291,7 @@ osu_on_init :: proc() {
     game.time_rate = 1.0
     game.mode = .PLAY
     
+    game_sounds_clear()
     ui_init_timeline(&game.ui_timeline)
     
     game.input.k1_key = sdl.Scancode.Z
@@ -338,7 +349,7 @@ osu_on_update :: proc(dt: f64) {
     // todo(isak): valid key presses system needs testing
     if valid_controller_press() {
         for &hobj, i in hobj_it {
-            if .EXPIRED in hobj.flags {
+            if .EXPIRED in hobj.flags || .HIT in hobj.flags {
                 continue
             }
             hobj_pos := hitobject_pos(&hobj)
@@ -382,6 +393,7 @@ osu_on_update :: proc(dt: f64) {
                 judgement_new_drawable(&hobj)
             }
             
+            hobj.flags |= {.HIT}
             break
         } 
     }
@@ -406,30 +418,69 @@ osu_on_update :: proc(dt: f64) {
             continue
         }
         if hobj.type == .SLIDER {
-            slider := &game.beatmap.slider_paths[hobj.slider_path_index]
-            render_slider(&window.renderer, &hobj, slider)
+            slider := &hobj.slider_state
+            path := &game.beatmap.slider_paths[hobj.slider_path_index]
+            render_slider_path(&window.renderer, &hobj, path)
             
             r_push_transform(game.playfield_transform)
             
-            cs := game.beatmap.circle_radius_osupx
-            sliderend_rect := Rect{ slider.end_pos.x - cs, slider.end_pos.y - cs, cs * 2, cs * 2 }
-            r_draw_rect(&window.renderer.quad_geometry, sliderend_rect, with_alpha(color_white, 0.2), skin_texture(.HITCIRCLEOVERLAY))
+            color_array := &game.active_map.combo_colors
+            combo_color := game.active_map.num_combo_colors > 0 ? color_array[hobj.combo_color_index] : color_purple
             
-            // note(isak) slider ball
+            cs := game.beatmap.circle_radius_osupx
+            element_scale := (cs*2) / (game.active_skin.elements[.HITCIRCLE].metrics)
+            
+            // note(isak): slider end circles
+            has_sliderend_at_end := slider.path_travel_count % 2 == 1 || slider.hit_repeats_count < slider.path_travel_count - 1
+            if has_sliderend_at_end && slider_snake_factor(&hobj) >= 1 {
+                sliderend_rect := rect_at_pos(path.end_pos, {cs * 2, cs * 2})
+                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_rect, .CENTER, combo_color, 
+                    skin_texture(.SLIDER_END))
+                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_rect, .CENTER, color_white, 
+                    skin_texture(.SLIDER_END_OVERLAY))
+            }
+            
+            has_sliderend_at_head := slider.path_travel_count > 1 && 
+                (slider.path_travel_count % 2 == 0 || slider.hit_repeats_count < slider.path_travel_count - 1)
+            if has_sliderend_at_head && hobj.start_time_ms <= map_time {
+                sliderend_head_rect := rect_at_pos(path.pos, {cs * 2, cs * 2})
+                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_head_rect, .CENTER, combo_color, 
+                    skin_texture(.SLIDER_END))
+                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_head_rect, .CENTER, color_white, 
+                    skin_texture(.SLIDER_END_OVERLAY))
+            }
+            
+            // note(isak): slider repeat arrows
+            has_repeat_at_end := slider.path_travel_count > 1 && slider.hit_repeats_count < slider.path_travel_count - 1 &&
+                (slider.path_travel_count % 2 == 0 || slider.hit_repeats_count < slider.path_travel_count - 2)
+            if has_repeat_at_end && slider_snake_factor(&hobj) >= 1 {
+                repeat_size := element_scale * game.active_skin.elements[.SLIDER_REPEAT].metrics
+                sliderend_repeat_rect := rect_at_pos(path.end_pos, repeat_size)
+                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_repeat_rect, .CENTER, color_white, 
+                    skin_texture(.SLIDER_REPEAT), angle = path.end_angle_rad)
+            }
+            
+            has_repeat_at_head := slider.path_travel_count > 2 && slider.hit_repeats_count < slider.path_travel_count - 1 &&
+                (slider.path_travel_count % 2 == 1 || slider.hit_repeats_count < slider.path_travel_count - 2)
+            if has_repeat_at_head && hobj.start_time_ms <= map_time {
+                repeat_size := element_scale * game.active_skin.elements[.SLIDER_REPEAT].metrics
+                sliderend_repeat_rect := rect_at_pos(path.pos, repeat_size)
+                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_repeat_rect, .CENTER, color_white, 
+                    skin_texture(.SLIDER_REPEAT), angle = path.head_angle_rad)
+            }
+            
+            // note(isak): slider tracking graphics
             if hobj.start_time_ms <= map_time && map_time < hobj.end_time_ms {
-                color_array := &game.active_map.combo_colors
-                combo_color := game.active_map.num_combo_colors > 0 ? color_array[hobj.combo_color_index] : color_purple
-
                 ball_pos := slider_ball_pos_at(&hobj, map_time)
-                ball_rect := rect_at_pos(ball_pos, {cs*2, cs*2})
-
-                r_draw_layout_rect(&window.renderer.quad_geometry, ball_rect, .CENTER, combo_color, skin_texture(.HITCIRCLEOVERLAY))
-
+                ball_rect := rect_at_pos(ball_pos, element_scale * game.active_skin.elements[.SLIDER_BALL].metrics)
+                
                 if hobj.slider_state.tracking {
-                    follow_size := cs * 2 * SLIDER_FOLLOW_CIRCLE_RADIUS_MULT
-                    follow_rect := rect_at_pos(ball_pos, {follow_size, follow_size})
+                    follow_rect := rect_at_pos(ball_pos, element_scale * SLIDER_FOLLOW_CIRCLE_RADIUS_MULT)
                     r_draw_layout_rect(&window.renderer.quad_geometry, follow_rect, .CENTER, color_white, skin_texture(.SLIDER_FOLLOW_CIRCLE))
                 }
+                
+                r_draw_layout_rect(&window.renderer.quad_geometry, ball_rect, .CENTER, combo_color, skin_texture(.SLIDER_BALL),
+                    angle = 0) // todo(isak): slider ball angle needs to be mathed out...
             }
         }
     }
@@ -522,9 +573,7 @@ hitobject_on_click :: proc(hobj: ^Hitobject) -> (result: Judgement_Type) {
     
     if result != .NONE {
         if hobj.type == .SLIDER {
-            // note(isak): slider head click is recorded; final judgement is deferred to slider_on_expire
-            hobj.slider_state.head_hit = true
-            hobj.slider_state.head_checked = true
+            slider_on_click(hobj)
         } else {
             judgement_new(hobj, result, time_error_ms)
             hobj.flags |= {.EXPIRED}
@@ -645,7 +694,10 @@ playfield_to_screenspace_transform :: proc() -> mat3 {
 }
 
 
-game_play_sound :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0) -> (result: slotmap.Handle) {
+//////////////////////////////////////////////////////
+// note(isak): managed game sound API
+
+game_sound_play :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0) -> (result: slotmap.Handle) {
     sound: Sound
     ok: bool
     if loop {
@@ -658,21 +710,33 @@ game_play_sound :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0) -> (r
     handle := slotmap.insert(&game.sounds, sound)
     snd := slotmap.get(&game.sounds, handle) or_else {}
     sound_play(snd, loop = loop, volume = volume)
+    log.info("playing", handle.generation, handle.index)
     return handle
 }
 
-game_stop_sound :: proc(handle: slotmap.Handle) {
+game_sound_stop :: proc(handle: slotmap.Handle) {
     sound, ok := slotmap.get(&game.sounds, handle)
-    if !ok do return
-    sound_destroy(sound)
-    slotmap.remove(&game.sounds, handle)
+    if ok {
+        sound_destroy(sound)
+        slotmap.remove(&game.sounds, handle)
+    }
 }
 
-game_clear_sounds :: proc() {
+game_sound_is_playing :: proc(handle: slotmap.Handle) -> (result: bool) {
+    sound, ok := slotmap.get(&game.sounds, handle)
+    if ok {
+        result = sound_is_playing(sound)
+    }
+    return result
+}
+
+game_sounds_clear :: proc() {
     for &s in game.sounds.values {
         sound_destroy(&s)
     }
-    slotmap.clear(&game.sounds)
+    slotmap.destroy(&game.sounds)
+    slotmap.init(&game.sounds, allocator = memory.allocators[.SOUND], capacity = 128)
+    null_sound_handle := slotmap.insert(&game.sounds, null_sound)
 }
 
 //////////////////////////////////////////////////////

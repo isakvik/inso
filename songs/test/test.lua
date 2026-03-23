@@ -4,6 +4,8 @@ local rand = load_file("rand.lua")
 -- missing thoughts (drawable):
 -- drawable layer: should be required argument, probably
 
+-- expose builtin elements and animations through the api
+
 -- needs easy way to refer to map settings and their consequential results 
 --   ar in millis, cs in osupx
 --   convert slider to table of positions
@@ -18,9 +20,12 @@ local rand = load_file("rand.lua")
 -- Beatmap.set_time_rate(1.5)
 
 
+-- things i shouldn't forget:
 -- custom events (observer)
 -- trigger_event("spellcard")
 -- register_event("spellcard", function () end )
+--
+-- buffer system (you can declare buffers in the .notosu and just write stuff here)
 
 function on_init()
     a = Animation.new()
@@ -46,24 +51,24 @@ function on_init()
     -- todo(isak) @beta if there is no hitobject at the ms of the first argument, 0 is returned...
     list = Hitobject.get_in_range_ms(0, 425000)
     
-    --table = {}
-    --for i, hobj in ipairs(list) do 
-    --    --hobj:hide()
-    --    t = hobj:get_start_time()
-    --    table[i] = dd:clone()
-    --        :set_pos(hobj:get_pos())
-    --        :set_time(t-1200, t)
-    --end
+    table = {}
+    for i, hobj in ipairs(list) do 
+        --hobj:hide()
+        t = hobj:get_start_time()
+        table[i] = dd:clone()
+            :set_pos(hobj:get_pos())
+            :set_time(t-1200, t)
+    end
 end
 
-function _on_update(time_ms)
+function on_update(time_ms)
     for i, hobj in ipairs(list) do 
         x, y = hobj:get_pos()
         x = x + math.cos((time_ms*i*0.01) / 1000 + i*0.1)* 10
         y = y + math.sin((time_ms*i*0.01) / 1000 + i*0.1)* 10
         
         hobj:set_pos(x,y) -- todo(isak) @beta broken on sliders cuz bounding box doesnt move
-        --table[i]:set_pos(x,y)
+        table[i]:set_pos(x,y)
     end
 end
 

@@ -1199,7 +1199,7 @@ luaapi_sound_play_loop :: proc "c" (L: ^lua.State) -> i32 {
         log.error("User error - sound not found:", name)
         return 0
     }
-    handle := game_play_sound(sample, loop = true, volume = volume)
+    handle := game_sound_play(sample, loop = true, volume = volume)
     lua_create_userdata(L, handle, lua_classes[.SOUND].name)
     return 1
 }
@@ -1208,7 +1208,7 @@ luaapi_sound_play_loop :: proc "c" (L: ^lua.State) -> i32 {
 luaapi_sound_stop :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     handle := cast(^slotmap.Handle)lua.L_checkudata(L, 1, lua_classes[.SOUND].name)
-    game_stop_sound(handle^)
+    game_sound_stop(handle^)
     handle^ = {}
     return 0
 }
@@ -1216,7 +1216,7 @@ luaapi_sound_stop :: proc "c" (L: ^lua.State) -> i32 {
 luaapi_sound_gc :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     handle := cast(^slotmap.Handle)lua.L_checkudata(L, 1, lua_classes[.SOUND].name)
-    game_stop_sound(handle^)
+    game_sound_stop(handle^)
     return 0
 }
 

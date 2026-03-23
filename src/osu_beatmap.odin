@@ -8,6 +8,7 @@ import rb "ring_buffer"
 
 import "core:container/queue"
 import "core:fmt"
+import "core:math"
 import "core:log"
 import "core:strings"
 
@@ -62,7 +63,7 @@ Beatmap :: struct {
 }
 
 beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
-    game_clear_sounds()
+    game_sounds_clear()
 
     beatmap^ = { map_reference = map_reference }
     beatmap_load(beatmap)
@@ -409,7 +410,7 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
             anchor = .CENTER,
             color = color_white,
             
-            angle_vel = 360.0,
+            angle_vel = 2*math.PI,
             
             start_time_ms = judgement.time,
             end_time_ms = judgement.time + 600
@@ -455,11 +456,23 @@ hitcircle_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
     return expired
 }   
 
+
+//////////////////////////////////////////////////////
+// note(isak): slider logic core
+
+slider_snake_factor :: proc(hobj: ^Hitobject) -> f64 {
+    snake_duration_ms := game.beatmap.preempt_ms * (1.0/3.0)
+    time_into_preempt  := beatmap_music_time_ms(&game.beatmap) - hobj.start_time_ms + game.beatmap.preempt_ms
+    return clamp(time_into_preempt / snake_duration_ms, 0, 1)
+}
+
+
 slider_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
     state := &hobj.slider_state
 
     // note(isak): one-time head miss check once the miss window has passed without a click
-    if !state.head_checked && map_time > hobj.start_time_ms + game.beatmap.timing_windows.miss {
+    if .HIT in hobj.flags ||
+        !state.head_checked && map_time > hobj.start_time_ms + game.beatmap.timing_windows.miss {
         state.head_checked = true
     }
 
@@ -472,6 +485,20 @@ slider_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
         expired = true
     }
     return expired
+}
+
+// note(isak): slider head click is recorded, final judgement is deferred to slider_on_expire
+slider_on_click :: proc(hobj: ^Hitobject) {
+    slider := &hobj.slider_state
+    slider.head_hit = true
+    slider.head_checked = true
+    
+    timing_point := &game.active_map.timing_points[game.beatmap.current_timing_point_index_inherited]
+    sample_set   := Skin_Sample_Set(timing_point.sample_set)
+    if slider.slide_sound == {} {
+        slider.slide_sound = 
+            game_sound_play(&game.active_skin.hitsounds[sample_set][.SLIDERSLIDE], loop = true, volume = 0.5)
+    }
 }
 
 
@@ -500,10 +527,10 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
     slider := &hobj.slider_state
 
     // todo(isak):
-    // - tracking must take (valid) key presses into account
+    // - @beta tracking must take (valid) key presses into account
+    // - @beta draw slider ticks and repeats
     // - tracking must take into account the 36ms magic ending 
     // - create tick judgements (and revise the num_ticks_hit or whatever part of judgement)
-    // - draw slider ticks and repeats
     
     ball_pos      := slider_ball_pos_at(hobj, map_time)
     follow_radius := game.beatmap.circle_radius_osupx * SLIDER_FOLLOW_CIRCLE_RADIUS_MULT
@@ -521,11 +548,12 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
     timing_point := &game.active_map.timing_points[game.beatmap.current_timing_point_index_inherited]
     sample_set   := Skin_Sample_Set(timing_point.sample_set)
 
-    if slider.tracking && !was_tracking {
+    if slider.head_checked && slider.slide_sound == {} && slider.tracking && !was_tracking {
+        // todo(isak): hitsound volume!! sliderwhistle!!
         slider.slide_sound = 
-            game_play_sound(&game.active_skin.hitsounds[sample_set][.SLIDERSLIDE], loop = true, volume = 0.5)
+            game_sound_play(&game.active_skin.hitsounds[sample_set][.SLIDERSLIDE], loop = true, volume = 0.5)
     } else if !slider.tracking && was_tracking {
-        game_stop_sound(slider.slide_sound)
+        game_sound_stop(slider.slide_sound)
         slider.slide_sound = {}
     }
 
@@ -535,11 +563,13 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
         if slider.tracking {
             judgement_new(hobj, .SLIDER_LARGE_SCOREPOINT, 0)
             slider.hit_judgement_count += 1
+            // todo(isak): hitsound volume!! repeat hitsounds need to be parsed!!!
             sample_play(&game.active_skin.hitsounds[sample_set][.HITNORMAL])
         }
     }
 
     // this tick stuff is broken
+    /*
     for slider.next_expected_judgement_at_ms <= map_time && slider.next_expected_judgement_at_ms < hobj.end_time_ms {
         if slider.tracking {
             judgement_new(hobj, .SLIDER_SMALL_SCOREPOINT, 0)
@@ -548,19 +578,18 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
         }
         slider.next_expected_judgement_at_ms += slider.tick_interval_ms
     }
+    */
 }
 
 slider_expire :: proc(hobj: ^Hitobject) {
-    
     slider := &hobj.slider_state
-    log.info("slider expired", slider.slide_sound.generation, slider.slide_sound.index)
 
     if slider.tracking {
         judgement_new(hobj, .SLIDER_LARGE_SCOREPOINT, 0)
         slider.hit_judgement_count += 1
     }
 
-    game_stop_sound(slider.slide_sound)
+    game_sound_stop(slider.slide_sound)
     slider.slide_sound = {}
 
     all_hit := slider.hit_judgement_count + (1 if slider.head_hit else 0)

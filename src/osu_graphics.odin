@@ -19,7 +19,12 @@ skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
     .APPROACH_CIRCLE    = .APPROACHCIRCLE,
     .COMBO_NUMBER       = .COMBO_1,
 
+    .SLIDER_BALL          = .SLIDER_BALL,
     .SLIDER_FOLLOW_CIRCLE = .SLIDER_FOLLOW_CIRCLE,
+    .SLIDER_REPEAT        = .SLIDER_REPEAT,
+    .SLIDER_TICK          = .SLIDER_TICK,
+    .SLIDER_END           = .SLIDER_END,
+    .SLIDER_END_OVERLAY   = .SLIDER_END_OVERLAY,
 
     .JUDGEMENT_MISS      = .HIT0,
     .JUDGEMENT_OK        = .HIT50,
@@ -30,10 +35,13 @@ skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
 //////////////////////////////////////////////////////
 // note(isak): core types
 
+// note(isak): this (mostly) mirrors ease.Ease, but it's fine in case we wanna expand this later
 Tween :: enum {
     LINEAR,
     QUAD_IN,     QUAD_OUT,     QUAD_IN_OUT,
     CUBIC_IN,    CUBIC_OUT,    CUBIC_IN_OUT,
+    QUARTIC_IN,  QUARTIC_OUT,  QUARTIC_IN_OUT,
+    QUINTIC_IN,  QUINTIC_OUT,  QUINTIC_IN_OUT,
     SINE_IN,     SINE_OUT,     SINE_IN_OUT,
     EXPO_IN,     EXPO_OUT,     EXPO_IN_OUT,
     BACK_IN,     BACK_OUT,     BACK_IN_OUT,
@@ -43,24 +51,30 @@ Tween :: enum {
 
 tween_apply :: proc(tween: Tween, t: f32) -> f32 {
     switch tween {
-    case .LINEAR:       return t
-    case .QUAD_IN:      return ease.quadratic_in(t)
-    case .QUAD_OUT:     return ease.quadratic_out(t)
-    case .QUAD_IN_OUT:  return ease.quadratic_in_out(t)
-    case .CUBIC_IN:     return ease.cubic_in(t)
-    case .CUBIC_OUT:    return ease.cubic_out(t)
-    case .CUBIC_IN_OUT: return ease.cubic_in_out(t)
-    case .SINE_IN:      return ease.sine_in(t)
-    case .SINE_OUT:     return ease.sine_out(t)
-    case .SINE_IN_OUT:  return ease.sine_in_out(t)
-    case .EXPO_IN:      return ease.exponential_in(t)
-    case .EXPO_OUT:     return ease.exponential_out(t)
-    case .EXPO_IN_OUT:  return ease.exponential_in_out(t)
-    case .BACK_IN:      return ease.back_in(t)
-    case .BACK_OUT:     return ease.back_out(t)
-    case .BACK_IN_OUT:  return ease.back_in_out(t)
-    case .ELASTIC_OUT:  return ease.elastic_out(t)
-    case .BOUNCE_OUT:   return ease.bounce_out(t)
+    case .LINEAR:         return t
+    case .QUAD_IN:        return ease.quadratic_in(t)
+    case .QUAD_OUT:       return ease.quadratic_out(t)
+    case .QUAD_IN_OUT:    return ease.quadratic_in_out(t)
+    case .CUBIC_IN:       return ease.cubic_in(t)
+    case .CUBIC_OUT:      return ease.cubic_out(t)
+    case .CUBIC_IN_OUT:   return ease.cubic_in_out(t)
+    case .QUARTIC_IN:     return ease.quartic_in(t)
+    case .QUARTIC_OUT:    return ease.quartic_out(t)
+    case .QUARTIC_IN_OUT: return ease.quartic_in_out(t)
+    case .QUINTIC_IN:     return ease.quintic_in(t)
+    case .QUINTIC_OUT:    return ease.quintic_out(t)
+    case .QUINTIC_IN_OUT: return ease.quintic_in_out(t)
+    case .SINE_IN:        return ease.sine_in(t)
+    case .SINE_OUT:       return ease.sine_out(t)
+    case .SINE_IN_OUT:    return ease.sine_in_out(t)
+    case .EXPO_IN:        return ease.exponential_in(t)
+    case .EXPO_OUT:       return ease.exponential_out(t)
+    case .EXPO_IN_OUT:    return ease.exponential_in_out(t)
+    case .BACK_IN:        return ease.back_in(t)
+    case .BACK_OUT:       return ease.back_out(t)
+    case .BACK_IN_OUT:    return ease.back_in_out(t)
+    case .ELASTIC_OUT:    return ease.elastic_out(t)
+    case .BOUNCE_OUT:     return ease.bounce_out(t)
     }
     return t
 }
@@ -154,9 +168,11 @@ Element_Type :: enum {
 
     SLIDER_BALL,
     SLIDER_FOLLOW_CIRCLE,
-    SLIDER_END_CIRCLE,
     SLIDER_TICK,
+    SLIDER_REPEAT,
     SLIDER_PATH,
+    SLIDER_END,
+    SLIDER_END_OVERLAY,
 
     CLICKED_HIT_CIRCLE,
     CLICKED_HIT_CIRCLE_OVERLAY,
@@ -222,7 +238,7 @@ Drawable :: struct {
     // drawing to that directly somehow
     pos: vec2,
     size: vec2,
-    angle_deg: f32,
+    angle_rad: f32,
     anchor: Layout_Anchor,
     color: Color,
     animation_rate: f64,
@@ -273,7 +289,7 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
     elements.data[builtin_element_slot(.HIT_CIRCLE)] = {
         tex = skin_texture(.HITCIRCLE),
 
-        animations = animation_new(anims, 
+        animations = animation_new(anims,
             Animation_Scale{
                 start_time = 0,
                 end_time = 0.5,
@@ -287,10 +303,10 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
                 end_scale = {0, 0}
             }, 
             Animation_Rotate{
-                start_time = 0, 
+                start_time = 0,
                 end_time = 1,
                 start_angle = 0, 
-                end_angle = 180
+                end_angle = math.PI/2
             }, 
         )
     }
@@ -425,7 +441,7 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}, al
     phys_x := d.vel.x * t_sec + 0.5 * d.accel.x * t_sec * t_sec
     phys_y := d.vel.y * t_sec + 0.5 * d.accel.y * t_sec * t_sec
     rect := Rect{d.pos.x + parent_pos.x + phys_x, d.pos.y + parent_pos.y + phys_y, d.size.x, d.size.y}
-    angle := d.angle_deg + d.angle_vel * t_sec
+    angle := d.angle_rad + d.angle_vel * t_sec
     color := d.color
 
     duration := d.end_time_ms - d.start_time_ms
@@ -541,16 +557,15 @@ slider_screenspace_bounding_box :: proc(slider: ^Slider_Path) -> (result: Rect) 
     return result
 }
 
-render_slider :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Path) {
-    pf_size: f32 = playfield_size_osupx / game.beatmap.circle_radius_osupx
 
-    slider_translation := -hobj.script_pos_translation / 2
-    x, y := slider_translation.x / pf_size, slider_translation.y / pf_size
+render_slider_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Path) {
+    pf_size: f32 = playfield_size_osupx / game.beatmap.circle_radius_osupx
     
-    pf_rect := Rect{x, y, pf_size,pf_size}
+    pf_rect := Rect{0, 0, pf_size,pf_size}
     slider_pf_transform := transform_from_bounds(rect_to_array(pf_rect), window.aspect_ratio)
     
     slider_rect := slider_screenspace_bounding_box(slider)
+    
     slider_uvs := Rect{
         slider_rect.x / window.rect.w,
         slider_rect.y / window.rect.h,
@@ -567,9 +582,7 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Pat
     
     r_clear(with_alpha(color_black, 0.0))
     
-    slider_snake_in_time_ms := game.beatmap.preempt_ms * (1.0/3.0)
-    slider_snake_in_time_at := beatmap_music_time_ms(&game.beatmap) - hobj.start_time_ms + game.beatmap.preempt_ms
-    slider_snake_instances := i32(f64(slider.instance_count) * clamp(slider_snake_in_time_at / slider_snake_in_time_ms, 0, 1))
+    slider_snake_instances := max(1, i32(f64(slider.instance_count) * slider_snake_factor(hobj)))
     
     // todo(isak): border_color should be the hitobject's combo color once combo colors are implemented
     command_push_draw_slider(Command_Draw_Slider{
@@ -582,6 +595,9 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Pat
     r_bind_framebuffer({ read = .SLIDERS })
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
     r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
+    
+    slider_rect.x += hobj.script_pos_translation.x
+    slider_rect.y += hobj.script_pos_translation.y
     
     r_push_transform(window.screenspace_transform)
     if app.debug_display_slider_bounds {
@@ -648,21 +664,20 @@ TEST_write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
 
         // digit drawables. each sized from its own skin metrics, spread and centered on hitobject pos
         // compute total width first so we can center the run
-        
-        hc_metrics := game.active_skin.elements[.HITCIRCLE].metrics
+        hc_size := game.active_skin.elements[.HITCIRCLE].metrics
         // how many osupx per natural skin pixel, based on hitcircle fitting circle_radius*2
-        number_scale := (game.beatmap.circle_radius_osupx * 2) / max(hc_metrics.w, 1) * COMBO_NUMBER_SCALE
+        number_scale := (game.beatmap.circle_radius_osupx * 2) / max(hc_size.x, 1) * COMBO_NUMBER_SCALE
             
         total_digits_w: f32
         for digit in 0..<n_digits {
             digit_el := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[digit])
-            total_digits_w += game.active_skin.elements[digit_el].metrics.w * number_scale
+            total_digits_w += game.active_skin.elements[digit_el].metrics.x * number_scale
         }
         x := -total_digits_w / 2
         for di in 0..<n_digits {
             digit_el      := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[di])
             digit_metrics := game.active_skin.elements[digit_el].metrics
-            digit_size    := vec2{digit_metrics.w, digit_metrics.h} * number_scale
+            digit_size    := digit_metrics * number_scale
             hobj.gfx_handles[di] = drawable_new(Drawable{
                 flags   = {.ACTIVE},
                 element = builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + digits[di])),

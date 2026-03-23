@@ -596,15 +596,22 @@ render_slider_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
     r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
     
-    slider_rect.x += hobj.script_pos_translation.x
-    slider_rect.y += hobj.script_pos_translation.y
-    
     r_push_transform(window.screenspace_transform)
     if app.debug_display_slider_bounds {
         r_reset_scissor_mode()
         r_draw_rect_outline(&renderer.quad_geometry, slider_rect, color_cyan, 1)
     }
-    r_set_scissor_mode(slider_rect)
+    
+    slider_rect.x += hobj.script_pos_translation.x
+    slider_rect.y += hobj.script_pos_translation.y
+    
+    scissor_rect := Rect{
+        2 + math.ceil(slider_rect.x),
+        2 + math.ceil(slider_rect.y),
+        math.floor(slider_rect.w) - 4,
+        math.floor(slider_rect.h) - 4,
+    }   
+    r_set_scissor_mode(scissor_rect)
     
     r_draw_rect_with_uv(&renderer.quad_geometry, 
                         slider_rect,

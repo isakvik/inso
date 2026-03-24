@@ -835,12 +835,6 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
             
             slider.tick_interval_ms = uninherited_tp.beat_length / osu_map.diff_slider_tickrate
             slider.tick_count = int((slider.duration_ms - SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS) / slider.tick_interval_ms)
-            
-            if slider.tick_count == 0 {
-                slider.next_expected_judgement_at_ms = max(f64)
-            } else {
-                slider.next_expected_judgement_at_ms = hobj.start_time_ms + slider.tick_interval_ms
-            }
         }
         
         // note(isak): combo colors and number

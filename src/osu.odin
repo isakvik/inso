@@ -49,6 +49,9 @@ game: struct {
 
         mouse_keys_enabled: bool,
         mouse_pos: vec2,
+
+        available_presses: int,
+        last_hit_at, last_valid_press_at: f64,
     },
 
     // note(isak): managed sounds to be used with the game_sound_* api. we create BASS streams from samples, and then
@@ -120,11 +123,13 @@ Slider_Flag :: enum {
     TRACKING,
     HEAD_CHECKED,
     HEAD_HIT,
+    END_TRACKED,
 }
 
 Slider_State :: struct {
     flags: Slider_Flags,
-    
+    down_key: int, // 0 = missed head or free (any key), 1 = k1 hit head, 2 = k2 hit head
+
     velocity: f64,
     distance, duration_ms: f64,
     
@@ -132,10 +137,8 @@ Slider_State :: struct {
     tick_count: int,
     
     path_travel_count, checked_repeats_count, checked_path_ticks_count: int,
-    hit_judgement_count, total_judgement_count: int,
-    
-    next_expected_judgement_at_ms: f64,
-    
+    hit_judgement_count: int,
+
     contingency_window_scorepoint_count: int,
     contingency_window_scorepoints: bit_set[0..<64; u64], // note(isak): ticks are 0, repeats are 1
 
@@ -355,7 +358,20 @@ osu_on_update :: proc(dt: f64) {
 
     
     // todo(isak): valid key presses system needs testing
+    game.input.available_presses = 0
+    if game.input.mouse_keys_enabled {
+        if is_pressed(game.input.k1) && !is_down(game.input.m1) do game.input.available_presses += 1
+        if is_pressed(game.input.k2) && !is_down(game.input.m2) do game.input.available_presses += 1
+        if is_pressed(game.input.m1) && !is_down(game.input.k1) do game.input.available_presses += 1
+        if is_pressed(game.input.m2) && !is_down(game.input.k2) do game.input.available_presses += 1
+    } else {
+        if is_pressed(game.input.k1) do game.input.available_presses += 1
+        if is_pressed(game.input.k2) do game.input.available_presses += 1
+    }
+
     if valid_controller_press() {
+        game.input.last_valid_press_at = map_time
+        
         for &hobj, i in hobj_it {
             if .EXPIRED in hobj.flags || .HIT in hobj.flags || .HEAD_HIT in hobj.slider_state.flags {
                 continue
@@ -400,9 +416,10 @@ osu_on_update :: proc(dt: f64) {
             if hobj.type == .CIRCLE {
                 judgement_new_drawable(&hobj)
             }
-            
+
+            consume_controller_press()
             break
-        } 
+        }
     }
     //--
     
@@ -436,6 +453,27 @@ osu_on_update :: proc(dt: f64) {
             
             cs := game.beatmap.circle_radius_osupx
             element_scale := (cs*2) / (game.active_skin.elements[.HITCIRCLE].metrics)
+            
+            slider_path_time_at := (map_time - hobj.start_time_ms) - f64(slider.checked_repeats_count) * slider.duration_ms
+            
+            // note(isak): slider ticks
+            heading_back := slider.checked_repeats_count % 2 == 1
+            first_tick_time := heading_back \
+                ? slider.duration_ms - slider.tick_interval_ms * f64(slider.tick_count) \
+                : slider.tick_interval_ms
+
+            ticks_to_draw := slider.tick_count
+            for ticks_to_draw > 0 && slider_path_time_at <= first_tick_time + f64(ticks_to_draw - 1) * slider.tick_interval_ms {
+                tick_size := element_scale * game.active_skin.elements[.SLIDER_TICK].metrics
+                forward_tick_index := heading_back ? (slider.tick_count + 1 - ticks_to_draw) : ticks_to_draw
+                tick_pos := slider_path_pos_at(&hobj, hobj.start_time_ms + f64(forward_tick_index) * slider.tick_interval_ms)
+                tick_rect := rect_at_pos(tick_pos, tick_size)
+                r_draw_layout_rect(&window.renderer.quad_geometry, tick_rect, .CENTER, color_white,
+                    skin_texture(.SLIDER_TICK))
+
+                ticks_to_draw -= 1
+            }
+            
             
             // note(isak): slider end circles
             has_sliderend_at_end := slider.path_travel_count % 2 == 1 || slider.checked_repeats_count < slider.path_travel_count - 1
@@ -478,7 +516,7 @@ osu_on_update :: proc(dt: f64) {
             
             // note(isak): slider tracking graphics
             if hobj.start_time_ms <= map_time && map_time < hobj.end_time_ms {
-                ball_pos := slider_ball_pos_at(&hobj, map_time)
+                ball_pos := slider_path_pos_at(&hobj, map_time)
                 ball_rect := rect_at_pos(ball_pos, element_scale * game.active_skin.elements[.SLIDER_BALL].metrics)
                 
                 if .TRACKING in hobj.slider_state.flags {
@@ -683,17 +721,44 @@ handle_menu_input_events :: proc() {
 }
 
 valid_controller_press :: proc() -> bool {
-    if game.input.mouse_keys_enabled {
-        if is_pressed(game.input.k1) && !is_down(game.input.m1) ||
-            is_pressed(game.input.k2) && !is_down(game.input.m2) {
-            return true
+    return game.input.available_presses > 0
+}
+
+consume_controller_press :: proc() {
+    game.input.available_presses -= 1
+}
+
+// returns whether key_num (1 or 2) was freshly pressed this frame, applying mouse_keys exclusion
+controller_key_pressed :: proc(key_num: int) -> bool {
+    if key_num == 1 {
+        if game.input.mouse_keys_enabled {
+            return is_pressed(game.input.k1) && !is_down(game.input.m1) ||
+                   is_pressed(game.input.m1) && !is_down(game.input.k1)
         }
-        
-        return is_pressed(game.input.m1) && !is_down(game.input.k1) || 
-            is_pressed(game.input.m2) && !is_down(game.input.k2)
+        return is_pressed(game.input.k1)
     } else {
-        return is_pressed(game.input.k1) || is_pressed(game.input.k2)
+        if game.input.mouse_keys_enabled {
+            return is_pressed(game.input.k2) && !is_down(game.input.m2) ||
+                   is_pressed(game.input.m2) && !is_down(game.input.k2)
+        }
+        return is_pressed(game.input.k2)
     }
+}
+
+// returns whether key_num (1 or 2) is currently held
+controller_key_down :: proc(key_num: int) -> bool {
+    if key_num == 1 {
+        return is_down(game.input.k1) || game.input.mouse_keys_enabled && is_down(game.input.m1)
+    } else {
+        return is_down(game.input.k2) || game.input.mouse_keys_enabled && is_down(game.input.m2)
+    }
+}
+
+// returns which key (1 or 2) was freshly pressed this frame, 0 if neither
+pressed_controller_key :: proc() -> int {
+    if controller_key_pressed(1) do return 1
+    if controller_key_pressed(2) do return 2
+    return 0
 }
 
 

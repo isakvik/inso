@@ -521,7 +521,7 @@ slider_path_pos_at :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
     t_on_path := pass_frac if pass_idx % 2 == 0 else 1.0 - pass_frac
 
     //--@temp treat every slider as straight start -> end until the math is done...
-    return linalg.lerp(path.pos, path.end_pos, vec2{f32(t_on_path), f32(t_on_path)})
+    return linalg.lerp(path.pos, path.end_pos, vec2{f32(t_on_path), f32(t_on_path)}) + hobj.script_pos_translation
     //--
 }
 

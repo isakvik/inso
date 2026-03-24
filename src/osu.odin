@@ -454,8 +454,11 @@ osu_on_update :: proc(dt: f64) {
             cs := game.beatmap.circle_radius_osupx
             element_scale := (cs*2) / (game.active_skin.elements[.HITCIRCLE].metrics)
             
+            hobj_pos := hitobject_pos(&hobj)
+            end_pos  := path.end_pos + hobj.script_pos_translation
+
             slider_path_time_at := (map_time - hobj.start_time_ms) - f64(slider.checked_repeats_count) * slider.duration_ms
-            
+
             // note(isak): slider ticks
             heading_back := slider.checked_repeats_count % 2 == 1
             first_tick_time := heading_back \
@@ -478,39 +481,39 @@ osu_on_update :: proc(dt: f64) {
             // note(isak): slider end circles
             has_sliderend_at_end := slider.path_travel_count % 2 == 1 || slider.checked_repeats_count < slider.path_travel_count - 1
             if has_sliderend_at_end && slider_snake_factor(&hobj) >= 1 {
-                sliderend_rect := rect_at_pos(path.end_pos, {cs * 2, cs * 2})
-                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_rect, .CENTER, combo_color, 
+                sliderend_rect := rect_at_pos(end_pos, {cs * 2, cs * 2})
+                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_rect, .CENTER, combo_color,
                     skin_texture(.SLIDER_END))
-                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_rect, .CENTER, color_white, 
+                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_rect, .CENTER, color_white,
                     skin_texture(.SLIDER_END_OVERLAY))
             }
-            
-            has_sliderend_at_head := slider.path_travel_count > 1 && 
+
+            has_sliderend_at_head := slider.path_travel_count > 1 &&
                 (slider.path_travel_count % 2 == 0 || slider.checked_repeats_count < slider.path_travel_count - 1)
             if has_sliderend_at_head && hobj.start_time_ms <= map_time {
-                sliderend_head_rect := rect_at_pos(path.pos, {cs * 2, cs * 2})
-                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_head_rect, .CENTER, combo_color, 
+                sliderend_head_rect := rect_at_pos(hobj_pos, {cs * 2, cs * 2})
+                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_head_rect, .CENTER, combo_color,
                     skin_texture(.SLIDER_END))
-                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_head_rect, .CENTER, color_white, 
+                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_head_rect, .CENTER, color_white,
                     skin_texture(.SLIDER_END_OVERLAY))
             }
-            
+
             // note(isak): slider repeat arrows
             has_repeat_at_end := slider.path_travel_count > 1 && slider.checked_repeats_count < slider.path_travel_count - 1 &&
                 (slider.path_travel_count % 2 == 0 || slider.checked_repeats_count < slider.path_travel_count - 2)
             if has_repeat_at_end && slider_snake_factor(&hobj) >= 1 {
                 repeat_size := element_scale * game.active_skin.elements[.SLIDER_REPEAT].metrics
-                sliderend_repeat_rect := rect_at_pos(path.end_pos, repeat_size)
-                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_repeat_rect, .CENTER, color_white, 
+                sliderend_repeat_rect := rect_at_pos(end_pos, repeat_size)
+                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_repeat_rect, .CENTER, color_white,
                     skin_texture(.SLIDER_REPEAT), angle = path.end_angle_rad)
             }
-            
+
             has_repeat_at_head := slider.path_travel_count > 2 && slider.checked_repeats_count < slider.path_travel_count - 1 &&
                 (slider.path_travel_count % 2 == 1 || slider.checked_repeats_count < slider.path_travel_count - 2)
             if has_repeat_at_head && hobj.start_time_ms <= map_time {
                 repeat_size := element_scale * game.active_skin.elements[.SLIDER_REPEAT].metrics
-                sliderend_repeat_rect := rect_at_pos(path.pos, repeat_size)
-                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_repeat_rect, .CENTER, color_white, 
+                sliderend_repeat_rect := rect_at_pos(hobj_pos, repeat_size)
+                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_repeat_rect, .CENTER, color_white,
                     skin_texture(.SLIDER_REPEAT), angle = path.head_angle_rad)
             }
             

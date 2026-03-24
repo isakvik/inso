@@ -81,10 +81,10 @@ Hitobject_Type :: enum u32 {
 }
 
 
-Hitobject_Flags :: distinct bit_set[Hitobject_Flag; u32]
-Hitobject_Flag :: enum u32 {
+Hitobject_Flags :: distinct bit_set[Hitobject_Flag]
+Hitobject_Flag :: enum {
     VISIBLE,
-    HIT,
+    HIT,       // note(isak): has result
     EXPIRED,
     
     NEW_COMBO,
@@ -115,10 +115,15 @@ Hitobject :: struct {
     gfx_handles: []Drawable_Handle,
 }
 
+Slider_Flags :: distinct bit_set[Slider_Flag]
+Slider_Flag :: enum {
+    TRACKING,
+    HEAD_CHECKED,
+    HEAD_HIT,
+}
+
 Slider_State :: struct {
-    head_hit:            bool,    // player clicked head within any window
-    head_checked:        bool,    // miss window for head has passed
-    tracking:            bool,    // cursor currently in follow circle
+    flags: Slider_Flags,
     
     velocity: f64,
     distance, duration_ms: f64,
@@ -126,11 +131,13 @@ Slider_State :: struct {
     tick_interval_ms: f64,
     tick_count: int,
     
-    path_travel_count, hit_repeats_count: int,
+    path_travel_count, checked_repeats_count, checked_path_ticks_count: int,
     hit_judgement_count, total_judgement_count: int,
     
-    judgements_checked_count: int,
     next_expected_judgement_at_ms: f64,
+    
+    contingency_window_scorepoint_count: int,
+    contingency_window_scorepoints: bit_set[0..<64; u64], // note(isak): ticks are 0, repeats are 1
 
     slide_sound: slotmap.Handle,
 }
@@ -238,6 +245,7 @@ Judgement_Type :: enum {
     
     SLIDER_SMALL_SCOREPOINT, // 10
     SLIDER_LARGE_SCOREPOINT, // 30
+    SLIDER_SCOREPOINT_MISS,
     
     IGNORED_HIT, // note(isak): used when we need a result that doesn't affect score
     COMBO_BREAK, // note(isak): intended for scripted misses
@@ -349,7 +357,7 @@ osu_on_update :: proc(dt: f64) {
     // todo(isak): valid key presses system needs testing
     if valid_controller_press() {
         for &hobj, i in hobj_it {
-            if .EXPIRED in hobj.flags || .HIT in hobj.flags {
+            if .EXPIRED in hobj.flags || .HIT in hobj.flags || .HEAD_HIT in hobj.slider_state.flags {
                 continue
             }
             hobj_pos := hitobject_pos(&hobj)
@@ -393,7 +401,6 @@ osu_on_update :: proc(dt: f64) {
                 judgement_new_drawable(&hobj)
             }
             
-            hobj.flags |= {.HIT}
             break
         } 
     }
@@ -431,7 +438,7 @@ osu_on_update :: proc(dt: f64) {
             element_scale := (cs*2) / (game.active_skin.elements[.HITCIRCLE].metrics)
             
             // note(isak): slider end circles
-            has_sliderend_at_end := slider.path_travel_count % 2 == 1 || slider.hit_repeats_count < slider.path_travel_count - 1
+            has_sliderend_at_end := slider.path_travel_count % 2 == 1 || slider.checked_repeats_count < slider.path_travel_count - 1
             if has_sliderend_at_end && slider_snake_factor(&hobj) >= 1 {
                 sliderend_rect := rect_at_pos(path.end_pos, {cs * 2, cs * 2})
                 r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_rect, .CENTER, combo_color, 
@@ -441,7 +448,7 @@ osu_on_update :: proc(dt: f64) {
             }
             
             has_sliderend_at_head := slider.path_travel_count > 1 && 
-                (slider.path_travel_count % 2 == 0 || slider.hit_repeats_count < slider.path_travel_count - 1)
+                (slider.path_travel_count % 2 == 0 || slider.checked_repeats_count < slider.path_travel_count - 1)
             if has_sliderend_at_head && hobj.start_time_ms <= map_time {
                 sliderend_head_rect := rect_at_pos(path.pos, {cs * 2, cs * 2})
                 r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_head_rect, .CENTER, combo_color, 
@@ -451,8 +458,8 @@ osu_on_update :: proc(dt: f64) {
             }
             
             // note(isak): slider repeat arrows
-            has_repeat_at_end := slider.path_travel_count > 1 && slider.hit_repeats_count < slider.path_travel_count - 1 &&
-                (slider.path_travel_count % 2 == 0 || slider.hit_repeats_count < slider.path_travel_count - 2)
+            has_repeat_at_end := slider.path_travel_count > 1 && slider.checked_repeats_count < slider.path_travel_count - 1 &&
+                (slider.path_travel_count % 2 == 0 || slider.checked_repeats_count < slider.path_travel_count - 2)
             if has_repeat_at_end && slider_snake_factor(&hobj) >= 1 {
                 repeat_size := element_scale * game.active_skin.elements[.SLIDER_REPEAT].metrics
                 sliderend_repeat_rect := rect_at_pos(path.end_pos, repeat_size)
@@ -460,8 +467,8 @@ osu_on_update :: proc(dt: f64) {
                     skin_texture(.SLIDER_REPEAT), angle = path.end_angle_rad)
             }
             
-            has_repeat_at_head := slider.path_travel_count > 2 && slider.hit_repeats_count < slider.path_travel_count - 1 &&
-                (slider.path_travel_count % 2 == 1 || slider.hit_repeats_count < slider.path_travel_count - 2)
+            has_repeat_at_head := slider.path_travel_count > 2 && slider.checked_repeats_count < slider.path_travel_count - 1 &&
+                (slider.path_travel_count % 2 == 1 || slider.checked_repeats_count < slider.path_travel_count - 2)
             if has_repeat_at_head && hobj.start_time_ms <= map_time {
                 repeat_size := element_scale * game.active_skin.elements[.SLIDER_REPEAT].metrics
                 sliderend_repeat_rect := rect_at_pos(path.pos, repeat_size)
@@ -474,8 +481,9 @@ osu_on_update :: proc(dt: f64) {
                 ball_pos := slider_ball_pos_at(&hobj, map_time)
                 ball_rect := rect_at_pos(ball_pos, element_scale * game.active_skin.elements[.SLIDER_BALL].metrics)
                 
-                if hobj.slider_state.tracking {
-                    follow_rect := rect_at_pos(ball_pos, element_scale * SLIDER_FOLLOW_CIRCLE_RADIUS_MULT)
+                if .TRACKING in hobj.slider_state.flags {
+                    follow_size := element_scale * game.active_skin.elements[.HITCIRCLE].metrics * SLIDER_FOLLOW_CIRCLE_RADIUS_MULT
+                    follow_rect := rect_at_pos(ball_pos, follow_size)
                     r_draw_layout_rect(&window.renderer.quad_geometry, follow_rect, .CENTER, color_white, skin_texture(.SLIDER_FOLLOW_CIRCLE))
                 }
                 
@@ -576,7 +584,7 @@ hitobject_on_click :: proc(hobj: ^Hitobject) -> (result: Judgement_Type) {
             slider_on_click(hobj)
         } else {
             judgement_new(hobj, result, time_error_ms)
-            hobj.flags |= {.EXPIRED}
+            hobj.flags |= {.HIT, .EXPIRED}
         }
 
         timing_point := &game.active_map.timing_points[game.beatmap.current_timing_point_index_inherited]
@@ -710,7 +718,6 @@ game_sound_play :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0) -> (r
     handle := slotmap.insert(&game.sounds, sound)
     snd := slotmap.get(&game.sounds, handle) or_else {}
     sound_play(snd, loop = loop, volume = volume)
-    log.info("playing", handle.generation, handle.index)
     return handle
 }
 

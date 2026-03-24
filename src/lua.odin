@@ -597,11 +597,12 @@ lua_beatmap_on_judgement :: proc(hobj_index: int, judgement: Judgement_Type, tim
             switch judgement.judgement {
             case .NONE: judgement_name = "None"
             case .MISS: judgement_name = "Miss"
-            case .OK: judgement_name = "50"
-            case .GOOD: judgement_name = "100"
-            case .MARVELOUS: judgement_name = "300"
+            case .OK: judgement_name = "Ok"
+            case .GOOD: judgement_name = "Good"
+            case .MARVELOUS: judgement_name = "Marvelous"
             case .SLIDER_SMALL_SCOREPOINT: judgement_name = "SliderSmallScorepoint"
             case .SLIDER_LARGE_SCOREPOINT: judgement_name = "SliderLargeScorepoint"
+            case .SLIDER_SCOREPOINT_MISS: judgement_name = "SliderScorepointMiss"
             case .IGNORED_HIT: judgement_name = "IgnoredHit"
             case .COMBO_BREAK: judgement_name = "ComboBreak"
             }

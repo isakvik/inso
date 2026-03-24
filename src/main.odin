@@ -138,7 +138,7 @@ main :: proc() {
         log.panic("SDL video init error:", sdl.GetError())
     }
 
-    window_init({w = 1024, h = 512})
+    window_init({w = 1280, h = 720})
     window.ui_enabled = true
     defer window_cleanup()
     

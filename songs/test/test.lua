@@ -14,8 +14,6 @@ local rand = load_file("rand.lua")
 -- diffsettings per object!!
 -- custom AR per object is complicated... animation system should be able to handle this
 
--- Sound.play_loop("normal-sliderslide.wav")
-
 -- map runtime data
 -- Beatmap.set_time_rate(1.5)
 
@@ -30,11 +28,11 @@ local rand = load_file("rand.lua")
 function on_init()
     a = Animation.new()
         :color(0, 0.5, Color.rgb(255,0,0), Color.rgb(0,0,255))
-        :scale(0, 1, 0,0, 2,2, Tween.QUINT_OUT)
+        :scale(0, 1, 1,1, 8,8, Tween.CUBIC_OUT)
         :texture(2000, 2000, "nonexisting.jpg") -- throws error, but defaults to white pixel
     
     el = Element.new()
-        :set_tex("kawayabughorou.jpg")
+        :set_tex("approachcircle.png")
         :set_animation(a)
         :set_shader("wave")
         
@@ -57,7 +55,7 @@ function on_init()
         t = hobj:get_start_time()
         table[i] = dd:clone()
             :set_pos(hobj:get_pos())
-            :set_time(t-1200, t)
+            :set_time(t, t+1200)
     end
 end
 
@@ -101,7 +99,7 @@ end
 --end
 
 --function on_judgement(hobj, judgement, timing_error_ms) 
---    print(timing_error_ms)
+--    print(judgement)
 --end
 --
 --function on_kiai_change(kiai) 

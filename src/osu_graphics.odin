@@ -584,12 +584,11 @@ render_slider_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     
     slider_snake_instances := max(1, i32(f64(slider.instance_count) * slider_snake_factor(hobj)))
     
-    // todo(isak): border_color should be the hitobject's combo color once combo colors are implemented
     command_push_draw_slider(Command_Draw_Slider{
-        base_instance = u32(slider.first_instance_at),
+        base_instance  = u32(slider.first_instance_at),
         instance_count = slider_snake_instances,
-        border_color  = with_alpha(color_white, 0.9),
-        body_color    = with_alpha(color_white, 0.7),
+        border_color   = with_alpha(color_white, 0.9),
+        body_color     = with_alpha(color_white, 0.7),
     })
     
     r_bind_framebuffer({ read = .SLIDERS })
@@ -621,6 +620,95 @@ render_slider_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     r_reset_scissor_mode()
 }
 
+render_slider_quads :: proc(hobj: ^Hitobject, path: ^Slider_Path, map_time: f64) {
+    slider := &hobj.slider_state
+    
+    // todo(isak): these actually have to be rewritten into drawables for data manipulation purposes, but we
+    // can do that later
+    
+    combo_color := hitobject_combo_color(hobj)
+    
+    cs := game.beatmap.circle_radius_osupx
+    element_scale := (cs*2) / (game.active_skin.elements[.HITCIRCLE].metrics)
+    
+    hobj_pos := hitobject_pos(hobj)
+    end_pos  := path.end_pos + hobj.script_pos_translation
+    slider_path_time_at := (map_time - hobj.start_time_ms) - f64(slider.checked_repeats_count) * slider.duration_ms
+
+    // note(isak): slider ticks
+    heading_back := slider.checked_repeats_count % 2 == 1
+    first_tick_time := heading_back \
+        ? slider.duration_ms - slider.tick_interval_ms * f64(slider.tick_count) \
+        : slider.tick_interval_ms
+
+    ticks_to_draw := slider.tick_count
+    for ticks_to_draw > 0 && slider_path_time_at <= first_tick_time + f64(ticks_to_draw - 1) * slider.tick_interval_ms {
+        tick_size := element_scale * game.active_skin.elements[.SLIDER_TICK].metrics
+        forward_tick_index := heading_back ? (slider.tick_count + 1 - ticks_to_draw) : ticks_to_draw
+        tick_pos := slider_path_pos_at(hobj, hobj.start_time_ms + f64(forward_tick_index) * slider.tick_interval_ms)
+        tick_rect := rect_at_pos(tick_pos, tick_size)
+        r_draw_layout_rect(&window.renderer.quad_geometry, tick_rect, .CENTER, color_white,
+            skin_texture(.SLIDER_TICK))
+
+        ticks_to_draw -= 1
+    }
+    
+    
+    // note(isak): slider end circles
+    has_sliderend_at_end := slider.path_travel_count % 2 == 1 || slider.checked_repeats_count < slider.path_travel_count - 1
+    if has_sliderend_at_end && slider_snake_factor(hobj) >= 1 {
+        sliderend_rect := rect_at_pos(end_pos, {cs * 2, cs * 2})
+        r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_rect, .CENTER, combo_color,
+            skin_texture(.SLIDER_END))
+        r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_rect, .CENTER, color_white,
+            skin_texture(.SLIDER_END_OVERLAY))
+    }
+
+    has_sliderend_at_head := slider.path_travel_count > 1 &&
+        (slider.path_travel_count % 2 == 0 || slider.checked_repeats_count < slider.path_travel_count - 1)
+    if has_sliderend_at_head && hobj.start_time_ms <= map_time {
+        sliderend_head_rect := rect_at_pos(hobj_pos, {cs * 2, cs * 2})
+        r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_head_rect, .CENTER, combo_color,
+            skin_texture(.SLIDER_END))
+        r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_head_rect, .CENTER, color_white,
+            skin_texture(.SLIDER_END_OVERLAY))
+    }
+
+    // note(isak): slider repeat arrows
+    has_repeat_at_end := slider.path_travel_count > 1 && slider.checked_repeats_count < slider.path_travel_count - 1 &&
+        (slider.path_travel_count % 2 == 0 || slider.checked_repeats_count < slider.path_travel_count - 2)
+    if has_repeat_at_end && slider_snake_factor(hobj) >= 1 {
+        repeat_size := element_scale * game.active_skin.elements[.SLIDER_REPEAT].metrics
+        sliderend_repeat_rect := rect_at_pos(end_pos, repeat_size)
+        r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_repeat_rect, .CENTER, color_white,
+            skin_texture(.SLIDER_REPEAT), angle = path.end_angle_rad)
+    }
+
+    has_repeat_at_head := slider.path_travel_count > 2 && slider.checked_repeats_count < slider.path_travel_count - 1 &&
+        (slider.path_travel_count % 2 == 1 || slider.checked_repeats_count < slider.path_travel_count - 2)
+    if has_repeat_at_head && hobj.start_time_ms <= map_time {
+        repeat_size := element_scale * game.active_skin.elements[.SLIDER_REPEAT].metrics
+        sliderend_repeat_rect := rect_at_pos(hobj_pos, repeat_size)
+        r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_repeat_rect, .CENTER, color_white,
+            skin_texture(.SLIDER_REPEAT), angle = path.head_angle_rad)
+    }
+    
+    // note(isak): slider tracking graphics
+    if hobj.start_time_ms <= map_time && map_time < hobj.end_time_ms {
+        ball_pos := slider_path_pos_at(hobj, map_time)
+        ball_rect := rect_at_pos(ball_pos, element_scale * game.active_skin.elements[.SLIDER_BALL].metrics)
+        
+        if .TRACKING in hobj.slider_state.flags {
+            follow_size := element_scale * game.active_skin.elements[.HITCIRCLE].metrics * SLIDER_FOLLOW_CIRCLE_RADIUS_MULT
+            follow_rect := rect_at_pos(ball_pos, follow_size)
+            r_draw_layout_rect(&window.renderer.quad_geometry, follow_rect, .CENTER, color_white, skin_texture(.SLIDER_FOLLOW_CIRCLE))
+        }
+        
+        r_draw_layout_rect(&window.renderer.quad_geometry, ball_rect, .CENTER, combo_color, skin_texture(.SLIDER_BALL),
+            angle = 0) // todo(isak): slider ball angle needs to be mathed out...
+    }
+}
+
 
 // note(isak): extracts up to 4 decimal digits of n into buf (most-significant first), returns count
 _combo_digits :: proc(n: int, buf: ^[4]int) -> (count: int) {
@@ -645,7 +733,7 @@ TEST_write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
             continue
         }
 
-        combo_color := osu_map.num_combo_colors > 0 ? osu_map.combo_colors[hobj.combo_color_index] : color_purple
+        combo_color := hitobject_combo_color(&hobj)
 
         digits: [4]int
         n_digits := _combo_digits(int(hobj.combo_number), &digits)

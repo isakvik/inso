@@ -139,6 +139,7 @@ beatmap_on_update :: proc(beatmap: ^Beatmap) {
     
     has_new_timing_point := beatmap_update_current_timing_section(beatmap)
     
+    lua_drain_scheduled_events(beatmap_music_time_ms(beatmap))
     if lua_cares_about_event(.ON_UPDATE) {
         lua_beatmap_on_update(beatmap_music_time_ms(beatmap))
     }

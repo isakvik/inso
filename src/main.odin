@@ -19,10 +19,6 @@ import sg "vendor:sokol/gfx"
 /*
 todo(isak):
 
-general:
-ui core 
-    map selector
-    skin select
 
 eventual YEAST on-scene features:
 local networking
@@ -183,7 +179,6 @@ main :: proc() {
         prepare_textures_for_rendering()
     }
     //--
-   
 
     osu_on_init()
 
@@ -331,7 +326,7 @@ main :: proc() {
             /*
                 todo(isak): state of the renderer:
                 usage:
-                - batch overrun has not been tested @beta
+                - batch overrun has not been tested (although an infinite loop crashes, which is expected) @beta
                 - transforms should be a dynamic stack that we just write as we process the frame; can save a bunch
                     of draw calls
             */

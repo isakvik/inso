@@ -76,9 +76,6 @@ Hitobject_Type :: enum u32 {
     NONE,
     CIRCLE,
     SLIDER,
-    SLIDER_PATH,
-    SLIDER_TICK,
-    SLIDER_REPEAT,
     SPINNER,
     // CUSTOM // note(isak) big plans?
 }
@@ -87,8 +84,9 @@ Hitobject_Type :: enum u32 {
 Hitobject_Flags :: distinct bit_set[Hitobject_Flag]
 Hitobject_Flag :: enum {
     VISIBLE,
-    HIT,       // note(isak): has result
+    HIT, // note(isak): has result
     EXPIRED,
+    LAST_IN_COMBO,
     
     NEW_COMBO,
     WHISTLE,
@@ -107,9 +105,9 @@ Hitobject :: struct {
     timing_point_index_uninherited: int,
     timing_point_index_inherited: int,
     hitsound_flags: byte,
+    combo_index: int, // note(isak): 1-indexed combo within the current map
+    combo_number: u16,
     combo_color_skip_offset: u8, // note(isak): bits 4-6 of osu type byte; how many combo colors to skip on new combo
-    combo_color_index: u8,
-    combo_number: u16, // note(isak): 1-based position within the current combo sequence
 
     slider_path_index: int,
     slider_state: Slider_State,
@@ -167,6 +165,24 @@ hitobject_visible_end_time :: proc(hobj: ^Hitobject) -> (result: f64) {
     case .CIRCLE, .SLIDER: end_time += game.beatmap.timing_windows.ok
     }
     return end_time
+}
+
+DEFAULT_COMBO_COLORS := [4]Color {
+    {240, 150, 0, 0xFF},
+    {5, 240, 5, 0xFF},
+    {5, 5, 240, 0xFF},
+    {240, 5, 5, 0xFF},
+}
+
+hitobject_combo_color :: proc(hobj: ^Hitobject) -> (result: Color) {
+    if game.active_map.num_combo_colors > 0 {
+        color_index := hobj.combo_index % game.active_map.num_combo_colors    
+        result = game.active_map.combo_colors[color_index]
+    } else {
+        color_index := hobj.combo_index % len(DEFAULT_COMBO_COLORS)
+        result = DEFAULT_COMBO_COLORS[color_index]
+    }
+    return result
 }
 
 
@@ -270,7 +286,7 @@ Osu_Map :: struct {
         audio_filename: string,
         audio_lead_in: f64,
         preview_time_ms: f64,
-        sample_set: Osu_Sample_Set,
+        sample_set: Osu_Map_Sample_Set,
     
         title: string,
         title_unicode: string,
@@ -328,7 +344,7 @@ osu_on_update :: proc(dt: f64) {
         if lua_cares_about_event(.ON_INIT) {
             lua_call_beatmap_func(lua_beatmap_event_names[.ON_INIT])
         }
-    } 
+    }
     if updated_systems[.SHADERS] {
         mapset_reinit_custom_shaders(game.active_mapset)
     }
@@ -388,9 +404,7 @@ osu_on_update :: proc(dt: f64) {
             clear_hitobject_drawables(&hobj)
             
             hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, 2) or_continue
-            
-            color_array := &game.active_map.combo_colors
-            combo_color := game.active_map.num_combo_colors > 0 ? color_array[hobj.combo_color_index] : color_purple
+            combo_color := hitobject_combo_color(&hobj)
             
             hobj.gfx_handles[0] = drawable_new({
                 flags = {.ACTIVE},
@@ -435,102 +449,16 @@ osu_on_update :: proc(dt: f64) {
     // todo(isak) ALSO don't forget that sliders SHOULD go on top of hitobjects appearing later, so the 
     // render hitobjects loop should be integrated into this
     
-    
-    
     for &hobj in hobj_it {
         if map_time < hobj.start_time_ms - game.beatmap.preempt_ms || hobj.end_time_ms < map_time {
             continue
         }
         if hobj.type == .SLIDER {
-            slider := &hobj.slider_state
             path := &game.beatmap.slider_paths[hobj.slider_path_index]
             render_slider_path(&window.renderer, &hobj, path)
             
             r_push_transform(game.playfield_transform)
-            
-            color_array := &game.active_map.combo_colors
-            combo_color := game.active_map.num_combo_colors > 0 ? color_array[hobj.combo_color_index] : color_purple
-            
-            cs := game.beatmap.circle_radius_osupx
-            element_scale := (cs*2) / (game.active_skin.elements[.HITCIRCLE].metrics)
-            
-            hobj_pos := hitobject_pos(&hobj)
-            end_pos  := path.end_pos + hobj.script_pos_translation
-
-            slider_path_time_at := (map_time - hobj.start_time_ms) - f64(slider.checked_repeats_count) * slider.duration_ms
-
-            // note(isak): slider ticks
-            heading_back := slider.checked_repeats_count % 2 == 1
-            first_tick_time := heading_back \
-                ? slider.duration_ms - slider.tick_interval_ms * f64(slider.tick_count) \
-                : slider.tick_interval_ms
-
-            ticks_to_draw := slider.tick_count
-            for ticks_to_draw > 0 && slider_path_time_at <= first_tick_time + f64(ticks_to_draw - 1) * slider.tick_interval_ms {
-                tick_size := element_scale * game.active_skin.elements[.SLIDER_TICK].metrics
-                forward_tick_index := heading_back ? (slider.tick_count + 1 - ticks_to_draw) : ticks_to_draw
-                tick_pos := slider_path_pos_at(&hobj, hobj.start_time_ms + f64(forward_tick_index) * slider.tick_interval_ms)
-                tick_rect := rect_at_pos(tick_pos, tick_size)
-                r_draw_layout_rect(&window.renderer.quad_geometry, tick_rect, .CENTER, color_white,
-                    skin_texture(.SLIDER_TICK))
-
-                ticks_to_draw -= 1
-            }
-            
-            
-            // note(isak): slider end circles
-            has_sliderend_at_end := slider.path_travel_count % 2 == 1 || slider.checked_repeats_count < slider.path_travel_count - 1
-            if has_sliderend_at_end && slider_snake_factor(&hobj) >= 1 {
-                sliderend_rect := rect_at_pos(end_pos, {cs * 2, cs * 2})
-                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_rect, .CENTER, combo_color,
-                    skin_texture(.SLIDER_END))
-                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_rect, .CENTER, color_white,
-                    skin_texture(.SLIDER_END_OVERLAY))
-            }
-
-            has_sliderend_at_head := slider.path_travel_count > 1 &&
-                (slider.path_travel_count % 2 == 0 || slider.checked_repeats_count < slider.path_travel_count - 1)
-            if has_sliderend_at_head && hobj.start_time_ms <= map_time {
-                sliderend_head_rect := rect_at_pos(hobj_pos, {cs * 2, cs * 2})
-                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_head_rect, .CENTER, combo_color,
-                    skin_texture(.SLIDER_END))
-                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_head_rect, .CENTER, color_white,
-                    skin_texture(.SLIDER_END_OVERLAY))
-            }
-
-            // note(isak): slider repeat arrows
-            has_repeat_at_end := slider.path_travel_count > 1 && slider.checked_repeats_count < slider.path_travel_count - 1 &&
-                (slider.path_travel_count % 2 == 0 || slider.checked_repeats_count < slider.path_travel_count - 2)
-            if has_repeat_at_end && slider_snake_factor(&hobj) >= 1 {
-                repeat_size := element_scale * game.active_skin.elements[.SLIDER_REPEAT].metrics
-                sliderend_repeat_rect := rect_at_pos(end_pos, repeat_size)
-                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_repeat_rect, .CENTER, color_white,
-                    skin_texture(.SLIDER_REPEAT), angle = path.end_angle_rad)
-            }
-
-            has_repeat_at_head := slider.path_travel_count > 2 && slider.checked_repeats_count < slider.path_travel_count - 1 &&
-                (slider.path_travel_count % 2 == 1 || slider.checked_repeats_count < slider.path_travel_count - 2)
-            if has_repeat_at_head && hobj.start_time_ms <= map_time {
-                repeat_size := element_scale * game.active_skin.elements[.SLIDER_REPEAT].metrics
-                sliderend_repeat_rect := rect_at_pos(hobj_pos, repeat_size)
-                r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_repeat_rect, .CENTER, color_white,
-                    skin_texture(.SLIDER_REPEAT), angle = path.head_angle_rad)
-            }
-            
-            // note(isak): slider tracking graphics
-            if hobj.start_time_ms <= map_time && map_time < hobj.end_time_ms {
-                ball_pos := slider_path_pos_at(&hobj, map_time)
-                ball_rect := rect_at_pos(ball_pos, element_scale * game.active_skin.elements[.SLIDER_BALL].metrics)
-                
-                if .TRACKING in hobj.slider_state.flags {
-                    follow_size := element_scale * game.active_skin.elements[.HITCIRCLE].metrics * SLIDER_FOLLOW_CIRCLE_RADIUS_MULT
-                    follow_rect := rect_at_pos(ball_pos, follow_size)
-                    r_draw_layout_rect(&window.renderer.quad_geometry, follow_rect, .CENTER, color_white, skin_texture(.SLIDER_FOLLOW_CIRCLE))
-                }
-                
-                r_draw_layout_rect(&window.renderer.quad_geometry, ball_rect, .CENTER, combo_color, skin_texture(.SLIDER_BALL),
-                    angle = 0) // todo(isak): slider ball angle needs to be mathed out...
-            }
+            render_slider_quads(&hobj, path, map_time)
         }
     }
     

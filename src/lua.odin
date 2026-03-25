@@ -22,7 +22,7 @@ import sdl "vendor:sdl3"
 // note(isak): API versioning/compat policy
 // maps declare a target API version in their .notosu header. when making breaking changes:
 //   - prefer add-only (rename new, keep old) until a clean break is necessary
-//   - on a genuine break: write compat/vN.lua (loaded before the map script for old versions)
+//   - on a breaking change: write compat/vN.lua (loaded before the map script for old versions)
 //   - shims can patch static methods directly (Hitobject.old = Hitobject.new) and instance
 //     methods via get_class_meta("ClassName") -- see luaapi_get_class_meta
 //   - things shims can't fix: event arg order changes, removed enum values the engine no
@@ -32,7 +32,7 @@ import sdl "vendor:sdl3"
 // @beta
 // todo(isak): expose scoring state to lua (combo, score, accuracy)
 // todo(isak): UV sub-rect support on Element for sprite sheet / atlas workflows
-// todo(isak): schedule(delay_ms, fn) for deferred callbacks without on_update boilerplate
+// todo(isak): schedule_event implemented - see luaapi_schedule_event / lua_drain_scheduled_events
 // todo(isak): z-index within a layer (currently insertion-order only)
 // todo(isak): animation list relocation is a silent footgun - ordering constraint should be enforced or surfaced clearly
 
@@ -41,6 +41,7 @@ lua_beatmap: struct {
     odin_context: runtime.Context,
     registered_events: bit_set[Lua_Beatmap_Event_Type],
     event_registrations: [dynamic]Lua_Event_Registration,
+    scheduled_events:    [dynamic]Scheduled_Event,
 
     last_rendered_timestamp_ms: f64,
 }
@@ -146,14 +147,7 @@ luaapi_global_funcs := []lua.L_Reg {
   { "key_is_down", luaapi_key_is_down },
   { "key_is_up", luaapi_key_is_up },
   { "trigger_event", luaapi_trigger_event },
-  
-  /* todo(isak) implement (maybe on Beatmap object):
-  { "get_music_time", luaapi_get_music_time },
-  { "get_bpm", luaapi_get_bpm },
-  { "get_ar_ms", luaapi_get_ar_ms },
-  { "get_cs_osupx", luaapi_get_cs_osupx },
-  
-  */
+  { "schedule_event", luaapi_schedule_event },
 }
 
 // note(isak): we use reflection to pull the names and associated enums directly to lua tables
@@ -169,6 +163,11 @@ Lua_Event_Registration :: struct {
     callback_ref: lua.Ref,  // luaL_ref into LUA_REGISTRYINDEX
     class:        Lua_Class_Type,
     handle_key:   u64,      // raw handle bits used for GC identification
+}
+
+Scheduled_Event :: struct {
+    event_name: string,  // points into Lua state memory - valid until Lua state is closed
+    fire_at_ms: f64,
 }
 
 
@@ -226,6 +225,7 @@ lua_cleanup :: proc() {
         lua.close(lua_beatmap.state)
     }
     clear(&lua_beatmap.event_registrations)
+    clear(&lua_beatmap.scheduled_events)
     lua_beatmap = {}
 }
 
@@ -266,7 +266,7 @@ lua_register_classes :: proc(L: ^lua.State) {
             lua.newtable(L)
             lua.L_setfuncs(L, raw_data(class.static_funcs), 0)
             lua.setglobal(L, class.name)
-        }        
+        }
     }   
 }
 
@@ -419,6 +419,43 @@ luaapi_trigger_event :: proc "c" (L: ^lua.State) -> i32 {
         }
     }
     return 0
+}
+
+// note(isak): schedule_event(delay_ms, name) - fires trigger_event(name) after delay_ms of music time.
+// fires even if the script has no on_update. re-entrant safe: callbacks may call schedule_event again.
+luaapi_schedule_event :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    event_name := lua_string(1)
+    delay_ms   := f64(lua.L_checknumber(L, 2))
+    append(&lua_beatmap.scheduled_events, Scheduled_Event{
+        event_name = event_name,
+        fire_at_ms = lua_beatmap.last_rendered_timestamp_ms + delay_ms,
+    })
+    return 0
+}
+
+// note(isak): called each frame from beatmap_on_update. fires any scheduled events whose
+// fire_at_ms has passed. uses unordered_remove so callbacks may safely append new entries.
+lua_drain_scheduled_events :: proc(time_ms: f64) {
+    L := lua_beatmap.state
+    if L == nil do return
+    i := 0
+    for i < len(lua_beatmap.scheduled_events) {
+        ev := lua_beatmap.scheduled_events[i]
+        if ev.fire_at_ms <= time_ms {
+            unordered_remove(&lua_beatmap.scheduled_events, i)
+            for reg in lua_beatmap.event_registrations {
+                if reg.name != ev.event_name do continue
+                lua.rawgeti(L, lua.REGISTRYINDEX, lua.Integer(reg.callback_ref))
+                _lua_push_event_target(L, reg.class, reg.handle_key)
+                if lua.pcall(L, 1, 0, 0) != lua.OK {
+                    lua_log_error("schedule_event error:")
+                }
+            }
+        } else {
+            i += 1
+        }
+    }
 }
 
 //////////////////////////////////////////////////////

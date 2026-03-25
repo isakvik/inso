@@ -151,7 +151,7 @@ osu_section_headers := []string{
     "[HitObjects]",
 }
 
-Osu_Sample_Set :: enum {
+Osu_Map_Sample_Set :: enum {
     NORMAL,
     SOFT,
     DRUM
@@ -779,8 +779,10 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
     current_timing_point_index_uninherited: int
     current_timing_point_index_inherited: int
     
-    combo_color_index := 0 // note(isak): osu logic - starts at second combo color...
+    combo_index := 0
     combo_number := 1
+    
+    last_non_spinner_hobj_i := 0
     
     for &hobj, i in osu_map.hitobjects {
         hobj.index = i
@@ -837,17 +839,28 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
             slider.tick_count = int((slider.duration_ms - SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS) / slider.tick_interval_ms)
         }
         
-        // note(isak): combo colors and number
-        if .NEW_COMBO in hobj.flags {
-            if osu_map.num_combo_colors > 0 {
-                combo_color_index = (combo_color_index + 1 + int(hobj.combo_color_skip_offset)) % osu_map.num_combo_colors
-            }
+        // note(isak): combo colors and number.
+        // color mirrors osu logic - we do a preincrement and start at the second combo color...
+        if .NEW_COMBO in hobj.flags || i == 0 {
+            combo_index = (combo_index + 1 + int(hobj.combo_color_skip_offset))
             combo_number = 1
+            
+            if i > 0 {
+                prev_hobj := &osu_map.hitobjects[last_non_spinner_hobj_i]
+                prev_hobj.flags |= {.LAST_IN_COMBO}
+            }
         }
-        hobj.combo_color_index = u8(combo_color_index)
+        
+        hobj.combo_index = combo_index
         hobj.combo_number = u16(combo_number)
         combo_number += 1
+        
+        if hobj.type != .SPINNER {
+            last_non_spinner_hobj_i = i
+        }
     }
+    
+    osu_map.hitobjects[last_non_spinner_hobj_i].flags |= {.LAST_IN_COMBO}
 }
 
 mapset_parse_osu_slider_params :: proc(hobj: ^Hitobject, slider: ^Slider_Path, params: string, alloc: mem.Allocator = context.allocator) {

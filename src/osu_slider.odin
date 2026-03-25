@@ -54,7 +54,7 @@ calculate_curve_from_time :: proc(time_at: f64, hobj: ^Hitobject, path: ^Slider_
     //bezier: needs logic fixes, right now it cannot correctly find which curve it's on
     //arc: done
     //straight: done
-    slider_duration := (hobj.end_time_ms - hobj.start_time_ms) / f64(hobj.slider_state.repeat_count)
+    slider_duration := (hobj.end_time_ms - hobj.start_time_ms) / f64(hobj.slider_state.path_travel_count)
     current_repeat := int(math.floor_f64((time_at - hobj.start_time_ms) / slider_duration))
     time_ref := time_at - slider_duration * f64(current_repeat)
 
@@ -215,7 +215,7 @@ calculate_straight_point_from_time :: proc(hobj: ^Hitobject, time_at: f64, path:
     elapsed  := clamp(time_at - hobj.start_time_ms, 0, duration)
 
     // t_passes goes from 0 to slider_repeats over the full duration
-    repeat_count := hobj.slider_state.repeat_count
+    repeat_count := hobj.slider_state.path_travel_count
     t_passes  := (elapsed / duration) * f64(repeat_count)
     pass_idx  := min(int(t_passes), repeat_count - 1)
     pass_frac := t_passes - f64(pass_idx)

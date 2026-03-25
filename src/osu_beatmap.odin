@@ -1,5 +1,6 @@
 package notosu
 
+import "core:thread"
 import "core:math/linalg"
 import sb "swap_buffer"
 import "slotmap"
@@ -198,6 +199,7 @@ beatmap_reload :: proc(beatmap: ^Beatmap, keep_song_position: bool = false) {
     game.active_map = &game.active_mapset.osu_map
     game.active_notosu_map = &game.active_mapset.notosu_map
     beatmap_on_init(beatmap.map_reference, beatmap)
+    sound_set_speed(&game.beatmap.music, game.time_rate)
     
     if keep_song_position {
         if music_time_before_load >= 0 {
@@ -206,7 +208,6 @@ beatmap_reload :: proc(beatmap: ^Beatmap, keep_song_position: bool = false) {
             game.beatmap.music_time_ms = music_time_before_load
         }
         
-        sound_set_speed(&game.beatmap.music, game.time_rate)
         if !game.paused {
             sound_resume(&game.beatmap.music)
         } 
@@ -378,7 +379,7 @@ judgement_new :: proc(hobj: ^Hitobject, type: Judgement_Type, time_error_ms: f64
 judgement_new_drawable :: proc(hobj: ^Hitobject) {
     if hobj.judgement_index > 0 {
         judgement := queue.get(&game.beatmap.judgements, hobj.judgement_index)
-        
+
         el_type: Element_Type
         switch judgement.result {
         case .MISS: el_type = .JUDGEMENT_MISS
@@ -387,17 +388,23 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
         case .MARVELOUS:    el_type = .JUDGEMENT_MARVELOUS
         case .SLIDER_SMALL_SCOREPOINT:  el_type = .LIGHTING
         case .SLIDER_LARGE_SCOREPOINT:  el_type = .LIGHTING
-            
-        case .NONE, .COMBO_BREAK, .IGNORED_HIT: 
+
+        case .NONE, .COMBO_BREAK, .IGNORED_HIT:
             return
         }
-    
-        //--@temp
+
+        pos := hitobject_pos(hobj)
+        if hobj.type == .SLIDER {
+            path := &game.beatmap.slider_paths[hobj.slider_path_index]
+            pos = path.pos if hobj.slider_state.path_travel_count % 2 == 0 else path.end_pos
+        }
+
+        //--@temp do the osu thing w metrics instead of spinny square
         drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
             flags = {.ACTIVE},
             element = builtin_element_slot(el_type),
             layer = .HITOBJECTS,
-            pos = hitobject_pos(hobj),
+            pos = pos,
             size = game.beatmap.circle_radius_osupx,
             anchor = .CENTER,
             color = color_white,
@@ -408,7 +415,9 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
             end_time_ms = judgement.time + 600
         })
         //--
+        fmt.println("judgement", fmt.enum_value_to_string(judgement.result))
     }
+    
 }
 
 process_expiring_hitobjects :: proc(expiring_hitobjects: ^sb.Swap_Buffer(int)) {
@@ -418,26 +427,54 @@ process_expiring_hitobjects :: proc(expiring_hitobjects: ^sb.Swap_Buffer(int)) {
         hobj := &game.beatmap.hitobjects[hobj_index]
 
         if .EXPIRED in hobj.flags do continue
-
+        
+        expired: bool
         #partial switch hobj.type {
         case .SLIDER:
-            slider_process(hobj, map_time, expiring_hitobjects)
+            expired = slider_process(hobj, map_time)
         case:
-            end_time := hitobject_visible_end_time(hobj)
-            if end_time < map_time {
-                judgement_new(hobj, .MISS, end_time - hobj.end_time_ms)
-                judgement_new_drawable(hobj)
-                hobj.flags &~= {.VISIBLE}
-                hobj.flags |= {.EXPIRED}
-            } else {
-                sb.append_next(expiring_hitobjects, hobj_index)
-            }
+            expired = hitcircle_process(hobj, map_time)
+        }
+        
+        if !expired {
+            sb.append_next(expiring_hitobjects, hobj_index)
         }
     }
     sb.swap(expiring_hitobjects)
 }
 
-// note(isak): returns slider ball position in playfield space at the given map time
+hitcircle_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
+    end_time := hitobject_visible_end_time(hobj)
+    if end_time < map_time {
+        judgement_new(hobj, .MISS, end_time - hobj.end_time_ms)
+        judgement_new_drawable(hobj)
+        hobj.flags &~= {.VISIBLE}
+        hobj.flags |= {.EXPIRED}
+        expired = true
+    }
+    return expired
+}   
+
+slider_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
+    state := &hobj.slider_state
+
+    // note(isak): one-time head miss check once the miss window has passed without a click
+    if !state.head_checked && map_time > hobj.start_time_ms + game.beatmap.timing_windows.miss {
+        state.head_checked = true
+    }
+
+    if map_time >= hobj.start_time_ms {
+        slider_update(hobj, map_time)
+    }
+
+    if map_time > hobj.end_time_ms {
+        slider_expire(hobj)
+        expired = true
+    }
+    return expired
+}
+
+
 slider_ball_pos_at :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
     path := &game.beatmap.slider_paths[hobj.slider_path_index]
 
@@ -447,36 +484,75 @@ slider_ball_pos_at :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
 
 SLIDER_FOLLOW_CIRCLE_RADIUS_MULT :: 2.4
 
-// note(isak): update ball tracking and fire tick scorepoints each frame
 slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
     slider := &hobj.slider_state
 
+    // todo(isak):
+    // - tracking must take (valid) key presses into account
+    // - tracking must take into account the 36ms magic ending 
+    // - create tick judgements (and revise the num_ticks_hit or whatever part of judgement)
+    // - draw slider ticks and repeats
+    
     ball_pos      := slider_ball_pos_at(hobj, map_time)
     follow_radius := game.beatmap.circle_radius_osupx * SLIDER_FOLLOW_CIRCLE_RADIUS_MULT
-    slider.tracking = point_in_circle(game.input.mouse_pos, ball_pos, follow_radius)
 
-    /*
-    for slider.next_expected_judgement_at_ms <= map_time && slider.next_checkpoint_time_ms < hobj.end_time_ms {
+    // note(isak): if the head was hit and the ball is still within follow circle distance of the head, 
+    // tracking activates regardless of cursor position. this is a contingency in the case of a late edgehit, 
+    // which we handle the same way as lazer by not activating if the sliderball has moved the distance of the radius.
+    
+    // TODO(isak): this needs to be tested
+    
+    was_tracking  := slider.tracking
+    head_snap     := slider.head_hit && point_in_circle(hobj.pos, ball_pos, follow_radius)
+    slider.tracking = point_in_circle(game.input.mouse_pos, ball_pos, follow_radius) || head_snap
+
+    timing_point := &game.active_map.timing_points[game.beatmap.current_timing_point_index_inherited]
+    sample_set   := Skin_Sample_Set(timing_point.sample_set)
+
+    if slider.tracking && !was_tracking {
+        slider.slide_sound = 
+            game_play_sound(&game.active_skin.hitsounds[sample_set][.SLIDERSLIDE], loop = true, volume = 0.5)
+    } else if !slider.tracking && was_tracking {
+        game_stop_sound(slider.slide_sound)
+        slider.slide_sound = {}
+    }
+
+    slider_time_at := (map_time - hobj.start_time_ms) - f64(slider.hit_repeats_count) * slider.duration_ms
+    if slider_time_at >= slider.duration_ms && slider.hit_repeats_count < (slider.path_travel_count - 1) {
+        slider.hit_repeats_count += 1
+        if slider.tracking {
+            judgement_new(hobj, .SLIDER_LARGE_SCOREPOINT, 0)
+            slider.hit_judgement_count += 1
+            sample_play(&game.active_skin.hitsounds[sample_set][.HITNORMAL])
+        }
+    }
+
+    // this tick stuff is broken
+    for slider.next_expected_judgement_at_ms <= map_time && slider.next_expected_judgement_at_ms < hobj.end_time_ms {
         if slider.tracking {
             judgement_new(hobj, .SLIDER_SMALL_SCOREPOINT, 0)
-            slider.n_checkpoints_hit += 1
+            slider.hit_judgement_count += 1
+            sample_play(&game.active_skin.hitsounds[sample_set][.SLIDERTICK])
         }
         slider.next_expected_judgement_at_ms += slider.tick_interval_ms
     }
-    */
 }
 
-// note(isak): called when the slider reaches end_time_ms; fires the tail scorepoint and deferred head judgement
 slider_expire :: proc(hobj: ^Hitobject) {
+    
     slider := &hobj.slider_state
+    log.info("slider expired", slider.slide_sound.generation, slider.slide_sound.index)
 
     if slider.tracking {
         judgement_new(hobj, .SLIDER_LARGE_SCOREPOINT, 0)
         slider.hit_judgement_count += 1
     }
 
+    game_stop_sound(slider.slide_sound)
+    slider.slide_sound = {}
+
     all_hit := slider.hit_judgement_count + (1 if slider.head_hit else 0)
-    total   := max(slider.total_judgement_count + 1, 1) // +1 for head
+    total   := max(slider.tick_count + slider.path_travel_count + 1, 1) // include tail
 
     result: Judgement_Type
     ratio := f64(all_hit) / f64(total)
@@ -491,23 +567,4 @@ slider_expire :: proc(hobj: ^Hitobject) {
     judgement_new_drawable(hobj)
     hobj.flags &~= {.VISIBLE}
     hobj.flags |= {.EXPIRED}
-}
-
-slider_process :: proc(hobj: ^Hitobject, map_time: f64, buf: ^sb.Swap_Buffer(int)) {
-    state := &hobj.slider_state
-
-    // note(isak): one-time head miss check once the miss window has passed without a click
-    if !state.head_checked && map_time > hobj.start_time_ms + game.beatmap.timing_windows.miss {
-        state.head_checked = true
-    }
-
-    if map_time >= hobj.start_time_ms {
-        slider_update(hobj, map_time)
-    }
-
-    if map_time > hobj.end_time_ms {
-        slider_expire(hobj)
-    } else {
-        sb.append_next(buf, hobj.index)
-    }
 }

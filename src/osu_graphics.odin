@@ -14,14 +14,16 @@ import "slotmap"
 
 // note(isak): texture id lookup table for skin elements
 skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
-    .HIT_CIRCLE = .HITCIRCLE,
+    .HIT_CIRCLE         = .HITCIRCLE,
     .HIT_CIRCLE_OVERLAY = .HITCIRCLEOVERLAY,
-    .APPROACH_CIRCLE = .APPROACHCIRCLE,
-    .COMBO_NUMBER = .COMBO_1,
-    
-    .JUDGEMENT_MISS = .HIT0,
-    .JUDGEMENT_OK = .HIT50,
-    .JUDGEMENT_GOOD = .HIT100,
+    .APPROACH_CIRCLE    = .APPROACHCIRCLE,
+    .COMBO_NUMBER       = .COMBO_1,
+
+    .SLIDER_FOLLOW_CIRCLE = .SLIDER_FOLLOW_CIRCLE,
+
+    .JUDGEMENT_MISS      = .HIT0,
+    .JUDGEMENT_OK        = .HIT50,
+    .JUDGEMENT_GOOD      = .HIT100,
     .JUDGEMENT_MARVELOUS = .HIT300,
 }
 
@@ -162,7 +164,18 @@ Element_Type :: enum {
     JUDGEMENT_OK,
     JUDGEMENT_GOOD,
     JUDGEMENT_MARVELOUS,
-    
+
+    COMBO_DIGIT_0,
+    COMBO_DIGIT_1,
+    COMBO_DIGIT_2,
+    COMBO_DIGIT_3,
+    COMBO_DIGIT_4,
+    COMBO_DIGIT_5,
+    COMBO_DIGIT_6,
+    COMBO_DIGIT_7,
+    COMBO_DIGIT_8,
+    COMBO_DIGIT_9,
+
     CUSTOM_ELEMENT
 }
 
@@ -249,6 +262,12 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
     
     for el_type in Element_Type {
         elements.data[el_type].tex = skin_texture(skin_element_for_type_table[el_type])
+    }
+
+    // note(isak): one element per digit glyph, avoids re-creating elements per hitobject
+    for d in 0..<10 {
+        elements.data[builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + d))].tex =
+            skin_texture(Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + d))
     }
 
     elements.data[builtin_element_slot(.HIT_CIRCLE)] = {
@@ -580,36 +599,82 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Pat
 }
 
 
+// note(isak): extracts up to 4 decimal digits of n into buf (most-significant first), returns count
+_combo_digits :: proc(n: int, buf: ^[4]int) -> (count: int) {
+    v := max(n, 1)
+    for v > 0 && count < 4 {
+        buf[count] = v % 10
+        v /= 10
+        count += 1
+    }
+    // reverse to most-significant-first order
+    for i in 0..<count/2 {
+        buf[i], buf[count-1-i] = buf[count-1-i], buf[i]
+    }
+    return count
+}
+
+COMBO_NUMBER_SCALE :: f32(0.9)
+
 TEST_write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
     for &hobj in game.beatmap.hitobjects {
+        if hobj.type != .CIRCLE && hobj.type != .SLIDER {
+            continue
+        }
+
         combo_color := osu_map.num_combo_colors > 0 ? osu_map.combo_colors[hobj.combo_color_index] : color_purple
 
-        hit_circle_el_types := [?]Element_Type{.COMBO_NUMBER, .HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
-        hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, len(hit_circle_el_types)) or_continue
-        #reverse for el_type, i in hit_circle_el_types {
-            d := Drawable{
-                flags = {.ACTIVE},
-                element = builtin_element_slot(el_type),
-                layer = .HITOBJECTS,
-                size = game.beatmap.circle_radius_osupx * 2,
-                anchor = .CENTER,
-                color = with_alpha(color_white, 1),
+        digits: [4]int
+        n_digits := _combo_digits(int(hobj.combo_number), &digits)
+
+        total_handles := n_digits + 3
+        hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, total_handles) or_continue
+
+        // last 3 handles (rendered first, behind digits)
+        base := [?]Element_Type{.HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
+        for el_type, i in base {
+            end_ms := hobj.start_time_ms + (game.beatmap.timing_windows.ok if el_type != .APPROACH_CIRCLE else 0)
+            hobj.gfx_handles[n_digits + i] = drawable_new(Drawable{
+                flags        = {.ACTIVE},
+                element      = builtin_element_slot(el_type),
+                layer        = .HITOBJECTS,
+                size         = game.beatmap.circle_radius_osupx * 2,
+                anchor       = .CENTER,
+                color        = (combo_color if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE else with_alpha(color_white, 1)),
                 start_time_ms = hobj.start_time_ms - game.beatmap.preempt_ms,
-                end_time_ms = hobj.start_time_ms,
-            }
-            if el_type == .HIT_CIRCLE || el_type == .HIT_CIRCLE_OVERLAY || el_type == .COMBO_NUMBER {
-                d.end_time_ms += game.beatmap.timing_windows.ok
-            }
-            if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE {
-                d.color = combo_color
-            }
+                end_time_ms   = end_ms,
+            })
+        }
 
-            if el_type == .COMBO_NUMBER {
-                d.size.x *= 0.2
-                d.size.y *= 0.4
-            }
-
-            hobj.gfx_handles[i] = drawable_new(d)
+        // digit drawables. each sized from its own skin metrics, spread and centered on hitobject pos
+        // compute total width first so we can center the run
+        
+        hc_metrics := game.active_skin.elements[.HITCIRCLE].metrics
+        // how many osupx per natural skin pixel, based on hitcircle fitting circle_radius*2
+        number_scale := (game.beatmap.circle_radius_osupx * 2) / max(hc_metrics.w, 1) * COMBO_NUMBER_SCALE
+            
+        total_digits_w: f32
+        for digit in 0..<n_digits {
+            digit_el := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[digit])
+            total_digits_w += game.active_skin.elements[digit_el].metrics.w * number_scale
+        }
+        x := -total_digits_w / 2
+        for di in 0..<n_digits {
+            digit_el      := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[di])
+            digit_metrics := game.active_skin.elements[digit_el].metrics
+            digit_size    := vec2{digit_metrics.w, digit_metrics.h} * number_scale
+            hobj.gfx_handles[di] = drawable_new(Drawable{
+                flags   = {.ACTIVE},
+                element = builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + digits[di])),
+                layer   = .HITOBJECTS,
+                pos     = {x + digit_size.x / 2, 0},
+                size    = digit_size,
+                anchor  = .CENTER,
+                color   = with_alpha(color_white, 1),
+                start_time_ms = hobj.start_time_ms - game.beatmap.preempt_ms,
+                end_time_ms   = hobj.start_time_ms + game.beatmap.timing_windows.ok,
+            })
+            x += digit_size.x
         }
     }
 }

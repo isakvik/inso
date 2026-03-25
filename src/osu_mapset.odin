@@ -738,7 +738,7 @@ mapset_load_buffer_entry :: proc(mapset: ^Mapset, name, source: string, size: in
     buf: Mapset_Buffer
 
     if source != "" {
-        // note(isak): file-backed buffer — load via GLTF, upload once, immutable on GPU
+        // note(isak): file-backed buffer
         model := load_model(source)
         if model == nil {
             log.errorf("mapset buffer '{}': failed to load source '{}'", name, source)
@@ -747,7 +747,7 @@ mapset_load_buffer_entry :: proc(mapset: ^Mapset, name, source: string, size: in
         buf.id   = model.id
         buf.size = model.size
     } else if size > 0 {
-        // note(isak): writable buffer — persistently mapped so Lua can write directly
+        // note(isak): writable buffer. persistently mapped so Lua can write directly
         buf = Mapset_Buffer(sbo_init(u8, size))
     } else {
         log.errorf("mapset buffer '{}': must specify either Source or Size, skipping", name)
@@ -780,6 +780,7 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
     current_timing_point_index_inherited: int
     
     combo_color_index := 0 // note(isak): osu logic - starts at second combo color...
+    combo_number := 1
     
     for &hobj, i in osu_map.hitobjects {
         hobj.index = i
@@ -830,10 +831,10 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
             }
             
             slider.duration_ms = slider.distance / (slider.velocity * 100 * osu_map.diff_slider_velocity) * uninherited_beat_length
-            hobj.end_time_ms = hobj.start_time_ms + (slider.duration_ms * f64(slider.repeat_count))
+            hobj.end_time_ms = hobj.start_time_ms + (slider.duration_ms * f64(slider.path_travel_count))
             
             slider.tick_interval_ms = uninherited_tp.beat_length / osu_map.diff_slider_tickrate
-            slider.tick_count = int(slider.duration_ms / slider.tick_interval_ms) * slider.repeat_count
+            slider.tick_count = int(slider.duration_ms / slider.tick_interval_ms) * slider.path_travel_count
             
             if slider.tick_count == 0 {
                 slider.next_expected_judgement_at_ms = hobj.start_time_ms + slider.duration_ms
@@ -842,13 +843,16 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
             }
         }
         
-        // note(isak): combo colors
+        // note(isak): combo colors and number
         if .NEW_COMBO in hobj.flags {
             if osu_map.num_combo_colors > 0 {
                 combo_color_index = (combo_color_index + 1 + int(hobj.combo_color_skip_offset)) % osu_map.num_combo_colors
             }
+            combo_number = 1
         }
         hobj.combo_color_index = u8(combo_color_index)
+        hobj.combo_number = u16(combo_number)
+        combo_number += 1
     }
 }
 
@@ -877,7 +881,7 @@ mapset_parse_osu_slider_params :: proc(hobj: ^Hitobject, slider: ^Slider_Path, p
                     slider.nodes[0] = hobj.pos
                 }
             case 1:
-                hobj.slider_state.repeat_count, ok = strconv.parse_int(value); assert(ok)
+                hobj.slider_state.path_travel_count, ok = strconv.parse_int(value); assert(ok)
             case 2:
                 slider.distance_osupx, ok = strconv.parse_f64(value); assert(ok)
             case 3:

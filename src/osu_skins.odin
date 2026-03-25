@@ -1,5 +1,6 @@
 package notosu
 
+import "core:log"
 import "core:mem/virtual"
 import os "core:os/os2"
 import "core:strings"
@@ -27,6 +28,8 @@ Skin_Element_Type :: enum u32 {
     COMBO_7,
     COMBO_8,
     COMBO_9,
+
+    SLIDER_FOLLOW_CIRCLE,
 }
 
 Skin_Sample_Set :: enum {
@@ -74,6 +77,8 @@ Skin_Element_Path := #partial [Skin_Element_Type]string {
     .COMBO_7 = "default-7",
     .COMBO_8 = "default-8",
     .COMBO_9 = "default-9",
+
+    .SLIDER_FOLLOW_CIRCLE = "sliderfollowcircle",
 }
 
 skin_sample_set_name := [Skin_Sample_Set]string {
@@ -119,15 +124,14 @@ skin_load :: proc(skin_path: string) -> (result: ^Skin) {
 
 skin_load_elements :: proc(skin: ^Skin) {
     for element in Skin_Element_Type {
+        tex_store := &window.skin_textures[element]
         tex_err: os.Error
+
         for extension in supported_image_extensions {
             element_path := strings.concatenate({Skin_Element_Path[element], "@2x", extension})
-            tex_store := &window.skin_textures[element]
-            tex := skin.elements[element]
-
             tex_store^, tex_err = texture_from_file(element_path)
             if tex_err == os.General_Error.None {
-                tex.is_high_resolution = true
+                skin.elements[element].is_high_resolution = true
                 break
             }
 
@@ -144,6 +148,10 @@ skin_load_elements :: proc(skin: ^Skin) {
         // todo(isak): we handle as much as we handle here, but can supply a default skin like osu here
         // instead of asserting
         assert(tex_err == os.General_Error.None)
+
+        // note(isak): natural display size. @2x textures are double-resolution for the same visual size
+        display_scale: f32 = skin.elements[element].is_high_resolution ? 0.5 : 1.0
+        skin.elements[element].metrics = {0, 0, f32(tex_store.w) * display_scale, f32(tex_store.h) * display_scale}
     }
 }
 
@@ -156,7 +164,8 @@ skin_load_hitsounds :: proc(skin: ^Skin) {
             }, context.temp_allocator)
 
             for extension in supported_audio_extensions {
-                path := strings.concatenate({stem, extension}, context.temp_allocator)
+                // note(isak): path is persisted
+                path := strings.concatenate({stem, extension}, context.allocator)
                 if !os.exists(path) {
                     continue
                 }

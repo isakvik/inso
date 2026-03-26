@@ -542,12 +542,12 @@ process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Dr
     sb.swap(expiring_gfx_refs)
 }
 
-slider_screenspace_bounding_box :: proc(slider: ^Slider_Path) -> (result: Rect) {
+slider_screenspace_bounding_box :: proc(slider: ^Slider_Path, translation: vec2 = {}) -> (result: Rect) {
     r := game.beatmap.circle_radius_osupx
     pad := f32(2)
     result = {
-        slider.bounds_min.x - r,
-        slider.bounds_min.y - r,
+        slider.bounds_min.x - r + translation.x,
+        slider.bounds_min.y - r + translation.y,
         slider.bounds_max.x - slider.bounds_min.x + r * 2,
         slider.bounds_max.y - slider.bounds_min.y + r * 2,
     }
@@ -564,31 +564,33 @@ render_slider_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     pf_rect := Rect{0, 0, pf_size,pf_size}
     slider_pf_transform := transform_from_bounds(rect_to_array(pf_rect), window.aspect_ratio)
     
-    slider_rect := slider_screenspace_bounding_box(slider)
-    
+    translation := hobj.script_pos_translation
+    slider_rect := slider_screenspace_bounding_box(slider, translation)
+
     slider_uvs := Rect{
         slider_rect.x / window.rect.w,
         slider_rect.y / window.rect.h,
         slider_rect.w / window.rect.w,
         slider_rect.h / window.rect.h,
     }
-    
+
     r_set_scissor_mode(slider_rect)
-    
+
     r_push_transform(slider_pf_transform)
     r_bind_pipeline({builtin_pipeline_slot(.SLIDER)})
     r_bind_framebuffer({ write = .SLIDERS })
     r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
-    
+
     r_clear(with_alpha(color_black, 0.0))
-    
+
     slider_snake_instances := max(1, i32(f64(slider.instance_count) * slider_snake_factor(hobj)))
-    
+
     command_push_draw_slider(Command_Draw_Slider{
-        base_instance  = u32(slider.first_instance_at),
-        instance_count = slider_snake_instances,
-        border_color   = with_alpha(color_white, 0.9),
-        body_color     = with_alpha(color_white, 0.7),
+        base_instance      = u32(slider.first_instance_at),
+        instance_count     = slider_snake_instances,
+        border_color       = with_alpha(color_white, 0.9),
+        body_color         = with_alpha(color_white, 0.7),
+        script_translation = translation,
     })
     
     r_bind_framebuffer({ read = .SLIDERS })
@@ -600,9 +602,6 @@ render_slider_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
         r_reset_scissor_mode()
         r_draw_rect_outline(&renderer.quad_geometry, slider_rect, color_cyan, 1)
     }
-    
-    slider_rect.x += hobj.script_pos_translation.x
-    slider_rect.y += hobj.script_pos_translation.y
     
     scissor_rect := Rect{
         2 + math.ceil(slider_rect.x),

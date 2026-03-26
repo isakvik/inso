@@ -10,8 +10,6 @@ game mechanics (not score, replays, etc)
         
     phase 1 visuals
         playfield scaling
-        combocolors (start on color 3)
-        combonumbers
         finish animations
             texture array handling is kinda half baked
 
@@ -58,6 +56,9 @@ lua
     particle system
 
 game
+    ui core (low priority)
+        map select
+        skin select
     entity hierarchy inspector
     offset wizard
 
@@ -65,3 +66,11 @@ platform
     lua profiling (nested profiler block support)
     input thread
     builtin resource pack
+
+YEAST mode
+    screen capture must work
+    parse and apply settings from osu install (specify with path?), to allow warmup
+    open specific map with command
+        click circle to start
+    
+    local networking for fun and video games

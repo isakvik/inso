@@ -97,6 +97,8 @@ window_on_resize :: proc(new_w, new_h: i32) {
     window.swapchain.height = new_h
     window.aspect_ratio = window.rect.h / window.rect.w
     window.screenspace_transform = transform_from_bounds({0, 0, window.rect.w, window.rect.h}, 1)
+    
+    // note(isak): you can put this in a game facing function and have a pointer here, but why would you wanna do that?
     game.playfield_transform = transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
     
     fbo_reinit(&window.framebuffers[.SLIDERS], new_w, new_h)

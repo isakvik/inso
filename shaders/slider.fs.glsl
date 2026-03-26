@@ -3,6 +3,7 @@
 layout(binding = 6, std140) uniform sliderParams {
     vec4 border_color;
     vec4 body_color;
+    vec2 script_translation_osupx;
 };
 
 in float color; // 0 = edge, 1 = center

@@ -1054,3 +1054,20 @@ mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu
     }
     return updated_systems
 }
+
+// note(isak): returns the index of the first hitobject with start_time_ms >= from_ms.
+// hitobjects are sorted by start time, so this is a binary search.
+hitobject_lower_bound_ms :: proc(from_ms: f64) -> int {
+    hitobjects := game.beatmap.hitobjects
+    lo, hi := 0, len(hitobjects)
+    for lo < hi {
+        mid := (lo + hi) / 2
+        if hitobjects[mid].start_time_ms < from_ms {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    return lo
+}
+

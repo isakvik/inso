@@ -5,6 +5,7 @@ import "core:container/queue"
 import "core:fmt"
 import "core:log"
 import "core:strings"
+import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:time"
@@ -189,6 +190,8 @@ main :: proc() {
 
     running := true
     event: sdl.Event
+    
+    app.debug_display_game_cursor = true
 
     for running {
         profiler_begin()
@@ -294,6 +297,8 @@ main :: proc() {
             begin_frame(renderer)
         }
         
+        game.playfield_transform = transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
+        
         {
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
             
@@ -314,12 +319,14 @@ main :: proc() {
             r_draw_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture(.CURSOR),
                 f32(time_s_since_beginning_of_program()))
             
-            r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
-            
-            pf_cur_rect: Rect = { game.input.mouse_pos.x, game.input.mouse_pos.y, 20, 20 }
-            r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, builtin_texture(.WHITE),
-                f32(time_s_since_beginning_of_program()))
-            r_draw_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
+            if app.debug_display_game_cursor {
+                r_push_transform(game.playfield_transform)
+                
+                pf_cur_rect: Rect = { game.input.mouse_pos.x, game.input.mouse_pos.y, 20, 20 }
+                r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, builtin_texture(.WHITE),
+                    f32(time_s_since_beginning_of_program()))
+                r_draw_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
+            }
         }
         
         {
@@ -454,6 +461,7 @@ handle_debug_ui_events :: proc(map_dropdown: ^Debug_Dropdown) {
     }
     if is_key_pressed(.F2) {
         app.debug_display_slider_bounds = !app.debug_display_slider_bounds
+        app.debug_display_game_cursor = !app.debug_display_game_cursor
     }
     if is_key_pressed(.F3) {
         app.debug_display_frame_profiler = !app.debug_display_frame_profiler

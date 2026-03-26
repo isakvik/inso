@@ -551,7 +551,7 @@ slider_screenspace_bounding_box :: proc(slider: ^Slider_Path, translation: vec2 
         slider.bounds_max.x - slider.bounds_min.x + r * 2,
         slider.bounds_max.y - slider.bounds_min.y + r * 2,
     }
-    result = transform_playfield_rect_to_screenspace(result)
+    result = transform_rect_playfield_to_screenspace(result)
     result.x, result.y = result.x - pad, result.y - pad
     result.w, result.h = result.w + pad*2, result.h + pad*2
     return result

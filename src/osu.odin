@@ -14,7 +14,7 @@ import sdl "vendor:sdl3"
 
 
 playfield_size_osupx :: f32(512)
-playfield_rect :: Rect{ 0, 0, playfield_size_osupx, playfield_size_osupx }
+playfield_rect := Rect{ 0, 0, playfield_size_osupx, playfield_size_osupx }
 
 osu_slider_curve_points_separation :: f32(2.5)
 

@@ -1615,23 +1615,18 @@ luaapi_hitobject_get_at_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
 luaapi_hitobject_get_in_range_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_beatmap.odin_context
     from_ms, to_ms := lua_int(1), lua_int(2)
-    
-    hitobject_index, found := game.active_mapset.hitobject_index_by_ms[int(from_ms)]
-    if !found {
-        log.warn("User warning - no hitobject at ms:", from_ms)
-        hitobject_index = 0
-    }
-    
+
+    start_index := hitobject_lower_bound_ms(f64(from_ms))
+
     default_array_size: i32 = 64
     lua.createtable(L, default_array_size, 0)
-    
-    for hobj, i in game.beatmap.hitobjects[hitobject_index:len(game.beatmap.hitobjects)] {
-        if hobj.start_time_ms < f64(from_ms) do continue
+
+    table_i: i32 = 1
+    for hobj, i in game.beatmap.hitobjects[start_index:] {
         if f64(to_ms) < hobj.start_time_ms do break
-        
-        lua_create_userdata(L, i, lua_classes[.HITOBJECT].name)
-        
-        lua.rawseti(L, -2, i32(i + 1))
+        lua_create_userdata(L, start_index + i, lua_classes[.HITOBJECT].name)
+        lua.rawseti(L, -2, table_i)
+        table_i += 1
     }
     return 1
 }

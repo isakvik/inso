@@ -884,7 +884,7 @@ transform_point_space :: proc(pt: vec2, source_to_common: mat3, dest_to_common: 
 }
 
 // note(isak): this is still very specific but my transform math makes my brain hurt
-transform_playfield_rect_to_screenspace :: proc(r: Rect) -> Rect {
+transform_rect_playfield_to_screenspace :: proc(r: Rect) -> Rect {
     tl_pt := vec3{r.x, r.y, 1.0}
     br_pt := vec3{r.x + r.w, r.y + r.h, 1.0}
     

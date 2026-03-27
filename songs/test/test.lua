@@ -80,24 +80,23 @@ function on_update(time_ms)
     Playfield.set_rotation(math.sin(time_ms / 3000) * 0.1)
 end
 
-function on_beat(beat)
-    -- every 1/1, index 0 meaning the first given timing section (most useful indexing for constructs like beat % 4)
-    -- trigger_event("saft", beat)
-    
-    if beat == 1 then
-        trigger_event("hehe", 1)
-    end
-    
-    --if beat % 4 == 0 and s == nil then
-    --    s = Sound.play_loop("soft-sliderslide.wav")
-    --end
-    --
-    --if beat % 4 == 2 and s ~= nil then
-    --    s:stop()
-    --    s = nil
-    --end
-    
-end
+--function on_beat(beat)
+--    -- every 1/1, index 0 meaning the first given timing section (most useful indexing for constructs like beat % 4)
+--    trigger_event("saft", beat)
+--    
+--    if beat == 1 then
+--        trigger_event("hehe", 1)
+--    end
+--    
+--    if beat % 4 == 0 and s == nil then
+--        s = Sound.play_loop("soft-sliderslide.wav")
+--    end
+--    
+--    if beat % 4 == 2 and s ~= nil then
+--        s:stop()
+--        s = nil
+--    end
+--end
 
 --function on_timing_change(beat, bpm)
 --    -- every redline

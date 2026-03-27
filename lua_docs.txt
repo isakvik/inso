@@ -1,0 +1,317 @@
+notosu lua scripting reference (written 27.03.2026)
+================================
+
+Scripts are LuaJIT (Lua 5.1 + select 5.2 features). The following standard
+libraries are available: base, table, string, math. IO and OS are disabled.
+
+Execution is capped at 1,000,000 instructions per frame to catch infinite loops.
+
+
+LIFECYCLE CALLBACKS
+-------------------
+Define these as global functions. The engine calls them automatically.
+
+  on_init()
+    Called once after the script is loaded.
+
+  on_update(time_ms)
+    Called every frame. time_ms is current music position in milliseconds.
+
+  on_beat(beat)
+    Called on each beat. beat is the integer beat number.
+
+  on_timing_change(beat, bpm)
+    Called when a new uninherited timing point becomes active.
+
+  on_pause_change(paused)
+    Called when the game is paused or unpaused. paused is a boolean.
+
+  on_kiai_change(kiai)
+    Called when kiai mode changes. kiai is a boolean.
+
+  on_controller_pressed(key)
+  on_controller_released(key)
+    key is one of: "k1", "k2", "m1", "m2"
+
+  on_key_pressed(key_name)
+  on_key_released(key_name)
+    key_name is an SDL scancode name, e.g. "Space", "Return", "A".
+
+  on_cursor_moved(x, y)
+    Called when the cursor moves. Coordinates are in screen pixels.
+
+  on_judgement(hitobject, judgement_name, timing_error_ms)
+    hitobject is a Hitobject handle. judgement_name is one of:
+      "None", "Miss", "Ok", "Good", "Marvelous",
+      "SliderSmallScorepoint", "SliderLargeScorepoint",
+      "SliderScorepointMiss", "IgnoredHit", "ComboBreak"
+    timing_error_ms is signed (negative = early, positive = late).
+
+
+GLOBAL FUNCTIONS
+----------------
+
+  load_file(filename)
+    Load and execute a lua file from the mapset folder. Returns any value
+    the file returns. Useful for splitting scripts across files.
+
+  get_cursor_pos() -> x, y
+    Returns the current cursor position in screen pixels.
+
+  controller_is_down(key) -> bool
+  controller_is_up(key) -> bool
+    key is one of: "k1", "k2", "m1", "m2"
+
+  key_is_down(key_name) -> bool
+  key_is_up(key_name) -> bool
+    key_name is an SDL scancode name.
+
+  trigger_event(name, ...)
+    Fire all callbacks registered under name. Extra args are forwarded to
+    each callback. Object callbacks receive (self, ...), global callbacks
+    receive (...) only.
+
+  schedule_event(name, delay_ms)
+    Fire trigger_event(name) after delay_ms of music time has elapsed.
+    Safe to call from inside a callback (re-entrant).
+
+  register_global_event(name, fn)
+    Register fn as a callback for trigger_event(name). fn receives only
+    the extra args, no leading self argument.
+
+
+ENUM CONSTANTS
+--------------
+These are read-only tables exposed as globals.
+
+  Layer.*
+    BACKGROUND, FOREGROUND, HITOBJECTS, OVERLAY, UI, DEBUG
+
+  Anchor.*
+    TOP_LEFT, TOP_MIDDLE, TOP_RIGHT
+    MIDDLE_LEFT, CENTER, MIDDLE_RIGHT
+    BOTTOM_LEFT, BOTTOM_MIDDLE, BOTTOM_RIGHT
+
+  Tween.*
+    LINEAR
+    QUAD_IN,    QUAD_OUT,    QUAD_IN_OUT
+    CUBIC_IN,   CUBIC_OUT,   CUBIC_IN_OUT
+    QUARTIC_IN, QUARTIC_OUT, QUARTIC_IN_OUT
+    QUINTIC_IN, QUINTIC_OUT, QUINTIC_IN_OUT
+    SINE_IN,    SINE_OUT,    SINE_IN_OUT
+    EXPO_IN,    EXPO_OUT,    EXPO_IN_OUT
+    BACK_IN,    BACK_OUT,    BACK_IN_OUT
+    ELASTIC_OUT
+    BOUNCE_OUT
+
+  Judgement.*
+    NONE, MISS, OK, GOOD, MARVELOUS
+    SLIDER_SMALL_SCOREPOINT, SLIDER_LARGE_SCOREPOINT, SLIDER_SCOREPOINT_MISS
+    IGNORED_HIT, COMBO_BREAK
+
+
+COLOR
+-----
+Colors are packed 32-bit integers (0xRRGGBBAA). Use Color helpers to build them.
+
+  Color.rgb(r, g, b) -> color
+  Color.rgba(r, g, b, a) -> color
+    r, g, b, a are integers 0-255. Values above 255 are clamped.
+
+
+DRAWABLE
+--------
+A visible object placed in the scene with a lifetime. Drawables are automatically
+removed when their end time passes.
+
+  Drawable.new(tex_name_or_element [, start_ms, end_ms]) -> drawable
+    tex_name_or_element: either a texture name string, or an Element object.
+    start_ms defaults to the current beatmap start time.
+    end_ms defaults to the beatmap length.
+
+  drawable:clone() -> drawable
+    Creates a new drawable that is a copy of this one.
+
+  drawable:register_event(name, fn)
+    Register fn as a callback for trigger_event(name) on this drawable.
+    fn receives (self, ...). Callback is automatically cleaned up when the
+    drawable is garbage collected.
+
+  drawable:set_layer(layer)       layer is a Layer.* value
+  drawable:set_anchor(anchor)     anchor is an Anchor.* value
+  drawable:set_pos(x, y)
+  drawable:set_size(w, h)
+  drawable:set_color(color)       color is a packed integer (see Color)
+  drawable:set_vel(x, y)          pixels per second
+  drawable:set_accel(x, y)        pixels per second^2
+  drawable:set_angle_vel(rad)     radians per second
+  drawable:set_start_time(ms)
+  drawable:set_end_time(ms)
+  drawable:set_time(start_ms, end_ms)
+  drawable:hide()
+  drawable:show()
+
+  drawable:get_pos() -> x, y
+  drawable:get_size() -> w, h
+  drawable:get_color() -> color
+  drawable:get_start_time() -> ms
+  drawable:get_end_time() -> ms
+
+  All setters return self for chaining.
+
+
+ELEMENT
+-------
+A reusable template for drawables. Holds the texture, shader, mesh, and
+animation list that a Drawable renders with.
+
+  Element.new() -> element
+    Creates a new element with a plain white quad shader and white texture.
+
+  element:register_event(name, fn)
+    Same semantics as drawable:register_event.
+
+  element:set_tex(name)
+    Set the texture by mapset resource name.
+
+  element:set_uv(x, y, w, h)
+    Set a UV sub-rectangle in [0,1] texture space for sprite sheet use.
+
+  element:set_shader(name)
+    Set the render pipeline by mapset resource name.
+
+  element:set_animation(anim)
+    Attach an Animation list. The element will play it when rendered.
+
+  element:set_mesh(buffer_name, vertex_count)
+    Switch to mesh-drawn mode. The vertex shader reads geometry from the
+    named SSBO (Buffer) at VERTEX_BUFFER binding. vertex_count is the
+    number of vertices to draw.
+
+
+ANIMATION
+---------
+An ordered list of keyframe animations attached to an Element. Animation times
+are normalized to the drawable's lifetime: 0.0 = start, 1.0 = end.
+
+  Animation.new() -> anim
+    Creates a new empty animation list.
+
+  anim:move(start, end, from_x, from_y, to_x, to_y [, tween])
+    Translate position from (from_x, from_y) to (to_x, to_y).
+
+  anim:scale(start, end, from_x, from_y, to_x, to_y [, tween])
+    Scale from (from_x, from_y) to (to_x, to_y).
+
+  anim:rotate(start, end, from_rad, to_rad [, tween])
+    Rotate from from_rad to to_rad (radians).
+
+  anim:color(start, end, from_color, to_color [, tween])
+    Interpolate color. from_color and to_color are packed integers (see Color).
+
+  anim:alpha(start, end, from, to [, tween])
+    Interpolate alpha. from and to are 0.0-1.0.
+
+  anim:texture(start, end, tex_name [, layer])
+    Set texture during [start, end]. layer selects a layer in a texture array
+    (default 0).
+
+  anim:frames(start, end, tex_name)
+    Distribute all layers of a texture array as evenly-spaced keyframes over
+    [start, end]. Useful for sprite sheet animations.
+
+  All anim methods return self for chaining.
+
+  Note: an Animation list must be appended to continuously from the end.
+  If you interleave calls to two different lists, the second list will be
+  automatically relocated (wasting some space). Build one list at a time.
+
+
+HITOBJECT
+---------
+A handle to a beatmap hitobject. Coordinates are in osu!px (0-512 range).
+
+  Hitobject.get_at_ms(ms) -> hitobject
+    Get the hitobject whose start time matches ms exactly.
+    Logs an error and returns nothing if not found.
+
+  Hitobject.get_in_range_ms(from_ms, to_ms) -> {hitobject, ...}
+    Returns an array of all hitobjects with start times in [from_ms, to_ms].
+
+  hitobject:register_event(name, fn)
+    Same semantics as drawable:register_event.
+
+  hitobject:hide()
+  hitobject:unhide()
+    Show or hide all drawables associated with this hitobject.
+
+  hitobject:get_pos() -> x, y
+  hitobject:set_pos(x, y)
+    Moves the hitobject to an absolute position by adjusting its script offset.
+
+  hitobject:get_start_time() -> ms
+  hitobject:set_start_time(ms)
+  hitobject:get_end_time() -> ms
+  hitobject:set_end_time(ms)
+
+  All setters return self for chaining.
+
+
+BEATMAP
+-------
+Read-only information about the active beatmap.
+
+  Beatmap.get_music_time_ms() -> ms
+  Beatmap.get_length_ms() -> ms
+  Beatmap.get_bpm() -> bpm
+  Beatmap.get_beat_length_ms() -> ms
+  Beatmap.get_ar_ms() -> ms      approach rate as preempt window in ms
+  Beatmap.get_cs_osupx() -> px   circle radius in osu!px
+  Beatmap.is_paused() -> bool
+
+
+BUFFER
+------
+A GPU-side data buffer (SSBO). Buffers are declared in the mapset .notosu file.
+
+  Buffer.get(name) -> buffer
+    Retrieve a buffer by mapset resource name. Logs an error and returns nil
+    if not found.
+
+  buffer:bind(user_slot)
+    Bind the buffer to a user shader slot (0-7, maps to USER_0..USER_7).
+    Call this before drawing if your shader reads from a user slot.
+
+  buffer:write_f32s(byte_offset, val, ...)
+    Write one or more f32 values starting at byte_offset.
+
+  buffer:write_vec4(vec4_index, x, y, z, w)
+    Write four f32s at vec4_index * 16 bytes. vec4_index is 0-based.
+
+  buffer:size() -> bytes
+    Returns the total byte size of the buffer.
+
+
+SOUND
+-----
+  Sound.play(name [, volume=1.0, pan=0.0])
+    Play a one-shot sound from the mapset by resource name.
+    pan is -1.0 (left) to 1.0 (right).
+
+  Sound.play_loop(name [, volume=1.0]) -> handle
+    Play a looping sound. Returns a handle to stop it later.
+
+  handle:stop()
+    Stop a looping sound started with play_loop.
+
+PLAYFIELD
+---------
+Controls the transform of the osu! playfield. All transforms are in osu!px space
+and stack on top of the engine's base centering transform.
+
+  Playfield.set_translation(x, y)   set absolute offset in osu!px
+  Playfield.set_scale(s)             set scale multiplier (1.0 = default size)
+  Playfield.set_rotation(rad)        set absolute rotation in radians
+
+  Playfield.translate(x, y)          add to current translation
+  Playfield.rotate(rad)              add to current rotation

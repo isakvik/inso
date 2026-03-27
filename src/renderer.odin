@@ -879,23 +879,16 @@ r_draw_rect_outline_fill :: proc(geometry: ^Buffer(Quad), rect: Rect, color_outl
 
 transform_point_space :: proc(pt: vec2, source_to_common: mat3, dest_to_common: mat3) -> vec2 {
     h_pt := vec3{pt.x, pt.y, 1.0}
-    h_pt = h_pt * source_to_common * linalg.matrix3_inverse(dest_to_common)
+    h_pt = linalg.matrix3_inverse(dest_to_common) * source_to_common * h_pt
     return h_pt.xy
 }
 
-// note(isak): this is still very specific but my transform math makes my brain hurt
 transform_rect_playfield_to_screenspace :: proc(r: Rect) -> Rect {
-    tl_pt := vec3{r.x, r.y, 1.0}
-    br_pt := vec3{r.x + r.w, r.y + r.h, 1.0}
-    
-    xform := playfield_to_screenspace_transform()
-    tl_xform := xform * tl_pt
-    br_xform := xform * br_pt
-    
-    return {
-        (window.rect.w - window.rect.h) / 2 + tl_xform.x, tl_xform.y,
-        br_xform.x - tl_xform.x, br_xform.y - tl_xform.y
-    }
+    pf_mat := transform_to_mat3(game.playfield_transform)
+    ss_mat := transform_to_mat3(window.screenspace_transform)
+    tl := transform_point_space({r.x,       r.y      }, pf_mat, ss_mat)
+    br := transform_point_space({r.x + r.w, r.y + r.h}, pf_mat, ss_mat)
+    return {tl.x, tl.y, br.x - tl.x, br.y - tl.y}
 }
 
 /*

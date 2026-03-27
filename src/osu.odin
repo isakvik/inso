@@ -14,8 +14,6 @@ import sdl "vendor:sdl3"
 
 
 playfield_size_osupx :: f32(512)
-playfield_rect := Rect{ 0, 0, playfield_size_osupx, playfield_size_osupx }
-
 osu_slider_curve_points_separation :: f32(2.5)
 
 // note(isak): state struct. keep it lean, put large data fields in arenas and point to it here
@@ -35,7 +33,10 @@ game: struct {
     
     beatmap: Beatmap,
     playfield_transform: Transform,
-    
+    playfield_translation_osupx: vec2,
+    playfield_scale: f32,
+    playfield_rotation_rad: f32,
+
     paused: bool,
     time_rate: f32,
     
@@ -314,19 +315,45 @@ Osu_Map :: struct {
     timing_points: []Timing_Point,
 }
 
+// note(isak): builds game.playfield_transform from playfield_offset_osupx, playfield_scale,
+// and playfield_rotation_rad. maps osu!px -> NDC with full affine support (translate, scale,
+// rotate). the inverse correctly maps window pixels back to osu!px without extra adjustment.
+playfield_build_transform :: proc "contextless" () -> Transform {
+    k  := game.playfield_scale * window.rect.h / playfield_size_osupx
+    cx := window.rect.w * 0.5 + game.playfield_translation_osupx.x * k
+    cy := window.rect.h * 0.5 + game.playfield_translation_osupx.y * k
+
+    ndc_from_px := mat3{
+        2 / window.rect.w, 0,                 -1,
+        0,                 2 / window.rect.h, -1,
+        0,                 0,                  1,
+    }
+    t_center := mat3{
+        1, 0, -playfield_size_osupx * 0.5,
+        0, 1, -playfield_size_osupx * 0.5,
+        0, 0,  1,
+    }
+
+    return mat3_to_transform(ndc_from_px * mat3_affine({cx, cy}, k, game.playfield_rotation_rad) * t_center)
+}
+
+
 osu_on_init :: proc() {
     game.time_rate = 1.0
     game.mode = .PLAY
-    
+
     game_sounds_clear()
     ui_init_timeline(&game.ui_timeline)
-    
+
     game.input.k1_key = sdl.Scancode.Z
     game.input.k2_key = sdl.Scancode.X
 
-    beatmap_on_init(game.active_map_ref, &game.beatmap)
-    game.playfield_transform = transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
+    game.playfield_scale = 1.06667
+    game.playfield_translation_osupx = {0, (512-384)/2+8}
     
+    beatmap_on_init(game.active_map_ref, &game.beatmap)
+    game.playfield_transform = playfield_build_transform()
+
     // todo(isak): @beta universal offset sync interface
     game.universal_offset_ms = -28
 }
@@ -437,6 +464,8 @@ osu_on_update :: proc(dt: f64) {
     }
     //--
     
+    game.playfield_transform = playfield_build_transform()
+    
     // beatmap render
     
     r_bind_layer_and_push_current_state(.HITOBJECTS)
@@ -446,8 +475,8 @@ osu_on_update :: proc(dt: f64) {
     // function pointer in the hitobject struct that renders (and maybe one that updates? continual
     // logic is necessary for sliders... hitting circles is a keyboard event kind of thing)
     
-    // todo(isak) ALSO don't forget that sliders SHOULD go on top of hitobjects appearing later, so the 
-    // render hitobjects loop should be integrated into this
+    // todo(isak) @beta ALSO don't forget that sliders SHOULD go on top of hitobjects appearing later, so the 
+    // render hitobjects loop should be integrated into this 
     
     for &hobj in hobj_it {
         if map_time < hobj.start_time_ms - game.beatmap.preempt_ms || hobj.end_time_ms < map_time {
@@ -606,11 +635,10 @@ handle_play_input_events :: proc() {
     game.input.m1 = mouse.buttons[.LEFT]
     game.input.m2 = mouse.buttons[.RIGHT]
     
-    pf_mouse := vec2{mouse.pos.x, mouse.pos.y}
-    pf_mouse.x -= (window.rect.w - window.rect.h) / 2
-    
+    screen_mouse := vec2{mouse.pos.x, mouse.pos.y}
+
     old_mouse_pos := game.input.mouse_pos
-    game.input.mouse_pos = transform_point_space(pf_mouse,
+    game.input.mouse_pos = transform_point_space(screen_mouse,
         transform_to_mat3(window.screenspace_transform),
         transform_to_mat3(game.playfield_transform)
     )
@@ -690,11 +718,6 @@ pressed_controller_key :: proc() -> int {
     if controller_key_pressed(1) do return 1
     if controller_key_pressed(2) do return 2
     return 0
-}
-
-
-playfield_to_screenspace_transform :: proc() -> mat3 {
-    return transform_to_mat3(game.playfield_transform) * linalg.matrix3_inverse(transform_to_mat3(window.screenspace_transform))
 }
 
 

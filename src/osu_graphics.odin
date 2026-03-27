@@ -559,11 +559,13 @@ slider_screenspace_bounding_box :: proc(slider: ^Slider_Path, translation: vec2 
 
 
 render_slider_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Path) {
-    pf_size: f32 = playfield_size_osupx / game.beatmap.circle_radius_osupx
-    
-    pf_rect := Rect{0, 0, pf_size,pf_size}
-    slider_pf_transform := transform_from_bounds(rect_to_array(pf_rect), window.aspect_ratio)
-    
+    // note(isak): slider geometry is in CS-normalized units (osu!px / radius). composing with
+    // game.playfield_transform means any offset/rotation/scale on the playfield automatically 
+    // applies to the slider pass too.
+    r := game.beatmap.circle_radius_osupx
+    cs_to_osupx := mat3{r, 0, 0, 0, r, 0, 0, 0, 1}
+    slider_pf_transform := mat3_to_transform(transform_to_mat3(game.playfield_transform) * cs_to_osupx)
+
     translation := hobj.script_pos_translation
     slider_rect := slider_screenspace_bounding_box(slider, translation)
 

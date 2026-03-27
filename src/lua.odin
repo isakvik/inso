@@ -32,7 +32,6 @@ import sdl "vendor:sdl3"
 // @beta
 // todo(isak): expose scoring state to lua (combo, score, accuracy)
 // todo(isak): UV sub-rect support on Element for sprite sheet / atlas workflows
-// todo(isak): schedule_event implemented - see luaapi_schedule_event / lua_drain_scheduled_events
 // todo(isak): z-index within a layer (currently insertion-order only)
 // todo(isak): animation list relocation is a silent footgun - ordering constraint should be enforced or surfaced clearly
 

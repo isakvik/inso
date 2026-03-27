@@ -102,16 +102,17 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     slotmap.init(&beatmap.drawables, 8192, memory.allocators[.DRAWABLES])
     _ = slotmap.insert(&beatmap.drawables, null_drawable)
     
-    //-- @temp @beta
-    // todo(isak): opinionated drawable pushing; needs to be rewritten to take scriptable objects and skin metrics
-    // into account
+    //-- @speed @beta
+    // todo(isak): we should probably run the lua init code first since that's the reasonable way of populating
+    // custom drawables to the hitobjects a map wants, then write the defaults to anything that doesn't have graphical
+    // handles after that, just to save some work
     TEST_write_default_drawables_from_map(game.active_map)
     bg_handle := TEST_bg_drawable(game.active_map.bg_filename, "wave")
-    //--
     
     if lua_cares_about_event(.ON_INIT) {
         lua_call_beatmap_func("on_init")
     }
+    //--
 }
 
 beatmap_on_update :: proc(beatmap: ^Beatmap) {

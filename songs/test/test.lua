@@ -44,9 +44,6 @@ function on_init()
             print("custom event @ beat: " .. beat_n) 
         end)
     
-    --hobj = Hitobject.get_at_ms(0) -- needs optional index param so we can get the next at ms 0
-    
-    -- todo(isak) @beta if there is no hitobject at the ms of the first argument, 0 is returned...
     list = Hitobject.get_in_range_ms(0, 425000)
     
     table = {}
@@ -59,13 +56,13 @@ function on_init()
     end
 end
 
-function on_update(time_ms)
+function _on_update(time_ms)
     for i, hobj in ipairs(list) do 
         x, y = hobj:get_pos()
         x = x + math.cos((time_ms*i*0.01) / 1000 + i*0.1)* 10
         y = y + math.sin((time_ms*i*0.01) / 1000 + i*0.1)* 10
         
-        hobj:set_pos(x,y) -- todo(isak) @beta broken on sliders cuz bounding box doesnt move
+        hobj:set_pos(x,y)
         table[i]:set_pos(x,y)
     end
 end

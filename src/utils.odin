@@ -251,6 +251,15 @@ transform_to_mat3 :: proc "contextless" (t: Transform) -> mat3 {
     }
 }
 
+mat3_to_transform :: proc "contextless" (m: mat3) -> Transform {
+    return Transform{
+        m[0][0], m[1][0], m[2][0],
+        m[0][1], m[1][1], m[2][1],
+        m[0][2], m[1][2], m[2][2],
+        0,0,0
+    }
+}
+
 mat3_rotation :: proc "contextless" (th: f32) -> mat3 {
     return {
         math.cos(th), -math.sin(th), 0,
@@ -259,10 +268,17 @@ mat3_rotation :: proc "contextless" (th: f32) -> mat3 {
     }
 }
 
+// note(isak): builds a 2d affine transform mat3: scale -> rotate -> translate.
+// column-vector convention: mat3_affine(...) * vec3(pos, 1)
+mat3_affine :: proc "contextless" (translation: vec2, scale: f32, rotation_rad: f32) -> mat3 {
+    t := mat3{1, 0, translation.x,  0, 1, translation.y,  0, 0, 1}
+    s := mat3{scale, 0, 0,  0, scale, 0,  0, 0, 1}
+    return t * mat3_rotation(rotation_rad) * s
+}
+
 line_normal :: proc "contextless" (from_to: vec2) -> vec2 {
     return linalg.normalize(linalg.vector2_orthogonal(from_to))
 }
-
 
 transform_from_bounds :: proc "contextless" (r: vec4, aspect_ratio: f32) -> Transform {
     center: vec2 = { r.x + r.z * 0.5, r.y + r.w * 0.5 }

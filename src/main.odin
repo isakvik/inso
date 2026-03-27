@@ -296,9 +296,7 @@ main :: proc() {
             // prepare drawing
             begin_frame(renderer)
         }
-        
-        game.playfield_transform = transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
-        
+
         {
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
             
@@ -321,12 +319,18 @@ main :: proc() {
             
             if app.debug_display_game_cursor {
                 r_push_transform(game.playfield_transform)
-                
                 pf_cur_rect: Rect = { game.input.mouse_pos.x, game.input.mouse_pos.y, 20, 20 }
                 r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, builtin_texture(.WHITE),
                     f32(time_s_since_beginning_of_program()))
-                r_draw_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
             }
+            
+            r_push_transform(game.playfield_transform)
+            
+            cs := game.beatmap.circle_radius_osupx
+            pf_outline := Rect{
+                -cs, -cs, playfield_size_osupx+2*cs, (playfield_size_osupx*3/4)+2*cs
+            }
+            r_draw_rect_outline(&renderer.quad_geometry, pf_outline, with_alpha(color_white, 0.1), 2)
         }
         
         {
@@ -427,7 +431,7 @@ end_frame :: proc(renderer: ^Renderer) {
 
 
 write_debug_ui :: proc(map_dropdown: ^Debug_Dropdown) {
-    imgui.Begin("饕餮尤魔 :3")
+    imgui.Begin("Info")
     defer imgui.End()
 
     timer_str := strings.clone_to_cstring(time_ms_to_string(beatmap_music_time_ms(&game.beatmap)), context.temp_allocator)

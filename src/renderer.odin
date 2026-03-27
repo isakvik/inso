@@ -883,15 +883,7 @@ transform_point_space :: proc(pt: vec2, source_to_common: mat3, dest_to_common: 
     return h_pt.xy
 }
 
-transform_rect_playfield_to_screenspace :: proc(r: Rect) -> Rect {
-    pf_mat := transform_to_mat3(game.playfield_transform)
-    ss_mat := transform_to_mat3(window.screenspace_transform)
-    tl := transform_point_space({r.x,       r.y      }, pf_mat, ss_mat)
-    br := transform_point_space({r.x + r.w, r.y + r.h}, pf_mat, ss_mat)
-    return {tl.x, tl.y, br.x - tl.x, br.y - tl.y}
-}
 
-/*
 transform_rect_to_screen_corners :: proc(r: Rect, playfield_to_ndc: mat3, screen_to_ndc: mat3) -> [4]vec2 {
     corners := [4]vec2{
         {r.x,       r.y},
@@ -916,7 +908,6 @@ calculate_aabb_from_corners :: proc(corners: [4]vec2) -> Rect {
     }
     return {min_pt.x, min_pt.y, max_pt.x - min_pt.x, max_pt.y - min_pt.y}
 }
-*/
 
 
 rect_translate_by_anchor :: proc(rect: Rect, anchor: Layout_Anchor) -> Rect {

@@ -545,13 +545,16 @@ process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Dr
 slider_screenspace_bounding_box :: proc(slider: ^Slider_Path, translation: vec2 = {}) -> (result: Rect) {
     r := game.beatmap.circle_radius_osupx
     pad := f32(2)
-    result = {
+    osupx_rect := Rect{
         slider.bounds_min.x - r + translation.x,
         slider.bounds_min.y - r + translation.y,
         slider.bounds_max.x - slider.bounds_min.x + r * 2,
         slider.bounds_max.y - slider.bounds_min.y + r * 2,
     }
-    result = transform_rect_playfield_to_screenspace(result)
+    pf_mat := transform_to_mat3(game.playfield_transform)
+    ss_mat := transform_to_mat3(window.screenspace_transform)
+    corners := transform_rect_to_screen_corners(osupx_rect, pf_mat, ss_mat)
+    result = calculate_aabb_from_corners(corners)
     result.x, result.y = result.x - pad, result.y - pad
     result.w, result.h = result.w + pad*2, result.h + pad*2
     return result
@@ -562,8 +565,6 @@ render_slider_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     // note(isak): slider geometry is in CS-normalized units (osu!px / radius). composing with
     // game.playfield_transform means any offset/rotation/scale on the playfield automatically 
     // applies to the slider pass too.
-    
-    // todo(isak): the bounding boxes for the sliders are buggy and don't preserve the slider properly on rotation
     
     r := game.beatmap.circle_radius_osupx
     cs_to_osupx := mat3{r, 0, 0, 0, r, 0, 0, 0, 1}

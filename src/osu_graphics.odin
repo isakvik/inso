@@ -825,7 +825,7 @@ TEST_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Hand
             pos = vec2{256, 256} - playfield_base_translation_osupx,
             size = bg_size,
             anchor = .CENTER,
-            color = {30,30,30,100},
+            color = {22,22,22,255},
             
             start_time_ms = game.beatmap.start_time_ms,
             end_time_ms = game.beatmap.length_ms

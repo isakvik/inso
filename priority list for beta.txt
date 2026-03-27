@@ -1,6 +1,8 @@
 priority list for beta
 
--- PRE BETA --
+-- PRE ALPHA --
+
+-- POST MAPPER ALPHA RELEASE -- 
 
 scripting
     draft more api
@@ -8,17 +10,8 @@ scripting
 game mechanics (not score, replays, etc)
     per-hitobject size and approach rate
         
-    phase 1 visuals
-        playfield scaling
-        combocolors (start on color 3)
-        combonumbers
-        finish animations
-            texture array handling is kinda half baked
-
-gameplay
-    hittesting
-    notelock
-    hitsounds
+    finish animations
+        texture array handling is kinda half baked
 
 rendering
     render to FBO
@@ -32,16 +25,16 @@ TEST
     notosu custom buffers
     custom animations
     limit testing
-
--- POST MAPPER BETA RELEASE -- 
-
+    
 rendering
     locking bugfix
     bindless textures fallback
-    optimization
+    fix the damn release build stuff
     3d pipeline support
+    renderer limit handling; eventual packing
     
 gameplay
+    notelock
     score system
     replays
     
@@ -50,14 +43,18 @@ gameplay
         followpoints
         note stacking
         object dimming
-        drop shadow
-        proper snaking sliders
     
 lua 
     REPL console
     particle system
 
 game
+    ui core (low priority)
+        map select
+        skin select
+        offset change
+        audio settings
+        
     entity hierarchy inspector
     offset wizard
 
@@ -65,3 +62,11 @@ platform
     lua profiling (nested profiler block support)
     input thread
     builtin resource pack
+
+YEAST mode
+    screen capture must work
+    parse and apply settings from osu install (specify with path?), to allow warmup
+    open specific map with command
+        click circle to start? network sync?
+    
+    local networking for fun and video games

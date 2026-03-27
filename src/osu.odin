@@ -14,9 +14,13 @@ import sdl "vendor:sdl3"
 
 
 playfield_size_osupx :: f32(512)
-playfield_rect :: Rect{ 0, 0, playfield_size_osupx, playfield_size_osupx }
-
 osu_slider_curve_points_separation :: f32(2.5)
+
+// note(isak): osu!'s actual play area is 512x384 within the 512x512 osu!px coordinate space,
+// with a small vertical offset for the toolbar. these constants define that base placement and
+// are always applied in playfield_build_transform, independent of any lua adjustments.
+playfield_base_scale :: f32(512.0 / 480.0)
+playfield_base_translation_osupx :: vec2{0, 72} // (512-384)/2 + 8
 
 // note(isak): state struct. keep it lean, put large data fields in arenas and point to it here
 game: struct {
@@ -35,7 +39,11 @@ game: struct {
     
     beatmap: Beatmap,
     playfield_transform: Transform,
-    
+    playfield_translation_osupx: vec2,
+    playfield_scale: f32,
+    playfield_rotation_rad: f32,
+    playfield_dirty_transform: bool,
+
     paused: bool,
     time_rate: f32,
     
@@ -49,8 +57,14 @@ game: struct {
 
         mouse_keys_enabled: bool,
         mouse_pos: vec2,
+
+        available_presses: int,
+        last_hit_at, last_valid_press_at: f64,
     },
 
+    // note(isak): managed sounds to be used with the game_sound_* api. we create BASS streams from samples, and then
+    // BASS handles the rest - not quite sure if we can further reuse sound data instead of creating multiple BASS handles,
+    // but i think it's fine.
     sounds: slotmap.Slotmap(Sound),
 }
 
@@ -58,6 +72,7 @@ game: struct {
 @(rodata) null_drawable := Drawable{}
 @(rodata) null_element := Element{}
 @(rodata) null_judgement := Judgement{}
+@(rodata) null_sound := Sound{}
 
 // note(isak): core types
 
@@ -69,18 +84,17 @@ Hitobject_Type :: enum u32 {
     NONE,
     CIRCLE,
     SLIDER,
-    SLIDER_PATH,
-    SLIDER_TICK,
-    SLIDER_REPEAT,
     SPINNER,
     // CUSTOM // note(isak) big plans?
 }
 
 
-Hitobject_Flags :: distinct bit_set[Hitobject_Flag; u32]
-Hitobject_Flag :: enum u32 {
+Hitobject_Flags :: distinct bit_set[Hitobject_Flag]
+Hitobject_Flag :: enum {
     VISIBLE,
+    HIT, // note(isak): has result
     EXPIRED,
+    LAST_IN_COMBO,
     
     NEW_COMBO,
     WHISTLE,
@@ -99,9 +113,9 @@ Hitobject :: struct {
     timing_point_index_uninherited: int,
     timing_point_index_inherited: int,
     hitsound_flags: byte,
+    combo_index: int, // note(isak): 1-indexed combo within the current map
+    combo_number: u16,
     combo_color_skip_offset: u8, // note(isak): bits 4-6 of osu type byte; how many combo colors to skip on new combo
-    combo_color_index: u8,
-    combo_number: u16, // note(isak): 1-based position within the current combo sequence
 
     slider_path_index: int,
     slider_state: Slider_State,
@@ -110,22 +124,29 @@ Hitobject :: struct {
     gfx_handles: []Drawable_Handle,
 }
 
+Slider_Flags :: distinct bit_set[Slider_Flag]
+Slider_Flag :: enum {
+    TRACKING,
+    HEAD_CHECKED,
+    HEAD_HIT,
+    END_TRACKED,
+}
+
 Slider_State :: struct {
-    head_hit:            bool,    // player clicked head within any window
-    head_checked:        bool,    // miss window for head has passed
-    tracking:            bool,    // cursor currently in follow circle
-    
+    flags: Slider_Flags,
+    down_key: int, // 0 = missed head or free (any key), 1 = k1 hit head, 2 = k2 hit head
+
     velocity: f64,
     distance, duration_ms: f64,
     
     tick_interval_ms: f64,
     tick_count: int,
     
-    path_travel_count, hit_repeats_count: int,
-    hit_judgement_count, total_judgement_count: int,
-    
-    judgements_checked_count: int,
-    next_expected_judgement_at_ms: f64,
+    path_travel_count, checked_repeats_count, checked_path_ticks_count: int,
+    hit_judgement_count: int,
+
+    contingency_window_scorepoint_count: int,
+    contingency_window_scorepoints: bit_set[0..<64; u64], // note(isak): ticks are 0, repeats are 1
 
     slide_sound: slotmap.Handle,
 }
@@ -152,6 +173,24 @@ hitobject_visible_end_time :: proc(hobj: ^Hitobject) -> (result: f64) {
     case .CIRCLE, .SLIDER: end_time += game.beatmap.timing_windows.ok
     }
     return end_time
+}
+
+DEFAULT_COMBO_COLORS := [4]Color {
+    {240, 150, 0, 0xFF},
+    {5, 240, 5, 0xFF},
+    {5, 5, 240, 0xFF},
+    {240, 5, 5, 0xFF},
+}
+
+hitobject_combo_color :: proc(hobj: ^Hitobject) -> (result: Color) {
+    if game.active_map.num_combo_colors > 0 {
+        color_index := hobj.combo_index % game.active_map.num_combo_colors    
+        result = game.active_map.combo_colors[color_index]
+    } else {
+        color_index := hobj.combo_index % len(DEFAULT_COMBO_COLORS)
+        result = DEFAULT_COMBO_COLORS[color_index]
+    }
+    return result
 }
 
 
@@ -193,8 +232,13 @@ Slider_Path :: struct {
     curves: []Slider_Curve, // note(isak): slice into mapset arena
     
     bounds_min, bounds_max: vec2,
-    
+
     instance_count, first_instance_at: i32, // note(isak): this could be a slice, but data reads are probs unnecessary
+
+    // note(isak): angles at the two endpoints, in radians (0 = pointing right).
+    // head_angle_rad: direction from head toward the path interior (first -> second instance)
+    // tail_angle_rad: direction of travel arriving at tail (second-to-last -> last instance)
+    head_angle_rad, end_angle_rad: f32,
 }
 
 Game_Mode :: enum {
@@ -228,6 +272,7 @@ Judgement_Type :: enum {
     
     SLIDER_SMALL_SCOREPOINT, // 10
     SLIDER_LARGE_SCOREPOINT, // 30
+    SLIDER_SCOREPOINT_MISS,
     
     IGNORED_HIT, // note(isak): used when we need a result that doesn't affect score
     COMBO_BREAK, // note(isak): intended for scripted misses
@@ -242,6 +287,7 @@ Judgement :: struct {
 Notosu_Map :: struct {
     lua_entry_point: string,
     shaders: []Shader,
+    bg_pipeline_name: string,
 }
 
 Osu_Map :: struct {
@@ -249,7 +295,7 @@ Osu_Map :: struct {
         audio_filename: string,
         audio_lead_in: f64,
         preview_time_ms: f64,
-        sample_set: Osu_Sample_Set,
+        sample_set: Osu_Map_Sample_Set,
     
         title: string,
         title_unicode: string,
@@ -277,18 +323,49 @@ Osu_Map :: struct {
     timing_points: []Timing_Point,
 }
 
+// note(isak): builds game.playfield_transform from playfield_offset_osupx, playfield_scale,
+// and playfield_rotation_rad. maps osu!px -> NDC with full affine support (translate, scale,
+// rotate). the inverse correctly maps window pixels back to osu!px without extra adjustment.
+playfield_build_transform :: proc "contextless" () -> Transform {
+    effective_scale       := playfield_base_scale * game.playfield_scale
+    effective_translation := playfield_base_translation_osupx + game.playfield_translation_osupx
+
+    k  := effective_scale * window.rect.h / playfield_size_osupx
+    cx := window.rect.w * 0.5 + effective_translation.x * k
+    cy := window.rect.h * 0.5 + effective_translation.y * k
+
+    ndc_from_px := mat3{
+        2 / window.rect.w, 0,                 -1,
+        0,                 2 / window.rect.h, -1,
+        0,                 0,                  1,
+    }
+    t_center := mat3{
+        1, 0, -playfield_size_osupx * 0.5,
+        0, 1, -playfield_size_osupx * 0.5,
+        0, 0,  1,
+    }
+
+    return mat3_to_transform(ndc_from_px * mat3_affine({cx, cy}, k, game.playfield_rotation_rad) * t_center)
+}
+
+
 osu_on_init :: proc() {
     game.time_rate = 1.0
     game.mode = .PLAY
-    
+
+    game_sounds_clear()
     ui_init_timeline(&game.ui_timeline)
-    
+
     game.input.k1_key = sdl.Scancode.Z
     game.input.k2_key = sdl.Scancode.X
 
+    game.playfield_scale = 1.0
+    game.playfield_translation_osupx = {}
+    game.playfield_rotation_rad = 0
+
     beatmap_on_init(game.active_map_ref, &game.beatmap)
-    game.playfield_transform = transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio)
-    
+    game.playfield_transform = playfield_build_transform()
+
     // todo(isak): @beta universal offset sync interface
     game.universal_offset_ms = -28
 }
@@ -306,7 +383,7 @@ osu_on_update :: proc(dt: f64) {
         if lua_cares_about_event(.ON_INIT) {
             lua_call_beatmap_func(lua_beatmap_event_names[.ON_INIT])
         }
-    } 
+    }
     if updated_systems[.SHADERS] {
         mapset_reinit_custom_shaders(game.active_mapset)
     }
@@ -336,9 +413,22 @@ osu_on_update :: proc(dt: f64) {
 
     
     // todo(isak): valid key presses system needs testing
+    game.input.available_presses = 0
+    if game.input.mouse_keys_enabled {
+        if button_is_pressed(game.input.k1) && !button_is_down(game.input.m1) do game.input.available_presses += 1
+        if button_is_pressed(game.input.k2) && !button_is_down(game.input.m2) do game.input.available_presses += 1
+        if button_is_pressed(game.input.m1) && !button_is_down(game.input.k1) do game.input.available_presses += 1
+        if button_is_pressed(game.input.m2) && !button_is_down(game.input.k2) do game.input.available_presses += 1
+    } else {
+        if button_is_pressed(game.input.k1) do game.input.available_presses += 1
+        if button_is_pressed(game.input.k2) do game.input.available_presses += 1
+    }
+
     if valid_controller_press() {
+        game.input.last_valid_press_at = map_time
+        
         for &hobj, i in hobj_it {
-            if .EXPIRED in hobj.flags {
+            if .EXPIRED in hobj.flags || .HIT in hobj.flags || .HEAD_HIT in hobj.slider_state.flags {
                 continue
             }
             hobj_pos := hitobject_pos(&hobj)
@@ -353,9 +443,7 @@ osu_on_update :: proc(dt: f64) {
             clear_hitobject_drawables(&hobj)
             
             hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, 2) or_continue
-            
-            color_array := &game.active_map.combo_colors
-            combo_color := game.active_map.num_combo_colors > 0 ? color_array[hobj.combo_color_index] : color_purple
+            combo_color := hitobject_combo_color(&hobj)
             
             hobj.gfx_handles[0] = drawable_new({
                 flags = {.ACTIVE},
@@ -381,12 +469,18 @@ osu_on_update :: proc(dt: f64) {
             if hobj.type == .CIRCLE {
                 judgement_new_drawable(&hobj)
             }
-            
+
+            consume_controller_press()
             break
-        } 
+        }
     }
     //--
     
+    if game.playfield_dirty_transform {
+        game.playfield_transform = playfield_build_transform()
+        game.playfield_dirty_transform = false
+    }
+
     // beatmap render
     
     r_bind_layer_and_push_current_state(.HITOBJECTS)
@@ -396,41 +490,19 @@ osu_on_update :: proc(dt: f64) {
     // function pointer in the hitobject struct that renders (and maybe one that updates? continual
     // logic is necessary for sliders... hitting circles is a keyboard event kind of thing)
     
-    // todo(isak) ALSO don't forget that sliders SHOULD go on top of hitobjects appearing later, so the 
-    // render hitobjects loop should be integrated into this
-    
-    
+    // todo(isak) @beta ALSO don't forget that sliders SHOULD go on top of hitobjects appearing later, so the 
+    // render hitobjects loop should be integrated into this 
     
     for &hobj in hobj_it {
         if map_time < hobj.start_time_ms - game.beatmap.preempt_ms || hobj.end_time_ms < map_time {
             continue
         }
         if hobj.type == .SLIDER {
-            slider := &game.beatmap.slider_paths[hobj.slider_path_index]
-            render_slider(&window.renderer, &hobj, slider)
+            path := &game.beatmap.slider_paths[hobj.slider_path_index]
+            render_slider_path(&window.renderer, &hobj, path)
             
             r_push_transform(game.playfield_transform)
-            
-            cs := game.beatmap.circle_radius_osupx
-            sliderend_rect := Rect{ slider.end_pos.x - cs, slider.end_pos.y - cs, cs * 2, cs * 2 }
-            r_draw_rect(&window.renderer.quad_geometry, sliderend_rect, with_alpha(color_white, 0.2), skin_texture(.HITCIRCLEOVERLAY))
-            
-            // note(isak) slider ball
-            if hobj.start_time_ms <= map_time && map_time < hobj.end_time_ms {
-                color_array := &game.active_map.combo_colors
-                combo_color := game.active_map.num_combo_colors > 0 ? color_array[hobj.combo_color_index] : color_purple
-
-                ball_pos := slider_ball_pos_at(&hobj, map_time)
-                ball_rect := rect_at_pos(ball_pos, {cs*2, cs*2})
-
-                r_draw_layout_rect(&window.renderer.quad_geometry, ball_rect, .CENTER, combo_color, skin_texture(.HITCIRCLEOVERLAY))
-
-                if hobj.slider_state.tracking {
-                    follow_size := cs * 2 * SLIDER_FOLLOW_CIRCLE_RADIUS_MULT
-                    follow_rect := rect_at_pos(ball_pos, {follow_size, follow_size})
-                    r_draw_layout_rect(&window.renderer.quad_geometry, follow_rect, .CENTER, color_white, skin_texture(.SLIDER_FOLLOW_CIRCLE))
-                }
-            }
+            render_slider_quads(&hobj, path, map_time)
         }
     }
     
@@ -522,12 +594,10 @@ hitobject_on_click :: proc(hobj: ^Hitobject) -> (result: Judgement_Type) {
     
     if result != .NONE {
         if hobj.type == .SLIDER {
-            // note(isak): slider head click is recorded; final judgement is deferred to slider_on_expire
-            hobj.slider_state.head_hit = true
-            hobj.slider_state.head_checked = true
+            slider_on_click(hobj)
         } else {
             judgement_new(hobj, result, time_error_ms)
-            hobj.flags |= {.EXPIRED}
+            hobj.flags |= {.HIT, .EXPIRED}
         }
 
         timing_point := &game.active_map.timing_points[game.beatmap.current_timing_point_index_inherited]
@@ -551,25 +621,25 @@ hitobject_on_click :: proc(hobj: ^Hitobject) -> (result: Judgement_Type) {
 
 
 handle_play_input_events :: proc() {
-    if is_key_pressed(.ESCAPE) || is_key_pressed(.SPACE) {
+    if key_is_pressed(.ESCAPE) || key_is_pressed(.SPACE) {
         beatmap_pause(&game.beatmap, !game.paused)
     }
-    if is_key_pressed(.R) {
-        beatmap_reload(&game.beatmap, !is_key_down(.LSHIFT))
+    if key_is_pressed(.R) {
+        beatmap_reload(&game.beatmap, !key_is_down(.LSHIFT))
     }
-    if is_key_pressed(.HOME) {
+    if key_is_pressed(.HOME) {
         game.time_rate = 1
     }
-    if is_key_pressed(.PAGEUP) {
+    if key_is_pressed(.PAGEUP) {
         game.time_rate *= 2
         sound_set_speed(&game.beatmap.music, game.time_rate)
     }
-    if is_key_pressed(.PAGEDOWN) {
+    if key_is_pressed(.PAGEDOWN) {
         game.time_rate /= 2
         sound_set_speed(&game.beatmap.music, game.time_rate)
     }
     
-    if is_key_pressed(.F10) {
+    if key_is_pressed(.F10) {
         game.input.mouse_keys_enabled = !game.input.mouse_keys_enabled
     }
     
@@ -580,11 +650,10 @@ handle_play_input_events :: proc() {
     game.input.m1 = mouse.buttons[.LEFT]
     game.input.m2 = mouse.buttons[.RIGHT]
     
-    pf_mouse := vec2{mouse.pos.x, mouse.pos.y}
-    pf_mouse.x -= (window.rect.w - window.rect.h) / 2
-    
+    screen_mouse := vec2{mouse.pos.x, mouse.pos.y}
+
     old_mouse_pos := game.input.mouse_pos
-    game.input.mouse_pos = transform_point_space(pf_mouse,
+    game.input.mouse_pos = transform_point_space(screen_mouse,
         transform_to_mat3(window.screenspace_transform),
         transform_to_mat3(game.playfield_transform)
     )
@@ -595,57 +664,82 @@ handle_play_input_events :: proc() {
     
     if lua_cares_about_event(.ON_KEY_DOWN) {
         for code in sdl.Scancode {
-            if is_key_pressed(code) do lua_beatmap_on_key_pressed(code)
+            if key_is_pressed(code) do lua_beatmap_on_key_pressed(code)
         }
     }
     if lua_cares_about_event(.ON_KEY_UP) {
         for code in sdl.Scancode {
-            if is_key_released(code) do lua_beatmap_on_key_released(code)
+            if key_is_released(code) do lua_beatmap_on_key_released(code)
         }
     }
     if lua_cares_about_event(.ON_CONTROLLER_PRESSED) {
-        if is_pressed(game.input.k1) do lua_beatmap_on_controller_pressed("k1")
-        if is_pressed(game.input.k2) do lua_beatmap_on_controller_pressed("k2")
-        if is_pressed(game.input.m1) do lua_beatmap_on_controller_pressed("m1")
-        if is_pressed(game.input.m2) do lua_beatmap_on_controller_pressed("m2")
+        if button_is_pressed(game.input.k1) do lua_beatmap_on_controller_pressed("k1")
+        if button_is_pressed(game.input.k2) do lua_beatmap_on_controller_pressed("k2")
+        if button_is_pressed(game.input.m1) do lua_beatmap_on_controller_pressed("m1")
+        if button_is_pressed(game.input.m2) do lua_beatmap_on_controller_pressed("m2")
     }
     if lua_cares_about_event(.ON_CONTROLLER_RELEASED) {
-        if is_released(game.input.k1) do lua_beatmap_on_controller_released("k1")
-        if is_released(game.input.k2) do lua_beatmap_on_controller_released("k2")
-        if is_released(game.input.m1) do lua_beatmap_on_controller_released("m1")
-        if is_released(game.input.m2) do lua_beatmap_on_controller_released("m2")
+        if button_is_released(game.input.k1) do lua_beatmap_on_controller_released("k1")
+        if button_is_released(game.input.k2) do lua_beatmap_on_controller_released("k2")
+        if button_is_released(game.input.m1) do lua_beatmap_on_controller_released("m1")
+        if button_is_released(game.input.m2) do lua_beatmap_on_controller_released("m2")
     }
 }
 
 handle_menu_input_events :: proc() {
-    if is_key_pressed(.S) {
-        if is_key_down(.LCTRL) || is_key_down(.LSHIFT) || is_key_down(.LALT) {
+    if key_is_pressed(.S) {
+        if key_is_down(.LCTRL) || key_is_down(.LSHIFT) || key_is_down(.LALT) {
             skin_reload(game.active_skin)
         }
     }
 }
 
 valid_controller_press :: proc() -> bool {
-    if game.input.mouse_keys_enabled {
-        if is_pressed(game.input.k1) && !is_down(game.input.m1) ||
-            is_pressed(game.input.k2) && !is_down(game.input.m2) {
-            return true
+    return game.input.available_presses > 0
+}
+
+consume_controller_press :: proc() {
+    game.input.available_presses -= 1
+}
+
+// returns whether key_num (1 or 2) was freshly pressed this frame, applying mouse_keys exclusion
+controller_key_pressed :: proc(key_num: int) -> bool {
+    if key_num == 1 {
+        if game.input.mouse_keys_enabled {
+            return button_is_pressed(game.input.k1) && !button_is_down(game.input.m1) ||
+                   button_is_pressed(game.input.m1) && !button_is_down(game.input.k1)
         }
-        
-        return is_pressed(game.input.m1) && !is_down(game.input.k1) || 
-            is_pressed(game.input.m2) && !is_down(game.input.k2)
+        return button_is_pressed(game.input.k1)
     } else {
-        return is_pressed(game.input.k1) || is_pressed(game.input.k2)
+        if game.input.mouse_keys_enabled {
+            return button_is_pressed(game.input.k2) && !button_is_down(game.input.m2) ||
+                   button_is_pressed(game.input.m2) && !button_is_down(game.input.k2)
+        }
+        return button_is_pressed(game.input.k2)
     }
 }
 
+// returns whether key_num (1 or 2) is currently held
+controller_key_down :: proc(key_num: int) -> bool {
+    if key_num == 1 {
+        return button_is_down(game.input.k1) || game.input.mouse_keys_enabled && button_is_down(game.input.m1)
+    } else {
+        return button_is_down(game.input.k2) || game.input.mouse_keys_enabled && button_is_down(game.input.m2)
+    }
+}
 
-playfield_to_screenspace_transform :: proc() -> mat3 {
-    return transform_to_mat3(game.playfield_transform) * linalg.matrix3_inverse(transform_to_mat3(window.screenspace_transform))
+// returns which key (1 or 2) was freshly pressed this frame, 0 if neither
+pressed_controller_key :: proc() -> int {
+    if controller_key_pressed(1) do return 1
+    if controller_key_pressed(2) do return 2
+    return 0
 }
 
 
-game_play_sound :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0) -> (result: slotmap.Handle) {
+//////////////////////////////////////////////////////
+// note(isak): managed game sound API
+
+game_sound_play :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0) -> (result: slotmap.Handle) {
     sound: Sound
     ok: bool
     if loop {
@@ -661,46 +755,54 @@ game_play_sound :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0) -> (r
     return handle
 }
 
-game_stop_sound :: proc(handle: slotmap.Handle) {
+game_sound_stop :: proc(handle: slotmap.Handle) {
     sound, ok := slotmap.get(&game.sounds, handle)
-    if !ok do return
-    sound_destroy(sound)
-    slotmap.remove(&game.sounds, handle)
-
+    if ok {
+        sound_destroy(sound)
+        slotmap.remove(&game.sounds, handle)
+    }
 }
 
-game_clear_sounds :: proc() {
+game_sound_is_playing :: proc(handle: slotmap.Handle) -> (result: bool) {
+    sound, ok := slotmap.get(&game.sounds, handle)
+    if ok {
+        result = sound_is_playing(sound)
+    }
+    return result
+}
+
+game_sounds_clear :: proc() {
     for &s in game.sounds.values {
         sound_destroy(&s)
     }
-
-    slotmap.clear(&game.sounds)
-
+    slotmap.destroy(&game.sounds)
+    slotmap.init(&game.sounds, allocator = memory.allocators[.SOUND], capacity = 128)
+    null_sound_handle := slotmap.insert(&game.sounds, null_sound)
 }
 
 //////////////////////////////////////////////////////
 // NOTE(yokes): in-game button input api
 
-is_down :: proc "c" (button: Button_State) -> bool {
+button_is_down :: proc "c" (button: Button_State) -> bool {
     return button.is_down
 }
 
-is_pressed :: proc "c" (button: Button_State) -> bool {
+button_is_pressed :: proc "c" (button: Button_State) -> bool {
     return button.is_down && !button.was_down
 }
 
-is_released :: proc "c" (button: Button_State) -> bool {
+button_is_released :: proc "c" (button: Button_State) -> bool {
     return !button.is_down && button.was_down
 }
 
-is_key_down :: proc "c" (code: sdl.Scancode) -> bool {
+key_is_down :: proc "c" (code: sdl.Scancode) -> bool {
     return keyboard.buttons[code]
 }
 
-is_key_pressed :: proc "c" (code: sdl.Scancode) -> bool {
+key_is_pressed :: proc "c" (code: sdl.Scancode) -> bool {
     return keyboard.buttons[code] && !keyboard.buttons_prev_frame[code]
 }
 
-is_key_released :: proc "c" (code: sdl.Scancode) -> bool {
+key_is_released :: proc "c" (code: sdl.Scancode) -> bool {
     return !keyboard.buttons[code] && keyboard.buttons_prev_frame[code]
 }

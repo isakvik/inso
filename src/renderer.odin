@@ -375,10 +375,11 @@ Command_Draw :: struct {
 }
 
 Command_Draw_Slider :: struct {
-    base_instance: u32,
-    instance_count: i32,
-    border_color: Color,
-    body_color:   Color,
+    base_instance:      u32,
+    instance_count:     i32,
+    border_color:       Color,
+    body_color:         Color,
+    script_translation: vec2,
 }
 
 Command_Bind_Pipeline :: struct {
@@ -718,8 +719,10 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                     cmd := _command_consume(&command_queue, Command_Draw_Slider)
 
                     slider_globals := Slider_Globals{
-                        color_to_vec(cmd.border_color), 
-                        color_to_vec(cmd.body_color)}
+                        border_color       = color_to_vec(cmd.border_color),
+                        body_color         = color_to_vec(cmd.body_color),
+                        script_translation = cmd.script_translation,
+                    }
                     gl.NamedBufferSubData(window.slider_param_buffer.id, 0, size_of(Slider_Globals), &slider_globals)
                     ubo_bind(&window.slider_param_buffer, u32(Shader_SSBO_Bind_Slot.SLIDER_PARAMS))
 
@@ -876,26 +879,11 @@ r_draw_rect_outline_fill :: proc(geometry: ^Buffer(Quad), rect: Rect, color_outl
 
 transform_point_space :: proc(pt: vec2, source_to_common: mat3, dest_to_common: mat3) -> vec2 {
     h_pt := vec3{pt.x, pt.y, 1.0}
-    h_pt = h_pt * source_to_common * linalg.matrix3_inverse(dest_to_common)
+    h_pt = linalg.matrix3_inverse(dest_to_common) * source_to_common * h_pt
     return h_pt.xy
 }
 
-// note(isak): this is still very specific but my transform math makes my brain hurt
-transform_playfield_rect_to_screenspace :: proc(r: Rect) -> Rect {
-    tl_pt := vec3{r.x, r.y, 1.0}
-    br_pt := vec3{r.x + r.w, r.y + r.h, 1.0}
-    
-    xform := playfield_to_screenspace_transform()
-    tl_xform := xform * tl_pt
-    br_xform := xform * br_pt
-    
-    return {
-        (window.rect.w - window.rect.h) / 2 + tl_xform.x, tl_xform.y,
-        br_xform.x - tl_xform.x, br_xform.y - tl_xform.y
-    }
-}
 
-/*
 transform_rect_to_screen_corners :: proc(r: Rect, playfield_to_ndc: mat3, screen_to_ndc: mat3) -> [4]vec2 {
     corners := [4]vec2{
         {r.x,       r.y},
@@ -920,7 +908,6 @@ calculate_aabb_from_corners :: proc(corners: [4]vec2) -> Rect {
     }
     return {min_pt.x, min_pt.y, max_pt.x - min_pt.x, max_pt.y - min_pt.y}
 }
-*/
 
 
 rect_translate_by_anchor :: proc(rect: Rect, anchor: Layout_Anchor) -> Rect {

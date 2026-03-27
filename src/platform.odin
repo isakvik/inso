@@ -17,10 +17,11 @@ app: struct {
     base_dir: string,
     logger: log.Logger,
 
-    debug_display_frame_profiler: bool,
+    debug_display_frame_profiler:  bool,
     debug_display_memory_profiler: bool,
-    debug_display_fontatlas: bool, // todo(isak): never written to
-    debug_display_slider_bounds: bool,
+    debug_display_fontatlas:       bool, // todo(isak): never written to
+    debug_display_slider_bounds:   bool,
+    debug_display_game_cursor:     bool,
 
     map_references:      [dynamic]Map_Reference,
     map_reference_names: [dynamic]cstring, // note(isak): parallel to map_references, for imgui

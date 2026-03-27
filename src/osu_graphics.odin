@@ -18,8 +18,14 @@ skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
     .HIT_CIRCLE_OVERLAY = .HITCIRCLEOVERLAY,
     .APPROACH_CIRCLE    = .APPROACHCIRCLE,
     .COMBO_NUMBER       = .COMBO_1,
+    .LIGHTING           = .LIGHTING,
 
+    .SLIDER_BALL          = .SLIDER_BALL,
     .SLIDER_FOLLOW_CIRCLE = .SLIDER_FOLLOW_CIRCLE,
+    .SLIDER_REPEAT        = .SLIDER_REPEAT,
+    .SLIDER_TICK          = .SLIDER_TICK,
+    .SLIDER_END           = .SLIDER_END,
+    .SLIDER_END_OVERLAY   = .SLIDER_END_OVERLAY,
 
     .JUDGEMENT_MISS      = .HIT0,
     .JUDGEMENT_OK        = .HIT50,
@@ -30,10 +36,13 @@ skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
 //////////////////////////////////////////////////////
 // note(isak): core types
 
+// note(isak): this (mostly) mirrors ease.Ease, but it's fine in case we wanna expand this later
 Tween :: enum {
     LINEAR,
     QUAD_IN,     QUAD_OUT,     QUAD_IN_OUT,
     CUBIC_IN,    CUBIC_OUT,    CUBIC_IN_OUT,
+    QUARTIC_IN,  QUARTIC_OUT,  QUARTIC_IN_OUT,
+    QUINTIC_IN,  QUINTIC_OUT,  QUINTIC_IN_OUT,
     SINE_IN,     SINE_OUT,     SINE_IN_OUT,
     EXPO_IN,     EXPO_OUT,     EXPO_IN_OUT,
     BACK_IN,     BACK_OUT,     BACK_IN_OUT,
@@ -43,24 +52,30 @@ Tween :: enum {
 
 tween_apply :: proc(tween: Tween, t: f32) -> f32 {
     switch tween {
-    case .LINEAR:       return t
-    case .QUAD_IN:      return ease.quadratic_in(t)
-    case .QUAD_OUT:     return ease.quadratic_out(t)
-    case .QUAD_IN_OUT:  return ease.quadratic_in_out(t)
-    case .CUBIC_IN:     return ease.cubic_in(t)
-    case .CUBIC_OUT:    return ease.cubic_out(t)
-    case .CUBIC_IN_OUT: return ease.cubic_in_out(t)
-    case .SINE_IN:      return ease.sine_in(t)
-    case .SINE_OUT:     return ease.sine_out(t)
-    case .SINE_IN_OUT:  return ease.sine_in_out(t)
-    case .EXPO_IN:      return ease.exponential_in(t)
-    case .EXPO_OUT:     return ease.exponential_out(t)
-    case .EXPO_IN_OUT:  return ease.exponential_in_out(t)
-    case .BACK_IN:      return ease.back_in(t)
-    case .BACK_OUT:     return ease.back_out(t)
-    case .BACK_IN_OUT:  return ease.back_in_out(t)
-    case .ELASTIC_OUT:  return ease.elastic_out(t)
-    case .BOUNCE_OUT:   return ease.bounce_out(t)
+    case .LINEAR:         return t
+    case .QUAD_IN:        return ease.quadratic_in(t)
+    case .QUAD_OUT:       return ease.quadratic_out(t)
+    case .QUAD_IN_OUT:    return ease.quadratic_in_out(t)
+    case .CUBIC_IN:       return ease.cubic_in(t)
+    case .CUBIC_OUT:      return ease.cubic_out(t)
+    case .CUBIC_IN_OUT:   return ease.cubic_in_out(t)
+    case .QUARTIC_IN:     return ease.quartic_in(t)
+    case .QUARTIC_OUT:    return ease.quartic_out(t)
+    case .QUARTIC_IN_OUT: return ease.quartic_in_out(t)
+    case .QUINTIC_IN:     return ease.quintic_in(t)
+    case .QUINTIC_OUT:    return ease.quintic_out(t)
+    case .QUINTIC_IN_OUT: return ease.quintic_in_out(t)
+    case .SINE_IN:        return ease.sine_in(t)
+    case .SINE_OUT:       return ease.sine_out(t)
+    case .SINE_IN_OUT:    return ease.sine_in_out(t)
+    case .EXPO_IN:        return ease.exponential_in(t)
+    case .EXPO_OUT:       return ease.exponential_out(t)
+    case .EXPO_IN_OUT:    return ease.exponential_in_out(t)
+    case .BACK_IN:        return ease.back_in(t)
+    case .BACK_OUT:       return ease.back_out(t)
+    case .BACK_IN_OUT:    return ease.back_in_out(t)
+    case .ELASTIC_OUT:    return ease.elastic_out(t)
+    case .BOUNCE_OUT:     return ease.bounce_out(t)
     }
     return t
 }
@@ -154,9 +169,11 @@ Element_Type :: enum {
 
     SLIDER_BALL,
     SLIDER_FOLLOW_CIRCLE,
-    SLIDER_END_CIRCLE,
     SLIDER_TICK,
+    SLIDER_REPEAT,
     SLIDER_PATH,
+    SLIDER_END,
+    SLIDER_END_OVERLAY,
 
     CLICKED_HIT_CIRCLE,
     CLICKED_HIT_CIRCLE_OVERLAY,
@@ -222,7 +239,7 @@ Drawable :: struct {
     // drawing to that directly somehow
     pos: vec2,
     size: vec2,
-    angle_deg: f32,
+    angle_rad: f32,
     anchor: Layout_Anchor,
     color: Color,
     animation_rate: f64,
@@ -273,7 +290,7 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
     elements.data[builtin_element_slot(.HIT_CIRCLE)] = {
         tex = skin_texture(.HITCIRCLE),
 
-        animations = animation_new(anims, 
+        animations = animation_new(anims,
             Animation_Scale{
                 start_time = 0,
                 end_time = 0.5,
@@ -287,10 +304,10 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
                 end_scale = {0, 0}
             }, 
             Animation_Rotate{
-                start_time = 0, 
+                start_time = 0,
                 end_time = 1,
                 start_angle = 0, 
-                end_angle = 180
+                end_angle = math.PI/2
             }, 
         )
     }
@@ -306,25 +323,31 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
         })
     }
     
-    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS)] = {
-        tex = skin_texture(.LIGHTING),
+    hit_anims := animation_new(anims,
+        Animation_Scale{
+            tween = .QUAD_OUT,
+            start_time  = 0,   
+            end_time = 0.2,
+            start_scale = {0.8, 0.8}, 
+            end_scale = {1.0, 1.0},
+        },
+        Animation_Alpha{
+            start_time  = 0.7, 
+            end_time = 1.0,
+            start_alpha = 1.0, 
+            end_alpha = 0.0,
+        },
+    )
+    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS)].animations = hit_anims
+    elements.data[builtin_element_slot(.JUDGEMENT_GOOD)].animations      = hit_anims
+    elements.data[builtin_element_slot(.JUDGEMENT_OK)].animations        = hit_anims
 
-        animations = animation_new(anims, 
-            Animation_Scale{
-                start_time = 0, 
-                end_time = 1,
-                start_scale = {0.5, 0.5}, 
-                end_scale = {1.5, 1.5}
-            },
-            Animation_Alpha{
-                start_time = 0.5, 
-                end_time = 1,
-                start_alpha = 1.0,
-                end_alpha = 0.0,
-            }
-        )
-    }
-    
+    elements.data[builtin_element_slot(.JUDGEMENT_MISS)].animations = animation_new(anims,
+        Animation_Alpha{
+            start_time  = 0.4, end_time  = 1.0,
+            start_alpha = 1.0, end_alpha = 0.0,
+        },
+    )
     
     click_animation := animation_new(anims, 
         Animation_Scale{
@@ -425,7 +448,7 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}, al
     phys_x := d.vel.x * t_sec + 0.5 * d.accel.x * t_sec * t_sec
     phys_y := d.vel.y * t_sec + 0.5 * d.accel.y * t_sec * t_sec
     rect := Rect{d.pos.x + parent_pos.x + phys_x, d.pos.y + parent_pos.y + phys_y, d.size.x, d.size.y}
-    angle := d.angle_deg + d.angle_vel * t_sec
+    angle := d.angle_rad + d.angle_vel * t_sec
     color := d.color
 
     duration := d.end_time_ms - d.start_time_ms
@@ -526,57 +549,61 @@ process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Dr
     sb.swap(expiring_gfx_refs)
 }
 
-slider_screenspace_bounding_box :: proc(slider: ^Slider_Path) -> (result: Rect) {
+slider_screenspace_bounding_box :: proc(slider: ^Slider_Path, translation: vec2 = {}) -> (result: Rect) {
     r := game.beatmap.circle_radius_osupx
     pad := f32(2)
-    result = {
-        slider.bounds_min.x - r,
-        slider.bounds_min.y - r,
+    osupx_rect := Rect{
+        slider.bounds_min.x - r + translation.x,
+        slider.bounds_min.y - r + translation.y,
         slider.bounds_max.x - slider.bounds_min.x + r * 2,
         slider.bounds_max.y - slider.bounds_min.y + r * 2,
     }
-    result = transform_playfield_rect_to_screenspace(result)
+    pf_mat := transform_to_mat3(game.playfield_transform)
+    ss_mat := transform_to_mat3(window.screenspace_transform)
+    corners := transform_rect_to_screen_corners(osupx_rect, pf_mat, ss_mat)
+    result = calculate_aabb_from_corners(corners)
     result.x, result.y = result.x - pad, result.y - pad
     result.w, result.h = result.w + pad*2, result.h + pad*2
     return result
 }
 
-render_slider :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Path) {
-    pf_size: f32 = playfield_size_osupx / game.beatmap.circle_radius_osupx
 
-    slider_translation := -hobj.script_pos_translation / 2
-    x, y := slider_translation.x / pf_size, slider_translation.y / pf_size
+render_slider_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Path) {
+    // note(isak): slider geometry is in CS-normalized units (osu!px / radius). composing with
+    // game.playfield_transform means any offset/rotation/scale on the playfield automatically 
+    // applies to the slider pass too.
     
-    pf_rect := Rect{x, y, pf_size,pf_size}
-    slider_pf_transform := transform_from_bounds(rect_to_array(pf_rect), window.aspect_ratio)
-    
-    slider_rect := slider_screenspace_bounding_box(slider)
+    r := game.beatmap.circle_radius_osupx
+    cs_to_osupx := mat3{r, 0, 0, 0, r, 0, 0, 0, 1}
+    slider_pf_transform := mat3_to_transform(transform_to_mat3(game.playfield_transform) * cs_to_osupx)
+
+    translation := hobj.script_pos_translation
+    slider_rect := slider_screenspace_bounding_box(slider, translation)
+
     slider_uvs := Rect{
         slider_rect.x / window.rect.w,
         slider_rect.y / window.rect.h,
         slider_rect.w / window.rect.w,
         slider_rect.h / window.rect.h,
     }
-    
+
     r_set_scissor_mode(slider_rect)
-    
+
     r_push_transform(slider_pf_transform)
     r_bind_pipeline({builtin_pipeline_slot(.SLIDER)})
     r_bind_framebuffer({ write = .SLIDERS })
     r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
-    
+
     r_clear(with_alpha(color_black, 0.0))
-    
-    slider_snake_in_time_ms := game.beatmap.preempt_ms * (1.0/3.0)
-    slider_snake_in_time_at := beatmap_music_time_ms(&game.beatmap) - hobj.start_time_ms + game.beatmap.preempt_ms
-    slider_snake_instances := i32(f64(slider.instance_count) * clamp(slider_snake_in_time_at / slider_snake_in_time_ms, 0, 1))
-    
-    // todo(isak): border_color should be the hitobject's combo color once combo colors are implemented
+
+    slider_snake_instances := max(1, i32(f64(slider.instance_count) * slider_snake_factor(hobj)))
+
     command_push_draw_slider(Command_Draw_Slider{
-        base_instance = u32(slider.first_instance_at),
-        instance_count = slider_snake_instances,
-        border_color  = with_alpha(color_white, 0.9),
-        body_color    = with_alpha(color_white, 0.7),
+        base_instance      = u32(slider.first_instance_at),
+        instance_count     = slider_snake_instances,
+        border_color       = with_alpha(color_white, 0.9),
+        body_color         = with_alpha(color_white, 0.7),
+        script_translation = translation,
     })
     
     r_bind_framebuffer({ read = .SLIDERS })
@@ -588,7 +615,14 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Pat
         r_reset_scissor_mode()
         r_draw_rect_outline(&renderer.quad_geometry, slider_rect, color_cyan, 1)
     }
-    r_set_scissor_mode(slider_rect)
+    
+    scissor_rect := Rect{
+        2 + math.ceil(slider_rect.x),
+        2 + math.ceil(slider_rect.y),
+        math.floor(slider_rect.w) - 4,
+        math.floor(slider_rect.h) - 4,
+    }   
+    r_set_scissor_mode(scissor_rect)
     
     r_draw_rect_with_uv(&renderer.quad_geometry, 
                         slider_rect,
@@ -596,6 +630,95 @@ render_slider :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Pat
                         color_white, 
                         builtin_texture(.SLIDER_FRAMEBUFFER))
     r_reset_scissor_mode()
+}
+
+render_slider_quads :: proc(hobj: ^Hitobject, path: ^Slider_Path, map_time: f64) {
+    slider := &hobj.slider_state
+    
+    // todo(isak): these actually have to be rewritten into drawables for data manipulation purposes, but we
+    // can do that later
+    
+    combo_color := hitobject_combo_color(hobj)
+    
+    cs := game.beatmap.circle_radius_osupx
+    element_scale := (cs*2) / (game.active_skin.elements[.HITCIRCLE].metrics)
+    
+    hobj_pos := hitobject_pos(hobj)
+    end_pos  := path.end_pos + hobj.script_pos_translation
+    slider_path_time_at := (map_time - hobj.start_time_ms) - f64(slider.checked_repeats_count) * slider.duration_ms
+
+    // note(isak): slider ticks
+    heading_back := slider.checked_repeats_count % 2 == 1
+    first_tick_time := heading_back \
+        ? slider.duration_ms - slider.tick_interval_ms * f64(slider.tick_count) \
+        : slider.tick_interval_ms
+
+    ticks_to_draw := slider.tick_count
+    for ticks_to_draw > 0 && slider_path_time_at <= first_tick_time + f64(ticks_to_draw - 1) * slider.tick_interval_ms {
+        tick_size := element_scale * game.active_skin.elements[.SLIDER_TICK].metrics
+        forward_tick_index := heading_back ? (slider.tick_count + 1 - ticks_to_draw) : ticks_to_draw
+        tick_pos := slider_path_pos_at(hobj, hobj.start_time_ms + f64(forward_tick_index) * slider.tick_interval_ms)
+        tick_rect := rect_at_pos(tick_pos, tick_size)
+        r_draw_layout_rect(&window.renderer.quad_geometry, tick_rect, .CENTER, color_white,
+            skin_texture(.SLIDER_TICK))
+
+        ticks_to_draw -= 1
+    }
+    
+    
+    // note(isak): slider end circles
+    has_sliderend_at_end := slider.path_travel_count % 2 == 1 || slider.checked_repeats_count < slider.path_travel_count - 1
+    if has_sliderend_at_end && slider_snake_factor(hobj) >= 1 {
+        sliderend_rect := rect_at_pos(end_pos, {cs * 2, cs * 2})
+        r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_rect, .CENTER, combo_color,
+            skin_texture(.SLIDER_END))
+        r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_rect, .CENTER, color_white,
+            skin_texture(.SLIDER_END_OVERLAY))
+    }
+
+    has_sliderend_at_head := slider.path_travel_count > 1 &&
+        (slider.path_travel_count % 2 == 0 || slider.checked_repeats_count < slider.path_travel_count - 1)
+    if has_sliderend_at_head && hobj.start_time_ms <= map_time {
+        sliderend_head_rect := rect_at_pos(hobj_pos, {cs * 2, cs * 2})
+        r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_head_rect, .CENTER, combo_color,
+            skin_texture(.SLIDER_END))
+        r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_head_rect, .CENTER, color_white,
+            skin_texture(.SLIDER_END_OVERLAY))
+    }
+
+    // note(isak): slider repeat arrows
+    has_repeat_at_end := slider.path_travel_count > 1 && slider.checked_repeats_count < slider.path_travel_count - 1 &&
+        (slider.path_travel_count % 2 == 0 || slider.checked_repeats_count < slider.path_travel_count - 2)
+    if has_repeat_at_end && slider_snake_factor(hobj) >= 1 {
+        repeat_size := element_scale * game.active_skin.elements[.SLIDER_REPEAT].metrics
+        sliderend_repeat_rect := rect_at_pos(end_pos, repeat_size)
+        r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_repeat_rect, .CENTER, color_white,
+            skin_texture(.SLIDER_REPEAT), angle = path.end_angle_rad)
+    }
+
+    has_repeat_at_head := slider.path_travel_count > 2 && slider.checked_repeats_count < slider.path_travel_count - 1 &&
+        (slider.path_travel_count % 2 == 1 || slider.checked_repeats_count < slider.path_travel_count - 2)
+    if has_repeat_at_head && hobj.start_time_ms <= map_time {
+        repeat_size := element_scale * game.active_skin.elements[.SLIDER_REPEAT].metrics
+        sliderend_repeat_rect := rect_at_pos(hobj_pos, repeat_size)
+        r_draw_layout_rect(&window.renderer.quad_geometry, sliderend_repeat_rect, .CENTER, color_white,
+            skin_texture(.SLIDER_REPEAT), angle = path.head_angle_rad)
+    }
+    
+    // note(isak): slider tracking graphics
+    if hobj.start_time_ms <= map_time && map_time < hobj.end_time_ms {
+        ball_pos := slider_path_pos_at(hobj, map_time)
+        ball_rect := rect_at_pos(ball_pos, element_scale * game.active_skin.elements[.SLIDER_BALL].metrics)
+        
+        if .TRACKING in hobj.slider_state.flags {
+            follow_size := element_scale * game.active_skin.elements[.HITCIRCLE].metrics * SLIDER_FOLLOW_CIRCLE_RADIUS_MULT
+            follow_rect := rect_at_pos(ball_pos, follow_size)
+            r_draw_layout_rect(&window.renderer.quad_geometry, follow_rect, .CENTER, color_white, skin_texture(.SLIDER_FOLLOW_CIRCLE))
+        }
+        
+        r_draw_layout_rect(&window.renderer.quad_geometry, ball_rect, .CENTER, combo_color, skin_texture(.SLIDER_BALL),
+            angle = 0) // todo(isak): slider ball angle needs to be mathed out...
+    }
 }
 
 
@@ -622,7 +745,7 @@ TEST_write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
             continue
         }
 
-        combo_color := osu_map.num_combo_colors > 0 ? osu_map.combo_colors[hobj.combo_color_index] : color_purple
+        combo_color := hitobject_combo_color(&hobj)
 
         digits: [4]int
         n_digits := _combo_digits(int(hobj.combo_number), &digits)
@@ -648,21 +771,20 @@ TEST_write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
 
         // digit drawables. each sized from its own skin metrics, spread and centered on hitobject pos
         // compute total width first so we can center the run
-        
-        hc_metrics := game.active_skin.elements[.HITCIRCLE].metrics
+        hc_size := game.active_skin.elements[.HITCIRCLE].metrics
         // how many osupx per natural skin pixel, based on hitcircle fitting circle_radius*2
-        number_scale := (game.beatmap.circle_radius_osupx * 2) / max(hc_metrics.w, 1) * COMBO_NUMBER_SCALE
+        number_scale := (game.beatmap.circle_radius_osupx * 2) / max(hc_size.x, 1) * COMBO_NUMBER_SCALE
             
         total_digits_w: f32
         for digit in 0..<n_digits {
             digit_el := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[digit])
-            total_digits_w += game.active_skin.elements[digit_el].metrics.w * number_scale
+            total_digits_w += game.active_skin.elements[digit_el].metrics.x * number_scale
         }
         x := -total_digits_w / 2
         for di in 0..<n_digits {
             digit_el      := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[di])
             digit_metrics := game.active_skin.elements[digit_el].metrics
-            digit_size    := vec2{digit_metrics.w, digit_metrics.h} * number_scale
+            digit_size    := digit_metrics * number_scale
             hobj.gfx_handles[di] = drawable_new(Drawable{
                 flags   = {.ACTIVE},
                 element = builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + digits[di])),
@@ -700,7 +822,7 @@ TEST_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Hand
             }),
             layer = .BACKGROUND,
     
-            pos = {256, 256},
+            pos = vec2{256, 256} - playfield_base_translation_osupx,
             size = bg_size,
             anchor = .CENTER,
             color = {30,30,30,100},

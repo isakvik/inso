@@ -47,8 +47,8 @@ void main() {
 
     vec2 localPos = vec2(q_pos[right].x, q_pos[bottom].y);
     vec2 center = (q.pos_min + q.pos_max) * 0.5;
-    float c = cos(radians(q.angle));
-    float s = sin(radians(q.angle));
+    float c = cos(q.angle);
+    float s = sin(q.angle);
     mat2 rot = mat2(c, s, -s, c);
     vec2 rotatedPos = center + rot * (localPos - center);
 

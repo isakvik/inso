@@ -641,5 +641,17 @@ write_instances_from_path :: proc(
     }
     
     instance_count = instance_buf.count - instance_offset
+    if instance_count >= 2 {
+        p0 := instance_buf.data[instance_offset]
+        p1 := instance_buf.data[instance_offset + 1]
+        path.head_angle_rad = math.atan2(p1.y - p0.y, p1.x - p0.x)
+
+        last := instance_buf.count - 1
+        
+        l0 := instance_buf.data[last]
+        l1 := instance_buf.data[last - 1]
+        path.end_angle_rad = math.atan2(l1.y - l0.y, l1.x - l0.x)
+    }
+    
     return instance_count, instance_offset
 }

@@ -5,31 +5,17 @@ import "core:container/queue"
 import "core:fmt"
 import "core:log"
 import "core:strings"
+import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:time"
 import vmem "core:mem/virtual"
 
-import gl "vendor:OpenGL"
 import imgui "imgui"
 import imgui_gl3 "imgui/imgui_impl_opengl3"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
 
-/*
-todo(isak):
-
-general:
-ui core 
-    map selector
-    skin select
-
-eventual YEAST on-scene features:
-local networking
-    multiple client sync
-    potentially display other client cursors? w
-
-*/
 
 Memory_Arena_Type :: enum {
     // note(isak): never cleared. used instead of odin's regular arena to keep track of our allocations
@@ -138,7 +124,7 @@ main :: proc() {
         log.panic("SDL video init error:", sdl.GetError())
     }
 
-    window_init({w = 1024, h = 512})
+    window_init({w = 1280, h = 720})
     window.ui_enabled = true
     defer window_cleanup()
     
@@ -146,7 +132,9 @@ main :: proc() {
     assert(audio.ready)
     defer audio_cleanup()
     
+    //-- @temp todo(isak): needs interface, but since BASS interfaces with windows, we can defer this until later...
     audio_set_volume(0.05)
+    //--
 
     renderer_init()
     renderer := &window.renderer
@@ -159,13 +147,16 @@ main :: proc() {
     text_init()
     keyboard_init()
     
+    //-- @temp todo(isak): discover_skins, skin select interface
     game.active_skin = skin_load("skins/gn/")
+    //--
 
     shaders_watch := win32_init_directory_watch("shaders/")
 
-    songs_discover_maps("songs/")
+    // todo(isak): consider creating a song_index allocator
+    discover_maps("songs/")
 
-    //-- @temp
+    //-- @temp todo(isak): handle this properly when menu mode is a thing
     {
         ok: bool
         initial_map_ref := 
@@ -183,7 +174,6 @@ main :: proc() {
         prepare_textures_for_rendering()
     }
     //--
-   
 
     osu_on_init()
 
@@ -194,7 +184,7 @@ main :: proc() {
 
     running := true
     event: sdl.Event
-
+    
     for running {
         profiler_begin()
         defer profiler_end()
@@ -298,11 +288,14 @@ main :: proc() {
             // prepare drawing
             begin_frame(renderer)
         }
-        
+
         {
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
             
             handle_debug_ui_events(&window.map_dropdown)
+            if key_is_pressed(.F5) {
+                discover_maps("songs/")
+            }
             
             r_bind_layer_and_push_current_state(.DEBUG, transform = window.screenspace_transform)
             
@@ -317,21 +310,29 @@ main :: proc() {
             
             cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 80, 80 }
             r_draw_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture(.CURSOR),
-                f32(time_s_since_beginning_of_program()*20))
+                f32(time_s_since_beginning_of_program()))
             
-            r_push_transform(transform_from_bounds(rect_to_array(playfield_rect), window.aspect_ratio))
+            if app.debug_display_game_cursor {
+                r_push_transform(game.playfield_transform)
+                pf_cur_rect: Rect = { game.input.mouse_pos.x, game.input.mouse_pos.y, 20, 20 }
+                r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, builtin_texture(.WHITE),
+                    f32(time_s_since_beginning_of_program()))
+            }
             
-            pf_cur_rect: Rect = { game.input.mouse_pos.x, game.input.mouse_pos.y, 20, 20 }
-            r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, builtin_texture(.WHITE),
-                f32(time_s_since_beginning_of_program()*20))
-            r_draw_rect_outline(&renderer.quad_geometry, playfield_rect, with_alpha(color_white, 0.1), 2)
+            r_push_transform(game.playfield_transform)
+            
+            cs := game.beatmap.circle_radius_osupx
+            pf_outline := Rect{
+                -cs, -cs, playfield_size_osupx+2*cs, (playfield_size_osupx*3/4)+2*cs
+            }
+            r_draw_rect_outline(&renderer.quad_geometry, pf_outline, with_alpha(color_white, 0.1), 2)
         }
         
         {
             /*
                 todo(isak): state of the renderer:
                 usage:
-                - batch overrun has not been tested @beta
+                - batch overrun has not been tested (although an infinite loop crashes, which is expected) @beta
                 - transforms should be a dynamic stack that we just write as we process the frame; can save a bunch
                     of draw calls
             */
@@ -425,7 +426,7 @@ end_frame :: proc(renderer: ^Renderer) {
 
 
 write_debug_ui :: proc(map_dropdown: ^Debug_Dropdown) {
-    imgui.Begin("饕餮尤魔 :3")
+    imgui.Begin("Info")
     defer imgui.End()
 
     timer_str := strings.clone_to_cstring(time_ms_to_string(beatmap_music_time_ms(&game.beatmap)), context.temp_allocator)
@@ -439,12 +440,8 @@ write_debug_ui :: proc(map_dropdown: ^Debug_Dropdown) {
     imgui.Text("Mouse keys: %s", game.input.mouse_keys_enabled ? cstring("on") : cstring("off"))
     imgui.Text("Universal offset: %d ms", i32(game.universal_offset_ms))
     
-    
     imgui.Text("Music pos: %f ms", f32(game.beatmap.music_time_ms))
     imgui.Text("Sound pos: %f ms", f32(sound_get_position_ms(&game.beatmap.music)))
-    
-    
-    
     
     imgui.Separator()
     debug_dropdown_update(map_dropdown)
@@ -454,16 +451,17 @@ handle_debug_ui_events :: proc(map_dropdown: ^Debug_Dropdown) {
     if map_dropdown.changed && map_dropdown.selected < len(app.map_references) {
         osu_switch_map(app.map_references[map_dropdown.selected])
     }
-    if is_key_pressed(.F1) {
+    if key_is_pressed(.F1) {
         window.renderer.trace_frame = !window.renderer.trace_frame
     }
-    if is_key_pressed(.F2) {
+    if key_is_pressed(.F2) {
         app.debug_display_slider_bounds = !app.debug_display_slider_bounds
+        app.debug_display_game_cursor = app.debug_display_slider_bounds
     }
-    if is_key_pressed(.F3) {
+    if key_is_pressed(.F3) {
         app.debug_display_frame_profiler = !app.debug_display_frame_profiler
     }
-    if is_key_pressed(.F4) {
+    if key_is_pressed(.F4) {
         app.debug_display_memory_profiler = !app.debug_display_memory_profiler
 
         track := &memory.tracker[.GLOBAL]

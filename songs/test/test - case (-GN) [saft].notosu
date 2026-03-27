@@ -2,6 +2,7 @@ notosu file format v1
 
 [General]
 LuaEntryPoint: test.lua
+BackgroundPipeline: wave
 
 [Shaders]
 [[wave]]

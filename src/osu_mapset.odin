@@ -151,7 +151,7 @@ osu_section_headers := []string{
     "[HitObjects]",
 }
 
-Osu_Sample_Set :: enum {
+Osu_Map_Sample_Set :: enum {
     NORMAL,
     SOFT,
     DRUM
@@ -232,19 +232,24 @@ mapset_open_for_editing :: proc(path: string, osu_filename: string = "") -> (^Ma
 }
 
 // note(isak): register every .osu file found in mapset subdirectories
-songs_discover_maps :: proc(songs_dir: string) {
+// allocates with given alloc + context.temp_allocator
+discover_maps :: proc(songs_dir: string, alloc: runtime.Allocator = context.allocator) {
     dir_handle, err := os.open(songs_dir)
     if err != nil {
         log.errorf("discover_maps: couldn't open '{}': {}", songs_dir, err)
         return
     }
+    
+    clear(&app.map_references)
+    clear(&app.map_reference_names)
+    
     dirs, _ := os.read_dir(dir_handle, 1024, context.temp_allocator)
 
     count := 0
     for dir in dirs {
         if dir.type != .Directory do continue
 
-        folder_path := strings.concatenate({songs_dir, dir.name, "/"}, context.allocator)
+        folder_path := strings.concatenate({songs_dir, dir.name, "/"}, alloc)
 
         sub_handle, sub_err := os.open(folder_path)
         if sub_err != nil do continue
@@ -253,7 +258,7 @@ songs_discover_maps :: proc(songs_dir: string) {
         for sub_file in sub_files {
             if filepath.ext(sub_file.name) != ".osu" do continue
 
-            osu_filename  := strings.clone(sub_file.name, context.allocator)
+            osu_filename  := strings.clone(sub_file.name, alloc)
             stem          := filepath.stem(sub_file.name)
             display_cstr  := fmt.caprintf("%s / %s", dir.name, stem)
 
@@ -356,8 +361,10 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
             for i in 1..<len(lines) {
                 key, value := get_key_value(lines[i])
                 switch key {
-                    case "LuaEntryPoint": 
-                        result.lua_entry_point = strings.concatenate({mapset.folder_path, value}, memory.allocators[.GLOBAL])
+                    case "LuaEntryPoint":
+                        result.lua_entry_point = strings.concatenate({mapset.folder_path, value}, context.allocator)
+                    case "BackgroundPipeline":
+                        result.bg_pipeline_name = strings.clone(value, context.allocator)
                 }
             }
         case .SHADERS:
@@ -779,8 +786,10 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
     current_timing_point_index_uninherited: int
     current_timing_point_index_inherited: int
     
-    combo_color_index := 0 // note(isak): osu logic - starts at second combo color...
+    combo_index := 0
     combo_number := 1
+    
+    last_non_spinner_hobj_i := 0
     
     for &hobj, i in osu_map.hitobjects {
         hobj.index = i
@@ -834,26 +843,31 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
             hobj.end_time_ms = hobj.start_time_ms + (slider.duration_ms * f64(slider.path_travel_count))
             
             slider.tick_interval_ms = uninherited_tp.beat_length / osu_map.diff_slider_tickrate
-            slider.tick_count = int(slider.duration_ms / slider.tick_interval_ms) * slider.path_travel_count
+            slider.tick_count = int((slider.duration_ms - SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS) / slider.tick_interval_ms)
+        }
+        
+        // note(isak): combo colors and number.
+        // color mirrors osu logic - we do a preincrement and start at the second combo color...
+        if .NEW_COMBO in hobj.flags || i == 0 {
+            combo_index = (combo_index + 1 + int(hobj.combo_color_skip_offset))
+            combo_number = 1
             
-            if slider.tick_count == 0 {
-                slider.next_expected_judgement_at_ms = hobj.start_time_ms + slider.duration_ms
-            } else {
-                slider.next_expected_judgement_at_ms = hobj.start_time_ms + slider.tick_interval_ms
+            if i > 0 {
+                prev_hobj := &osu_map.hitobjects[last_non_spinner_hobj_i]
+                prev_hobj.flags |= {.LAST_IN_COMBO}
             }
         }
         
-        // note(isak): combo colors and number
-        if .NEW_COMBO in hobj.flags {
-            if osu_map.num_combo_colors > 0 {
-                combo_color_index = (combo_color_index + 1 + int(hobj.combo_color_skip_offset)) % osu_map.num_combo_colors
-            }
-            combo_number = 1
-        }
-        hobj.combo_color_index = u8(combo_color_index)
+        hobj.combo_index = combo_index
         hobj.combo_number = u16(combo_number)
         combo_number += 1
+        
+        if hobj.type != .SPINNER {
+            last_non_spinner_hobj_i = i
+        }
     }
+    
+    osu_map.hitobjects[last_non_spinner_hobj_i].flags |= {.LAST_IN_COMBO}
 }
 
 mapset_parse_osu_slider_params :: proc(hobj: ^Hitobject, slider: ^Slider_Path, params: string, alloc: mem.Allocator = context.allocator) {
@@ -1046,4 +1060,20 @@ mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu
         watch.notify_bytes_written = 0
     }
     return updated_systems
+}
+
+// note(isak): returns the index of the first hitobject with start_time_ms >= from_ms.
+// hitobjects are sorted by start time, so this is a binary search.
+hitobject_lower_bound_ms :: proc(from_ms: f64) -> int {
+    hitobjects := game.beatmap.hitobjects
+    lo, hi := 0, len(hitobjects)
+    for lo < hi {
+        mid := (lo + hi) / 2
+        if hitobjects[mid].start_time_ms < from_ms {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    return lo
 }

@@ -1,10 +1,23 @@
 package notosu
 
+import "core:fmt"
 import "core:log"
 import "core:mem/virtual"
 import os "core:os/os2"
 import "core:strings"
 
+
+Skin :: struct {
+    path: string,
+    elements: [Skin_Element_Type]Skin_Element,
+    hitsounds: [Skin_Sample_Set][Skin_Hitsound_Type]Hitsound,
+}
+
+supported_image_extensions :: []string{".png", ".jpg"}
+supported_audio_extensions :: []string{".wav", ".ogg"}
+
+
+// -- skin image elements
 
 Skin_Element_Type :: enum u32 {
     CURSOR,
@@ -29,33 +42,21 @@ Skin_Element_Type :: enum u32 {
     COMBO_8,
     COMBO_9,
 
+    SLIDER_BALL,
     SLIDER_FOLLOW_CIRCLE,
-}
-
-Skin_Sample_Set :: enum {
-    NORMAL,
-    SOFT,
-    DRUM
-}
-
-Skin_Hitsound_Type :: enum u32 {
-    HITNORMAL,
-    HITWHISTLE,
-    HITFINISH,
-    HITCLAP,
-
-    SLIDERSLIDE,
-    SLIDERWHISTLE,
-    SLIDERTICK,
+    SLIDER_REPEAT,
+    SLIDER_TICK,
+    SLIDER_END,
+    SLIDER_END_OVERLAY,
 }
 
 Skin_Element :: struct {
-    texture: ^Texture,
+    texture: u32,
     is_high_resolution: bool,
-    metrics: Rect,
+    metrics: vec2,
 }
 
-Skin_Element_Path := #partial [Skin_Element_Type]string {
+Skin_Element_Path := [Skin_Element_Type]string {
     .CURSOR          = "cursor",
     .APPROACHCIRCLE  = "approachcircle",
     .HITCIRCLE       = "hitcircle",
@@ -78,7 +79,31 @@ Skin_Element_Path := #partial [Skin_Element_Type]string {
     .COMBO_8 = "default-8",
     .COMBO_9 = "default-9",
 
+    .SLIDER_BALL = "sliderb0",
     .SLIDER_FOLLOW_CIRCLE = "sliderfollowcircle",
+    .SLIDER_REPEAT = "reversearrow",
+    .SLIDER_TICK = "sliderscorepoint",
+    .SLIDER_END = "sliderendcircle",
+    .SLIDER_END_OVERLAY = "sliderendcircleoverlay",
+}
+
+// -- skin hitsound elements
+
+Skin_Sample_Set :: enum {
+    NORMAL,
+    SOFT,
+    DRUM
+}
+
+Skin_Hitsound_Type :: enum u32 {
+    HITNORMAL,
+    HITWHISTLE,
+    HITFINISH,
+    HITCLAP,
+
+    SLIDERSLIDE,
+    SLIDERWHISTLE,
+    SLIDERTICK,
 }
 
 skin_sample_set_name := [Skin_Sample_Set]string {
@@ -99,15 +124,6 @@ skin_hitsound_type_name := [Skin_Hitsound_Type]string {
 
 Hitsound :: Sample
 
-Skin :: struct {
-    path: string,
-    elements: [Skin_Element_Type]Skin_Element,
-    hitsounds: [Skin_Sample_Set][Skin_Hitsound_Type]Hitsound,
-}
-
-
-supported_image_extensions :: []string{".png", ".jpg"}
-supported_audio_extensions :: []string{".wav", ".ogg"}
 
 skin_load :: proc(skin_path: string) -> (result: ^Skin) {
     context.allocator = memory.allocators[.SKIN]
@@ -141,17 +157,31 @@ skin_load_elements :: proc(skin: ^Skin) {
             }
 
             if tex_err == os.General_Error.None {
+                skin.elements[element].texture = tex_store.tex_id
                 break
             }
         }
 
         // todo(isak): we handle as much as we handle here, but can supply a default skin like osu here
-        // instead of asserting
-        assert(tex_err == os.General_Error.None)
+        if tex_err != os.General_Error.None {
+            log.debugf("skin warning: attempted searching for {}, but got error: {}", 
+                fmt.enum_value_to_string(element), tex_err)
+        }
 
         // note(isak): natural display size. @2x textures are double-resolution for the same visual size
         display_scale: f32 = skin.elements[element].is_high_resolution ? 0.5 : 1.0
-        skin.elements[element].metrics = {0, 0, f32(tex_store.w) * display_scale, f32(tex_store.h) * display_scale}
+        skin.elements[element].metrics = {f32(tex_store.w) * display_scale, f32(tex_store.h) * display_scale}
+    }
+    
+    
+    // note(isak): fallbacks
+    for element in Skin_Element_Type {
+        if skin.elements[element].texture == 0 {
+            #partial switch element {
+            case .SLIDER_END:         skin.elements[element] = skin.elements[.HITCIRCLE]
+            case .SLIDER_END_OVERLAY: skin.elements[element] = skin.elements[.HITCIRCLEOVERLAY]
+            }
+        }
     }
 }
 

@@ -72,7 +72,7 @@ calculate_curve_from_time :: proc(time_at: f64, hobj: ^Hitobject, path: ^Slider_
 
         // todo(yokes): make new logic for calculating slider ball pos on bezier (should only need to get "t" correctly)
 
-        pos_at = calculate_bezier_point_from_time(path, t)
+        pos_at = calculate_bezier_point_from_time(hobj, time_at, path)
         
     } else if path.type == .ARC {
         curve := path.curves[0]
@@ -165,7 +165,7 @@ calculate_distance_from_piecewise :: proc(path: ^Slider_Path, output: ^queue.Que
 
 // https://github.com/McKay42/McOsu/blob/master/src/App/Osu/OsuSliderCurves.cpp#L435
 // note(yokes): "t" is for time which means we need to calculate the time it takes to get "d" distance beforehand
-calculate_bezier_point_from_time :: proc(path: ^Slider_Path, t: f64) -> (point: vec2) {
+calculate_bezier_point_from_time :: proc(hobj: ^Hitobject, time_at: f64, path: ^Slider_Path) -> (point: vec2) {
 
     path_instances := window.renderer.slider_instances.data[path.first_instance_at:path.first_instance_at+path.instance_count]
 
@@ -173,10 +173,22 @@ calculate_bezier_point_from_time :: proc(path: ^Slider_Path, t: f64) -> (point: 
         return vec2({0,0})
     }
     
-    curve_m_i := min(i64(path.distance_osupx / clamp(base_dist, 1.0, 100.0)), i64(slider_max_points))
+    //curve_m_i := min(i64(path.distance_osupx / clamp(base_dist, 1.0, 100.0)), i64(slider_max_points), i64(len(path_instances) - 1))
+    curve_m_i := min(i64(slider_max_points), i64(len(path_instances) - 1))
 
-    index_f := t * f64(curve_m_i)
+    duration := hobj.end_time_ms - hobj.start_time_ms
+    elapsed  := clamp(time_at - hobj.start_time_ms, 0, duration)
+
+    repeat_count := hobj.slider_state.path_travel_count
+    t_passes  := (elapsed / duration) * f64(repeat_count)
+    pass_idx  := min(int(t_passes), repeat_count - 1)
+    pass_frac := t_passes - f64(pass_idx)
+
+    t_on_path := pass_frac if pass_idx % 2 == 0 else 1.0 - pass_frac
+
+    index_f := t_on_path * f64(curve_m_i)
     index := i64(index_f)
+
     if index >= curve_m_i {
         if curve_m_i > -1 && curve_m_i < i64(len(path_instances)) {
             return path_instances[curve_m_i]
@@ -266,6 +278,8 @@ calculate_distance_of_straight_bezier :: proc(
     return f64(travelled_distance)
 
 }
+
+write_instances_over_distance :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path)
 
 //todo(yokes): make a procedure for calculating points on bezier and arch sliders when the curve is too slight
 //check todos under circular_arc_to_piecewise_linear and bezier_to_piecewise_linear

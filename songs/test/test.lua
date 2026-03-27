@@ -61,7 +61,7 @@ function on_init()
     end
     
     register_global_event("hehe", function()
-        -- note that this drifts over time, so it's not really a clean repeat every 250ms
+        -- note that this drifts over time, it's not a clean repeat every 250ms
         schedule_event("hehe", 250)
         print("hehe loop " .. Beatmap.get_music_time_ms())
     end)

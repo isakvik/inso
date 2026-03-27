@@ -777,7 +777,7 @@ luaapi_element_set_tex :: proc "c" (L: ^lua.State) -> (result: i32) {
     return lua_return_self()
 }
 
-// element:set_uv(x, y, w, h) — UV sub-rect in [0,1] space; picks a region of the texture
+// element:set_uv(x, y, w, h) - UV sub-rect in [0,1] space; picks a region of the texture
 luaapi_element_set_uv :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_beatmap.odin_context
     userdata := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)

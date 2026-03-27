@@ -402,23 +402,26 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
             pos = path.pos if hobj.slider_state.path_travel_count % 2 == 0 else path.end_pos
         }
 
-        //--@temp do the osu thing w metrics instead of spinny square
+        cs := game.beatmap.circle_radius_osupx
+        element_scale := (cs * 2) / game.active_skin.elements[.HITCIRCLE].metrics
+        skin_el := skin_element_for_type_table[el_type]
+        
+        vel := judgement.result == .MISS ? vec2{0, 10} : vec2{0, 0}
+        
         drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
-            flags = {.ACTIVE},
-            element = builtin_element_slot(el_type),
-            layer = .HITOBJECTS,
-            pos = pos,
-            size = game.beatmap.circle_radius_osupx,
-            anchor = .CENTER,
-            color = color_white,
+            flags         = {.ACTIVE},
+            element       = builtin_element_slot(el_type),
+            layer         = .HITOBJECTS,
+            pos           = pos,
+            size          = element_scale * game.active_skin.elements[skin_el].metrics,
+            anchor        = .CENTER,
+            color         = color_white,
             
-            angle_vel = 2*math.PI,
+            vel           = vel,
             
             start_time_ms = judgement.time,
-            end_time_ms = judgement.time + 600
+            end_time_ms   = judgement.time + 600,
         })
-        //--
-        //fmt.println("judgement", fmt.enum_value_to_string(judgement.result))
     }
     
 }

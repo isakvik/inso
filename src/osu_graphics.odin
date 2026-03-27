@@ -18,6 +18,7 @@ skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
     .HIT_CIRCLE_OVERLAY = .HITCIRCLEOVERLAY,
     .APPROACH_CIRCLE    = .APPROACHCIRCLE,
     .COMBO_NUMBER       = .COMBO_1,
+    .LIGHTING           = .LIGHTING,
 
     .SLIDER_BALL          = .SLIDER_BALL,
     .SLIDER_FOLLOW_CIRCLE = .SLIDER_FOLLOW_CIRCLE,
@@ -322,25 +323,31 @@ write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
         })
     }
     
-    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS)] = {
-        tex = skin_texture(.LIGHTING),
+    hit_anims := animation_new(anims,
+        Animation_Scale{
+            tween = .QUAD_OUT,
+            start_time  = 0,   
+            end_time = 0.2,
+            start_scale = {0.8, 0.8}, 
+            end_scale = {1.0, 1.0},
+        },
+        Animation_Alpha{
+            start_time  = 0.7, 
+            end_time = 1.0,
+            start_alpha = 1.0, 
+            end_alpha = 0.0,
+        },
+    )
+    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS)].animations = hit_anims
+    elements.data[builtin_element_slot(.JUDGEMENT_GOOD)].animations      = hit_anims
+    elements.data[builtin_element_slot(.JUDGEMENT_OK)].animations        = hit_anims
 
-        animations = animation_new(anims, 
-            Animation_Scale{
-                start_time = 0, 
-                end_time = 1,
-                start_scale = {0.5, 0.5}, 
-                end_scale = {1.5, 1.5}
-            },
-            Animation_Alpha{
-                start_time = 0.5, 
-                end_time = 1,
-                start_alpha = 1.0,
-                end_alpha = 0.0,
-            }
-        )
-    }
-    
+    elements.data[builtin_element_slot(.JUDGEMENT_MISS)].animations = animation_new(anims,
+        Animation_Alpha{
+            start_time  = 0.4, end_time  = 1.0,
+            start_alpha = 1.0, end_alpha = 0.0,
+        },
+    )
     
     click_animation := animation_new(anims, 
         Animation_Scale{

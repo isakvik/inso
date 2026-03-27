@@ -26,13 +26,12 @@ TEST
     custom animations
     limit testing
     
-
-
 rendering
     locking bugfix
     bindless textures fallback
     fix the damn release build stuff
     3d pipeline support
+    renderer limit handling; eventual packing
     
 gameplay
     notelock

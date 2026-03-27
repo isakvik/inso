@@ -42,7 +42,7 @@ lua_beatmap: struct {
     event_registrations: [dynamic]Lua_Event_Registration,
     scheduled_events:    [dynamic]Scheduled_Event,
 
-    last_rendered_timestamp_ms: f64,
+    music_time_ms: f64,
 }
 
 Lua_Beatmap_Event_Type :: enum {
@@ -85,6 +85,7 @@ Lua_Class_Type :: enum {
     BEATMAP,
     BUFFER,
     SOUND,
+    PLAYFIELD,
 }
 
 Lua_Class :: struct {
@@ -136,6 +137,10 @@ lua_classes: [Lua_Class_Type]Lua_Class = {
         static_funcs    = luaapi_sound_static_funcs,
         instance_funcs  = luaapi_sound_instance_funcs,
     },
+    .PLAYFIELD = {
+        name         = "Playfield",
+        static_funcs = luaapi_playfield_static_funcs,
+    },
 }
 
 luaapi_global_funcs := []lua.L_Reg {
@@ -147,6 +152,7 @@ luaapi_global_funcs := []lua.L_Reg {
   { "key_is_up", luaapi_key_is_up },
   { "trigger_event", luaapi_trigger_event },
   { "schedule_event", luaapi_schedule_event },
+  { "register_global_event", luaapi_register_global_event },
 }
 
 // note(isak): we use reflection to pull the names and associated enums directly to lua tables
@@ -162,6 +168,7 @@ Lua_Event_Registration :: struct {
     callback_ref: lua.Ref,  // luaL_ref into LUA_REGISTRYINDEX
     class:        Lua_Class_Type,
     handle_key:   u64,      // raw handle bits used for GC identification
+    is_global:    bool,     // if true: no object arg, callback receives only extra args
 }
 
 Scheduled_Event :: struct {
@@ -335,7 +342,7 @@ lua_log_error :: proc "c" (log_str: string = "Lua error:", location := #caller_l
     log.error(log_str, "\n", lua.tostring(L, -1), sep = "", location = location)
     lua.pop(L, 1)
     
-    intrinsics.debug_trap()
+    //intrinsics.debug_trap()
 }
 
 // note(isak): pushes a handle and associates it with the given name. 
@@ -400,7 +407,7 @@ _register_event :: proc(L: ^lua.State, class: Lua_Class_Type, handle_key: u64) -
 }
 
 // note(isak): trigger_event(name, ...) - fires all callbacks registered under 'name'.
-// each callback receives (object_handle, ...) where ... are any extra args passed to trigger_event.
+// object callbacks receive (object_handle, ...), global callbacks receive (...) only.
 luaapi_trigger_event :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     event_name := lua_string(1)
@@ -409,14 +416,35 @@ luaapi_trigger_event :: proc "c" (L: ^lua.State) -> i32 {
     for reg in lua_beatmap.event_registrations {
         if reg.name != event_name do continue
         lua.rawgeti(L, lua.REGISTRYINDEX, lua.Integer(reg.callback_ref))
-        _lua_push_event_target(L, reg.class, reg.handle_key)
+        if !reg.is_global {
+            _lua_push_event_target(L, reg.class, reg.handle_key)
+        }
         for i in i32(0)..<n_extra_args {
             lua.pushvalue(L, lua.Index(2 + i))
         }
-        if lua.pcall(L, 1 + n_extra_args, 0, 0) != lua.OK {
+        n_args := n_extra_args if reg.is_global else 1 + n_extra_args
+        if lua.pcall(L, n_args, 0, 0) != lua.OK {
             lua_log_error("trigger_event error:")
         }
     }
+    return 0
+}
+
+// note(isak): register_global_event(name, fn) - registers a callback not tied to any object.
+// callback receives only the extra args passed to trigger_event, with no leading self.
+luaapi_register_global_event :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    event_name := lua_string(1)
+    if !lua.isfunction(L, 2) {
+        return lua.L_error(L, "register_global_event: argument 2 must be a function")
+    }
+    lua.pushvalue(L, 2)
+    callback_ref := lua.L_ref(L, lua.REGISTRYINDEX)
+    append(&lua_beatmap.event_registrations, Lua_Event_Registration{
+        name         = event_name,
+        callback_ref = callback_ref,
+        is_global    = true,
+    })
     return 0
 }
 
@@ -428,7 +456,7 @@ luaapi_schedule_event :: proc "c" (L: ^lua.State) -> i32 {
     delay_ms   := f64(lua.L_checknumber(L, 2))
     append(&lua_beatmap.scheduled_events, Scheduled_Event{
         event_name = event_name,
-        fire_at_ms = lua_beatmap.last_rendered_timestamp_ms + delay_ms,
+        fire_at_ms = lua_beatmap.music_time_ms + delay_ms,
     })
     return 0
 }
@@ -438,6 +466,7 @@ luaapi_schedule_event :: proc "c" (L: ^lua.State) -> i32 {
 lua_drain_scheduled_events :: proc(time_ms: f64) {
     L := lua_beatmap.state
     if L == nil do return
+    lua_beatmap.music_time_ms = time_ms
     i := 0
     for i < len(lua_beatmap.scheduled_events) {
         ev := lua_beatmap.scheduled_events[i]
@@ -446,8 +475,11 @@ lua_drain_scheduled_events :: proc(time_ms: f64) {
             for reg in lua_beatmap.event_registrations {
                 if reg.name != ev.event_name do continue
                 lua.rawgeti(L, lua.REGISTRYINDEX, lua.Integer(reg.callback_ref))
-                _lua_push_event_target(L, reg.class, reg.handle_key)
-                if lua.pcall(L, 1, 0, 0) != lua.OK {
+                if !reg.is_global {
+                    _lua_push_event_target(L, reg.class, reg.handle_key)
+                }
+                n_args := i32(0) if reg.is_global else i32(1)
+                if lua.pcall(L, n_args, 0, 0) != lua.OK {
                     lua_log_error("schedule_event error:")
                 }
             }
@@ -486,10 +518,10 @@ luaapi_controller_is_down :: proc "c" (L: ^lua.State) -> i32 {
     key_name := lua.L_checkstring(L, 1)
     result: bool
     switch key_name {
-    case "k1": result = is_down(game.input.k1)
-    case "k2": result = is_down(game.input.k2)
-    case "m1": result = is_down(game.input.m1)
-    case "m2": result = is_down(game.input.m2)
+    case "k1": result = button_is_down(game.input.k1)
+    case "k2": result = button_is_down(game.input.k2)
+    case "m1": result = button_is_down(game.input.m1)
+    case "m2": result = button_is_down(game.input.m2)
     }
     lua.pushboolean(L, b32(result))
     return 1
@@ -499,10 +531,10 @@ luaapi_controller_is_up :: proc "c" (L: ^lua.State) -> i32 {
     key_name := lua.L_checkstring(L, 1)
     result: bool
     switch key_name {
-    case "k1": result = !is_down(game.input.k1)
-    case "k2": result = !is_down(game.input.k2)
-    case "m1": result = !is_down(game.input.m1)
-    case "m2": result = !is_down(game.input.m2)
+    case "k1": result = !button_is_down(game.input.k1)
+    case "k2": result = !button_is_down(game.input.k2)
+    case "m1": result = !button_is_down(game.input.m1)
+    case "m2": result = !button_is_down(game.input.m2)
     }
     lua.pushboolean(L, b32(result))
     return 1
@@ -511,14 +543,14 @@ luaapi_controller_is_up :: proc "c" (L: ^lua.State) -> i32 {
 luaapi_key_is_down :: proc "c" (L: ^lua.State) -> i32 {
     key_name := lua.L_checkstring(L, 1)
     scancode := sdl.GetScancodeFromName(key_name)
-    lua.pushboolean(L, b32(is_key_down(scancode)))
+    lua.pushboolean(L, b32(key_is_down(scancode)))
     return 1
 }
 
 luaapi_key_is_up :: proc "c" (L: ^lua.State) -> i32 {
     key_name := lua.L_checkstring(L, 1)
     scancode := sdl.GetScancodeFromName(key_name)
-    lua.pushboolean(L, b32(!is_key_down(scancode)))
+    lua.pushboolean(L, b32(!key_is_down(scancode)))
     return 1
 }
 
@@ -1039,7 +1071,7 @@ luaapi_tween_static_funcs := []lua.L_Reg {
 
 @(private="file")
 luaapi_beatmap_static_funcs := []lua.L_Reg {
-  { "get_music_time",     luaapi_beatmap_get_music_time },
+  { "get_music_time_ms",  luaapi_beatmap_get_music_time_ms },
   { "get_length_ms",      luaapi_beatmap_get_length_ms },
   { "get_bpm",            luaapi_beatmap_get_bpm },
   { "get_beat_length_ms", luaapi_beatmap_get_beat_length_ms },
@@ -1049,7 +1081,7 @@ luaapi_beatmap_static_funcs := []lua.L_Reg {
   { nil, nil },
 }
 
-luaapi_beatmap_get_music_time :: proc "c" (L: ^lua.State) -> i32 {
+luaapi_beatmap_get_music_time_ms :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     lua.pushnumber(L, lua.Number(beatmap_music_time_ms(&game.beatmap)))
     return 1
@@ -1728,4 +1760,57 @@ luaapi_color_rgb :: proc "c" (L: ^lua.State) -> (result: i32) {
     color := Color{u8(min(r, 255)),u8(min(g, 255)),u8(min(b, 255)),255}
     lua.pushinteger(L, lua.Integer(color_to_pixel_u8(color)))
     return 1
+}
+
+//////////////////////////////////////////////////////
+// note(isak): Playfield API
+
+@(private="file")
+luaapi_playfield_static_funcs := []lua.L_Reg {
+  { "set_translation", luaapi_playfield_set_translation },
+  { "set_scale",       luaapi_playfield_set_scale },
+  { "set_rotation",    luaapi_playfield_set_rotation },
+  { "translate",       luaapi_playfield_translate },
+  { "rotate",          luaapi_playfield_rotate },
+  { nil, nil },
+}
+
+// set_translation(x, y) - offset in osu!px, applied on top of the base centering translation
+luaapi_playfield_set_translation :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    game.playfield_translation_osupx = {f32(lua.L_checknumber(L, 1)), f32(lua.L_checknumber(L, 2))}
+    game.playfield_dirty_transform = true
+    return 0
+}
+
+// set_scale(s) - multiplier on top of the base scale (1.0 = default size)
+luaapi_playfield_set_scale :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    game.playfield_scale = f32(lua.L_checknumber(L, 1))
+    game.playfield_dirty_transform = true
+    return 0
+}
+
+// set_rotation(rad) - rotation in radians around the playfield center
+luaapi_playfield_set_rotation :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    game.playfield_rotation_rad = f32(lua.L_checknumber(L, 1))
+    game.playfield_dirty_transform = true
+    return 0
+}
+
+// translate(x, y) - adds to the current translation in osu!px
+luaapi_playfield_translate :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    game.playfield_translation_osupx += {f32(lua.L_checknumber(L, 1)), f32(lua.L_checknumber(L, 2))}
+    game.playfield_dirty_transform = true
+    return 0
+}
+
+// rotate(rad) - adds to the current rotation in radians
+luaapi_playfield_rotate :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    game.playfield_rotation_rad += f32(lua.L_checknumber(L, 1))
+    game.playfield_dirty_transform = true
+    return 0
 }

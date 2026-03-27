@@ -16,6 +16,12 @@ import sdl "vendor:sdl3"
 playfield_size_osupx :: f32(512)
 osu_slider_curve_points_separation :: f32(2.5)
 
+// note(isak): osu!'s actual play area is 512x384 within the 512x512 osu!px coordinate space,
+// with a small vertical offset for the toolbar. these constants define that base placement and
+// are always applied in playfield_build_transform, independent of any lua adjustments.
+playfield_base_scale :: f32(512.0 / 480.0)
+playfield_base_translation_osupx :: vec2{0, 72} // (512-384)/2 + 8
+
 // note(isak): state struct. keep it lean, put large data fields in arenas and point to it here
 game: struct {
     dt: f64, 
@@ -36,6 +42,7 @@ game: struct {
     playfield_translation_osupx: vec2,
     playfield_scale: f32,
     playfield_rotation_rad: f32,
+    playfield_dirty_transform: bool,
 
     paused: bool,
     time_rate: f32,
@@ -280,6 +287,7 @@ Judgement :: struct {
 Notosu_Map :: struct {
     lua_entry_point: string,
     shaders: []Shader,
+    bg_pipeline_name: string,
 }
 
 Osu_Map :: struct {
@@ -319,9 +327,12 @@ Osu_Map :: struct {
 // and playfield_rotation_rad. maps osu!px -> NDC with full affine support (translate, scale,
 // rotate). the inverse correctly maps window pixels back to osu!px without extra adjustment.
 playfield_build_transform :: proc "contextless" () -> Transform {
-    k  := game.playfield_scale * window.rect.h / playfield_size_osupx
-    cx := window.rect.w * 0.5 + game.playfield_translation_osupx.x * k
-    cy := window.rect.h * 0.5 + game.playfield_translation_osupx.y * k
+    effective_scale       := playfield_base_scale * game.playfield_scale
+    effective_translation := playfield_base_translation_osupx + game.playfield_translation_osupx
+
+    k  := effective_scale * window.rect.h / playfield_size_osupx
+    cx := window.rect.w * 0.5 + effective_translation.x * k
+    cy := window.rect.h * 0.5 + effective_translation.y * k
 
     ndc_from_px := mat3{
         2 / window.rect.w, 0,                 -1,
@@ -348,9 +359,10 @@ osu_on_init :: proc() {
     game.input.k1_key = sdl.Scancode.Z
     game.input.k2_key = sdl.Scancode.X
 
-    game.playfield_scale = 1.06667
-    game.playfield_translation_osupx = {0, (512-384)/2+8}
-    
+    game.playfield_scale = 1.0
+    game.playfield_translation_osupx = {}
+    game.playfield_rotation_rad = 0
+
     beatmap_on_init(game.active_map_ref, &game.beatmap)
     game.playfield_transform = playfield_build_transform()
 
@@ -403,13 +415,13 @@ osu_on_update :: proc(dt: f64) {
     // todo(isak): valid key presses system needs testing
     game.input.available_presses = 0
     if game.input.mouse_keys_enabled {
-        if is_pressed(game.input.k1) && !is_down(game.input.m1) do game.input.available_presses += 1
-        if is_pressed(game.input.k2) && !is_down(game.input.m2) do game.input.available_presses += 1
-        if is_pressed(game.input.m1) && !is_down(game.input.k1) do game.input.available_presses += 1
-        if is_pressed(game.input.m2) && !is_down(game.input.k2) do game.input.available_presses += 1
+        if button_is_pressed(game.input.k1) && !button_is_down(game.input.m1) do game.input.available_presses += 1
+        if button_is_pressed(game.input.k2) && !button_is_down(game.input.m2) do game.input.available_presses += 1
+        if button_is_pressed(game.input.m1) && !button_is_down(game.input.k1) do game.input.available_presses += 1
+        if button_is_pressed(game.input.m2) && !button_is_down(game.input.k2) do game.input.available_presses += 1
     } else {
-        if is_pressed(game.input.k1) do game.input.available_presses += 1
-        if is_pressed(game.input.k2) do game.input.available_presses += 1
+        if button_is_pressed(game.input.k1) do game.input.available_presses += 1
+        if button_is_pressed(game.input.k2) do game.input.available_presses += 1
     }
 
     if valid_controller_press() {
@@ -464,8 +476,11 @@ osu_on_update :: proc(dt: f64) {
     }
     //--
     
-    game.playfield_transform = playfield_build_transform()
-    
+    if game.playfield_dirty_transform {
+        game.playfield_transform = playfield_build_transform()
+        game.playfield_dirty_transform = false
+    }
+
     // beatmap render
     
     r_bind_layer_and_push_current_state(.HITOBJECTS)
@@ -606,25 +621,25 @@ hitobject_on_click :: proc(hobj: ^Hitobject) -> (result: Judgement_Type) {
 
 
 handle_play_input_events :: proc() {
-    if is_key_pressed(.ESCAPE) || is_key_pressed(.SPACE) {
+    if key_is_pressed(.ESCAPE) || key_is_pressed(.SPACE) {
         beatmap_pause(&game.beatmap, !game.paused)
     }
-    if is_key_pressed(.R) {
-        beatmap_reload(&game.beatmap, !is_key_down(.LSHIFT))
+    if key_is_pressed(.R) {
+        beatmap_reload(&game.beatmap, !key_is_down(.LSHIFT))
     }
-    if is_key_pressed(.HOME) {
+    if key_is_pressed(.HOME) {
         game.time_rate = 1
     }
-    if is_key_pressed(.PAGEUP) {
+    if key_is_pressed(.PAGEUP) {
         game.time_rate *= 2
         sound_set_speed(&game.beatmap.music, game.time_rate)
     }
-    if is_key_pressed(.PAGEDOWN) {
+    if key_is_pressed(.PAGEDOWN) {
         game.time_rate /= 2
         sound_set_speed(&game.beatmap.music, game.time_rate)
     }
     
-    if is_key_pressed(.F10) {
+    if key_is_pressed(.F10) {
         game.input.mouse_keys_enabled = !game.input.mouse_keys_enabled
     }
     
@@ -649,31 +664,31 @@ handle_play_input_events :: proc() {
     
     if lua_cares_about_event(.ON_KEY_DOWN) {
         for code in sdl.Scancode {
-            if is_key_pressed(code) do lua_beatmap_on_key_pressed(code)
+            if key_is_pressed(code) do lua_beatmap_on_key_pressed(code)
         }
     }
     if lua_cares_about_event(.ON_KEY_UP) {
         for code in sdl.Scancode {
-            if is_key_released(code) do lua_beatmap_on_key_released(code)
+            if key_is_released(code) do lua_beatmap_on_key_released(code)
         }
     }
     if lua_cares_about_event(.ON_CONTROLLER_PRESSED) {
-        if is_pressed(game.input.k1) do lua_beatmap_on_controller_pressed("k1")
-        if is_pressed(game.input.k2) do lua_beatmap_on_controller_pressed("k2")
-        if is_pressed(game.input.m1) do lua_beatmap_on_controller_pressed("m1")
-        if is_pressed(game.input.m2) do lua_beatmap_on_controller_pressed("m2")
+        if button_is_pressed(game.input.k1) do lua_beatmap_on_controller_pressed("k1")
+        if button_is_pressed(game.input.k2) do lua_beatmap_on_controller_pressed("k2")
+        if button_is_pressed(game.input.m1) do lua_beatmap_on_controller_pressed("m1")
+        if button_is_pressed(game.input.m2) do lua_beatmap_on_controller_pressed("m2")
     }
     if lua_cares_about_event(.ON_CONTROLLER_RELEASED) {
-        if is_released(game.input.k1) do lua_beatmap_on_controller_released("k1")
-        if is_released(game.input.k2) do lua_beatmap_on_controller_released("k2")
-        if is_released(game.input.m1) do lua_beatmap_on_controller_released("m1")
-        if is_released(game.input.m2) do lua_beatmap_on_controller_released("m2")
+        if button_is_released(game.input.k1) do lua_beatmap_on_controller_released("k1")
+        if button_is_released(game.input.k2) do lua_beatmap_on_controller_released("k2")
+        if button_is_released(game.input.m1) do lua_beatmap_on_controller_released("m1")
+        if button_is_released(game.input.m2) do lua_beatmap_on_controller_released("m2")
     }
 }
 
 handle_menu_input_events :: proc() {
-    if is_key_pressed(.S) {
-        if is_key_down(.LCTRL) || is_key_down(.LSHIFT) || is_key_down(.LALT) {
+    if key_is_pressed(.S) {
+        if key_is_down(.LCTRL) || key_is_down(.LSHIFT) || key_is_down(.LALT) {
             skin_reload(game.active_skin)
         }
     }
@@ -691,25 +706,25 @@ consume_controller_press :: proc() {
 controller_key_pressed :: proc(key_num: int) -> bool {
     if key_num == 1 {
         if game.input.mouse_keys_enabled {
-            return is_pressed(game.input.k1) && !is_down(game.input.m1) ||
-                   is_pressed(game.input.m1) && !is_down(game.input.k1)
+            return button_is_pressed(game.input.k1) && !button_is_down(game.input.m1) ||
+                   button_is_pressed(game.input.m1) && !button_is_down(game.input.k1)
         }
-        return is_pressed(game.input.k1)
+        return button_is_pressed(game.input.k1)
     } else {
         if game.input.mouse_keys_enabled {
-            return is_pressed(game.input.k2) && !is_down(game.input.m2) ||
-                   is_pressed(game.input.m2) && !is_down(game.input.k2)
+            return button_is_pressed(game.input.k2) && !button_is_down(game.input.m2) ||
+                   button_is_pressed(game.input.m2) && !button_is_down(game.input.k2)
         }
-        return is_pressed(game.input.k2)
+        return button_is_pressed(game.input.k2)
     }
 }
 
 // returns whether key_num (1 or 2) is currently held
 controller_key_down :: proc(key_num: int) -> bool {
     if key_num == 1 {
-        return is_down(game.input.k1) || game.input.mouse_keys_enabled && is_down(game.input.m1)
+        return button_is_down(game.input.k1) || game.input.mouse_keys_enabled && button_is_down(game.input.m1)
     } else {
-        return is_down(game.input.k2) || game.input.mouse_keys_enabled && is_down(game.input.m2)
+        return button_is_down(game.input.k2) || game.input.mouse_keys_enabled && button_is_down(game.input.m2)
     }
 }
 
@@ -768,26 +783,26 @@ game_sounds_clear :: proc() {
 //////////////////////////////////////////////////////
 // NOTE(yokes): in-game button input api
 
-is_down :: proc "c" (button: Button_State) -> bool {
+button_is_down :: proc "c" (button: Button_State) -> bool {
     return button.is_down
 }
 
-is_pressed :: proc "c" (button: Button_State) -> bool {
+button_is_pressed :: proc "c" (button: Button_State) -> bool {
     return button.is_down && !button.was_down
 }
 
-is_released :: proc "c" (button: Button_State) -> bool {
+button_is_released :: proc "c" (button: Button_State) -> bool {
     return !button.is_down && button.was_down
 }
 
-is_key_down :: proc "c" (code: sdl.Scancode) -> bool {
+key_is_down :: proc "c" (code: sdl.Scancode) -> bool {
     return keyboard.buttons[code]
 }
 
-is_key_pressed :: proc "c" (code: sdl.Scancode) -> bool {
+key_is_pressed :: proc "c" (code: sdl.Scancode) -> bool {
     return keyboard.buttons[code] && !keyboard.buttons_prev_frame[code]
 }
 
-is_key_released :: proc "c" (code: sdl.Scancode) -> bool {
+key_is_released :: proc "c" (code: sdl.Scancode) -> bool {
     return !keyboard.buttons[code] && keyboard.buttons_prev_frame[code]
 }

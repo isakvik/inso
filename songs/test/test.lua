@@ -24,12 +24,17 @@ local rand = load_file("rand.lua")
 -- register_event("spellcard", function () end )
 --
 -- buffer system (you can declare buffers in the .notosu and just write stuff here)
+--
+-- event stuff is half-baked - you can trigger events on elements, drawables, hitobjects,
+-- and you can schedule them to the future, but you can't pass arguments to them via scheduling
+-- (although you can create global state and just use that in the events, but i'd rather avoid that)
+
 
 function on_init()
     a = Animation.new()
         :color(0, 0.5, Color.rgb(255,0,0), Color.rgb(0,0,255))
         :scale(0, 1, 1,1, 8,8, Tween.CUBIC_OUT)
-        :texture(2000, 2000, "nonexisting.jpg") -- throws error, but defaults to white pixel
+        :texture(2000, 3000, "nonexisting.jpg") -- throws error, but defaults to white pixel
     
     el = Element.new()
         :set_tex("approachcircle.png")
@@ -54,31 +59,43 @@ function on_init()
             :set_pos(hobj:get_pos())
             :set_time(t, t+1200)
     end
+    
+    register_global_event("hehe", function()
+        -- note that this drifts over time, so it's not really a clean repeat every 250ms
+        schedule_event("hehe", 250)
+        print("hehe loop " .. Beatmap.get_music_time_ms())
+    end)
 end
 
-function _on_update(time_ms)
+function on_update(time_ms)
     for i, hobj in ipairs(list) do 
         x, y = hobj:get_pos()
-        x = x + math.cos((time_ms*i*0.01) / 1000 + i*0.1)* 10
-        y = y + math.sin((time_ms*i*0.01) / 1000 + i*0.1)* 10
+        x = x + math.cos((time_ms*i*0.001) / 1000 + i*0.1)* i/10
+        y = y + math.sin((time_ms*i*0.001) / 1000 + i*0.1)* i/10
         
         hobj:set_pos(x,y)
         table[i]:set_pos(x,y)
     end
+    
+    Playfield.set_rotation(math.sin(time_ms / 3000) * 0.1)
 end
 
-function _on_beat(beat)
+function on_beat(beat)
     -- every 1/1, index 0 meaning the first given timing section (most useful indexing for constructs like beat % 4)
-    trigger_event("saft", beat)
+    -- trigger_event("saft", beat)
     
-    if beat % 4 == 0 and s == nil then
-        s = Sound.play_loop("soft-sliderslide.wav")
+    if beat == 1 then
+        trigger_event("hehe", 1)
     end
     
-    if beat % 4 == 2 and s ~= nil then
-        s:stop()
-        s = nil
-    end
+    --if beat % 4 == 0 and s == nil then
+    --    s = Sound.play_loop("soft-sliderslide.wav")
+    --end
+    --
+    --if beat % 4 == 2 and s ~= nil then
+    --    s:stop()
+    --    s = nil
+    --end
     
 end
 

@@ -107,7 +107,7 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     // custom drawables to the hitobjects a map wants, then write the defaults to anything that doesn't have graphical
     // handles after that, just to save some work
     TEST_write_default_drawables_from_map(game.active_map)
-    bg_handle := TEST_bg_drawable(game.active_map.bg_filename, "wave")
+    bg_handle := TEST_bg_drawable(game.active_map.bg_filename, game.active_notosu_map.bg_pipeline_name)
     
     if lua_cares_about_event(.ON_INIT) {
         lua_call_beatmap_func("on_init")

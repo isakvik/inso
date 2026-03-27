@@ -562,6 +562,9 @@ render_slider_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     // note(isak): slider geometry is in CS-normalized units (osu!px / radius). composing with
     // game.playfield_transform means any offset/rotation/scale on the playfield automatically 
     // applies to the slider pass too.
+    
+    // todo(isak): the bounding boxes for the sliders are buggy and don't preserve the slider properly on rotation
+    
     r := game.beatmap.circle_radius_osupx
     cs_to_osupx := mat3{r, 0, 0, 0, r, 0, 0, 0, 1}
     slider_pf_transform := mat3_to_transform(transform_to_mat3(game.playfield_transform) * cs_to_osupx)
@@ -811,7 +814,7 @@ TEST_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Hand
             }),
             layer = .BACKGROUND,
     
-            pos = {256, 256},
+            pos = vec2{256, 256} - playfield_base_translation_osupx,
             size = bg_size,
             anchor = .CENTER,
             color = {30,30,30,100},

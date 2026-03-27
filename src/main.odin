@@ -11,22 +11,11 @@ import "core:mem"
 import "core:time"
 import vmem "core:mem/virtual"
 
-import gl "vendor:OpenGL"
 import imgui "imgui"
 import imgui_gl3 "imgui/imgui_impl_opengl3"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
 
-/*
-todo(isak):
-
-
-eventual YEAST on-scene features:
-local networking
-    multiple client sync
-    potentially display other client cursors? w
-
-*/
 
 Memory_Arena_Type :: enum {
     // note(isak): never cleared. used instead of odin's regular arena to keep track of our allocations
@@ -143,7 +132,9 @@ main :: proc() {
     assert(audio.ready)
     defer audio_cleanup()
     
+    //-- @temp todo(isak): needs interface, but since BASS interfaces with windows, we can defer this until later...
     audio_set_volume(0.05)
+    //--
 
     renderer_init()
     renderer := &window.renderer
@@ -156,13 +147,16 @@ main :: proc() {
     text_init()
     keyboard_init()
     
+    //-- @temp todo(isak): discover_skins, skin select interface
     game.active_skin = skin_load("skins/gn/")
+    //--
 
     shaders_watch := win32_init_directory_watch("shaders/")
 
-    songs_discover_maps("songs/")
+    // todo(isak): consider creating a song_index allocator
+    discover_maps("songs/")
 
-    //-- @temp
+    //-- @temp todo(isak): handle this properly when menu mode is a thing
     {
         ok: bool
         initial_map_ref := 
@@ -191,8 +185,6 @@ main :: proc() {
     running := true
     event: sdl.Event
     
-    app.debug_display_game_cursor = true
-
     for running {
         profiler_begin()
         defer profiler_end()
@@ -301,6 +293,9 @@ main :: proc() {
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
             
             handle_debug_ui_events(&window.map_dropdown)
+            if key_is_pressed(.F5) {
+                discover_maps("songs/")
+            }
             
             r_bind_layer_and_push_current_state(.DEBUG, transform = window.screenspace_transform)
             
@@ -445,12 +440,8 @@ write_debug_ui :: proc(map_dropdown: ^Debug_Dropdown) {
     imgui.Text("Mouse keys: %s", game.input.mouse_keys_enabled ? cstring("on") : cstring("off"))
     imgui.Text("Universal offset: %d ms", i32(game.universal_offset_ms))
     
-    
     imgui.Text("Music pos: %f ms", f32(game.beatmap.music_time_ms))
     imgui.Text("Sound pos: %f ms", f32(sound_get_position_ms(&game.beatmap.music)))
-    
-    
-    
     
     imgui.Separator()
     debug_dropdown_update(map_dropdown)
@@ -460,17 +451,17 @@ handle_debug_ui_events :: proc(map_dropdown: ^Debug_Dropdown) {
     if map_dropdown.changed && map_dropdown.selected < len(app.map_references) {
         osu_switch_map(app.map_references[map_dropdown.selected])
     }
-    if is_key_pressed(.F1) {
+    if key_is_pressed(.F1) {
         window.renderer.trace_frame = !window.renderer.trace_frame
     }
-    if is_key_pressed(.F2) {
+    if key_is_pressed(.F2) {
         app.debug_display_slider_bounds = !app.debug_display_slider_bounds
-        app.debug_display_game_cursor = !app.debug_display_game_cursor
+        app.debug_display_game_cursor = app.debug_display_slider_bounds
     }
-    if is_key_pressed(.F3) {
+    if key_is_pressed(.F3) {
         app.debug_display_frame_profiler = !app.debug_display_frame_profiler
     }
-    if is_key_pressed(.F4) {
+    if key_is_pressed(.F4) {
         app.debug_display_memory_profiler = !app.debug_display_memory_profiler
 
         track := &memory.tracker[.GLOBAL]

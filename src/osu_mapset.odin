@@ -232,19 +232,24 @@ mapset_open_for_editing :: proc(path: string, osu_filename: string = "") -> (^Ma
 }
 
 // note(isak): register every .osu file found in mapset subdirectories
-songs_discover_maps :: proc(songs_dir: string) {
+// allocates with given alloc + context.temp_allocator
+discover_maps :: proc(songs_dir: string, alloc: runtime.Allocator = context.allocator) {
     dir_handle, err := os.open(songs_dir)
     if err != nil {
         log.errorf("discover_maps: couldn't open '{}': {}", songs_dir, err)
         return
     }
+    
+    clear(&app.map_references)
+    clear(&app.map_reference_names)
+    
     dirs, _ := os.read_dir(dir_handle, 1024, context.temp_allocator)
 
     count := 0
     for dir in dirs {
         if dir.type != .Directory do continue
 
-        folder_path := strings.concatenate({songs_dir, dir.name, "/"}, context.allocator)
+        folder_path := strings.concatenate({songs_dir, dir.name, "/"}, alloc)
 
         sub_handle, sub_err := os.open(folder_path)
         if sub_err != nil do continue
@@ -253,7 +258,7 @@ songs_discover_maps :: proc(songs_dir: string) {
         for sub_file in sub_files {
             if filepath.ext(sub_file.name) != ".osu" do continue
 
-            osu_filename  := strings.clone(sub_file.name, context.allocator)
+            osu_filename  := strings.clone(sub_file.name, alloc)
             stem          := filepath.stem(sub_file.name)
             display_cstr  := fmt.caprintf("%s / %s", dir.name, stem)
 
@@ -356,8 +361,10 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
             for i in 1..<len(lines) {
                 key, value := get_key_value(lines[i])
                 switch key {
-                    case "LuaEntryPoint": 
-                        result.lua_entry_point = strings.concatenate({mapset.folder_path, value}, memory.allocators[.GLOBAL])
+                    case "LuaEntryPoint":
+                        result.lua_entry_point = strings.concatenate({mapset.folder_path, value}, context.allocator)
+                    case "BackgroundPipeline":
+                        result.bg_pipeline_name = strings.clone(value, context.allocator)
                 }
             }
         case .SHADERS:
@@ -1070,4 +1077,3 @@ hitobject_lower_bound_ms :: proc(from_ms: f64) -> int {
     }
     return lo
 }
-

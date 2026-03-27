@@ -69,7 +69,7 @@ ui_update_timeline :: proc(ui: ^UI_Timeline, time_value: ^f64) -> (result: bool)
     ui.clicked = false
     ui.released = false
     
-    if !imgui.GetIO().WantCaptureMouse && is_pressed(mouse.buttons[.LEFT]) && point_in_rect(mouse.last_click_position[.LEFT], timeline_hitbox) {
+    if !imgui.GetIO().WantCaptureMouse && button_is_pressed(mouse.buttons[.LEFT]) && point_in_rect(mouse.last_click_position[.LEFT], timeline_hitbox) {
         ui.clicked = true
         ui.dragging = true
         ui.pause_on_release = game.paused
@@ -84,7 +84,7 @@ ui_update_timeline :: proc(ui: ^UI_Timeline, time_value: ^f64) -> (result: bool)
         
         game.beatmap.visible_hitobject_state = {}
 
-        if !is_down(mouse.buttons[.LEFT]) {
+        if !button_is_down(mouse.buttons[.LEFT]) {
             game.paused = ui.pause_on_release
             ui.released = true
             ui.dragging = false

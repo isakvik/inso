@@ -97,6 +97,7 @@ window_on_resize :: proc(new_w, new_h: i32) {
     window.aspect_ratio = window.rect.h / window.rect.w
     window.screenspace_transform = transform_from_bounds({0, 0, window.rect.w, window.rect.h}, 1)
     game.playfield_transform = playfield_build_transform()
+    game.playfield_dirty_transform = false
     
     fbo_reinit(&window.framebuffers[.SLIDERS], new_w, new_h)
 }

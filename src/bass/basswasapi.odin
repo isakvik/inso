@@ -1,3 +1,4 @@
+#+build windows
 /*
     BASSWASAPI 2.4 C/C++ header file
     Copyright (c) 2009-2020 Un4seen Developments Ltd.

@@ -21,7 +21,8 @@ import "base:builtin"
 import "base:intrinsics"
 import "core:c/libc"
 import "core:c"
-foreign import lj "lua51.lib"
+LJ_LIB :: "lua51.lib" when ODIN_OS == .Windows else "lib/libluajit.a"
+foreign import lj { LJ_LIB }
 
 #assert(size_of(c.int) == size_of(b32))
 

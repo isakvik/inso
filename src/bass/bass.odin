@@ -6,16 +6,15 @@
 */
 package bass
 
-import "core:sys/windows"
-
-LIB :: "lib/bass.lib" when ODIN_OS == .Windows else "lib/bass.a"
+LIB :: "lib/bass.lib" when ODIN_OS == .Windows else "lib/libbass.so"
 foreign import lib { LIB }
 
-HWND :: windows.HWND
-BOOL :: windows.BOOL
-BYTE :: windows.BYTE
-WORD :: windows.WORD
-DWORD :: windows.DWORD
+// note: these mirror the windows types BASS was designed around, but map to portable equivalents
+HWND  :: rawptr // null on non-windows
+BOOL  :: b32    // 32-bit bool, equivalent to windows BOOL / C int
+BYTE  :: u8
+WORD  :: u16
+DWORD :: u32
 QWORD :: u64
 
 

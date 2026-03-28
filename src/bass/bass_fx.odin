@@ -17,7 +17,7 @@ package bass
 
 import "core:c"
 
-FX_LIB :: "lib/bass_fx.lib" when ODIN_OS == .Windows else "lib/bass_fx.a"
+FX_LIB :: "lib/bass_fx.lib" when ODIN_OS == .Windows else "lib/libbass_fx.so"
 foreign import lib { FX_LIB }
 
 // BASS_CHANNELINFO types

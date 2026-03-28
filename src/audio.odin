@@ -2,7 +2,6 @@ package notosu
 
 import "core:strings"
 import "core:log"
-import "core:math"
 import os "core:os/os2"
 
 import "bass"
@@ -10,8 +9,7 @@ import "bass"
 
 audio: struct {
     ready: bool,
-    wasapi_info: bass.WASAPI_INFO,
-    wasapi_output_mixer: bass.HSTREAM
+    output_mixer: bass.HSTREAM
 }
 
 Device :: i32
@@ -61,72 +59,96 @@ Sample :: struct {
 //////////////////////////////////////////////////////
 // note(isak): audio engine api
 
-bass_wasapi_proc :: proc "c" (buffer: rawptr, len: u32, user_data: rawptr) -> u32 {
-    if audio.wasapi_output_mixer != 0 {
-        c := bass.ChannelGetData(audio.wasapi_output_mixer, buffer, len)
-        return max(c, 0)
+when ODIN_OS == .Windows {
+    // note: WASAPI output callback — BASS runs as a decode source, WASAPI pulls from it
+    _bass_wasapi_proc :: proc "c" (buffer: rawptr, len: u32, user_data: rawptr) -> u32 {
+        if audio.output_mixer != 0 {
+            c := bass.ChannelGetData(audio.output_mixer, buffer, len)
+            return max(c, 0)
+        }
+        return 0
     }
-    return 0
 }
 
 // todo(isak): should probably call this device_init() or something
 // todo(isak): device selection
 audio_init :: proc(device: Device = -1) -> bool {
-    init := bass.Init(device, 44100, bass.DEVICE_NOSPEAKER, nil, nil)
+    when ODIN_OS == .Windows {
+        /*
+        note(isak): we're using some flags that make BASS run very smoothly with WASAPI in windows' shared audio mode
+        courtesy of LastExceed: https://github.com/ppy/osu-framework/pull/6651
 
-    /*
-    note(isak): we're using some flags that make BASS run very smoothly with WASAPI in windows' shared audio mode
-    courtesy of LastExceed: https://github.com/ppy/osu-framework/pull/6651
-    
-    the following is the old osu lazer init that makes BASS run like ass, which are useful for provoking large 
-    interpolation deltas (for handling the music buffer granularity/play time discrepancy):
-    
-        device = -1,
-        freq = 0,
-        chans = 0,
-        flags = 0,
-        buffer = 0.02,
-        period = 0,
-        _proc = bass_wasapi_proc,
-        user = nil
-    */
-    
-    if !bass.WASAPI_Init(
-        device = -1,
-        freq = 0,
-        chans = 0,
-        flags = bass.WASAPI_EVENT | bass.WASAPI_AUTOFORMAT,
-        buffer = 0,
-        period = math.F32_EPSILON,
-        _proc = bass_wasapi_proc,
-        user = nil
-    ) {
-        log.error("BASS_WASAPI init error:", bass.ErrorGetCode())
+        the following is the old osu lazer init that makes BASS run like ass, which are useful for provoking large
+        interpolation deltas (for handling the music buffer granularity/play time discrepancy):
+
+            device = -1,
+            freq = 0,
+            chans = 0,
+            flags = 0,
+            buffer = 0.02,
+            period = 0,
+            _proc = _bass_wasapi_proc,
+            user = nil
+        */
+        bass.Init(device, 44100, bass.DEVICE_NOSPEAKER, nil, nil)
+
+        if !bass.WASAPI_Init(
+            device = -1,
+            freq = 0,
+            chans = 0,
+            flags = bass.WASAPI_EVENT | bass.WASAPI_AUTOFORMAT,
+            buffer = 0,
+            period = 1.1920929e-07, // math.F32_EPSILON
+            _proc = _bass_wasapi_proc,
+            user = nil
+        ) {
+            log.error("BASS_WASAPI init error:", bass.ErrorGetCode())
+            return false
+        }
+
+        bass.WASAPI_Start()
+
+        wasapi_info: bass.WASAPI_INFO
+        bass.WASAPI_GetInfo(&wasapi_info)
+        audio.output_mixer = bass.Mixer_StreamCreate(wasapi_info.freq, wasapi_info.chans,
+            bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
+    } else {
+        // note(isak): on linux/mac, BASS handles output via ALSA/PulseAudio directly
+        if !bass.Init(device, 44100, 0, nil, nil) {
+            log.error("BASS init error:", bass.ErrorGetCode())
+            return false
+        }
+        audio.output_mixer = bass.Mixer_StreamCreate(44100, 2,
+            bass.SAMPLE_FLOAT | bass.MIXER_NONSTOP)
+        if audio.output_mixer != 0 {
+            bass.ChannelPlay(audio.output_mixer, false)
+        }
+    }
+
+    if audio.output_mixer == 0 {
+        log.error("BASS mixer init error:", bass.ErrorGetCode())
         return false
     }
-    
-    bass.WASAPI_Start()
-    
-    bass.WASAPI_GetInfo(&audio.wasapi_info)
-    audio.wasapi_output_mixer = bass.Mixer_StreamCreate(audio.wasapi_info.freq, audio.wasapi_info.chans, 
-        bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
-    
-    if audio.wasapi_output_mixer == 0 {
-        log.error("BASS WASAPI mixer init error:", bass.ErrorGetCode())
-        return false
-    }
-    
+
     audio.ready = true
     return true
 }
 
 audio_cleanup :: proc() {
-    bass.WASAPI_Free()
+    when ODIN_OS == .Windows {
+        bass.WASAPI_Free()
+    } else {
+        bass.Free()
+    }
 }
 
 // note(isak): volume is a 0.0 - 1.0 range
 audio_set_volume :: proc(volume: f32) {
-    bass.WASAPI_SetVolume(bass.WASAPI_CURVE_WINDOWS | bass.WASAPI_VOL_SESSION, volume)
+    when ODIN_OS == .Windows {
+        bass.WASAPI_SetVolume(bass.WASAPI_CURVE_WINDOWS | bass.WASAPI_VOL_SESSION, volume)
+    } else {
+        bass.SetVolume(volume)
+    }
 }
 
 //////////////////////////////////////////////////////
@@ -329,8 +351,8 @@ sound_play :: proc(sound: ^Sound, start_paused: bool = false, loop: bool = false
             flags: u32 = bass.MIXER_DOWNMIX | bass.MIXER_NORAMPIN
             flags |= (!loop && .STREAM in base.flags) ? bass.STREAM_AUTOFREE : 0
             flags |= start_paused ? bass.MIXER_CHAN_PAUSE : 0
-            
-            if !bass.Mixer_StreamAddChannel(audio.wasapi_output_mixer, handle, flags) {
+
+            if !bass.Mixer_StreamAddChannel(audio.output_mixer, handle, flags) {
                 log.error("BASS mixer add channel error:", bass.ErrorGetCode())
             }
         }

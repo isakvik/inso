@@ -1,7 +1,6 @@
 package notosu
 
 import q "core:container/queue"
-import "core:sys/windows"
 
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
@@ -62,8 +61,8 @@ window: struct {
 }
 
 window_init :: proc(rect: Rect) {
-    windows.SetProcessDPIAware()
-    
+    _platform_dpi_init()
+
     window.rect = rect
     window.handle = sdl.CreateWindow("notosu!", i32(rect.w), i32(rect.h), sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
     window.aspect_ratio = f32(rect.h) / f32(rect.w)

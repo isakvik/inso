@@ -1,7 +1,8 @@
 @echo off
 
 if not exist build mkdir build
-if not exist "build\SDL3.dll" xcopy ".\data" ".\build" /Y /I
+if not exist "build\SDL3.dll" xcopy ".\data\windows" ".\build" /Y /I
+if not exist "build\segoeui.ttf" copy ".\data\segoeui.ttf" ".\build\segoeui.ttf" /Y
 
 set exec_name=notosu.exe
 

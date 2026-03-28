@@ -48,7 +48,7 @@ split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> 
     return result
 }
 
-calculate_curve_from_time :: proc(time_at: f64, hobj: ^Hitobject, path: ^Slider_Path) -> (pos_at: vec2) {
+calculate_curve_from_time :: proc(hobj: ^Hitobject, time_at: f64, path: ^Slider_Path) -> (pos_at: vec2) {
     //time stuff: osu_mapset.odin ~#L825
     if hobj.type != .SLIDER {
         return hobj.pos
@@ -85,7 +85,7 @@ calculate_curve_from_time :: proc(time_at: f64, hobj: ^Hitobject, path: ^Slider_
     } else if path.type == .LINEAR {
         pos_at = calculate_straight_point_from_time(hobj, time_at, path)
     }
-    return pos_at
+    return pos_at + hobj.script_pos_translation
 }
 
 calculate_bezier_curve_distance :: proc(hobj: ^Hitobject, path: ^Slider_Path, curve: Slider_Curve) -> (distance: f64) {
@@ -164,6 +164,7 @@ calculate_distance_from_piecewise :: proc(path: ^Slider_Path, output: ^queue.Que
 }
 
 // https://github.com/McKay42/McOsu/blob/master/src/App/Osu/OsuSliderCurves.cpp#L435
+// todo(yokes): different curves have different speeds, this is wrong
 // note(yokes): "t" is for time which means we need to calculate the time it takes to get "d" distance beforehand
 calculate_bezier_point_from_time :: proc(hobj: ^Hitobject, time_at: f64, path: ^Slider_Path) -> (point: vec2) {
 
@@ -279,27 +280,44 @@ calculate_distance_of_straight_bezier :: proc(
 
 }
 
-write_instances_over_distance :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path)
+write_instances_over_distance :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, curve_distance: f64) {
+    last := instance_buf.count - 1
+    l0 := instance_buf.data[last - 1]
+    l1 := instance_buf.data[last]
+    l_vector : vec2 = (l1 - l0)
+    l_distance_mult := f32(curve_distance) / linalg.length(l_vector)
+
+    write_instances_from_straight(instance_buf, path, l1, l1 + l_vector * l_distance_mult, curve_distance)
+}
 
 //todo(yokes): make a procedure for calculating points on bezier and arch sliders when the curve is too slight
 //check todos under circular_arc_to_piecewise_linear and bezier_to_piecewise_linear
 calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, output: ^queue.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
     for point, i in output.data[:output.len] {
+        curr_distance : f64 = 0
         if i < int(output.len) - 1 {
-            curr_distance := f64(linalg.vector_length(queue.get(output, i + 1) - queue.get(output, i)))
-            total_distance += curr_distance
-
-            if total_distance > curve_distance {
-                buffer_push(instance_buf, point)
-                break
-            }
             if curr_distance > base_dist {
                 //todo(yokes): at the moment the end point overlaps an instance with the start point of the next output.data
                 write_instances_from_straight(instance_buf, path, queue.get(output, i), queue.get(output, i + 1), curr_distance)
             } else if i != 0 {
                 buffer_push(instance_buf, point)
             }
+            
+            curr_distance = f64(linalg.vector_length(queue.get(output, i + 1) - queue.get(output, i)))
 
+            // todo(yokes): last point gets pushed at the previous position
+            // fix using write_instances_over_distance to push position at real end position
+            if total_distance + curr_distance > curve_distance {
+                remaining_distance := abs(curve_distance - total_distance)
+                distance_between_last := linalg.vector_length(output.data[i+1] - point)
+                vec2_between_last := output.data[i+1] - point
+
+                buffer_push(instance_buf, point + vec2_between_last * f32(remaining_distance) / distance_between_last)
+                total_distance += remaining_distance
+                break
+            }
+
+            total_distance += curr_distance
         } else {
             buffer_push(instance_buf, point)
         }
@@ -556,7 +574,7 @@ write_instances_from_straight :: proc(
     last_point_added := start_pos
 
     for i in 1..<(iterations+1) {
-        if (curr_distance + base_dist) > curve_distance {
+        if (curr_distance + base_dist) >= curve_distance {
             remaining_distance = remaining_distance - f64(curr_distance)
             iterations_remaining := remaining_distance / base_dist
             buffer_push(instance_buf, last_point_added + xy_step * f32(iterations_remaining))
@@ -617,7 +635,7 @@ write_instances_from_path :: proc(
 
     path.curves = split_path_into_curves(path, alloc)
 
-    // todo(yokes): add buffer push here? start_pos should always be drawn
+    buffer_push(instance_buf, path.nodes[0])
     distance_to_cover := path.distance_osupx
     for curve, i in path.curves {
         
@@ -631,14 +649,12 @@ write_instances_from_path :: proc(
             distance_to_cover -= distance_covered_by_curve
         }
     }
+
+    if distance_to_cover > 0 {
+        write_instances_over_distance(instance_buf, path, distance_to_cover)
+    }
     
     path.pos, path.end_pos = instance_buf.data[instance_offset], instance_buf.data[max(instance_buf.count-1, 0)]
-
-    // todo(yokes): if we still have distance left over but zero curves, a linear path needs to cover
-    // the remaining distance. maybe mcosu has something neat for this?
-    if distance_to_cover > 0 {
-
-    }
     
     instance_count = instance_buf.count - instance_offset
     if instance_count >= 2 {

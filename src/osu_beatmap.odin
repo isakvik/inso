@@ -514,20 +514,7 @@ slider_on_click :: proc(hobj: ^Hitobject) {
 slider_path_pos_at :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
     path := &game.beatmap.slider_paths[hobj.slider_path_index]
 
-    duration := hobj.end_time_ms - hobj.start_time_ms
-    elapsed  := clamp(map_time - hobj.start_time_ms, 0, duration)
-
-    repeat_count := hobj.slider_state.path_travel_count
-    t_passes  := (elapsed / duration) * f64(repeat_count)
-    pass_idx  := min(int(t_passes), repeat_count - 1)
-    pass_frac := t_passes - f64(pass_idx)
-
-    // even passes go forward (0->1), odd passes go backward (1->0)
-    t_on_path := pass_frac if pass_idx % 2 == 0 else 1.0 - pass_frac
-
-    //--@temp treat every slider as straight start -> end until the math is done...
-    return linalg.lerp(path.pos, path.end_pos, vec2{f32(t_on_path), f32(t_on_path)}) + hobj.script_pos_translation
-    //--
+    return calculate_curve_from_time(hobj, map_time, path)
 }
 
 slider_update :: proc(hobj: ^Hitobject, map_time: f64) {

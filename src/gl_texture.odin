@@ -1,7 +1,7 @@
 package notosu
 
 import "core:fmt"
-import os "core:os/os2"
+import os "core:os"
 
 import gl "vendor:OpenGL"
 import stbi "vendor:stb/image"

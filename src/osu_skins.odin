@@ -3,7 +3,7 @@ package notosu
 import "core:fmt"
 import "core:log"
 import "core:mem/virtual"
-import os "core:os/os2"
+import os "core:os"
 import "core:strings"
 
 

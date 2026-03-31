@@ -3,7 +3,7 @@ package notosu
 import "core:fmt"
 import "core:log"
 import "core:mem"
-import os "core:os/os2"
+import os "core:os"
 import "core:path/filepath"
 
 import sdl "vendor:sdl3"

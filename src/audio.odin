@@ -2,7 +2,7 @@ package notosu
 
 import "core:strings"
 import "core:log"
-import os "core:os/os2"
+import os "core:os"
 
 import "bass"
 

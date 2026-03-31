@@ -1,7 +1,7 @@
 package notosu
 
 import "core:fmt"
-import os "core:os/os2"
+import os "core:os"
 
 import fs "vendor:fontstash"
 import gl "vendor:OpenGL"

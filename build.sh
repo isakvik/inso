@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 set -e
 
-odin build src -extra-linker-flags:"-Ldata/linux/"
+mkdir -p build
 
-export LD_LIBRARY_PATH=build/ && export OUTPUT=notosu-x86_64.AppImage && ~/linuxdeploy/linuxdeploy-x86_64.AppImage --appdir a
-ppdir --executable appdir/usr/bin/notosu.bin --output appimage
+# copy runtime libraries if not already present
+cp -u data/linux/* build/
+if [ -f data/segoeui.ttf ] && [ ! -f build/segoeui.ttf ]; then
+    cp data/segoeui.ttf build/segoeui.ttf
+fi
+
+odin build src \
+    -out:build/notosu \
+    -define:SOKOL_USE_GL=true \
+    -o:minimal \
+    -extra-linker-flags:"-Ldata/linux/ -Wl,-rpath,\$ORIGIN -ldl -lm"

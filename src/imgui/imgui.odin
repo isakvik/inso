@@ -9,7 +9,7 @@ when ODIN_OS == .Windows {
 } else when ODIN_OS == .Linux {
 	foreign import lib {
 		"imgui_linux_" + ARCH + ".a",
-		"system:c++",
+		"system:stdc++",
 	}
 } else when ODIN_OS == .Darwin {
 	foreign import lib {

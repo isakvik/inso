@@ -4,13 +4,13 @@ set -e
 mkdir -p build
 
 # copy runtime libraries if not already present
-cp -u data/linux/* build/
-if [ -f data/segoeui.ttf ] && [ ! -f build/segoeui.ttf ]; then
-    cp data/segoeui.ttf build/segoeui.ttf
+cp -u lib/linux/* build/
+if [ -f data/Roboto-Regular.ttf ] && [ ! -f build/Roboto-Regular.ttf ]; then
+    cp data/Roboto-Regular.ttf build/Roboto-Regular.ttf
 fi
 
 odin build src \
     -out:build/notosu \
     -define:SOKOL_USE_GL=true \
     -o:minimal \
-    -extra-linker-flags:"-Ldata/linux/ -Wl,-rpath,\$ORIGIN -ldl -lm"
+    -extra-linker-flags:"-Llib/linux/ -Wl,-rpath,\$ORIGIN -ldl -lm"

@@ -6,7 +6,7 @@
 */
 package bass
 
-LIB :: "lib/bass.lib" when ODIN_OS == .Windows else "lib/libbass.so"
+LIB :: "lib/bass.lib" when ODIN_OS == .Windows else "system:bass"
 foreign import lib { LIB }
 
 // note: these mirror the windows types BASS was designed around, but map to portable equivalents

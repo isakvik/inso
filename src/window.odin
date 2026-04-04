@@ -73,10 +73,8 @@ window_init :: proc(rect: Rect) {
     sdl.GL_SetAttribute(sdl.GL_CONTEXT_MINOR_VERSION, 6)
     sdl.SetHint(sdl.HINT_RENDER_DRIVER, "opengl")
 
-    sdl.GL_SetSwapInterval(0)
-    sdl.SetWindowSurfaceVSync(window.handle, 0)
-
     window.gl_context = sdl.GL_CreateContext(window.handle)
+    sdl.GL_SetSwapInterval(0)
     gl.load_up_to(4, 6, sdl.gl_set_proc_address)
     gl.ClipControl(gl.UPPER_LEFT, gl.ZERO_TO_ONE)
     gl.Enable(gl.SCISSOR_TEST)
@@ -103,6 +101,10 @@ window_on_resize :: proc(new_w, new_h: i32) {
 }
 
 clipspace_transform := transform_from_bounds({0, 0, 1, 1}, 1)
+
+window_apply_vsync :: proc(enabled: bool) {
+    sdl.GL_SetSwapInterval(1 if enabled else 0)
+}
 
 window_cleanup :: proc() {
     sdl.GL_DestroyContext(window.gl_context)

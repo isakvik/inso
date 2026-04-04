@@ -7,9 +7,15 @@ import os "core:os"
 import "bass"
 
 
+Sound_Category :: enum { MUSIC, HITSOUND }
+
 audio: struct {
     ready: bool,
-    output_mixer: bass.HSTREAM
+    output_mixer:   bass.HSTREAM,
+    music_mixer:    bass.HSTREAM,
+    hitsound_mixer: bass.HSTREAM,
+    music_volume:   f32,
+    hitsound_volume: f32,
 }
 
 Device :: i32
@@ -112,10 +118,15 @@ audio_init :: proc(device: Device = -1) -> bool {
         bass.WASAPI_GetInfo(&wasapi_info)
         audio.output_mixer = bass.Mixer_StreamCreate(wasapi_info.freq, wasapi_info.chans,
             bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
+        audio.music_mixer = bass.Mixer_StreamCreate(wasapi_info.freq, wasapi_info.chans,
+            bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
+        audio.hitsound_mixer = bass.Mixer_StreamCreate(wasapi_info.freq, wasapi_info.chans,
+            bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
+        bass.Mixer_StreamAddChannel(audio.output_mixer, audio.music_mixer,    bass.MIXER_DOWNMIX)
+        bass.Mixer_StreamAddChannel(audio.output_mixer, audio.hitsound_mixer, bass.MIXER_DOWNMIX)
     } else {
         // note(isak): on linux/mac, BASS handles output via ALSA/PulseAudio directly.
-        // these must be set before Init — CONFIG_BUFFER defaults to 500ms which causes
-        // audible delay on pause/seek (buffer is already filled that far ahead).
+        // these must be set before Init — CONFIG_BUFFER defaults to 500ms which causes huge delay on pause/seek
         bass.SetConfig(bass.CONFIG_UPDATEPERIOD, 1)
         bass.SetConfig(bass.CONFIG_DEV_PERIOD, 10)
         bass.SetConfig(bass.CONFIG_BUFFER, 50)
@@ -129,6 +140,12 @@ audio_init :: proc(device: Device = -1) -> bool {
         if audio.output_mixer != 0 {
             bass.ChannelPlay(audio.output_mixer, false)
         }
+        audio.music_mixer = bass.Mixer_StreamCreate(44100, 2,
+            bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
+        audio.hitsound_mixer = bass.Mixer_StreamCreate(44100, 2,
+            bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
+        bass.Mixer_StreamAddChannel(audio.output_mixer, audio.music_mixer,    bass.MIXER_DOWNMIX)
+        bass.Mixer_StreamAddChannel(audio.output_mixer, audio.hitsound_mixer, bass.MIXER_DOWNMIX)
     }
 
     if audio.output_mixer == 0 {
@@ -136,6 +153,8 @@ audio_init :: proc(device: Device = -1) -> bool {
         return false
     }
 
+    audio.music_volume   = 1.0
+    audio.hitsound_volume = 1.0
     audio.ready = true
     return true
 }
@@ -154,6 +173,17 @@ audio_set_volume :: proc(volume: f32) {
         bass.WASAPI_SetVolume(bass.WASAPI_CURVE_WINDOWS | bass.WASAPI_VOL_SESSION, volume)
     } else {
         bass.SetVolume(volume)
+    }
+}
+
+audio_set_category_volume :: proc(category: Sound_Category, volume: f32) {
+    switch category {
+    case .MUSIC:
+        audio.music_volume = volume
+        bass.ChannelSetAttribute(audio.music_mixer, bass.ATTRIB_VOL, volume)
+    case .HITSOUND:
+        audio.hitsound_volume = volume
+        bass.ChannelSetAttribute(audio.hitsound_mixer, bass.ATTRIB_VOL, volume)
     }
 }
 
@@ -345,20 +375,21 @@ sound_set_speed :: proc(sound: ^Sound, rate: f32) {
     }
 }
 
-sound_play :: proc(sound: ^Sound, start_paused: bool = false, loop: bool = false, volume: f32 = 1.0) {
+sound_play :: proc(sound: ^Sound, start_paused: bool = false, loop: bool = false, volume: f32 = 1.0, category: Sound_Category = .MUSIC) {
     if audio.ready {
         base := cast(^Base_Sound)sound
         handle := _sound_get_channel_handle(sound)
 
         bass.ChannelSetAttribute(handle, bass.ATTRIB_NORAMP, 1.0) // see https://github.com/ppy/osu-framework/pull/3146
         bass.ChannelSetAttribute(handle, bass.ATTRIB_VOL, volume)
-        
+
         if bass.Mixer_ChannelGetMixer(handle) == 0 {
             flags: u32 = bass.MIXER_DOWNMIX | bass.MIXER_NORAMPIN
             flags |= (!loop && .STREAM in base.flags) ? bass.STREAM_AUTOFREE : 0
             flags |= start_paused ? bass.MIXER_CHAN_PAUSE : 0
 
-            if !bass.Mixer_StreamAddChannel(audio.output_mixer, handle, flags) {
+            mixer := audio.music_mixer if category == .MUSIC else audio.hitsound_mixer
+            if !bass.Mixer_StreamAddChannel(mixer, handle, flags) {
                 log.error("BASS mixer add channel error:", bass.ErrorGetCode())
             }
         }
@@ -452,7 +483,7 @@ sample_play :: proc(s: ^Sample, volume: f32 = 1.0, pan: f32 = 0.0) {
         return
     }
     bass.ChannelSetAttribute(channel, bass.ATTRIB_NORAMP, 1.0)
-    bass.ChannelSetAttribute(channel, bass.ATTRIB_VOL, volume)
+    bass.ChannelSetAttribute(channel, bass.ATTRIB_VOL, volume * audio.hitsound_volume)
     bass.ChannelSetAttribute(channel, bass.ATTRIB_PAN, pan)
     if !bass.ChannelPlay(channel, false) {
         log.error("BASS sample play error:", bass.ErrorGetCode())

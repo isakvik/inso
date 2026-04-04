@@ -51,7 +51,7 @@ Glyph_Quad :: struct {
 // probably just slap arial unicode into our executable at release time
 font_paths := [Font]string{
     .FALLBACK = "c:/Windows/Fonts/ARIAL_UNICODE_MS.ttf",
-    .DEFAULT = "data/segoeui.ttf",
+    .DEFAULT = "data/Roboto-Regular.ttf",
 }
 
 text_engine: struct {

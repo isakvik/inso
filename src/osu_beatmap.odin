@@ -175,7 +175,7 @@ beatmap_load :: proc(beatmap: ^Beatmap) {
     ok: bool
     beatmap.music, ok = sound_stream_init(game.active_map.audio_filepath, prescan = true)
     if ok {
-        sound_play(&beatmap.music, start_paused = true, loop = true)
+        sound_play(&beatmap.music, start_paused = true, loop = true, category = .MUSIC)
     } else {
         log.error("tried to open map sound file, but failed:", game.active_map.audio_filepath)
     }

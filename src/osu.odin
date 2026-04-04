@@ -744,7 +744,7 @@ pressed_controller_key :: proc() -> int {
 //////////////////////////////////////////////////////
 // note(isak): managed game sound API
 
-game_sound_play :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0) -> (result: slotmap.Handle) {
+game_sound_play :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0, category: Sound_Category = .HITSOUND) -> (result: slotmap.Handle) {
     sound: Sound
     ok: bool
     if loop {
@@ -756,7 +756,7 @@ game_sound_play :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0) -> (r
 
     handle := slotmap.insert(&game.sounds, sound)
     snd := slotmap.get(&game.sounds, handle) or_else {}
-    sound_play(snd, loop = loop, volume = volume)
+    sound_play(snd, loop = loop, volume = volume, category = category)
     return handle
 }
 

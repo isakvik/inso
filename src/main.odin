@@ -90,8 +90,10 @@ debug_ui_init :: proc() {
     imgui.CreateContext()
     io := imgui.GetIO()
     io.ConfigFlags += {.NavEnableKeyboard}
-    imgui.FontAtlas_AddFontFromFileTTF(io.Fonts, "data/segoeui.ttf", 16)
+    imgui.FontAtlas_AddFontFromFileTTF(io.Fonts, "data/Roboto-Regular.ttf", 14)
     imgui_gl3.Init("#version 460")
+    ok := sdl.StartTextInput(window.handle)
+    assert(ok)
     
     window.map_dropdown = Debug_Dropdown{
         label    = "Map",
@@ -132,10 +134,6 @@ main :: proc() {
     audio_init()
     assert(audio.ready)
     defer audio_cleanup()
-    
-    //-- @temp todo(isak): needs interface, but since BASS interfaces with windows, we can defer this until later...
-    audio_set_volume(0.5)
-    //--
 
     renderer_init()
     renderer := &window.renderer
@@ -150,7 +148,11 @@ main :: proc() {
     
     game.user_config = config_load("User.ini")
     defer config_save("User.ini")
-    
+    window_apply_vsync(game.user_config.vsync_enabled)
+    audio_set_volume(game.user_config.master_volume)
+    audio_set_category_volume(.MUSIC,    game.user_config.music_volume)
+    audio_set_category_volume(.HITSOUND, game.user_config.hitsound_volume)
+
     //-- @temp todo(isak): discover_skins, skin select interface
     game.active_skin = skin_load("skins/gn/")
     //--
@@ -432,6 +434,9 @@ end_frame :: proc(renderer: ^Renderer) {
 write_debug_ui :: proc(map_dropdown: ^Debug_Dropdown) {
     imgui.Begin("Info")
     defer imgui.End()
+    
+    debug_dropdown_update(map_dropdown)
+    imgui.Separator()
 
     timer_str := strings.clone_to_cstring(time_ms_to_string(beatmap_music_time_ms(&game.beatmap)), context.temp_allocator)
     imgui.Text("Time: %s", timer_str)
@@ -450,7 +455,22 @@ write_debug_ui :: proc(map_dropdown: ^Debug_Dropdown) {
     imgui.Text("Sound pos: %f ms", f32(sound_get_position_ms(&game.beatmap.music)))
     
     imgui.Separator()
-    debug_dropdown_update(map_dropdown)
+    if imgui.CollapsingHeader("Display") {
+        if imgui.Checkbox("VSync", &game.user_config.vsync_enabled) {
+            window_apply_vsync(game.user_config.vsync_enabled)
+        }
+    }
+    if imgui.CollapsingHeader("Audio") {
+        if imgui.SliderFloat("Master##vol", &game.user_config.master_volume, 0, 1) {
+            audio_set_volume(game.user_config.master_volume)
+        }
+        if imgui.SliderFloat("Music##vol", &game.user_config.music_volume, 0, 1) {
+            audio_set_category_volume(.MUSIC, game.user_config.music_volume)
+        }
+        if imgui.SliderFloat("Hitsounds##vol", &game.user_config.hitsound_volume, 0, 1) {
+            audio_set_category_volume(.HITSOUND, game.user_config.hitsound_volume)
+        }
+    }
 
     write_offset_window()
 }

@@ -6,7 +6,7 @@
 */
 package bass
 
-MIX_LIB :: "lib/bassmix.lib" when ODIN_OS == .Windows else "lib/libbassmix.so"
+MIX_LIB :: "lib/bassmix.lib" when ODIN_OS == .Windows else "system:bassmix"
 foreign import lib { MIX_LIB }
 
 // Additional SetConfig options

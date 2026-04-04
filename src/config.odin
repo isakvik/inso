@@ -27,7 +27,7 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         return strings.trim_space(v), ok && len(v) > 0
     }
 
-    // note(isak): top level is sectionless (we don't need a section here)
+    // note(isak): top level is sectionless
     if gen, ok := m[""]; ok {
         if v, ok := get(gen, "universal_offset_ms"); ok {
             result.universal_offset_ms, ok = strconv.parse_int(v)

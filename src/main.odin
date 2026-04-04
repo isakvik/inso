@@ -157,7 +157,7 @@ main :: proc() {
     game.active_skin = skin_load("skins/gn/")
     //--
 
-    shaders_watch := win32_init_directory_watch("shaders/")
+    shaders_watch := directory_watch_init("shaders/")
 
     // todo(isak): consider creating a song_index allocator
     discover_maps("songs/")
@@ -524,7 +524,7 @@ handle_debug_ui_events :: proc(map_dropdown: ^Debug_Dropdown) {
     }
 }
 
-process_builtin_shader_changes :: proc(watch: ^Win32_Directory_Watch) {
+process_builtin_shader_changes :: proc(watch: ^Directory_Watch) {
     updated_systems := mapset_check_system_file_watch(watch)
     if updated_systems[.SHADERS] {
         for &shader in window.shaders.data[:len(Builtin_Pipeline_Slot)] {

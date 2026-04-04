@@ -53,7 +53,7 @@ Mapset :: struct {
     samples: queue.Queue(Sample),
     sample_slot_by_name: map[string]u32,
 
-    watch: Win32_Directory_Watch
+    watch: Directory_Watch
 }
 
 
@@ -159,7 +159,7 @@ Osu_Map_Sample_Set :: enum {
 
 
 mapset_free :: proc(mapset: ^Mapset) -> string {
-    win32_close_directory_watch(&mapset.watch)
+    directory_watch_close(&mapset.watch)
 
     for &texture in mapset.textures.data {
         texture_cleanup(&texture)
@@ -225,7 +225,7 @@ mapset_open_for_editing :: proc(path: string, osu_filename: string = "") -> (^Ma
     
     mapset_walk_directory(mapset, path)
 
-    mapset.watch = win32_init_directory_watch(path)
+    mapset.watch = directory_watch_init(path)
     log.info("initialized directory watch for path:", path)
     
     return mapset, true
@@ -1020,44 +1020,25 @@ convert_overall_difficulty_to_timing_window :: proc(od: f64) -> Timing_Window {
 }
 
 
-mapset_check_system_file_watch :: proc(watch: ^Win32_Directory_Watch) -> [Notosu_Map_System]bool {
+mapset_check_system_file_watch :: proc(watch: ^Directory_Watch) -> [Notosu_Map_System]bool {
     updated_systems: [Notosu_Map_System]bool
-
-    win32_get_directory_changes(watch)
-    if watch.notify_bytes_written > 0 {
-        
-        wfilename_buf: [MAX_PATH]u16
-        for true {
-            notify, wfilename_len := win32_watch_get_next_notify(watch, &wfilename_buf)
-            if wfilename_len > 0 {
-                filename_buf: [MAX_PATH]u8
-                for i in 0..<wfilename_len {
-                    filename_buf[i] = u8(wfilename_buf[i])
-                }
-                
-                extension := filepath.ext(string(filename_buf[:wfilename_len]))
-                switch extension {
-                    case ".osu": updated_systems[.OSU_FILE] = true
-                    case ".glsl": updated_systems[.SHADERS] = true
-                    case ".lua": updated_systems[.SCRIPTS] = true
-                    case ".notosu": updated_systems[.NOTOSU_FILE] = true
-                }
-                for img_ext in supported_image_extensions {
-                    if extension == img_ext {
-                        updated_systems[.ASSETS] = true
-                        break
-                    }
-                }
-
-                if notify.next_entry_offset == 0 {
-                    break
-                }
-            } 
-            else {
+    directory_watch_poll(watch)
+    for {
+        filename, ok := directory_watch_next_file(watch)
+        if !ok do break
+        extension := filepath.ext(filename)
+        switch extension {
+        case ".osu":    updated_systems[.OSU_FILE]    = true
+        case ".glsl":   updated_systems[.SHADERS]     = true
+        case ".lua":    updated_systems[.SCRIPTS]     = true
+        case ".notosu": updated_systems[.NOTOSU_FILE] = true
+        }
+        for img_ext in supported_image_extensions {
+            if extension == img_ext {
+                updated_systems[.ASSETS] = true
                 break
             }
         }
-        watch.notify_bytes_written = 0
     }
     return updated_systems
 }

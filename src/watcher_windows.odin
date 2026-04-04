@@ -1,36 +1,25 @@
 #+build windows
 package notosu
 
-import "core:fmt"
+import "core:log"
 import "core:sys/windows"
 
-
-win32_print_error :: proc() {
-    if windows.GetLastError() > 0 {
-        fmt.printfln("win32 error: {}", windows.GetLastError())
-    }
-}
-
-MAX_PATH :: windows.MAX_PATH
 NOTIFY_BUFFER_SIZE :: 16 * 1024
-Win32_File_Notify_Info :: windows.FILE_NOTIFY_INFORMATION
 
-Win32_Directory_Watch :: struct {
+Directory_Watch :: struct {
     initialized: bool,
     overlapped: windows.OVERLAPPED,
-    notify_buffer: [NOTIFY_BUFFER_SIZE]u8,
-    notify_bytes_written: u32,
-    notify_read_offset: u32,
-    
+    notify_buf: [NOTIFY_BUFFER_SIZE]u8,
+    buf_len: u32,
+    buf_offset: u32,
     iocp_handle: windows.HANDLE,
     dir_handle: windows.HANDLE,
-    path: string
+    filename_scratch: [windows.MAX_PATH]u8,
+    path: string,
 }
 
-win32_init_directory_watch :: proc(path: string) -> Win32_Directory_Watch {
-    result := Win32_Directory_Watch{
-        path = path
-    }
+directory_watch_init :: proc(path: string) -> Directory_Watch {
+    result := Directory_Watch{ path = path }
 
     result.dir_handle = windows.CreateFileW(
         windows.utf8_to_wstring(path),
@@ -39,93 +28,79 @@ win32_init_directory_watch :: proc(path: string) -> Win32_Directory_Watch {
         nil,
         windows.OPEN_EXISTING,
         windows.FILE_FLAG_BACKUP_SEMANTICS | windows.FILE_FLAG_OVERLAPPED,
-        nil    
+        nil,
     )
-
     if result.dir_handle == windows.INVALID_HANDLE_VALUE {
-        fmt.println("win32_init_directory_watch, invalid path:", path)
+        log.error("directory_watch_init: invalid path:", path)
         return result
     }
 
     result.iocp_handle = windows.CreateIoCompletionPort(windows.INVALID_HANDLE_VALUE, nil, 0, 1)
     windows.CreateIoCompletionPort(result.dir_handle, result.iocp_handle, 0, 1)
-    // note(isak): this will allocate some buffer within Windows, and initializes the directory
-    //             for watching of changes
-
     result.initialized = true
-    win32_start_directory_change_io(&result)
+    _directory_watch_start_io(&result)
     return result
 }
 
-win32_close_directory_watch :: proc(watch_dir: ^Win32_Directory_Watch) {
-    windows.CloseHandle(watch_dir.dir_handle)
-    windows.CloseHandle(watch_dir.iocp_handle)
+directory_watch_close :: proc(watch: ^Directory_Watch) {
+    if !watch.initialized do return
+    windows.CloseHandle(watch.dir_handle)
+    windows.CloseHandle(watch.iocp_handle)
+    watch.initialized = false
 }
 
-win32_get_directory_changes :: proc(watch_dir: ^Win32_Directory_Watch) {
-    assert(watch_dir.initialized)
-
+directory_watch_poll :: proc(watch: ^Directory_Watch) {
+    if !watch.initialized do return
     completion_key: windows.ULONG_PTR
-    lpOverlapped: windows.LPOVERLAPPED
+    overlapped: windows.LPOVERLAPPED
     has_result := windows.GetQueuedCompletionStatus(
-        watch_dir.iocp_handle,
-        &watch_dir.notify_bytes_written,
-        &completion_key,
-        &lpOverlapped,
-        0
+        watch.iocp_handle, &watch.buf_len, &completion_key, &overlapped, 0,
     )
-
     if has_result {
-        watch_dir.notify_read_offset = 0
-        win32_start_directory_change_io(watch_dir)
+        watch.buf_offset = 0
+        _directory_watch_start_io(watch)
     } else {
-        watch_dir.notify_bytes_written = 0
+        watch.buf_len = 0
     }
-
-    if (windows.GetLastError() == windows.WAIT_TIMEOUT) {
+    if windows.GetLastError() == windows.WAIT_TIMEOUT {
         windows.SetLastError(0)
-    } else {
-        win32_print_error()
     }
 }
 
-win32_start_directory_change_io :: proc(watch: ^Win32_Directory_Watch) {
-    assert(watch.initialized)
+directory_watch_next_file :: proc(watch: ^Directory_Watch) -> (filename: string, ok: bool) {
+    if watch.buf_len == 0 do return "", false
 
+    notify_at := rawptr(uintptr(&watch.notify_buf) + uintptr(watch.buf_offset))
+    notify    := (^windows.FILE_NOTIFY_INFORMATION)(notify_at)
+
+    if notify.file_name_length > 0 && notify.file_name_length < windows.MAX_PATH * size_of(windows.wchar_t) {
+        wname := ([^]u16)(&notify.file_name)
+        name_len := notify.file_name_length / size_of(windows.wchar_t)
+        for i in 0..<name_len {
+            watch.filename_scratch[i] = u8(wname[i])
+        }
+        if notify.next_entry_offset != 0 {
+            watch.buf_offset += notify.next_entry_offset
+        } else {
+            watch.buf_len = 0
+        }
+        return string(watch.filename_scratch[:name_len]), true
+    }
+
+    watch.buf_len = 0
+    return "", false
+}
+
+_directory_watch_start_io :: proc(watch: ^Directory_Watch) {
     windows.ReadDirectoryChangesW(
         watch.dir_handle,
-        &watch.notify_buffer,
+        &watch.notify_buf,
         NOTIFY_BUFFER_SIZE,
-        true, // watch subtree
+        true,
         windows.FILE_NOTIFY_CHANGE_FILE_NAME | windows.FILE_NOTIFY_CHANGE_DIR_NAME |
-        windows.FILE_NOTIFY_CHANGE_CREATION | windows.FILE_NOTIFY_CHANGE_LAST_WRITE,
+        windows.FILE_NOTIFY_CHANGE_CREATION  | windows.FILE_NOTIFY_CHANGE_LAST_WRITE,
         nil,
         &watch.overlapped,
-        nil
+        nil,
     )
-    win32_print_error()
-}
-
-// returns a pointer to the next notify object, plus the given filename length in characters (not bytes)
-win32_watch_get_next_notify :: proc(watch: ^Win32_Directory_Watch, filename_buf: ^[windows.MAX_PATH]u16) -> (^Win32_File_Notify_Info, u32) {
-    assert(watch.notify_read_offset < NOTIFY_BUFFER_SIZE, "pointer arithmetic error!")
-    
-    // note(isak): might be the only way to do pointer arithmetic... thanks microsoft for requiring this
-    notify_at := rawptr(uintptr(&watch.notify_buffer) + uintptr(watch.notify_read_offset))
-    notify := (^Win32_File_Notify_Info)(notify_at)
-
-    if notify.file_name_length > 0 && notify.file_name_length < MAX_PATH {
-        filename_cs16 := ([^]u16)(&notify.file_name)
-        filename_str_len := notify.file_name_length / size_of(windows.wchar_t)
-
-        for i in 0 ..< filename_str_len {
-            filename_buf[i] = filename_cs16[i]
-        }
-        filename_buf[filename_str_len] = 0
-
-        watch.notify_read_offset += notify.next_entry_offset
-        return notify, filename_str_len
-    }
-    
-    return notify, 0
 }

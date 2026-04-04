@@ -33,7 +33,7 @@ game: struct {
     
     mode: Game_Mode,
     
-    universal_offset_ms: f64,
+    user_config: User_Configuration,
     
     // note(isak): map game logic fields
     
@@ -365,9 +365,6 @@ osu_on_init :: proc() {
 
     beatmap_on_init(game.active_map_ref, &game.beatmap)
     game.playfield_transform = playfield_build_transform()
-
-    // todo(isak): @beta universal offset sync interface
-    game.universal_offset_ms = -28
 }
 
 
@@ -627,6 +624,7 @@ handle_play_input_events :: proc() {
     if key_is_pressed(.R) {
         beatmap_reload(&game.beatmap, !key_is_down(.LSHIFT))
     }
+    
     if key_is_pressed(.HOME) {
         game.time_rate = 1
     }
@@ -637,6 +635,13 @@ handle_play_input_events :: proc() {
     if key_is_pressed(.PAGEDOWN) {
         game.time_rate /= 2
         sound_set_speed(&game.beatmap.music, game.time_rate)
+    }
+    
+    if key_is_pressed(.KP_PLUS) {
+        game.user_config.universal_offset_ms += key_is_down(.LSHIFT) ? 1 : 5
+    }
+    if key_is_pressed(.KP_MINUS) {
+        game.user_config.universal_offset_ms -= key_is_down(.LSHIFT) ? 1 : 5
     }
     
     if key_is_pressed(.F10) {

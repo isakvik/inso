@@ -246,11 +246,11 @@ beatmap_seek :: proc(beatmap: ^Beatmap, pos: f64) {
 }
 
 beatmap_music_time_ms :: proc(beatmap: ^Beatmap) -> f64 {
-    return beatmap.music_time_ms + game.universal_offset_ms // + beatmap.local_offset_ms
+    return beatmap.music_time_ms + f64(game.user_config.universal_offset_ms) // + beatmap.local_offset_ms
 }
 
 beatmap_game_time_to_music_time :: proc(beatmap: ^Beatmap, game_time: f64) -> f64 {
-    return game_time - game.universal_offset_ms // - beatmap.local_offset_ms
+    return game_time - f64(game.user_config.universal_offset_ms) // - beatmap.local_offset_ms
 }
 
 

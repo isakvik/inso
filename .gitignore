@@ -2,3 +2,4 @@ build
 notosu.raddbg_project
 *.mp3
 imgui.ini
+/User.ini

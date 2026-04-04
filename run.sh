@@ -9,7 +9,7 @@ if [ -f data/segoeui.ttf ] && [ ! -f build/segoeui.ttf ]; then
     cp data/segoeui.ttf build/segoeui.ttf
 fi
 
-odin build src \
+odin run src \
     -out:build/notosu \
     -define:SOKOL_USE_GL=true \
     -o:minimal \

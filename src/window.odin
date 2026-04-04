@@ -21,6 +21,7 @@ window: struct {
     
     ui_enabled: bool,
     map_dropdown: Debug_Dropdown,
+    offset_window_open: bool,
     
     // note(isak): graphical resources used by the drawing context go here 
 

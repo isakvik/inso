@@ -113,7 +113,13 @@ audio_init :: proc(device: Device = -1) -> bool {
         audio.output_mixer = bass.Mixer_StreamCreate(wasapi_info.freq, wasapi_info.chans,
             bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
     } else {
-        // note(isak): on linux/mac, BASS handles output via ALSA/PulseAudio directly
+        // note(isak): on linux/mac, BASS handles output via ALSA/PulseAudio directly.
+        // these must be set before Init — CONFIG_BUFFER defaults to 500ms which causes
+        // audible delay on pause/seek (buffer is already filled that far ahead).
+        bass.SetConfig(bass.CONFIG_UPDATEPERIOD, 1)
+        bass.SetConfig(bass.CONFIG_DEV_PERIOD, 10)
+        bass.SetConfig(bass.CONFIG_BUFFER, 50)
+
         if !bass.Init(device, 44100, 0, nil, nil) {
             log.error("BASS init error:", bass.ErrorGetCode())
             return false

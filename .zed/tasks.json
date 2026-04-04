@@ -49,4 +49,16 @@
     // Represents the tags for inline runnable indicators, or spawning multiple tasks at once.
     // "tags": []
   },
+  {
+    "label": "run.sh [linux]",
+    "command": "./run.sh",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": false,
+    "reveal": "never",
+    "reveal_target": "dock",
+    "hide": "always",
+    "shell": "system",
+    "show_summary": true,
+    "show_command": true,
+  },
 ]

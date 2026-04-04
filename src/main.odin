@@ -11,6 +11,7 @@ import "core:mem"
 import "core:time"
 import vmem "core:mem/virtual"
 
+import "core:c"
 import imgui "imgui"
 import imgui_gl3 "imgui/imgui_impl_opengl3"
 import sdl "vendor:sdl3"
@@ -77,7 +78,7 @@ memory_init :: proc() -> runtime.Allocator_Error {
     
     for t in Memory_Arena_Type {
         init_tracked_growing_arena(&arenas[t], &allocators[t], &memory.backing_alloc[t], &memory.tracker[t]) or_return
-    }
+    } 
     for layer in Layer {
         init_growing_arena(&memory.command_buffer_arenas[layer], &memory.command_buffer_allocators[layer]) or_return
     }
@@ -133,7 +134,7 @@ main :: proc() {
     defer audio_cleanup()
     
     //-- @temp todo(isak): needs interface, but since BASS interfaces with windows, we can defer this until later...
-    audio_set_volume(0.05)
+    audio_set_volume(0.5)
     //--
 
     renderer_init()
@@ -146,6 +147,9 @@ main :: proc() {
     defer debug_ui_cleanup()
     text_init()
     keyboard_init()
+    
+    game.user_config = config_load("User.ini")
+    defer config_save("User.ini")
     
     //-- @temp todo(isak): discover_skins, skin select interface
     game.active_skin = skin_load("skins/gn/")
@@ -438,13 +442,31 @@ write_debug_ui :: proc(map_dropdown: ^Debug_Dropdown) {
     hobj_visibility := game.beatmap.visible_hitobject_state
     imgui.Text("Visible hitobjects: %d", i32(hobj_visibility.latest_i - hobj_visibility.earliest_i - 1))
     imgui.Text("Mouse keys: %s", game.input.mouse_keys_enabled ? cstring("on") : cstring("off"))
-    imgui.Text("Universal offset: %d ms", i32(game.universal_offset_ms))
-    
+    if imgui.Button("Offset") do window.offset_window_open = true
+    imgui.SameLine()
+    imgui.Text("%d ms", i32(game.user_config.universal_offset_ms))
+
     imgui.Text("Music pos: %f ms", f32(game.beatmap.music_time_ms))
     imgui.Text("Sound pos: %f ms", f32(sound_get_position_ms(&game.beatmap.music)))
     
     imgui.Separator()
     debug_dropdown_update(map_dropdown)
+
+    write_offset_window()
+}
+
+write_offset_window :: proc() {
+    if !window.offset_window_open do return
+
+    imgui.SetNextWindowSize({220, 70}, .FirstUseEver)
+    if imgui.Begin("Universal Offset", &window.offset_window_open) {
+        offset := c.int(game.user_config.universal_offset_ms)
+        imgui.SetNextItemWidth(-1)
+        if imgui.InputInt("##offset", &offset, 1, 5) {
+            game.user_config.universal_offset_ms = int(offset)
+        }
+    }
+    imgui.End()
 }
 
 handle_debug_ui_events :: proc(map_dropdown: ^Debug_Dropdown) {

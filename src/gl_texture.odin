@@ -26,8 +26,11 @@ _texture_init :: proc(x, y: i32, layers: i32 = 1, internal_format: u32 = gl.RGBA
     texture := texture_create()
     gl.TextureStorage3D(texture, 1, internal_format, x, y, layers)
 
-    // note(isak): this makes texture state (not data) immutable
-    tex_handle := gl.GetTextureHandleARB(texture)
+    tex_handle: Texture_Handle
+    if window.bindless_supported {
+        // note(isak): this makes texture state (not data) immutable
+        tex_handle = gl.GetTextureHandleARB(texture)
+    }
 
     return texture, tex_handle
 }
@@ -45,7 +48,9 @@ _texture_init_with_data :: proc(
 }
 
 _texture_reinit :: proc(texture: ^Texture, x, y: i32, pixels: rawptr) {
-    gl.MakeTextureHandleNonResidentARB(texture.tex_handle)
+    if window.bindless_supported {
+        gl.MakeTextureHandleNonResidentARB(texture.tex_handle)
+    }
 
     texture_free({texture.tex_id})
     texture.tex_id, texture.tex_handle =
@@ -55,7 +60,9 @@ _texture_reinit :: proc(texture: ^Texture, x, y: i32, pixels: rawptr) {
     texture.h = y
     texture.layer_count = 1
 
-    gl.MakeTextureHandleResidentARB(texture.tex_handle)
+    if window.bindless_supported {
+        gl.MakeTextureHandleResidentARB(texture.tex_handle)
+    }
 }
 
 texture_free :: proc(textures: []u32) {
@@ -143,7 +150,9 @@ texture_array_from_files :: proc(paths: []string) -> (result: Texture, err: os.E
             result.h = h
             result.tex_id = texture_create()
             gl.TextureStorage3D(result.tex_id, 1, result.internal_format, w, h, result.layer_count)
-            result.tex_handle = gl.GetTextureHandleARB(result.tex_id)
+            if window.bindless_supported {
+                result.tex_handle = gl.GetTextureHandleARB(result.tex_id)
+            }
         } else {
             assert(w == result.w && h == result.h, "texture_array_from_files: all frames must be the same size")
         }

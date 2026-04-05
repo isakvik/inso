@@ -303,16 +303,26 @@ main :: proc() {
                 discover_maps("songs/")
             }
             
-            r_bind_layer_and_push_current_state(.DEBUG, transform = window.screenspace_transform)
-            
             dt_ms := (time_current_frame - time_last_frame) * 1000
-
+            
             r_bind_layer_and_push_current_state(.BACKGROUND, transform = window.screenspace_transform)
             osu_on_update(dt_ms)
 
-            r_bind_layer_and_push_current_state(.UI, pipeline = {builtin_pipeline_slot(.QUAD)})
+            r_bind_layer_and_push_current_state(.UI, 
+                pipeline = {builtin_pipeline_slot(.QUAD)},
+                transform = window.screenspace_transform)
             
-            r_push_transform(window.screenspace_transform)
+            if app.debug_display_textures {
+                for i in 0..<50 {
+                    r_draw_quad(&renderer.quad_geometry, 
+                        vec2{400 + 40*(f32(i%10)), 10 + 40*f32(i/10)},
+                        vec2{440 + 40*(f32(i%10)), 50 + 40*f32(i/10)},
+                        vec2{0,0}, vec2{1,1},
+                        color_white, 
+                        tex_index = u32(i)
+                    )
+                }
+            }
             
             cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 80, 80 }
             r_draw_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture(.CURSOR),
@@ -513,6 +523,9 @@ handle_debug_ui_events :: proc(map_dropdown: ^Debug_Dropdown) {
                 fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
             }
         }
+    }
+    if key_is_pressed(.F6) {
+        app.debug_display_textures = !app.debug_display_textures
     }
 
     // note(isak): cursor visibility - show OS cursor when imgui wants the mouse

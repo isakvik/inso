@@ -1,6 +1,8 @@
 #version 460
+#ifdef BINDLESS
 #extension GL_ARB_bindless_texture : require
 #extension GL_NV_gpu_shader5 : enable
+#endif
 
 struct Vertex {
     vec3 pos;
@@ -32,7 +34,7 @@ void main() {
     uint i = instanceToIndex[gl_VertexID % 6];
     uint right =  (i & 1);
     uint bottom = ((i >> 1) & 1);
-    
+
     vec2 q_pos[2] = {q.pos_min, q.pos_max};
     vec2 q_uvs[2] = {q.uv_min, q.uv_max};
 
@@ -43,10 +45,10 @@ void main() {
     mat2 rot = mat2(c, s, -s, c);
     vec2 rotatedPos = center + rot * (localPos - center);
 
-    uv = vec2(q_uvs[right].x, q_uvs[bottom].y); 
+    uv = vec2(q_uvs[right].x, q_uvs[bottom].y);
     color = unpackUnorm4x8(q.color);
     texIndex = q.texIndex;
 
-    vec3 pos = t * vec3(rotatedPos, 1.0); 
+    vec3 pos = t * vec3(rotatedPos, 1.0);
     gl_Position.xy = pos.xy;
 }

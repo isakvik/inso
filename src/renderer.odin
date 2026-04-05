@@ -5,6 +5,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:fmt"
 import "core:log"
+import "core:mem"
 import os "core:os"
 import "core:slice"
 import "core:strings"
@@ -18,10 +19,19 @@ import slog "vendor:sokol/log"
 MAX_BATCH_VERTICES :: 64*1024
 MAX_SLIDER_INSTANCES :: 16 * 1024 * 1024
 MAX_TEXTURE_HANDLES :: 1024
+MAX_TEXTURE_UNITS :: 16
 
 MAX_DRAW_CALLS_PER_LAYER :: 4096
 
 UNIT_CIRCLE_VERTEX_COUNT :: 48
+
+UNMAPPED_UNIT :: 0xFF
+
+Texture_Unit_Map :: struct {
+    global_to_local: [MAX_TEXTURE_HANDLES]u8,
+    local_to_global: [MAX_TEXTURE_UNITS]u32,
+    unit_count: u8,
+}
 
 
 Quad :: struct {
@@ -68,9 +78,9 @@ Shader_Globals :: struct {
 Renderer :: struct {
     quad_geometry: Buffer(Quad),
     slider_instances: Buffer(vec2),
-    
+
     text_geometry: Buffer(Glyph_Quad),
-    
+
     circle_geometry: Buffer(Slider_Vertex),
 
     transform_queue: queue.Queue(Transform),
@@ -79,7 +89,7 @@ Renderer :: struct {
 
     current_draw: ^Command_Draw,
     text_draw: Command_Draw, // todo(isak) this makes text rendering pretty nonconfigurable... good for debug tho
-    
+
     new_draw_on_next_push: bool,
     current_layer: Layer,
     current_global_data: Shader_Globals,
@@ -89,6 +99,10 @@ Renderer :: struct {
 
     current_pipeline_for_layer: [Layer]Command_Bind_Pipeline,
     current_ssbo_binds: [Shader_SSBO_Bind_Slot]Command_Bind_SSBO,
+
+    // note(isak): non-bindless texture unit tracking
+    texture_unit_map: Texture_Unit_Map,
+    current_draw_tex_units: ^Draw_Texture_Units,
 
     trace_frame: bool
 }
@@ -269,6 +283,41 @@ r_create_dynamic_store :: proc($T: typeid, count: int, alloc: runtime.Allocator)
 
 
 //////////////////////////////////////////////////////
+// note(isak): texture unit map (non-bindless fallback)
+
+texture_unit_map_reset :: proc(m: ^Texture_Unit_Map) {
+    mem.set(&m.global_to_local, UNMAPPED_UNIT, MAX_TEXTURE_HANDLES)
+    m.unit_count = 0
+}
+
+// note(isak): returns the local unit for a global texture slot. assigns a new unit if unmapped.
+// returns UNMAPPED_UNIT if the map is full (caller should flush and retry).
+texture_unit_map_assign :: proc(m: ^Texture_Unit_Map, global_slot: u32) -> u8 {
+    local_slot := m.global_to_local[global_slot]
+    if local_slot != UNMAPPED_UNIT do return local_slot
+    if m.unit_count >= MAX_TEXTURE_UNITS do return UNMAPPED_UNIT
+
+    local_slot = m.unit_count
+    m.global_to_local[global_slot] = local_slot
+    m.local_to_global[local_slot] = global_slot
+    m.unit_count += 1
+    return local_slot
+}
+
+// note(isak): snapshots the current unit map into the in-flight draw's texture data
+texture_unit_map_finalize :: proc(renderer: ^Renderer) {
+    tex_unit_data := renderer.current_draw_tex_units
+    if tex_unit_data == nil do return
+    
+    tex_unit_data.count = renderer.texture_unit_map.unit_count
+    for i in 0..<tex_unit_data.count {
+        global_slot := renderer.texture_unit_map.local_to_global[i]
+        tex_unit_data.tex_ids[i] = window.tex_id_lookup[global_slot]
+    }
+}
+
+
+//////////////////////////////////////////////////////
 // note(isak): shader api (program api)
 
 Shader_Error :: enum {
@@ -299,14 +348,26 @@ shader_init :: proc(vs_path, fs_path: string, alloc: runtime.Allocator = context
         return {}, .PATH_ERROR
     }
 
+    // note(isak): inject #define BINDLESS after #version line when the extension is available
+    vs_source := vs_filedata
+    fs_source := fs_filedata
+    if window.bindless_supported {
+        vs_source = _shader_inject_define(vs_filedata, vs_filelen, alloc)
+        fs_source = _shader_inject_define(fs_filedata, fs_filelen, alloc)
+    }
+
     temp_shader := sg.make_shader(
         sg.Shader_Desc {
-            vertex_func = {source = vs_filedata},
-            fragment_func = {source = fs_filedata}
+            vertex_func = {source = vs_source},
+            fragment_func = {source = fs_source}
         },
     )
 
     if sg.query_shader_state(temp_shader) == sg.Resource_State.VALID {
+        // note(isak): for non-bindless, set up sampler uniform array so textures[i] maps to unit i
+        if !window.bindless_supported {
+            _shader_setup_sampler_uniforms(temp_shader)
+        }
         return {
             shader = temp_shader,
             vs_path = vs_path,
@@ -315,6 +376,47 @@ shader_init :: proc(vs_path, fs_path: string, alloc: runtime.Allocator = context
     }
     sg.destroy_shader(temp_shader)
     return {}, .COMPILE_ERROR
+}
+
+_shader_setup_sampler_uniforms :: proc(shader: sg.Shader) {
+    info := sg.gl_query_shader_info(shader)
+    prog := info.prog
+    if prog == 0 do return
+
+    loc := gl.GetUniformLocation(prog, "textures")
+    if loc < 0 do return
+
+    // note(isak): set textures[i] = i for each unit
+    prev_prog: i32
+    gl.GetIntegerv(gl.CURRENT_PROGRAM, &prev_prog)
+    gl.UseProgram(prog)
+    for i in 0..<i32(MAX_TEXTURE_UNITS) {
+        gl.Uniform1i(loc + i, i)
+    }
+    gl.UseProgram(u32(prev_prog))
+}
+
+
+_shader_inject_define :: proc(source: cstring, source_len: int, alloc: runtime.Allocator) -> cstring {
+    src := (cast([^]u8)source)[:source_len]
+    // find end of the #version line
+    newline_pos := 0
+    for i in 0..<source_len {
+        if src[i] == '\n' {
+            newline_pos = i + 1
+            break
+        }
+    }
+
+    BINDLESS_DEFINE :: "#define BINDLESS\n"
+    
+    new_len := source_len + len(BINDLESS_DEFINE)
+    buf := make([]u8, new_len + 1, alloc) // +1 for null terminator
+    copy(buf[:newline_pos], src[:newline_pos])
+    copy(buf[newline_pos:], BINDLESS_DEFINE)
+    copy(buf[newline_pos + len(BINDLESS_DEFINE):], src[newline_pos:])
+    buf[new_len] = 0
+    return cstring(raw_data(buf))
 }
 
 shader_reinit :: proc(shader: ^Shader, alloc: runtime.Allocator = context.temp_allocator) -> Shader_Error {
@@ -405,6 +507,12 @@ Command_Scissor_Mode :: struct {
     x, y, w, h: i32
 }
 
+// note(isak): extra data appended after draw in non-bindless mode
+Draw_Texture_Units :: struct {
+    tex_ids: [MAX_TEXTURE_UNITS]u32,
+    count: u8,
+}
+
 command_push_clear             :: proc(cmd: Command_Clear) -> bool { return _command_push(cmd, .CLEAR) }
 command_push_push_transform    :: proc(cmd: Command_Push_Transform) -> bool { return _command_push(cmd, .PUSH_TRANSFORM) }
 command_push_pop_transform     :: proc() -> bool { return _command_push_header(.POP_TRANSFORM) }
@@ -453,6 +561,11 @@ r_clear :: proc(color: Color = color_black) {
 }
 
 r_push_draw :: proc(index_offset: u32, index_count: i32, instance_count: i32 = 1, base_instance: u32 = 0) {
+    if !window.bindless_supported {
+        texture_unit_map_finalize(&window.renderer)
+        texture_unit_map_reset(&window.renderer.texture_unit_map)
+    }
+
     command_push_draw({
         index_offset = index_offset,
         index_count = index_count,
@@ -461,7 +574,15 @@ r_push_draw :: proc(index_offset: u32, index_count: i32, instance_count: i32 = 1
     })
     cmds := &window.renderer.layer_command_queues[window.renderer.current_layer]
     window.renderer.current_draw = cast(^Command_Draw)&cmds.data[cmds.len - size_of(Command_Draw)]
-    
+
+    // note(isak): append texture unit data right after the draw command (no command header)
+    if !window.bindless_supported {
+        tex_units := Draw_Texture_Units{}
+        tex_data := slice.from_ptr((^u8)(&tex_units), size_of(Draw_Texture_Units))
+        queue.push_back_elems(&cmds^, ..tex_data)
+        window.renderer.current_draw_tex_units = cast(^Draw_Texture_Units)&cmds.data[cmds.len - size_of(Draw_Texture_Units)]
+    }
+
     window.renderer.new_draw_on_next_push = false
 }
 
@@ -641,14 +762,24 @@ batch_begin :: proc(renderer: ^Renderer) {
     renderer.text_geometry.data = tbo_advance_and_get(&window.text_store)
     renderer.text_geometry.count = 0
 
+    if !window.bindless_supported {
+        texture_unit_map_reset(&renderer.texture_unit_map)
+        renderer.current_draw_tex_units = nil
+    }
+
     r_push_draw(0,0)
 }
 
 batch_end :: proc(renderer: ^Renderer) {
     tbo_lock(&window.quad_store)
     tbo_lock(&window.text_store)
-    
-    sbo_bind(&window.texture_buffer, u32(Shader_SSBO_Bind_Slot.TEXTURES))
+
+    if window.bindless_supported {
+        sbo_bind(&window.texture_buffer, u32(Shader_SSBO_Bind_Slot.TEXTURES))
+    } else {
+        // note(isak): finalize the last in-flight texture bind before processing commands
+        texture_unit_map_finalize(renderer)
+    }
     ubo_bind(&window.shader_global_buffer, u32(Shader_SSBO_Bind_Slot.TRANSFORM))
     sbo_bind(&window.slider_instance_store, u32(Shader_SSBO_Bind_Slot.INSTANCE_BUFFER))
     ubo_bind(&window.user_param_buffer, u32(Shader_SSBO_Bind_Slot.USER_PARAMS))
@@ -698,13 +829,20 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                     // todo(isak) implement
                     
                     if (trace) { 
-                        fmt.println("  pop xform") 
+                        fmt.println("  pop xform")
                     }
                 }
                 case .DRAW: {
                     cmd := _command_consume(&command_queue, Command_Draw)
                     assert(cmd.base_instance == 0, "base_instance is unhandled")
-                    
+
+                    if !window.bindless_supported {
+                        tex_units := _command_consume(&command_queue, Draw_Texture_Units)
+                        for i in 0..<tex_units.count {
+                            gl.BindTextureUnit(u32(i), tex_units.tex_ids[i])
+                        }
+                    }
+
                     sg.draw(cmd.index_offset, cmd.index_count, cmd.instance_count)
 
                     if (trace) { fmt.println("  draw", cmd.index_offset, cmd.index_count, cmd.instance_count, cmd.base_instance ) }
@@ -764,7 +902,7 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                     cmd := _command_consume(&command_queue, Command_Scissor_Mode)
                     // note(isak): GL expects y=0 to be the bottom, but our convention is the top, so we transform
                     gl.Scissor(cmd.x, i32(window.rect.h) - cmd.y - cmd.h, max(cmd.w, 0), max(cmd.h, 0))
-                    
+
                     if (trace) { fmt.println("  scissor", cmd.x, cmd.y, cmd.w, cmd.h) }
                 }
             }
@@ -787,11 +925,31 @@ r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, u
     if geometry.count + 1 > MAX_BATCH_VERTICES {
         batch_flush(&window.renderer)
     }
+
     if window.renderer.new_draw_on_next_push {
         r_push_draw(
             index_offset = u32(geometry.count) * 6,
             index_count = 0
         )
+    }
+
+    resolved_tex_index := tex_index
+
+    // note(isak): non-bindless path — remap global texture slot to a local texture unit.
+    // this must happen AFTER the new_draw_on_next_push check so the texture is assigned
+    // to the correct draw's unit map.
+    if !window.bindless_supported {
+        local := texture_unit_map_assign(&window.renderer.texture_unit_map, tex_index)
+        if local == UNMAPPED_UNIT {
+            // note(isak): hit 16 texture units — start a new draw and retry
+            r_push_draw(
+                index_offset = u32(geometry.count) * 6,
+                index_count = 0
+            )
+            local = texture_unit_map_assign(&window.renderer.texture_unit_map, tex_index)
+            assert(local != UNMAPPED_UNIT)
+        }
+        resolved_tex_index = u32(local)
     }
 
     #no_bounds_check {
@@ -805,7 +963,7 @@ r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, u
             uv_max = {uv_max.x, uv_max.y},
             tex_layer = layer,
             color = transmute(u32)color,
-            tex_index = tex_index,
+            tex_index = resolved_tex_index,
             angle = angle
         }
 

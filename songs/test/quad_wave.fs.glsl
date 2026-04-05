@@ -1,13 +1,18 @@
-#version 460 
+#version 460
+#ifdef BINDLESS
 #extension GL_ARB_bindless_texture : require
+
+layout(binding = 4, std430) readonly buffer textureHandles {
+    sampler2DArray textures[];
+};
+#else
+uniform sampler2DArray textures[16];
+#endif
 
 layout (binding = 3, std140) uniform globalData {
     mat3 t;
     float circleSizeOsupx;
     float time;
-};
-layout(binding = 4, std430) readonly buffer textureHandles {
-    sampler2D textures[];
 };
 
 in vec3 uv;
@@ -23,7 +28,7 @@ out vec4 frag_color;
 vec2 rect_to_polar(vec2 rect) {
     float r = length(rect);
     float theta = atan(rect.y, rect.x) + PI;
-    
+
     return vec2(r, theta / TAU);
 }
 
@@ -41,8 +46,8 @@ void main() {
     float swirl = 0.5 * sin(polar.x - s)+0.5;
 
     polar.x = sin((polar.x-s*0.01) * 20)*0.5+0.5;
-    
+
     vec2 coords = uv.xy + rotateZAxis(polar, s)*0.05;
-    frag_color = texture(textures[texIndex], clamp(coords, 0.001, 1.0)) * color;
+    frag_color = texture(textures[texIndex], vec3(clamp(coords, 0.001, 1.0), 0.0)) * color;
     //frag_color = vec4(rotateZAxis(polar, s), 0, 1);
 }

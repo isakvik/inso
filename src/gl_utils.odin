@@ -7,6 +7,20 @@ import gl "vendor:OpenGL"
 
 
 //////////////////////////////////////////////////////
+// note(isak): gl capability queries
+
+gl_has_extension :: proc(name: cstring) -> bool {
+    num_extensions: i32
+    gl.GetIntegerv(gl.NUM_EXTENSIONS, &num_extensions)
+    for i in 0..<num_extensions {
+        if gl.GetStringi(gl.EXTENSIONS, u32(i)) == name {
+            return true
+        }
+    }
+    return false
+}
+
+//////////////////////////////////////////////////////
 // note(isak): buffer object, useful for proxies to GPU buffers
 
 Buffer :: struct(T: typeid) {
@@ -274,7 +288,9 @@ fbo_init :: proc(color_texture_count, depth_texture_count: u32, w, h: i32, color
         result.color_textures[i] = t
         gl.TextureStorage3D(t, 1, color_format, w, h, 1)
         gl.NamedFramebufferTextureLayer(result.id, gl.COLOR_ATTACHMENT0 + i, t, 0, 0)
-        result.color_texture_handles[i] = gl.GetTextureHandleARB(t)
+        if window.bindless_supported {
+            result.color_texture_handles[i] = gl.GetTextureHandleARB(t)
+        }
     }
 
     assert(depth_texture_count <= 1)
@@ -283,7 +299,9 @@ fbo_init :: proc(color_texture_count, depth_texture_count: u32, w, h: i32, color
         result.depth_texture = t
         gl.TextureStorage3D(t, 1, gl.DEPTH32F_STENCIL8, w, h, 1)
         gl.NamedFramebufferTextureLayer(result.id, gl.DEPTH_ATTACHMENT, t, 0, 0)
-        result.depth_texture_handle = gl.GetTextureHandleARB(t)
+        if window.bindless_supported {
+            result.depth_texture_handle = gl.GetTextureHandleARB(t)
+        }
     }
 
     draw_buffers := [4]u32 { gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2, gl.COLOR_ATTACHMENT3 }

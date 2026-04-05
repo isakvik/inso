@@ -175,15 +175,23 @@ text_submit_geometry :: proc(renderer: ^Renderer) {
     // note(isak): the state management isn't needed, but this checks if texture updates
     // is necessary and calls the callback with the dirty rect
     fs.EndState(&text_engine.ctx)
-    
-    // note(isak): since we do vertex picking and our vertex data composes a whole glyph, 
+
+    // note(isak): since we do vertex picking and our vertex data composes a whole glyph,
     // i've written the shader to draw a glyph quad by invoking a quad 6 times
     r_bind_layer_and_push_current_state(.DEBUG)
     r_bind_pipeline({ builtin_pipeline_slot(.TEXT) })
     r_bind_ssbo(&window.text_store, .VERTEX_BUFFER)
+
     r_push_draw(
         index_offset = 0,
         index_count = renderer.text_geometry.count * 6,
         instance_count = 1
     )
+
+    // note(isak): for non-bindless text, assign font atlas to unit 0.
+    // must happen after r_push_draw so we populate the NEW draw's map, not the previous one.
+    // (text.vs.glsl hardcodes texIndex=0 in non-bindless mode)
+    if !window.bindless_supported {
+        texture_unit_map_assign(&renderer.texture_unit_map, builtin_texture(.FONT_ATLAS))
+    }
 }

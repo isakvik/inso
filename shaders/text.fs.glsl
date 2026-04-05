@@ -1,9 +1,13 @@
 #version 460
+#ifdef BINDLESS
 #extension GL_ARB_bindless_texture : require
 
 layout(binding = 4, std430) readonly buffer textureHandles {
     sampler2DArray textures[];
 };
+#else
+uniform sampler2DArray textures[16];
+#endif
 
 in vec2 uv;
 in vec4 color;

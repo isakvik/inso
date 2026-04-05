@@ -1,6 +1,7 @@
 package notosu
 
 import q "core:container/queue"
+import "core:log"
 
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
@@ -15,15 +16,16 @@ window: struct {
     renderer: Renderer,
 
     cursor_hidden: bool,
+    bindless_supported: bool,
 
     handle: ^sdl.Window,
     gl_context: sdl.GLContext,
-    
+
     ui_enabled: bool,
     map_dropdown: Debug_Dropdown,
     offset_window_open: bool,
-    
-    // note(isak): graphical resources used by the drawing context go here 
+
+    // note(isak): graphical resources used by the drawing context go here
 
     bindings: sg.Bindings,
     pass_action: sg.Pass_Action,
@@ -32,7 +34,7 @@ window: struct {
     shaders: q.Queue(Shader),
     pipelines: q.Queue(sg.Pipeline),
     framebuffers: [Framebuffer_ID]GL_Framebuffer,
-    
+
     // note(isak): we make a distinction between static and dynamic geometry; dynamic can be streamed
     // data into efficiently by using a triple buffer setup, while static is single-buffered and is fit
     // for bigger data that isn't updated as often (such as during a loading screen)
@@ -41,21 +43,23 @@ window: struct {
     fullscreen_store: GL_Buffer(Quad),
 
     quad_store: GL_Triple_Buffer(Quad),
-    
+
     slider_instance_store: GL_Buffer(vec2),
-    
+
     text_store: GL_Triple_Buffer(Glyph_Quad),
-    
+
     shader_global_buffer: GL_Uniform_Buffer(Shader_Globals),
     slider_param_buffer: GL_Uniform_Buffer(Slider_Globals),
     user_param_buffer: GL_Uniform_Buffer(User_Shader_Params),
     circle_geo_buffer: GL_Buffer(Slider_Vertex),
     texture_buffer: GL_Buffer(u64),
 
+    // note(isak): non-bindless fallback
+    tex_id_lookup: [MAX_TEXTURE_HANDLES]u32,
+
     white_texture: Texture,
     profiler_texture: Texture,
     font_atlas_texture: Texture,
-
 
     skin_textures: [Skin_Element_Type]Texture,
     is_high_resolution: [Skin_Element_Type]bool
@@ -78,6 +82,9 @@ window_init :: proc(rect: Rect) {
     gl.load_up_to(4, 6, sdl.gl_set_proc_address)
     gl.ClipControl(gl.UPPER_LEFT, gl.ZERO_TO_ONE)
     gl.Enable(gl.SCISSOR_TEST)
+
+    window.bindless_supported = gl_has_extension("GL_ARB_bindless_texture")
+    log.infof("GL_ARB_bindless_texture: {}", window.bindless_supported ? "supported" : "not supported")
 
     win_x, win_y: i32
     sdl.GetWindowPosition(window.handle, &win_x, &win_y)

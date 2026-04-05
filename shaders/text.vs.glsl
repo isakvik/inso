@@ -1,6 +1,8 @@
 #version 460
+#ifdef BINDLESS
 #extension GL_ARB_bindless_texture : require
 #extension GL_NV_gpu_shader5 : enable
+#endif
 
 struct GlyphQuad {
     vec2 pos_min;
@@ -44,10 +46,14 @@ void main() {
         vec2(pos[right].x, pos[bottom].y),
         vec2(uvs[right].x, uvs[bottom].y)
     };
-    
+
     uv = v.uv;
     color = unpackUnorm4x8(q.color);
-    texIndex = 2;
+#ifdef BINDLESS
+    texIndex = 2; // global slot for font atlas
+#else
+    texIndex = 0; // local unit — font atlas bound to unit 0 for text draws
+#endif
 
     gl_Position = vec4(t * vec3(v.pos, 1.0), 1.0);
 }

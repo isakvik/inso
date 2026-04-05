@@ -208,34 +208,50 @@ text_pipeline_desc :: proc() -> sg.Pipeline_Desc {
     to write a packing system or another way of handling multi-texture draws that doesn't hit the limit
 */
 prepare_textures_for_rendering :: proc() {
-    textures := &window.texture_buffer.data
-
-    textures[Builtin_Texture_Slot.WHITE] = window.white_texture.tex_handle
-    textures[Builtin_Texture_Slot.PROFILER] = window.profiler_texture.tex_handle
-    textures[Builtin_Texture_Slot.FONT_ATLAS] = window.font_atlas_texture.tex_handle
-    textures[Builtin_Texture_Slot.SLIDER_FRAMEBUFFER] = window.framebuffers[.SLIDERS].color_texture_handles[0]
     num_elements := len(Builtin_Texture_Slot)
 
-    for skin_el in Skin_Element_Type {
-        textures[num_elements] = window.skin_textures[skin_el].tex_handle
-        num_elements += 1
-    }
+    if window.bindless_supported {
+        textures := &window.texture_buffer.data
+        textures[Builtin_Texture_Slot.WHITE] = window.white_texture.tex_handle
+        textures[Builtin_Texture_Slot.PROFILER] = window.profiler_texture.tex_handle
+        textures[Builtin_Texture_Slot.FONT_ATLAS] = window.font_atlas_texture.tex_handle
+        textures[Builtin_Texture_Slot.SLIDER_FRAMEBUFFER] = window.framebuffers[.SLIDERS].color_texture_handles[0]
 
-    for map_texture in game.active_mapset.textures.data {
-        textures[num_elements] = map_texture.tex_handle
-        num_elements += 1
-    }
+        for skin_el in Skin_Element_Type {
+            textures[num_elements] = window.skin_textures[skin_el].tex_handle
+            num_elements += 1
+        }
+        for map_texture in game.active_mapset.textures.data {
+            textures[num_elements] = map_texture.tex_handle
+            num_elements += 1
+        }
+        for i in 0..<num_elements {
+            if textures[i] > 0 {
+                gl.MakeTextureHandleResidentARB(textures[i])
+            }
+        }
+    } else {
+        ids := &window.tex_id_lookup
+        ids[Builtin_Texture_Slot.WHITE] = window.white_texture.tex_id
+        ids[Builtin_Texture_Slot.PROFILER] = window.profiler_texture.tex_id
+        ids[Builtin_Texture_Slot.FONT_ATLAS] = window.font_atlas_texture.tex_id
+        ids[Builtin_Texture_Slot.SLIDER_FRAMEBUFFER] = window.framebuffers[.SLIDERS].color_textures[0]
 
-    for i in 0..<num_elements {
-        if textures[i] > 0 {
-            gl.MakeTextureHandleResidentARB(textures[i])
+        for skin_el in Skin_Element_Type {
+            ids[num_elements] = window.skin_textures[skin_el].tex_id
+            num_elements += 1
+        }
+        for map_texture in game.active_mapset.textures.data {
+            ids[num_elements] = map_texture.tex_id
+            num_elements += 1
         }
     }
 }
 
 cleanup_textures_for_rendering :: proc() {
+    if !window.bindless_supported do return
+
     textures := &window.texture_buffer.data
-    
     num_elements := len(Builtin_Texture_Slot) + len(Skin_Element_Type) + game.active_mapset.textures.len
     for i in 0..<num_elements {
         if textures[i] > 0 {

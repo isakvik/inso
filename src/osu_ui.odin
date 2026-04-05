@@ -113,19 +113,6 @@ ui_update_timeline :: proc(ui: ^UI_Timeline, time_value: ^f64) -> (result: bool)
     return result
 }
 
-render_timeline :: proc(ui: ^UI_Timeline, beatmap_leadin_fract, beatmap_finish_fract: f32) {
-    r_push_transform(clipspace_transform)
-    
-    r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, 1, ui.display_h_px / window.rect.h}, 
-                     .BOTTOM_LEFT, with_alpha(color_white, 0.1))
-    r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, beatmap_finish_fract, ui.display_h_px / window.rect.h}, 
-                     .BOTTOM_LEFT, with_alpha(color_white, 0.4))
-    if beatmap_leadin_fract > 0 {
-        r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, beatmap_leadin_fract, ui.display_h_px / window.rect.h}, 
-                         .BOTTOM_LEFT, with_alpha(color_lime_green, 0.2))
-    }
-}
-
 handle_and_render_timeline :: proc() {
     seek_to_fract: f64
     if ui_update_timeline(&game.ui_timeline, &seek_to_fract) {
@@ -158,6 +145,19 @@ handle_and_render_timeline :: proc() {
     beatmap_finish_fract := f32(map_time_with_preempt / map_len_with_preempt)
     
     render_timeline(&game.ui_timeline, beatmap_leadin_fract, beatmap_finish_fract)
+}
+
+render_timeline :: proc(ui: ^UI_Timeline, beatmap_leadin_fract, beatmap_finish_fract: f32) {
+    r_push_transform(clipspace_transform)
+    
+    r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, 1, ui.display_h_px / window.rect.h}, 
+                     .BOTTOM_LEFT, with_alpha(color_white, 0.1))
+    r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, beatmap_finish_fract, ui.display_h_px / window.rect.h}, 
+                     .BOTTOM_LEFT, with_alpha(color_white, 0.4))
+    if beatmap_leadin_fract > 0 {
+        r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, beatmap_leadin_fract, ui.display_h_px / window.rect.h}, 
+                         .BOTTOM_LEFT, with_alpha(color_lime_green, 0.2))
+    }
 }
 
 render_input_display :: proc() {

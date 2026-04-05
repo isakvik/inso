@@ -196,7 +196,7 @@ renderer_init :: proc() {
     window.texture_buffer = sbo_init(u64, MAX_TEXTURE_HANDLES)
     
     window.shader_global_buffer = ubo_init(Shader_Globals, 1)
-    window.slider_param_buffer  = ubo_init(Slider_Globals, 1)
+    window.slider_param_buffer  = ubo_init(Slider_Params, 1)
     window.user_param_buffer    = ubo_init(User_Shader_Params, 1)
 
 
@@ -856,19 +856,20 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 case .DRAW_SLIDER: {
                     cmd := _command_consume(&command_queue, Command_Draw_Slider)
 
-                    slider_globals := Slider_Globals{
+                    slider_globals := Slider_Params{
                         border_color       = color_to_vec(cmd.border_color),
                         body_color         = color_to_vec(cmd.body_color),
                         script_translation = cmd.script_translation,
+                        base_instance      = cmd.base_instance,
                     }
-                    gl.NamedBufferSubData(window.slider_param_buffer.id, 0, size_of(Slider_Globals), &slider_globals)
+                    gl.NamedBufferSubData(window.slider_param_buffer.id, 0, size_of(Slider_Params), &slider_globals)
                     ubo_bind(&window.slider_param_buffer, u32(Shader_SSBO_Bind_Slot.SLIDER_PARAMS))
-
-                    gl.DrawArraysInstancedBaseInstance(
+                    
+                    gl.DrawArraysInstanced(
                         gl.TRIANGLE_FAN,
                         0,
                         renderer.circle_geometry.count,
-                        cmd.instance_count, cmd.base_instance)
+                        cmd.instance_count)
 
                     if (trace) { fmt.println("  drawslider", cmd.instance_count, cmd.base_instance) }
                 }

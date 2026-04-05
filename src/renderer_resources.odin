@@ -73,10 +73,11 @@ User_Shader_Params :: struct #align(16) {
 }
 
 // note(isak): per-draw slider params, uploaded before each DRAW_SLIDER command
-Slider_Globals :: struct {
+Slider_Params :: struct {
     border_color:       vec4,
     body_color:         vec4,
     script_translation: vec2,  // osu!px, applied in VS before coord normalization
+    base_instance:      u32,   // replaces gl_BaseInstance for intel compat
 }
 
 

@@ -348,32 +348,38 @@ shader_init :: proc(vs_path, fs_path: string, alloc: runtime.Allocator = context
         return {}, .PATH_ERROR
     }
 
-    // note(isak): inject #define BINDLESS after #version line when the extension is available
-    vs_source := vs_filedata
-    fs_source := fs_filedata
+    // note(isak): try bindless compilation first. if the driver reports the extension but
+    // can't actually compile shaders with sampler arrays in buffer blocks (intel), fall back
+    // to the non-bindless path and disable bindless globally for all subsequent shaders
     if window.bindless_supported {
-        vs_source = _shader_inject_define(vs_filedata, vs_filelen, alloc)
-        fs_source = _shader_inject_define(fs_filedata, fs_filelen, alloc)
-    }
+        vs_source := _shader_inject_define(vs_filedata, vs_filelen, alloc)
+        fs_source := _shader_inject_define(fs_filedata, fs_filelen, alloc)
 
-    temp_shader := sg.make_shader(
-        sg.Shader_Desc {
+        temp_shader := sg.make_shader({
             vertex_func = {source = vs_source},
-            fragment_func = {source = fs_source}
-        },
-    )
+            fragment_func = {source = fs_source},
+        })
 
-    if sg.query_shader_state(temp_shader) == sg.Resource_State.VALID {
-        // note(isak): for non-bindless, set up sampler uniform array so textures[i] maps to unit i
-        if !window.bindless_supported {
-            _shader_setup_sampler_uniforms(temp_shader)
+        if sg.query_shader_state(temp_shader) == .VALID {
+            return { shader = temp_shader, vs_path = vs_path, fs_path = fs_path }, .NONE
         }
-        return {
-            shader = temp_shader,
-            vs_path = vs_path,
-            fs_path = fs_path
-        }, .NONE
+
+        log.warnf("bindless shader compile failed for '{}' / '{}', falling back to non-bindless", vs_path, fs_path)
+        sg.destroy_shader(temp_shader)
+        window.bindless_supported = false
     }
+
+    // note(isak): non-bindless path
+    temp_shader := sg.make_shader({
+        vertex_func = {source = vs_filedata},
+        fragment_func = {source = fs_filedata},
+    })
+
+    if sg.query_shader_state(temp_shader) == .VALID {
+        _shader_setup_sampler_uniforms(temp_shader)
+        return { shader = temp_shader, vs_path = vs_path, fs_path = fs_path }, .NONE
+    }
+
     sg.destroy_shader(temp_shader)
     return {}, .COMPILE_ERROR
 }

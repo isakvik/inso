@@ -4,7 +4,6 @@ import "core:thread"
 import "core:math/linalg"
 import sb "swap_buffer"
 import "slotmap"
-import rb "ring_buffer"
 
 import "core:container/queue"
 import "core:fmt"
@@ -44,12 +43,10 @@ Beatmap :: struct {
     preempt_ms: f64,
     circle_radius_osupx: f32,
     
+    phase_transitions: sb.Swap_Buffer(Phase_Transition),
+
     // -- gfx data fields
-    
-    // todo(isak): if drawables are added sequentially, this allows for an acceleration structure where 
-    // we keep track of the timespan of active drawables and thus don't have to iterate the entire set
-    persistent_gfx: rb.Ring_Buffer(Drawable_Handle),
-    
+
     gameplay_expiring_gfx: sb.Swap_Buffer(Drawable_Handle),
     map_expiring_gfx: sb.Swap_Buffer(Drawable_Handle),
     
@@ -94,19 +91,13 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
 
     write_default_elements(&beatmap.elements, &beatmap.animations)
     
-    rb.init(&beatmap.persistent_gfx, 8192, memory.allocators[.DRAWABLES])
-    beatmap.persistent_gfx.len = cap(beatmap.persistent_gfx.data)
-    
+    sb.init(&beatmap.phase_transitions, 256, memory.allocators[.DRAWABLES])
+
     sb.init(&beatmap.gameplay_expiring_gfx, 8192, memory.allocators[.DRAWABLES])
     sb.init(&beatmap.map_expiring_gfx, 8192, memory.allocators[.DRAWABLES])
     slotmap.init(&beatmap.drawables, 8192, memory.allocators[.DRAWABLES])
     _ = slotmap.insert(&beatmap.drawables, null_drawable)
-    
-    //-- @speed @beta
-    // todo(isak): we should probably run the lua init code first since that's the reasonable way of populating
-    // custom drawables to the hitobjects a map wants, then write the defaults to anything that doesn't have graphical
-    // handles after that, just to save some work
-    TEST_write_default_drawables_from_map(game.active_map)
+
     bg_handle := TEST_bg_drawable(game.active_map.bg_filename, game.active_notosu_map.bg_pipeline_name)
     
     if lua_cares_about_event(.ON_INIT) {
@@ -163,7 +154,7 @@ beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
         hobj.gfx_handles = {}
     }
     
-    rb.destroy(&beatmap.persistent_gfx)
+    sb.destroy(&beatmap.phase_transitions)
     sb.destroy(&beatmap.map_expiring_gfx)
     sb.destroy(&beatmap.gameplay_expiring_gfx)
     sb.destroy(&beatmap.expiring_hitobjects)
@@ -454,6 +445,7 @@ hitcircle_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
     if end_time < map_time {
         judgement_new(hobj, .MISS, end_time - hobj.end_time_ms)
         judgement_new_drawable(hobj)
+        emit_phase_transition(hobj, .MISS)
         hobj.flags &~= {.VISIBLE}
         hobj.flags |= {.EXPIRED}
         expired = true
@@ -690,6 +682,7 @@ slider_expire :: proc(hobj: ^Hitobject) {
 
     judgement_new(hobj, result, 0)
     judgement_new_drawable(hobj)
+    emit_phase_transition(hobj, result == .MISS ? .MISS : .HIT)
     hobj.flags &~= {.VISIBLE}
     hobj.flags |= {.EXPIRED}
 }

@@ -3,7 +3,6 @@ package notosu
 import "core:time"
 import sb "swap_buffer"
 import "slotmap"
-import rb "ring_buffer"
 
 import "core:log"
 import "core:math/linalg"
@@ -17,7 +16,7 @@ playfield_size_osupx :: f32(512)
 osu_slider_curve_points_separation :: f32(2.5)
 
 // note(isak): osu!'s actual play area is 512x384 within the 512x512 osu!px coordinate space,
-// with a small vertical offset for the toolbar. these constants define that base placement and
+// with a small vertical offset for the HUD. these constants define that base placement and
 // are always applied in playfield_build_transform, independent of any lua adjustments.
 playfield_base_scale :: f32(512.0 / 480.0)
 playfield_base_translation_osupx :: vec2{0, 72} // (512-384)/2 + 8
@@ -62,9 +61,9 @@ game: struct {
         last_hit_at, last_valid_press_at: f64,
     },
 
-    // note(isak): managed sounds to be used with the game_sound_* api. we create BASS streams from samples, and then
-    // BASS handles the rest - not quite sure if we can further reuse sound data instead of creating multiple BASS handles,
-    // but i think it's fine.
+    // note(isak): managed sounds to be used with the game_sound_* api. we create BASS streams 
+    // from samples, and then BASS handles the rest - not quite sure if we can further reuse sound data 
+    // instead of creating multiple BASS handles, but i think it's fine.
     sounds: slotmap.Slotmap(Sound),
 }
 
@@ -102,6 +101,19 @@ Hitobject_Flag :: enum {
     CLAP,
 }
 
+Hitobject_Phase :: enum u8 {
+    NONE,
+    ACTIVE,  // on screen, hittable
+    HOLD,    // slider: tracking the ball
+    HIT,
+    MISS,
+}
+
+Phase_Transition :: struct {
+    hitobject_index: int,
+    from, to: Hitobject_Phase,
+}
+
 Hitobject :: struct {
     type: Hitobject_Type,
     flags: Hitobject_Flags,
@@ -119,6 +131,9 @@ Hitobject :: struct {
 
     slider_path_index: int,
     slider_state: Slider_State,
+
+    phase: Hitobject_Phase,
+    custom_elements: [Hitobject_Phase]Element_ID,
 
     judgement_index: int,
     gfx_handles: []Drawable_Handle,
@@ -191,6 +206,11 @@ hitobject_combo_color :: proc(hobj: ^Hitobject) -> (result: Color) {
         result = DEFAULT_COMBO_COLORS[color_index]
     }
     return result
+}
+
+emit_phase_transition :: proc(hobj: ^Hitobject, to: Hitobject_Phase) {
+    sb.append(&game.beatmap.phase_transitions, Phase_Transition{hobj.index, hobj.phase, to})
+    hobj.phase = to
 }
 
 
@@ -398,9 +418,11 @@ osu_on_update :: proc(dt: f64) {
     map_time := beatmap_music_time_ms(&game.beatmap)
     hobj_it := get_visible_hobj_iterator(&game.beatmap.visible_hitobject_state, map_time)
     
+    // note(isak): phase emitter — advance hitobjects entering the visibility window
     for &hobj in hobj_it {
-        if .VISIBLE not_in hobj.flags && .EXPIRED not_in hobj.flags {
+        if hobj.phase == .NONE {
             if hitobject_visible_start_time(&hobj) < map_time && map_time < hitobject_visible_end_time(&hobj) {
+                emit_phase_transition(&hobj, .ACTIVE)
                 hobj.flags |= {.VISIBLE}
                 sb.append(&game.beatmap.expiring_hitobjects, hobj.index)
             }
@@ -408,7 +430,7 @@ osu_on_update :: proc(dt: f64) {
     }
     process_expiring_hitobjects(&game.beatmap.expiring_hitobjects)
 
-    
+
     // todo(isak): valid key presses system needs testing
     game.input.available_presses = 0
     if game.input.mouse_keys_enabled {
@@ -423,9 +445,9 @@ osu_on_update :: proc(dt: f64) {
 
     if valid_controller_press() {
         game.input.last_valid_press_at = map_time
-        
+
         for &hobj, i in hobj_it {
-            if .EXPIRED in hobj.flags || .HIT in hobj.flags || .HEAD_HIT in hobj.slider_state.flags {
+            if hobj.phase != .ACTIVE {
                 continue
             }
             hobj_pos := hitobject_pos(&hobj)
@@ -436,60 +458,35 @@ osu_on_update :: proc(dt: f64) {
             if judgement == .NONE {
                 continue
             }
-            
-            clear_hitobject_drawables(&hobj)
-            
-            hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, 2) or_continue
-            combo_color := hitobject_combo_color(&hobj)
-            
-            hobj.gfx_handles[0] = drawable_new({
-                flags = {.ACTIVE},
-                element = builtin_element_slot(.CLICKED_HIT_CIRCLE_OVERLAY),
-                layer = .HITOBJECTS,
-                size = game.beatmap.circle_radius_osupx * 2,
-                anchor = .CENTER,
-                color = color_white,
-                start_time_ms = map_time,
-                end_time_ms = map_time + 250
-            })
-            hobj.gfx_handles[1] = drawable_new({
-                flags = {.ACTIVE},
-                element = builtin_element_slot(.CLICKED_HIT_CIRCLE),
-                layer = .HITOBJECTS,
-                size = game.beatmap.circle_radius_osupx * 2,
-                anchor = .CENTER,
-                color = combo_color,
-                start_time_ms = map_time,
-                end_time_ms = map_time + 250
-            })
-            
-            if hobj.type == .CIRCLE {
+
+            #partial switch hobj.type {
+            case .CIRCLE:
+                emit_phase_transition(&hobj, .HIT)
                 judgement_new_drawable(&hobj)
+            case .SLIDER:
+                emit_phase_transition(&hobj, .HOLD)
             }
 
             consume_controller_press()
             break
         }
     }
-    //--
-    
+
     if game.playfield_dirty_transform {
         game.playfield_transform = playfield_build_transform()
         game.playfield_dirty_transform = false
     }
 
+    // note(isak): process phase transitions — creates/replaces drawables in response to game logic
+    process_phase_transitions()
+
     // beatmap render
-    
+
     r_bind_layer_and_push_current_state(.HITOBJECTS)
-    
-    //-- @temp
-    // todo(isak): for the eventual rewrite here that takes object type into account, consider a
-    // function pointer in the hitobject struct that renders (and maybe one that updates? continual
-    // logic is necessary for sliders... hitting circles is a keyboard event kind of thing)
-    
-    // todo(isak) @beta ALSO don't forget that sliders SHOULD go on top of hitobjects appearing later, so the 
-    // render hitobjects loop should be integrated into this 
-    
+
+    // todo(isak) @beta sliders SHOULD go on top of hitobjects appearing later, so the
+    // render hitobjects loop should be integrated into this
+
     for &hobj in hobj_it {
         if map_time < hobj.start_time_ms - game.beatmap.preempt_ms || hobj.end_time_ms < map_time {
             continue
@@ -497,19 +494,18 @@ osu_on_update :: proc(dt: f64) {
         if hobj.type == .SLIDER {
             path := &game.beatmap.slider_paths[hobj.slider_path_index]
             render_slider_path(&window.renderer, &hobj, path)
-            
+
             r_push_transform(game.playfield_transform)
             render_slider_quads(&hobj, path, map_time)
         }
     }
-    
+
     r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
     r_push_transform(game.playfield_transform)
 
-    // note(isak): we render hitobject elements back to front for correct blending
-    // todo(isak): @speed @beta - use persistent_gfx for visible set optimization
+    // note(isak): render hitobject elements back to front for correct blending
     fade_in_ms := min(game.beatmap.preempt_ms * 0.4, 400.0)
-    #reverse for &hobj in game.beatmap.hitobjects {
+    #reverse for &hobj in hobj_it {
         alpha_mul: f32 = 1.0
         if hobj.judgement_index == 0 {
             visible_start := hobj.start_time_ms - game.beatmap.preempt_ms
@@ -522,7 +518,6 @@ osu_on_update :: proc(dt: f64) {
             }
         }
     }
-    //--
     
     process_and_draw_expiring_gfx_refs(&game.beatmap.gameplay_expiring_gfx)
     
@@ -627,6 +622,7 @@ handle_play_input_events :: proc() {
     
     if key_is_pressed(.HOME) {
         game.time_rate = 1
+        sound_set_speed(&game.beatmap.music, game.time_rate)
     }
     if key_is_pressed(.PAGEUP) {
         game.time_rate *= 2

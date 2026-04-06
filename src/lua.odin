@@ -133,8 +133,8 @@ lua_classes: [Lua_Class_Type]Lua_Class = {
         static_funcs    = luaapi_color_static_funcs,
     },
     .PLAYFIELD = {
-        name         = "Playfield",
-        static_funcs = luaapi_playfield_static_funcs,
+        name            = "Playfield",
+        static_funcs    = luaapi_playfield_static_funcs,
     },
 }
 
@@ -712,6 +712,7 @@ lua_call_beatmap_func :: proc {
 luaapi_hitobject_static_funcs := []lua.L_Reg {
   { "get_at_ms", luaapi_hitobject_get_at_ms },
   { "get_in_range_ms", luaapi_hitobject_get_in_range_ms },
+  { "get_visible", luaapi_hitobject_get_visible },
   { nil, nil },
 }
 
@@ -721,6 +722,7 @@ luaapi_hitobject_instance_funcs := []lua.L_Reg {
   { "register_event", luaapi_hitobject_register_event },
   { "hide", luaapi_hitobject_hide },
   { "unhide", luaapi_hitobject_unhide },
+  { "get_index", luaapi_hitobject_get_index },
   { "get_pos", luaapi_hitobject_get_pos },
   { "set_pos", luaapi_hitobject_set_pos },
   { "get_start_time", luaapi_hitobject_get_start_time },
@@ -775,6 +777,23 @@ luaapi_hitobject_get_in_range_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
     return 1
 }
 
+luaapi_hitobject_get_visible :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    state := &game.beatmap.visible_hitobject_state
+    count := i32(state.latest_i - state.earliest_i)
+
+    lua.createtable(L, max(count, 0), 0)
+
+    table_i: i32 = 1
+    for i in state.earliest_i..<state.latest_i {
+        if i >= len(game.beatmap.hitobjects) do break
+        lua_create_userdata(L, i, lua_classes[.HITOBJECT].name)
+        lua.rawseti(L, -2, table_i)
+        table_i += 1
+    }
+    return 1
+}
+
 _luaapi_hitobject_op :: proc "c" (
     L: ^lua.State, 
     op: proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32
@@ -806,6 +825,13 @@ luaapi_hitobject_unhide :: proc "c" (L: ^lua.State) -> (result: i32) {
             if found do d.flags |= {.ACTIVE}
         }
         return 0
+    })
+}
+
+luaapi_hitobject_get_index :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        lua.pushinteger(L, lua.Integer(hobj.index))
+        return 1
     })
 }
 

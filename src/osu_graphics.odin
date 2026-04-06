@@ -5,9 +5,6 @@ import q "core:container/queue"
 import "core:math"
 import "core:math/ease"
 import "core:math/linalg"
-import "core:slice"
-
-import rb "ring_buffer"
 import sb "swap_buffer"
 import "slotmap"
 
@@ -405,30 +402,119 @@ clear_hitobject_drawables :: proc(hobj: ^Hitobject) {
     hobj.gfx_handles = {}
 }
 
-// note(isak): seeks the entirety of the ring buffer until a contiguous run of n unoccupied handles are found
-reserve_handles :: proc(buf: ^rb.Ring_Buffer(Drawable_Handle), #any_int n: int) -> ([]Drawable_Handle, bool) {
-    at: int 
-    has_contiguous_space: bool
-    for !has_contiguous_space && at < cap(buf.data) {
-        found_active_el: bool
-        for i in 0..<n {
-            handle := rb.at(buf, buf.cursor + at + i)
-            if handle.index > 0 {
-                at += i + 1
-                found_active_el = true
-                break
+// note(isak): creates default drawables for a hitobject entering ACTIVE phase.
+// respects custom_elements if set by lua at init time.
+write_hitobject_drawables :: proc(hobj: ^Hitobject) {
+    if hobj.type != .CIRCLE && hobj.type != .SLIDER { return }
+
+    // todo(isak): check hobj.custom_elements[.ACTIVE] for lua-overridden elements
+
+    combo_color := hitobject_combo_color(hobj)
+
+    digits: [4]int
+    n_digits := _combo_digits(int(hobj.combo_number), &digits)
+    total_handles := n_digits + 3
+
+    hobj.gfx_handles = make([]Drawable_Handle, total_handles, memory.allocators[.DRAWABLES])
+
+    // last 3 handles (rendered first, behind digits)
+    base := [?]Element_Type{.HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
+    for el_type, i in base {
+        end_ms := hobj.start_time_ms + (game.beatmap.timing_windows.ok if el_type != .APPROACH_CIRCLE else 0)
+        hobj.gfx_handles[n_digits + i] = drawable_new(Drawable{
+            flags        = {.ACTIVE},
+            element      = builtin_element_slot(el_type),
+            layer        = .HITOBJECTS,
+            size         = game.beatmap.circle_radius_osupx * 2,
+            anchor       = .CENTER,
+            color        = (combo_color if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE else with_alpha(color_white, 1)),
+            start_time_ms = hobj.start_time_ms - game.beatmap.preempt_ms,
+            end_time_ms   = end_ms,
+        })
+    }
+
+    // digit drawables
+    hc_size := game.active_skin.elements[.HITCIRCLE].metrics
+    number_scale := (game.beatmap.circle_radius_osupx * 2) / max(hc_size.x, 1) * COMBO_NUMBER_SCALE
+
+    total_digits_w: f32
+    for digit in 0..<n_digits {
+        digit_el := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[digit])
+        total_digits_w += game.active_skin.elements[digit_el].metrics.x * number_scale
+    }
+    x := -total_digits_w / 2
+    for di in 0..<n_digits {
+        digit_el      := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[di])
+        digit_metrics := game.active_skin.elements[digit_el].metrics
+        digit_size    := digit_metrics * number_scale
+        hobj.gfx_handles[di] = drawable_new(Drawable{
+            flags   = {.ACTIVE},
+            element = builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + digits[di])),
+            layer   = .HITOBJECTS,
+            pos     = {x + digit_size.x / 2, 0},
+            size    = digit_size,
+            anchor  = .CENTER,
+            color   = with_alpha(color_white, 1),
+            start_time_ms = hobj.start_time_ms - game.beatmap.preempt_ms,
+            end_time_ms   = hobj.start_time_ms + game.beatmap.timing_windows.ok,
+        })
+        x += digit_size.x
+    }
+}
+
+// note(isak): creates the expanding circle hit feedback as expiring drawables
+write_click_feedback_drawables :: proc(hobj: ^Hitobject, map_time: f64) {
+    combo_color := hitobject_combo_color(hobj)
+    pos := hitobject_pos(hobj)
+
+    drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
+        flags = {.ACTIVE},
+        element = builtin_element_slot(.CLICKED_HIT_CIRCLE_OVERLAY),
+        layer = .HITOBJECTS,
+        pos = pos,
+        size = game.beatmap.circle_radius_osupx * 2,
+        anchor = .CENTER,
+        color = color_white,
+        start_time_ms = map_time,
+        end_time_ms = map_time + 250,
+    })
+    drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
+        flags = {.ACTIVE},
+        element = builtin_element_slot(.CLICKED_HIT_CIRCLE),
+        layer = .HITOBJECTS,
+        pos = pos,
+        size = game.beatmap.circle_radius_osupx * 2,
+        anchor = .CENTER,
+        color = combo_color,
+        start_time_ms = map_time,
+        end_time_ms = map_time + 250,
+    })
+}
+
+// note(isak): processes phase transitions emitted by game logic, creating/replacing drawables
+process_phase_transitions :: proc() {
+    map_time := beatmap_music_time_ms(&game.beatmap)
+
+    for transition in game.beatmap.phase_transitions.current {
+        hobj := &game.beatmap.hitobjects[transition.hitobject_index]
+
+        switch transition.to {
+        case .ACTIVE:
+            write_hitobject_drawables(hobj)
+        case .HOLD:
+            clear_hitobject_drawables(hobj)
+            write_click_feedback_drawables(hobj, map_time)
+        case .HIT:
+            clear_hitobject_drawables(hobj)
+            if transition.from == .ACTIVE {
+                write_click_feedback_drawables(hobj, map_time)
             }
+        case .MISS:
+            clear_hitobject_drawables(hobj)
+        case .NONE:
         }
-        has_contiguous_space = !found_active_el
     }
-    // todo(isak): needs eviction strategy in case of important elements (use another element flag for this)
-    assert(has_contiguous_space)
-    
-    if has_contiguous_space {
-        buf.cursor += at
-        return slice.from_ptr(rb.at(buf, buf.cursor), n), true
-    }
-    return slice.from_ptr(rb.at(buf, buf.cursor), 0), false
+    sb.swap(&game.beatmap.phase_transitions)
 }
 
 render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}, alpha_mul: f32 = 1.0) -> bool {
@@ -738,68 +824,6 @@ _combo_digits :: proc(n: int, buf: ^[4]int) -> (count: int) {
 }
 
 COMBO_NUMBER_SCALE :: f32(0.9)
-
-TEST_write_default_drawables_from_map :: proc(osu_map: ^Osu_Map) {
-    for &hobj in game.beatmap.hitobjects {
-        if hobj.type != .CIRCLE && hobj.type != .SLIDER {
-            continue
-        }
-
-        combo_color := hitobject_combo_color(&hobj)
-
-        digits: [4]int
-        n_digits := _combo_digits(int(hobj.combo_number), &digits)
-
-        total_handles := n_digits + 3
-        hobj.gfx_handles = reserve_handles(&game.beatmap.persistent_gfx, total_handles) or_continue
-
-        // last 3 handles (rendered first, behind digits)
-        base := [?]Element_Type{.HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
-        for el_type, i in base {
-            end_ms := hobj.start_time_ms + (game.beatmap.timing_windows.ok if el_type != .APPROACH_CIRCLE else 0)
-            hobj.gfx_handles[n_digits + i] = drawable_new(Drawable{
-                flags        = {.ACTIVE},
-                element      = builtin_element_slot(el_type),
-                layer        = .HITOBJECTS,
-                size         = game.beatmap.circle_radius_osupx * 2,
-                anchor       = .CENTER,
-                color        = (combo_color if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE else with_alpha(color_white, 1)),
-                start_time_ms = hobj.start_time_ms - game.beatmap.preempt_ms,
-                end_time_ms   = end_ms,
-            })
-        }
-
-        // digit drawables. each sized from its own skin metrics, spread and centered on hitobject pos
-        // compute total width first so we can center the run
-        hc_size := game.active_skin.elements[.HITCIRCLE].metrics
-        // how many osupx per natural skin pixel, based on hitcircle fitting circle_radius*2
-        number_scale := (game.beatmap.circle_radius_osupx * 2) / max(hc_size.x, 1) * COMBO_NUMBER_SCALE
-            
-        total_digits_w: f32
-        for digit in 0..<n_digits {
-            digit_el := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[digit])
-            total_digits_w += game.active_skin.elements[digit_el].metrics.x * number_scale
-        }
-        x := -total_digits_w / 2
-        for di in 0..<n_digits {
-            digit_el      := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[di])
-            digit_metrics := game.active_skin.elements[digit_el].metrics
-            digit_size    := digit_metrics * number_scale
-            hobj.gfx_handles[di] = drawable_new(Drawable{
-                flags   = {.ACTIVE},
-                element = builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + digits[di])),
-                layer   = .HITOBJECTS,
-                pos     = {x + digit_size.x / 2, 0},
-                size    = digit_size,
-                anchor  = .CENTER,
-                color   = with_alpha(color_white, 1),
-                start_time_ms = hobj.start_time_ms - game.beatmap.preempt_ms,
-                end_time_ms   = hobj.start_time_ms + game.beatmap.timing_windows.ok,
-            })
-            x += digit_size.x
-        }
-    }
-}
 
 TEST_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Handle) {
     tex, ok := mapset_texture(bg_path)

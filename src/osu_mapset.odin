@@ -679,7 +679,13 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                     case .SPINNER:
                         ok: bool
                         hitsound_params_at := strings.index_byte(hobj_extra_params, ',')
-                        hobj.end_time_ms, ok = strconv.parse_f64(hobj_extra_params[:hitsound_params_at]); assert(ok)
+                        if hitsound_params_at != -1 {
+                            hobj.end_time_ms, ok = strconv.parse_f64(hobj_extra_params[:hitsound_params_at])
+                        } else {
+                            hobj.end_time_ms, ok = strconv.parse_f64(hobj_extra_params)
+                        }
+                        assert(ok)
+                        
                     case .SLIDER:
                         slider: Slider_Path = {
                             bounds_min = {math.F32_MAX, math.F32_MAX},

@@ -55,7 +55,7 @@ function on_init()
     for i, hobj in ipairs(list) do 
         --hobj:hide()
         t = hobj:get_start_time()
-        table[i] = dd:clone()
+        table[hobj:get_index()] = dd:clone()
             :set_pos(hobj:get_pos())
             :set_time(t, t+1200)
     end
@@ -68,7 +68,9 @@ function on_init()
 end
 
 function on_update(time_ms)
-    for i, hobj in ipairs(list) do 
+    for ii, hobj in ipairs(Hitobject.get_visible()) do 
+        i = hobj:get_index()
+        
         x, y = hobj:get_pos()
         x = x + math.cos((time_ms*i*0.001) / 1000 + i*0.1)* i/10
         y = y + math.sin((time_ms*i*0.001) / 1000 + i*0.1)* i/10

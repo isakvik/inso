@@ -410,6 +410,7 @@ write_hitobject_drawables :: proc(hobj: ^Hitobject) {
     // todo(isak): check hobj.custom_elements[.ACTIVE] for lua-overridden elements
 
     combo_color := hitobject_combo_color(hobj)
+    preempt := hitobject_preempt_ms(hobj)
 
     digits: [4]int
     n_digits := _combo_digits(int(hobj.combo_number), &digits)
@@ -428,7 +429,7 @@ write_hitobject_drawables :: proc(hobj: ^Hitobject) {
             size         = game.beatmap.circle_radius_osupx * 2,
             anchor       = .CENTER,
             color        = (combo_color if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE else with_alpha(color_white, 1)),
-            start_time_ms = hobj.start_time_ms - game.beatmap.preempt_ms,
+            start_time_ms = hobj.start_time_ms - preempt,
             end_time_ms   = end_ms,
         })
     }
@@ -455,7 +456,7 @@ write_hitobject_drawables :: proc(hobj: ^Hitobject) {
             size    = digit_size,
             anchor  = .CENTER,
             color   = with_alpha(color_white, 1),
-            start_time_ms = hobj.start_time_ms - game.beatmap.preempt_ms,
+            start_time_ms = hobj.start_time_ms - preempt,
             end_time_ms   = hobj.start_time_ms + game.beatmap.timing_windows.ok,
         })
         x += digit_size.x

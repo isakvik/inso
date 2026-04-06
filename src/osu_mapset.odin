@@ -1012,6 +1012,13 @@ convert_approach_rate_to_preempt_ms :: proc(ar: f64) -> f64 {
     return 1800 - min(ar, 5) * 120 - (max(ar, 5) - 5) * 150
 }
 
+convert_preempt_ms_to_approach_rate :: proc(preempt: f64) -> f64 {
+    if preempt <= 1200 {
+        return 5 - ((preempt - 1200) / 150)
+    }
+    return 5 + ((preempt - 1200) / 120)
+}
+
 convert_circle_size_to_radius_osupx :: proc(cs: f64) -> f32 {
     return f32((54.4 - 4.48 * cs) * 1.00041)
 }

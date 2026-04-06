@@ -41,7 +41,14 @@ Beatmap :: struct {
     
     visible_hitobject_state: Visibility_State,
     preempt_ms: f64,
+    max_preempt_ms: f64, // note(isak): max of preempt_ms and all custom per-object preempts; used as iterator lookahead
     circle_radius_osupx: f32,
+    
+    playfield_translation_osupx: vec2,
+    playfield_scale: f32,
+    playfield_rotation_rad: f32,
+
+    deferred_activations: [dynamic]Deferred_Activation,
     
     phase_transitions: sb.Swap_Buffer(Phase_Transition),
 
@@ -77,6 +84,11 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     
     beatmap.hitobjects = game.active_map.hitobjects
     beatmap.slider_paths = game.active_map.slider_paths
+
+    beatmap.playfield_scale = 1.0
+    beatmap.playfield_translation_osupx = {}
+    beatmap.playfield_rotation_rad = 0
+    game.playfield_dirty_transform = true
     
     queue.init(&beatmap.judgements, 8192, memory.allocators[.JUDGEMENTS])
     queue.append(&beatmap.judgements, null_judgement)
@@ -103,7 +115,30 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     if lua_cares_about_event(.ON_INIT) {
         lua_call_beatmap_func("on_init")
     }
-    //--
+
+    // note(isak): build deferred activation list for objects with custom preempt (set by lua at init time).
+    // these bypass the normal visibility iterator since per-object preempt breaks monotonic ordering.
+    build_deferred_activations(beatmap)
+}
+
+build_deferred_activations :: proc(beatmap: ^Beatmap) {
+    max_preempt := beatmap.preempt_ms
+    count := 0
+    for &hobj in beatmap.hitobjects {
+        if hobj.custom_preempt_ms != 0 {
+            count += 1
+            if hobj.custom_preempt_ms > max_preempt do max_preempt = hobj.custom_preempt_ms
+        }
+    }
+    beatmap.max_preempt_ms = max_preempt
+
+    beatmap.deferred_activations = make([dynamic]Deferred_Activation, 0, count, memory.allocators[.MAPSET])
+    for &hobj in beatmap.hitobjects {
+        if hobj.custom_preempt_ms != 0 {
+            append(&beatmap.deferred_activations, Deferred_Activation{hobj.index, hobj.start_time_ms - hobj.custom_preempt_ms})
+            hobj.deferred_activation_index = len(beatmap.deferred_activations) // index+1
+        }
+    }
 }
 
 beatmap_on_update :: proc(beatmap: ^Beatmap) {
@@ -154,6 +189,7 @@ beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
         hobj.gfx_handles = {}
     }
     
+    delete(beatmap.deferred_activations)
     sb.destroy(&beatmap.phase_transitions)
     sb.destroy(&beatmap.map_expiring_gfx)
     sb.destroy(&beatmap.gameplay_expiring_gfx)
@@ -194,6 +230,7 @@ beatmap_reload :: proc(beatmap: ^Beatmap, keep_song_position: bool = false) {
     game.active_notosu_map = &game.active_mapset.notosu_map
     beatmap_on_init(beatmap.map_reference, beatmap)
     sound_set_speed(&game.beatmap.music, game.time_rate)
+    game.playfield_dirty_transform = true
     
     if keep_song_position {
         if music_time_before_load >= 0 {
@@ -445,7 +482,7 @@ hitcircle_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
     if end_time < map_time {
         judgement_new(hobj, .MISS, end_time - hobj.end_time_ms)
         judgement_new_drawable(hobj)
-        emit_phase_transition(hobj, .MISS)
+        hitobject_emit_phase_transition(hobj, .MISS)
         hobj.flags &~= {.VISIBLE}
         hobj.flags |= {.EXPIRED}
         expired = true
@@ -462,8 +499,9 @@ SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS :: 3
 SLIDER_END_LENIENCY_MS :: 36
 
 slider_snake_factor :: proc(hobj: ^Hitobject) -> f64 {
-    snake_duration_ms := game.beatmap.preempt_ms * (1.0/3.0)
-    time_into_preempt  := beatmap_music_time_ms(&game.beatmap) - hobj.start_time_ms + game.beatmap.preempt_ms
+    preempt_ms := hitobject_preempt_ms(hobj)
+    snake_duration_ms := preempt_ms * (1.0/3.0)
+    time_into_preempt  := beatmap_music_time_ms(&game.beatmap) - hobj.start_time_ms + preempt_ms
     return clamp(time_into_preempt / snake_duration_ms, 0, 1)
 }
 
@@ -682,7 +720,7 @@ slider_expire :: proc(hobj: ^Hitobject) {
 
     judgement_new(hobj, result, 0)
     judgement_new_drawable(hobj)
-    emit_phase_transition(hobj, result == .MISS ? .MISS : .HIT)
+    hitobject_emit_phase_transition(hobj, result == .MISS ? .MISS : .HIT)
     hobj.flags &~= {.VISIBLE}
     hobj.flags |= {.EXPIRED}
 }

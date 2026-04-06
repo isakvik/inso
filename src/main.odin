@@ -398,10 +398,12 @@ main :: proc() {
         {
             profiler_block_begin(.SWAP_FRAME); defer profiler_block_end()
             sdl.GL_SwapWindow(window.handle)
-
-            // note(isak): cap to ~30fps when unfocused to save resources
+        }
+        
+        {
+            profiler_block_begin(.SLEEP); defer profiler_block_end()
             if !window.focused {
-                sdl.Delay(30)
+                sdl.Delay(30) // note(isak): ~30fps cap
             }
         }
         

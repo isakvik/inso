@@ -732,6 +732,10 @@ luaapi_hitobject_instance_funcs := []lua.L_Reg {
   { "set_end_time", luaapi_hitobject_set_end_time },
   { "get_phase", luaapi_hitobject_get_phase },
   { "set_element_for_phase", luaapi_hitobject_set_element_for_phase },
+  { "get_preempt", luaapi_hitobject_get_preempt },
+  { "set_preempt", luaapi_hitobject_set_preempt },
+  { "get_ar", luaapi_hitobject_get_ar },
+  { "set_ar", luaapi_hitobject_set_ar },
   { nil, nil },
 }
 
@@ -893,6 +897,54 @@ luaapi_hitobject_set_element_for_phase :: proc "c" (L: ^lua.State) -> (result: i
         phase := Hitobject_Phase(lua_int(2))
         element_id := Element_ID(lua_int(3))
         hobj.custom_elements[phase] = element_id
+        return 0
+    })
+}
+
+luaapi_hitobject_get_preempt :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        preempt := hobj.custom_preempt_ms if hobj.custom_preempt_ms != 0 else game.beatmap.preempt_ms
+        lua.pushnumber(L, lua.Number(preempt))
+        return 1
+    })
+}
+
+luaapi_hitobject_set_preempt :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        context = lua_beatmap.odin_context
+        preempt := f64(lua_number(2))
+        hobj.custom_preempt_ms = preempt
+
+        // update or insert deferred activation entry
+        beatmap := &game.beatmap
+        visible_start := hobj.start_time_ms - preempt
+        if hobj.deferred_activation_index != 0 {
+            beatmap.deferred_activations[hobj.deferred_activation_index - 1].visible_start_time_ms = visible_start
+        } else {
+            append(&beatmap.deferred_activations, Deferred_Activation{hobj.index, visible_start})
+            hobj.deferred_activation_index = len(beatmap.deferred_activations) // index+1
+        }
+
+        if preempt > beatmap.max_preempt_ms {
+            beatmap.max_preempt_ms = preempt
+        }
+        return 0
+    })
+}
+
+luaapi_hitobject_get_ar :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        context = lua_beatmap.odin_context
+        preempt := hobj.custom_preempt_ms if hobj.custom_preempt_ms != 0 else game.beatmap.preempt_ms
+        lua.pushnumber(L, lua.Number(convert_preempt_ms_to_approach_rate(preempt)))
+        return 1
+    })
+}
+
+luaapi_hitobject_set_ar :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        context = lua_beatmap.odin_context
+        hobj.custom_preempt_ms = convert_approach_rate_to_preempt_ms(f64(lua_number(2)))
         return 0
     })
 }
@@ -1770,7 +1822,7 @@ luaapi_playfield_static_funcs := []lua.L_Reg {
 // set_translation(x, y) - offset in osu!px, applied on top of the base centering translation
 luaapi_playfield_set_translation :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
-    game.playfield_translation_osupx = {f32(lua.L_checknumber(L, 1)), f32(lua.L_checknumber(L, 2))}
+    game.beatmap.playfield_translation_osupx = {f32(lua.L_checknumber(L, 1)), f32(lua.L_checknumber(L, 2))}
     game.playfield_dirty_transform = true
     return 0
 }
@@ -1778,7 +1830,7 @@ luaapi_playfield_set_translation :: proc "c" (L: ^lua.State) -> i32 {
 // set_scale(s) - multiplier on top of the base scale (1.0 = default size)
 luaapi_playfield_set_scale :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
-    game.playfield_scale = f32(lua.L_checknumber(L, 1))
+    game.beatmap.playfield_scale = f32(lua.L_checknumber(L, 1))
     game.playfield_dirty_transform = true
     return 0
 }
@@ -1786,7 +1838,7 @@ luaapi_playfield_set_scale :: proc "c" (L: ^lua.State) -> i32 {
 // set_rotation(rad) - rotation in radians around the playfield center
 luaapi_playfield_set_rotation :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
-    game.playfield_rotation_rad = f32(lua.L_checknumber(L, 1))
+    game.beatmap.playfield_rotation_rad = f32(lua.L_checknumber(L, 1))
     game.playfield_dirty_transform = true
     return 0
 }
@@ -1794,7 +1846,7 @@ luaapi_playfield_set_rotation :: proc "c" (L: ^lua.State) -> i32 {
 // translate(x, y) - adds to the current translation in osu!px
 luaapi_playfield_translate :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
-    game.playfield_translation_osupx += {f32(lua.L_checknumber(L, 1)), f32(lua.L_checknumber(L, 2))}
+    game.beatmap.playfield_translation_osupx += {f32(lua.L_checknumber(L, 1)), f32(lua.L_checknumber(L, 2))}
     game.playfield_dirty_transform = true
     return 0
 }
@@ -1802,7 +1854,7 @@ luaapi_playfield_translate :: proc "c" (L: ^lua.State) -> i32 {
 // rotate(rad) - adds to the current rotation in radians
 luaapi_playfield_rotate :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
-    game.playfield_rotation_rad += f32(lua.L_checknumber(L, 1))
+    game.beatmap.playfield_rotation_rad += f32(lua.L_checknumber(L, 1))
     game.playfield_dirty_transform = true
     return 0
 }

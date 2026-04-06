@@ -1,14 +1,12 @@
 priority list for beta
 
--- PRE ALPHA --
-
 -- POST MAPPER ALPHA RELEASE -- 
 
 scripting
     draft more api
 
 game mechanics (not score, replays, etc)
-    per-hitobject size and approach rate
+    per-hitobject size
         
     finish animations
         texture array handling is kinda half baked
@@ -16,10 +14,6 @@ game mechanics (not score, replays, etc)
 rendering
     render to FBO
     lua frame object
-
-fixes
-    fix slider processing high memory usage
-    reconsider entity ring buffer persistence
 
 TEST
     mouse buttons when keyboard held down and vice versa

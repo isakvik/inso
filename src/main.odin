@@ -253,8 +253,17 @@ main :: proc() {
                     window_on_resize(max(event.window.data1, 1), max(event.window.data2, 1))
                     prepare_textures_for_rendering()
 
+                case sdl.EventType.WINDOW_FOCUS_GAINED:
+                    window.focused = true
+                    imgui.IO_AddFocusEvent(imgui.GetIO(), true)
                 case sdl.EventType.WINDOW_FOCUS_LOST:
+                    window.focused = false
                     imgui.IO_AddFocusEvent(imgui.GetIO(), false)
+
+                case sdl.EventType.WINDOW_MINIMIZED:
+                    window.minimized = true
+                case sdl.EventType.WINDOW_RESTORED:
+                    window.minimized = false
 
                 case sdl.EventType.QUIT:
                     running = false
@@ -279,6 +288,13 @@ main :: proc() {
             mouse.pos.y = mouse.pos.y - f32(yi)
 
             imgui.IO_AddMousePosEvent(imgui.GetIO(), mouse.pos.x, mouse.pos.y)
+        }
+
+        // note(isak): when minimized, skip all rendering and game update work.
+        // music and game logic still advance via beatmap_on_update's time interpolation on restore.
+        if window.minimized {
+            sdl.Delay(16)
+            continue
         }
 
         {
@@ -382,6 +398,11 @@ main :: proc() {
         {
             profiler_block_begin(.SWAP_FRAME); defer profiler_block_end()
             sdl.GL_SwapWindow(window.handle)
+
+            // note(isak): cap to ~30fps when unfocused to save resources
+            if !window.focused {
+                sdl.Delay(30)
+            }
         }
         
         {
@@ -515,12 +536,20 @@ handle_debug_ui_events :: proc(map_dropdown: ^Debug_Dropdown) {
     }
     if key_is_pressed(.F4) {
         app.debug_display_memory_profiler = !app.debug_display_memory_profiler
+        
+        for arena in Memory_Arena_Type {
+            track := memory.tracker[arena]
+            
+            fmt.println(fmt.enum_value_to_string(arena), " :: ",
+                "cur ", track.alloc.current_memory_allocated, 
+                ", peak ", track.alloc.peak_memory_allocated)
+        }
 
         track := &memory.tracker[.GLOBAL]
         if len(track.alloc.allocation_map) > 0 {
-            fmt.eprintf("=== global allocator - %v allocations not freed: ===\n", len(track.alloc.allocation_map))
+            fmt.printf("=== global allocator - %v allocations not freed: ===\n", len(track.alloc.allocation_map))
             for _, entry in track.alloc.allocation_map {
-                fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
+                fmt.printf("- %v bytes @ %v\n", entry.size, entry.location)
             }
         }
     }

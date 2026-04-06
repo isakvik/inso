@@ -156,6 +156,7 @@ luaapi_enum_constants := [?]struct { t: typeid, name: cstring }{
     { Judgement_Type, "Judgement" },
     { Layout_Anchor, "Anchor" },
     { Tween, "Tween" },
+    { Hitobject_Phase, "Phase" },
 }
 
 Lua_Event_Registration :: struct {
@@ -729,6 +730,8 @@ luaapi_hitobject_instance_funcs := []lua.L_Reg {
   { "set_start_time", luaapi_hitobject_set_start_time },
   { "get_end_time", luaapi_hitobject_get_end_time },
   { "set_end_time", luaapi_hitobject_set_end_time },
+  { "get_phase", luaapi_hitobject_get_phase },
+  { "set_element_for_phase", luaapi_hitobject_set_element_for_phase },
   { nil, nil },
 }
 
@@ -873,6 +876,23 @@ luaapi_hitobject_get_end_time :: proc "c" (L: ^lua.State) -> (result: i32) {
 luaapi_hitobject_set_end_time :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         hobj.end_time_ms = f64(lua_number(2))
+        return 0
+    })
+}
+
+
+luaapi_hitobject_get_phase :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        lua.pushinteger(L, lua.Integer(hobj.phase))
+        return 1
+    })
+}
+
+luaapi_hitobject_set_element_for_phase :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        phase := Hitobject_Phase(lua_int(2))
+        element_id := Element_ID(lua_int(3))
+        hobj.custom_elements[phase] = element_id
         return 0
     })
 }

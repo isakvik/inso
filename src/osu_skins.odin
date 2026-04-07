@@ -140,6 +140,15 @@ skin_load :: proc(skin_path: string) -> (result: ^Skin) {
     skin_load_hitsounds(result)
     
     notify_info("loaded skin '%s' in %.3vs", skin_path, time_s_since_beginning_of_program() - load_start)
+    
+    // --@temp waiting on menu mode ui
+    for r, i in app.skin_references {
+        if r == skin_path {
+            window.skin_dropdown.selected = i
+            break
+        }
+    }
+    //--
     return result
 }
 

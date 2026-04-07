@@ -249,6 +249,15 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false) {
             sound_resume(&game.beatmap.music)
         }
     }
+    
+    // --@temp waiting on menu mode ui
+    for r, i in app.map_references {
+        if r.folder_path == ref.folder_path && r.osu_filename == ref.osu_filename {
+            window.map_dropdown.selected = i
+            break
+        }
+    }
+    // --
 }
 
 beatmap_seek :: proc(beatmap: ^Beatmap, pos: f64) {

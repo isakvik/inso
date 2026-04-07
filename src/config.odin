@@ -14,6 +14,7 @@ User_Configuration :: struct {
     music_volume:        f32,
     hitsound_volume:     f32,
     vsync_enabled:       bool,
+    skin_path:           string,
 }
 
 config_load :: proc(path: string) -> (result: User_Configuration) {
@@ -44,6 +45,9 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         if v, ok := get(gen, "vsync_enabled"); ok {
             result.vsync_enabled = v == "true"
         }
+        if v, ok := get(gen, "skin_path"); ok {
+            result.skin_path = strings.clone(v)
+        }
     }
     return
 }
@@ -57,6 +61,7 @@ config_save :: proc(path: string) {
     ini.write_pair(w, "master_volume",       game.user_config.master_volume)
     ini.write_pair(w, "music_volume",        game.user_config.music_volume)
     ini.write_pair(w, "hitsound_volume",     game.user_config.hitsound_volume)
+    ini.write_pair(w, "skin_path",           game.user_config.skin_path)
 
     err := os.write_entire_file(path, transmute([]byte)strings.to_string(sb))
     if err != os.General_Error.None {
@@ -78,5 +83,6 @@ config_supply_default :: proc() -> (result: User_Configuration) {
         master_volume       = 0.5,
         music_volume        = 0.5,
         hitsound_volume     = 0.8,
+        skin_path           = "skins/gn/",
     }
 }

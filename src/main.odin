@@ -141,9 +141,7 @@ main :: proc() {
     discover_maps("songs/")
     discover_skins("skins/")
 
-    //-- @temp todo(isak): skin select interface, user_config last used skin
-    game.active_skin = skin_load("skins/gn/")
-    //--
+    game.active_skin = skin_load(game.user_config.skin_path)
     
     notosu_load_time := time_s_since_beginning_of_program()
 
@@ -507,13 +505,6 @@ handle_debug_ui_events :: proc() {
     if map_dropdown.changed && map_dropdown.selected < len(app.map_references) {
         map_ref := app.map_references[map_dropdown.selected]
         beatmap_open(map_ref)
-        
-        for r, i in app.map_references {
-            if r.folder_path == map_ref.folder_path && r.osu_filename == map_ref.osu_filename {
-                window.map_dropdown.selected = i
-                break
-            }
-        }
     }
     
     skin_dropdown := &window.skin_dropdown
@@ -523,14 +514,8 @@ handle_debug_ui_events :: proc() {
         
         skin_ref := app.skin_references[skin_dropdown.selected]
         game.active_skin = skin_load(skin_ref)
+        game.user_config.skin_path = skin_ref
         prepare_textures_for_rendering()
-        
-        for r, i in app.skin_references {
-            if r == skin_ref {
-                window.skin_dropdown.selected = i
-                break
-            }
-        }
     }
     
     if key_is_pressed(.F1) {

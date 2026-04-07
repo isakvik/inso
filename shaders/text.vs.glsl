@@ -21,10 +21,13 @@ layout(binding = 1, std140) readonly buffer vertexData {
     GlyphQuad vertices[];
 };
 
-layout (binding = 3, std140) uniform transform {
+layout (binding = 3, std140) uniform globalData {
     mat3 t;
-    float circleSizeOsupx;
+    mat3 playfieldTransform;
     float time;
+    float circleSizeOsupx;
+    vec2 cursorPos;
+    vec2 resolution;
 };
 
 out vec4 color;
@@ -52,7 +55,7 @@ void main() {
 #ifdef BINDLESS
     texIndex = 2; // global slot for font atlas
 #else
-    texIndex = 0; // local unit — font atlas bound to unit 0 for text draws
+    texIndex = 0; // local unit; font atlas bound to unit 0 for text draws
 #endif
 
     gl_Position = vec4(t * vec3(v.pos, 1.0), 1.0);

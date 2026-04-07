@@ -71,8 +71,11 @@ Draw_Call :: struct {
 
 Shader_Globals :: struct {
     transform: Transform,
-    circle_size_osupx: f32,
+    playfield_transform: Transform,
     time: f32,
+    circle_size_osupx: f32,
+    cursor_pos: [2]f32,
+    resolution: [2]f32,
 }
 
 Renderer :: struct {
@@ -242,7 +245,9 @@ renderer_init :: proc() {
     
     renderer.text_geometry.size = MAX_BATCH_VERTICES
     
-    renderer.current_global_data = {identity_transform, 0, 0}
+    renderer.current_global_data = {
+        transform = identity_transform
+    }
     gl.NamedBufferSubData(window.shader_global_buffer.id, 0, size_of(Shader_Globals), &renderer.current_global_data)
 
     renderer.slider_instances = buffer_init(MAX_SLIDER_INSTANCES, window.slider_instance_store.data)
@@ -351,6 +356,7 @@ shader_init :: proc(vs_path, fs_path: string, alloc: runtime.Allocator = context
     // note(isak): try bindless compilation first. if the driver reports the extension but
     // can't actually compile shaders with sampler arrays in buffer blocks (intel), fall back
     // to the non-bindless path and disable bindless globally for all subsequent shaders
+    tried_bindless_path: bool
     if window.bindless_supported {
         vs_source := _shader_inject_define(vs_filedata, vs_filelen, alloc)
         fs_source := _shader_inject_define(fs_filedata, fs_filelen, alloc)
@@ -367,6 +373,7 @@ shader_init :: proc(vs_path, fs_path: string, alloc: runtime.Allocator = context
         log.warnf("bindless shader compile failed for '{}' / '{}', falling back to non-bindless", vs_path, fs_path)
         sg.destroy_shader(temp_shader)
         window.bindless_supported = false
+        tried_bindless_path = true
     }
 
     // note(isak): non-bindless path
@@ -380,6 +387,9 @@ shader_init :: proc(vs_path, fs_path: string, alloc: runtime.Allocator = context
         return { shader = temp_shader, vs_path = vs_path, fs_path = fs_path }, .NONE
     }
 
+    // note(isak): if the bindless backup still fails, we're failing for an unexpected reason. restore state
+    window.bindless_supported = tried_bindless_path
+    
     sg.destroy_shader(temp_shader)
     return {}, .COMPILE_ERROR
 }
@@ -429,7 +439,7 @@ shader_reinit :: proc(shader: ^Shader, alloc: runtime.Allocator = context.temp_a
     new_shader, err := shader_init(shader.vs_path, shader.fs_path, alloc)
     if err != .NONE {
         assert(err == .COMPILE_ERROR)
-        log.errorf("Shader compile errors found. Paths:", shader.vs_path, shader.fs_path)
+        log.error("Shader compile errors found. Paths:", shader.vs_path, shader.fs_path)
         return err
     }
     sg.destroy_shader(shader.shader)
@@ -942,13 +952,13 @@ r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, u
 
     resolved_tex_index := tex_index
 
-    // note(isak): non-bindless path — remap global texture slot to a local texture unit.
+    // note(isak): non-bindless path that remap global texture slots to a local texture unit.
     // this must happen AFTER the new_draw_on_next_push check so the texture is assigned
     // to the correct draw's unit map.
     if !window.bindless_supported {
         local := texture_unit_map_assign(&window.renderer.texture_unit_map, tex_index)
         if local == UNMAPPED_UNIT {
-            // note(isak): hit 16 texture units — start a new draw and retry
+            // note(isak): hit 16 texture units, start a new draw and retry
             r_push_draw(
                 index_offset = u32(geometry.count) * 6,
                 index_count = 0

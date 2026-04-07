@@ -493,7 +493,7 @@ write_click_feedback_drawables :: proc(hobj: ^Hitobject, map_time: f64) {
 }
 
 // note(isak): processes phase transitions emitted by game logic, creating/replacing drawables
-process_phase_transitions :: proc() {
+process_hitobject_phase_transitions :: proc() {
     map_time := beatmap_music_time_ms(&game.beatmap)
 
     for transition in game.beatmap.phase_transitions.current {
@@ -852,7 +852,7 @@ TEST_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Hand
             pos = vec2{256, 256} - playfield_base_translation_osupx,
             size = bg_size,
             anchor = .CENTER,
-            color = {22,22,22,255},
+            color = {100, 100, 100, 255},
             
             start_time_ms = game.beatmap.start_time_ms,
             end_time_ms = game.beatmap.length_ms

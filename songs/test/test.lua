@@ -58,6 +58,9 @@ function on_init()
         table[hobj:get_index()] = dd:clone()
             :set_pos(hobj:get_pos())
             :set_time(t, t+1200)
+            
+        hobj:set_ar(9-i/100)
+        --hobj:set_cs(i/100) -- todo(isak): breaks sliders
     end
     
     register_global_event("hehe", function()

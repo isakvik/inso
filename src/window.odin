@@ -19,6 +19,7 @@ window: struct {
     cursor_hidden: bool,
     focused: bool,
     minimized: bool,
+    fullscreen: bool,
     bindless_supported: bool,
 
     handle: ^sdl.Window,
@@ -114,6 +115,11 @@ window_on_resize :: proc(new_w, new_h: i32) {
 }
 
 clipspace_transform := transform_from_bounds({0, 0, 1, 1}, 1)
+
+window_toggle_fullscreen :: proc() {
+    window.fullscreen = !window.fullscreen
+    sdl.SetWindowFullscreen(window.handle, window.fullscreen)
+}
 
 window_apply_vsync :: proc(enabled: bool) {
     sdl.GL_SetSwapInterval(1 if enabled else 0)

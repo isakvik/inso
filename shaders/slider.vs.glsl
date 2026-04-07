@@ -14,10 +14,13 @@ layout(binding = 1, std430) readonly buffer sliderVertexData {
 layout(binding = 5, std430) readonly buffer sliderInstanceData {
     vec2 points[];
 };
-layout (binding = 3, std140) uniform transform {
+layout (binding = 3, std140) uniform globalData {
     mat3 t;
-    float circleSizeOsupx;
+    mat3 playfieldTransform;
     float time;
+    float circleSizeOsupx;
+    vec2 cursorPos;
+    vec2 resolution;
 };
 
 layout (binding = 6, std140) uniform sliderParams {

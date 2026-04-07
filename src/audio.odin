@@ -66,7 +66,7 @@ Sample :: struct {
 // note(isak): audio engine api
 
 when ODIN_OS == .Windows {
-    // note: WASAPI output callback — BASS runs as a decode source, WASAPI pulls from it
+    // note(isak): WASAPI output callback. BASS runs as a decode source, WASAPI pulls from it
     _bass_wasapi_proc :: proc "c" (buffer: rawptr, len: u32, user_data: rawptr) -> u32 {
         if audio.output_mixer != 0 {
             c := bass.ChannelGetData(audio.output_mixer, buffer, len)
@@ -126,7 +126,7 @@ audio_init :: proc(device: Device = -1) -> bool {
         bass.Mixer_StreamAddChannel(audio.output_mixer, audio.hitsound_mixer, bass.MIXER_DOWNMIX)
     } else {
         // note(isak): on linux/mac, BASS handles output via ALSA/PulseAudio directly.
-        // these must be set before Init — CONFIG_BUFFER defaults to 500ms which causes huge delay on pause/seek
+        // these must be set before Init. CONFIG_BUFFER defaults to 500ms which causes huge delay on pause/seek
         bass.SetConfig(bass.CONFIG_UPDATEPERIOD, 1)
         bass.SetConfig(bass.CONFIG_DEV_PERIOD, 10)
         bass.SetConfig(bass.CONFIG_BUFFER, 50)

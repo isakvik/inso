@@ -1,6 +1,6 @@
 package notosu
 
-VERSION :: #config(VERSION, "dev")
+VERSION :: #config(VERSION, "dev (unversioned)")
 
 import "base:runtime"
 import "core:container/queue"
@@ -245,6 +245,9 @@ main :: proc() {
 
                 case sdl.EventType.KEY_DOWN:
                     imgui.IO_AddKeyEvent(imgui.GetIO(), sdl_scancode_to_imgui(event.key.scancode), true)
+                    if event.key.scancode == .RETURN && (event.key.mod & sdl.KMOD_ALT) != {} {
+                        window_toggle_fullscreen()
+                    }
                 case sdl.EventType.KEY_UP:
                     imgui.IO_AddKeyEvent(imgui.GetIO(), sdl_scancode_to_imgui(event.key.scancode), false)
                 case sdl.EventType.TEXT_INPUT:
@@ -342,24 +345,12 @@ main :: proc() {
                 }
             }
             
-            cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), 80, 80 }
-            r_draw_layout_rect(&renderer.quad_geometry, cursor_rect, .CENTER, color_white, skin_texture(.CURSOR),
-                f32(time_s_since_beginning_of_program()))
-            
             if app.debug_display_game_cursor {
                 r_push_transform(game.playfield_transform)
                 pf_cur_rect: Rect = { game.input.mouse_pos.x, game.input.mouse_pos.y, 20, 20 }
                 r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, builtin_texture(.WHITE),
                     f32(time_s_since_beginning_of_program()))
             }
-            
-            r_push_transform(game.playfield_transform)
-            
-            cs := game.beatmap.circle_radius_osupx
-            pf_outline := Rect{
-                -cs, -cs, playfield_size_osupx+2*cs, (playfield_size_osupx*3/4)+2*cs
-            }
-            r_draw_rect_outline(&renderer.quad_geometry, pf_outline, with_alpha(color_white, 0.1), 2)
         }
         
         {
@@ -392,7 +383,7 @@ main :: proc() {
             push_text(renderer, VERSION,
                 pos     = {window.rect.w / 2, window.rect.h - 8},
                 size    = 14,
-                color   = {255, 255, 255, 70},
+                color   = {255, 255, 255, 150},
                 align_h = .Center,
                 align_v = .Bottom)
 
@@ -446,8 +437,11 @@ begin_frame :: proc(renderer: ^Renderer) {
 
     r_set_shader_globals({
         transform = identity_transform,
+        playfield_transform = game.playfield_transform,
+        time = f32(beatmap_music_time_ms(&game.beatmap)),
         circle_size_osupx = game.beatmap.circle_radius_osupx,
-        time = f32(beatmap_music_time_ms(&game.beatmap))
+        cursor_pos = mouse.pos,
+        resolution = vec2{window.rect.w, window.rect.h},
     })
 
     r_bind_layer(.BACKGROUND)

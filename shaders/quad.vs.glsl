@@ -27,8 +27,11 @@ layout(binding = 2, std430) readonly buffer indexData {
 };
 layout (binding = 3, std140) uniform globalData {
     mat3 t;
-    float circleSizeOsupx;
+    mat3 playfieldTransform;
     float time;
+    float circleSizeOsupx;
+    vec2 cursorPos;
+    vec2 resolution;
 };
 
 out vec4 color;

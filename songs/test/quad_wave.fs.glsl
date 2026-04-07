@@ -11,15 +11,18 @@ uniform sampler2DArray textures[16];
 
 layout (binding = 3, std140) uniform globalData {
     mat3 t;
-    float circleSizeOsupx;
+    mat3 playfieldTransform;
     float time;
+    float circleSizeOsupx;
+    vec2 cursorPos;
+    vec2 resolution;
 };
 
 in vec3 uv;
 in vec4 color;
 flat in uint texIndex;
 
-out vec4 frag_color;
+out vec4 fragColor;
 
 #define PI 3.1415926535897
 #define TAU (2.0 * PI)
@@ -48,6 +51,6 @@ void main() {
     polar.x = sin((polar.x-s*0.01) * 20)*0.5+0.5;
 
     vec2 coords = uv.xy + rotateZAxis(polar, s)*0.05;
-    frag_color = texture(textures[texIndex], vec3(clamp(coords, 0.001, 1.0), 0.0)) * color;
-    //frag_color = vec4(rotateZAxis(polar, s), 0, 1);
+    fragColor = texture(textures[texIndex], vec3(clamp(coords, 0.001, 1.0), 0.0)) * color;
+    //fragColor = vec4(rotateZAxis(polar, s), 0, 1);
 }

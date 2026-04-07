@@ -11,8 +11,11 @@ uniform sampler2DArray textures[16];
 
 layout (binding = 3, std140) uniform globalData {
     mat3 t;
-    float circleSizeOsupx;
+    mat3 playfieldTransform;
     float time;
+    float circleSizeOsupx;
+    vec2 cursorPos;
+    vec2 resolution;
 };
 
 in vec3 uv; // xy = tex coords, z = array layer index

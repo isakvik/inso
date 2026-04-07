@@ -161,8 +161,6 @@ render_timeline :: proc(ui: ^UI_Timeline, beatmap_leadin_fract, beatmap_finish_f
 }
 
 render_input_display :: proc() {
-    r_push_transform(window.screenspace_transform)
-    
     render_input_key :: proc(key: Button_State, rect: Rect) {
         display_color := key.is_down ? color_light_gray : color_dark_gray
         r_draw_layout_rect(&window.renderer.quad_geometry, rect, .BOTTOM_RIGHT, display_color, builtin_texture(.WHITE))

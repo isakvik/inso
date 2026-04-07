@@ -500,8 +500,7 @@ osu_on_update :: proc(dt: f64) {
         game.playfield_dirty_transform = false
     }
 
-    // note(isak): process phase transitions — creates/replaces drawables in response to game logic
-    process_phase_transitions()
+    process_hitobject_phase_transitions()
 
     // beatmap render
 
@@ -550,10 +549,29 @@ osu_on_update :: proc(dt: f64) {
     process_and_draw_expiring_gfx_refs(&game.beatmap.map_expiring_gfx)
     
     // ui render
+    r_bind_layer_and_push_current_state(.UI, 
+        transform = game.playfield_transform,
+        pipeline = {builtin_pipeline_slot(.QUAD)})
+    
+    {
+        // playfield border
+        cs := game.beatmap.circle_radius_osupx
+        pf_outline := Rect{
+            -cs, -cs, playfield_size_osupx+2*cs, (playfield_size_osupx*3/4)+2*cs
+        }
+        r_draw_rect_outline(&window.renderer.quad_geometry, pf_outline, with_alpha(color_white, 0.1), 2)
+    }
     
     // todo(isak): "screens" implementation for determining relevant UI components?
     handle_and_render_timeline()
+    
+    r_push_transform(window.screenspace_transform)
     render_input_display()
+    
+    cursor_size := 80 * playfield_base_scale
+    cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), cursor_size, cursor_size }
+    r_draw_layout_rect(&window.renderer.quad_geometry, cursor_rect, .CENTER, color_white, 
+        skin_texture(.CURSOR), f32(time_s_since_beginning_of_program()))
 }
 
 // note(isak): this function assumes the start times of objects are sorted, but doesn't require end times to be.
@@ -719,47 +737,6 @@ handle_menu_input_events :: proc() {
     }
 }
 
-valid_controller_press :: proc() -> bool {
-    return game.input.available_presses > 0
-}
-
-consume_controller_press :: proc() {
-    game.input.available_presses -= 1
-}
-
-// returns whether key_num (1 or 2) was freshly pressed this frame, applying mouse_keys exclusion
-controller_key_pressed :: proc(key_num: int) -> bool {
-    if key_num == 1 {
-        if game.input.mouse_keys_enabled {
-            return button_is_pressed(game.input.k1) && !button_is_down(game.input.m1) ||
-                   button_is_pressed(game.input.m1) && !button_is_down(game.input.k1)
-        }
-        return button_is_pressed(game.input.k1)
-    } else {
-        if game.input.mouse_keys_enabled {
-            return button_is_pressed(game.input.k2) && !button_is_down(game.input.m2) ||
-                   button_is_pressed(game.input.m2) && !button_is_down(game.input.k2)
-        }
-        return button_is_pressed(game.input.k2)
-    }
-}
-
-// returns whether key_num (1 or 2) is currently held
-controller_key_down :: proc(key_num: int) -> bool {
-    if key_num == 1 {
-        return button_is_down(game.input.k1) || game.input.mouse_keys_enabled && button_is_down(game.input.m1)
-    } else {
-        return button_is_down(game.input.k2) || game.input.mouse_keys_enabled && button_is_down(game.input.m2)
-    }
-}
-
-// returns which key (1 or 2) was freshly pressed this frame, 0 if neither
-pressed_controller_key :: proc() -> int {
-    if controller_key_pressed(1) do return 1
-    if controller_key_pressed(2) do return 2
-    return 0
-}
-
 
 //////////////////////////////////////////////////////
 // note(isak): managed game sound API
@@ -803,31 +780,4 @@ game_sounds_clear :: proc() {
     slotmap.destroy(&game.sounds)
     slotmap.init(&game.sounds, allocator = memory.allocators[.SOUND], capacity = 128)
     null_sound_handle := slotmap.insert(&game.sounds, null_sound)
-}
-
-//////////////////////////////////////////////////////
-// NOTE(yokes): in-game button input api
-
-button_is_down :: proc "c" (button: Button_State) -> bool {
-    return button.is_down
-}
-
-button_is_pressed :: proc "c" (button: Button_State) -> bool {
-    return button.is_down && !button.was_down
-}
-
-button_is_released :: proc "c" (button: Button_State) -> bool {
-    return !button.is_down && button.was_down
-}
-
-key_is_down :: proc "c" (code: sdl.Scancode) -> bool {
-    return keyboard.buttons[code]
-}
-
-key_is_pressed :: proc "c" (code: sdl.Scancode) -> bool {
-    return keyboard.buttons[code] && !keyboard.buttons_prev_frame[code]
-}
-
-key_is_released :: proc "c" (code: sdl.Scancode) -> bool {
-    return !keyboard.buttons[code] && keyboard.buttons_prev_frame[code]
 }

@@ -108,7 +108,7 @@ main :: proc() {
     }
 
     window_init({w = 1280, h = 720})
-    window.ui_enabled = true
+    app.ui_enabled = true
     defer window_cleanup()
     
     audio_init()
@@ -362,7 +362,7 @@ main :: proc() {
 
             end_frame(renderer)
 
-            if window.ui_enabled {
+            if app.ui_enabled {
                 imgui.Render()
                 imgui_gl3.RenderDrawData(imgui.GetDrawData())
             }
@@ -427,7 +427,7 @@ begin_frame :: proc(renderer: ^Renderer) {
 
     renderer.transform_queue.len = 0
 
-    if window.ui_enabled {
+    if app.ui_enabled {
         imgui_gl3.NewFrame()
         imgui.NewFrame()
         write_debug_ui()
@@ -445,8 +445,8 @@ write_debug_ui :: proc() {
     imgui.Begin("Info")
     defer imgui.End()
     
-    debug_dropdown_update(&window.map_dropdown)
-    debug_dropdown_update(&window.skin_dropdown)
+    debug_dropdown_update(&app.map_dropdown)
+    debug_dropdown_update(&app.skin_dropdown)
     imgui.Separator()
 
     timer_str := strings.clone_to_cstring(time_ms_to_string(beatmap_music_time_ms(&game.beatmap)), context.temp_allocator)
@@ -458,7 +458,7 @@ write_debug_ui :: proc() {
     hobj_visibility := game.beatmap.visible_hitobject_state
     imgui.Text("Visible hitobjects: %d", i32(hobj_visibility.latest_i - hobj_visibility.earliest_i - 1))
     imgui.Text("Mouse keys: %s", game.input.mouse_keys_enabled ? cstring("on") : cstring("off"))
-    if imgui.Button("Offset") do window.offset_window_open = true
+    if imgui.Button("Offset") do app.offset_window_open = true
     imgui.SameLine()
     imgui.Text("%d ms", i32(game.user_config.universal_offset_ms))
 
@@ -487,10 +487,10 @@ write_debug_ui :: proc() {
 }
 
 write_offset_window :: proc() {
-    if !window.offset_window_open do return
+    if !app.offset_window_open do return
 
     imgui.SetNextWindowSize({220, 70}, .FirstUseEver)
-    if imgui.Begin("Universal Offset", &window.offset_window_open) {
+    if imgui.Begin("Universal Offset", &app.offset_window_open) {
         offset := c.int(game.user_config.universal_offset_ms)
         imgui.SetNextItemWidth(-1)
         if imgui.InputInt("##offset", &offset, 1, 5) {
@@ -501,13 +501,13 @@ write_offset_window :: proc() {
 }
 
 handle_debug_ui_events :: proc() {
-    map_dropdown := &window.map_dropdown
+    map_dropdown := &app.map_dropdown
     if map_dropdown.changed && map_dropdown.selected < len(app.map_references) {
         map_ref := app.map_references[map_dropdown.selected]
         beatmap_open(map_ref)
     }
     
-    skin_dropdown := &window.skin_dropdown
+    skin_dropdown := &app.skin_dropdown
     if skin_dropdown.changed && skin_dropdown.selected < len(app.skin_references) {
         cleanup_textures_for_rendering()
         skin_unload(game.active_skin)

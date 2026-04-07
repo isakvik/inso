@@ -15,12 +15,12 @@ debug_ui_init :: proc() {
     ok := sdl.StartTextInput(window.handle)
     assert(ok)
     
-    window.map_dropdown = Debug_Dropdown{
+    app.map_dropdown = Debug_Dropdown{
         label    = "Map",
         items    = &app.map_reference_names,
         selected = 0,
     }
-    window.skin_dropdown = Debug_Dropdown{
+    app.skin_dropdown = Debug_Dropdown{
         label    = "Skin",
         items    = &app.skin_reference_names,
         selected = 0,

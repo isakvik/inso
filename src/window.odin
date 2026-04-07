@@ -25,11 +25,6 @@ window: struct {
     handle: ^sdl.Window,
     gl_context: sdl.GLContext,
 
-    ui_enabled: bool,
-    map_dropdown: Debug_Dropdown,
-    skin_dropdown: Debug_Dropdown,
-    offset_window_open: bool,
-
     // note(isak): graphical resources used by the drawing context go here
 
     bindings: sg.Bindings,

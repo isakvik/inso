@@ -144,7 +144,7 @@ skin_load :: proc(skin_path: string) -> (result: ^Skin) {
     // --@temp waiting on menu mode ui
     for r, i in app.skin_references {
         if r == skin_path {
-            window.skin_dropdown.selected = i
+            app.skin_dropdown.selected = i
             break
         }
     }

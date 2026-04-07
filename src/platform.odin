@@ -29,6 +29,11 @@ app: struct {
 
     skin_references:      [dynamic]string,
     skin_reference_names: [dynamic]cstring, // note(isak): parallel to skin_references, for imgui
+    
+    ui_enabled: bool,
+    map_dropdown: Debug_Dropdown,
+    skin_dropdown: Debug_Dropdown,
+    offset_window_open: bool,
 }
 
 app_init :: proc() {

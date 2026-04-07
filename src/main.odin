@@ -390,7 +390,7 @@ main :: proc() {
                 profiler_write_texture_column(frame_count, window.profiler_texture)
 
                 if frame_count % 100 == 0 {
-                    fmt.println("ms:", profiler_get_fps())
+                    fmt.println("fps:", profiler_get_fps())
                 }
             }
             

@@ -740,6 +740,8 @@ handle_menu_input_events :: proc() {
 // note(isak): managed game sound API
 
 game_sound_play :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0, category: Sound_Category = .HITSOUND) -> (result: slotmap.Handle) {
+    if s.handle == 0 do return
+    
     sound: Sound
     ok: bool
     if loop {

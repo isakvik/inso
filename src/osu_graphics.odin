@@ -464,9 +464,8 @@ write_hitobject_drawables :: proc(hobj: ^Hitobject) {
 }
 
 // note(isak): creates the expanding circle hit feedback as expiring drawables
-write_click_feedback_drawables :: proc(hobj: ^Hitobject, map_time: f64) {
+write_click_feedback_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_time: f64) {
     combo_color := hitobject_combo_color(hobj)
-    pos := hitobject_pos(hobj)
 
     drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
         flags = {.ACTIVE},
@@ -504,11 +503,15 @@ process_hitobject_phase_transitions :: proc() {
             write_hitobject_drawables(hobj)
         case .HOLD:
             clear_hitobject_drawables(hobj)
-            write_click_feedback_drawables(hobj, map_time)
+            write_click_feedback_drawables(hobj, hitobject_pos(hobj), map_time)
         case .HIT:
             clear_hitobject_drawables(hobj)
             if transition.from == .ACTIVE {
-                write_click_feedback_drawables(hobj, map_time)
+                write_click_feedback_drawables(hobj, hitobject_pos(hobj), map_time)
+            } else if transition.from == .HOLD {
+                path := &game.beatmap.slider_paths[hobj.slider_path_index]
+                tail_pos := (path.pos if hobj.slider_state.path_travel_count % 2 == 0 else path.end_pos) + hobj.script_pos_translation
+                write_click_feedback_drawables(hobj, tail_pos, map_time)
             }
         case .MISS:
             clear_hitobject_drawables(hobj)

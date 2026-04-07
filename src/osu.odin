@@ -137,6 +137,7 @@ Hitobject :: struct {
     phase: Hitobject_Phase,
     custom_preempt_ms: f64,          // note(isak): per-object approach rate override. 0 = use global
     deferred_activation_index: int,  // note(isak): index+1 into beatmap.deferred_activations. 0 = not in list
+    custom_radius_osupx: f32,        // note(isak): per-object circle size override. 0 = use global
     custom_elements: [Hitobject_Phase]Element_ID,
 
     judgement_index: int,
@@ -180,6 +181,10 @@ hitobject_duration :: proc(hobj: ^Hitobject) -> (result: f64) {
 
 hitobject_preempt_ms :: proc(hobj: ^Hitobject) -> f64 {
     return hobj.custom_preempt_ms if hobj.custom_preempt_ms != 0 else game.beatmap.preempt_ms
+}
+
+hitobject_radius_osupx :: proc(hobj: ^Hitobject) -> f32 {
+    return hobj.custom_radius_osupx if hobj.custom_radius_osupx != 0 else game.beatmap.circle_radius_osupx
 }
 
 // note(isak): uses max_preempt_ms (max of global and all per-object preempts) to keep visible
@@ -469,7 +474,7 @@ osu_on_update :: proc(dt: f64) {
                 continue
             }
             hobj_pos := hitobject_pos(&hobj)
-            if !point_in_circle(game.input.mouse_pos, hobj_pos, game.beatmap.circle_radius_osupx) {
+            if !point_in_circle(game.input.mouse_pos, hobj_pos, hitobject_radius_osupx(&hobj)) {
                 continue
             }
             judgement := hitobject_on_click(&hobj)

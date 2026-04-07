@@ -426,7 +426,7 @@ write_hitobject_drawables :: proc(hobj: ^Hitobject) {
             flags        = {.ACTIVE},
             element      = builtin_element_slot(el_type),
             layer        = .HITOBJECTS,
-            size         = game.beatmap.circle_radius_osupx * 2,
+            size         = hitobject_radius_osupx(hobj) * 2,
             anchor       = .CENTER,
             color        = (combo_color if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE else with_alpha(color_white, 1)),
             start_time_ms = hobj.start_time_ms - preempt,
@@ -436,7 +436,7 @@ write_hitobject_drawables :: proc(hobj: ^Hitobject) {
 
     // digit drawables
     hc_size := game.active_skin.elements[.HITCIRCLE].metrics
-    number_scale := (game.beatmap.circle_radius_osupx * 2) / max(hc_size.x, 1) * COMBO_NUMBER_SCALE
+    number_scale := (hitobject_radius_osupx(hobj) * 2) / max(hc_size.x, 1) * COMBO_NUMBER_SCALE
 
     total_digits_w: f32
     for digit in 0..<n_digits {
@@ -473,7 +473,7 @@ write_click_feedback_drawables :: proc(hobj: ^Hitobject, map_time: f64) {
         element = builtin_element_slot(.CLICKED_HIT_CIRCLE_OVERLAY),
         layer = .HITOBJECTS,
         pos = pos,
-        size = game.beatmap.circle_radius_osupx * 2,
+        size = hitobject_radius_osupx(hobj) * 2,
         anchor = .CENTER,
         color = color_white,
         start_time_ms = map_time,
@@ -484,7 +484,7 @@ write_click_feedback_drawables :: proc(hobj: ^Hitobject, map_time: f64) {
         element = builtin_element_slot(.CLICKED_HIT_CIRCLE),
         layer = .HITOBJECTS,
         pos = pos,
-        size = game.beatmap.circle_radius_osupx * 2,
+        size = hitobject_radius_osupx(hobj) * 2,
         anchor = .CENTER,
         color = combo_color,
         start_time_ms = map_time,
@@ -636,8 +636,8 @@ process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Dr
     sb.swap(expiring_gfx_refs)
 }
 
-slider_screenspace_bounding_box :: proc(slider: ^Slider_Path, translation: vec2 = {}) -> (result: Rect) {
-    r := game.beatmap.circle_radius_osupx
+slider_screenspace_bounding_box :: proc(hobj: ^Hitobject, slider: ^Slider_Path, translation: vec2 = {}) -> (result: Rect) {
+    r := hitobject_radius_osupx(hobj)
     pad := f32(2)
     osupx_rect := Rect{
         slider.bounds_min.x - r + translation.x,
@@ -660,12 +660,14 @@ render_slider_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     // game.playfield_transform means any offset/rotation/scale on the playfield automatically 
     // applies to the slider pass too.
     
-    r := game.beatmap.circle_radius_osupx
+    // todo(isak): slider path tessellation is baked at map load using global CS; per-object CS only
+    // affects visual scale here. if accurate per-object slider ball physics are needed, rebuild the path.
+    r := hitobject_radius_osupx(hobj)
     cs_to_osupx := mat3{r, 0, 0, 0, r, 0, 0, 0, 1}
     slider_pf_transform := mat3_to_transform(transform_to_mat3(game.playfield_transform) * cs_to_osupx)
 
     translation := hobj.script_pos_translation
-    slider_rect := slider_screenspace_bounding_box(slider, translation)
+    slider_rect := slider_screenspace_bounding_box(hobj, slider, translation)
 
     slider_uvs := Rect{
         slider_rect.x / window.rect.w,
@@ -727,7 +729,7 @@ render_slider_quads :: proc(hobj: ^Hitobject, path: ^Slider_Path, map_time: f64)
     
     combo_color := hitobject_combo_color(hobj)
     
-    cs := game.beatmap.circle_radius_osupx
+    cs := hitobject_radius_osupx(hobj)
     element_scale := (cs*2) / (game.active_skin.elements[.HITCIRCLE].metrics)
     
     hobj_pos := hitobject_pos(hobj)

@@ -736,6 +736,8 @@ luaapi_hitobject_instance_funcs := []lua.L_Reg {
   { "set_preempt", luaapi_hitobject_set_preempt },
   { "get_ar", luaapi_hitobject_get_ar },
   { "set_ar", luaapi_hitobject_set_ar },
+  { "get_cs", luaapi_hitobject_get_cs },
+  { "set_cs", luaapi_hitobject_set_cs },
   { nil, nil },
 }
 
@@ -945,6 +947,22 @@ luaapi_hitobject_set_ar :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         context = lua_beatmap.odin_context
         hobj.custom_preempt_ms = convert_approach_rate_to_preempt_ms(f64(lua_number(2)))
+        return 0
+    })
+}
+
+luaapi_hitobject_get_cs :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        r := f64(hobj.custom_radius_osupx if hobj.custom_radius_osupx != 0 else game.beatmap.circle_radius_osupx)
+        lua.pushnumber(L, lua.Number((54.4 * 1.00041 - r) / (4.48 * 1.00041)))
+        return 1
+    })
+}
+
+luaapi_hitobject_set_cs :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        cs := f64(lua_number(2))
+        hobj.custom_radius_osupx = f32((54.4 - 4.48 * cs) * 1.00041)
         return 0
     })
 }

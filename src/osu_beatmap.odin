@@ -430,7 +430,7 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
             pos = path.pos if hobj.slider_state.path_travel_count % 2 == 0 else path.end_pos
         }
 
-        cs := game.beatmap.circle_radius_osupx
+        cs := hitobject_radius_osupx(hobj)
         element_scale := (cs * 2) / game.active_skin.elements[.HITCIRCLE].metrics
         skin_el := skin_element_for_type_table[el_type]
         
@@ -564,7 +564,7 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
     slider := &hobj.slider_state
 
     ball_pos      := slider_path_pos_at(hobj, map_time)
-    follow_radius := game.beatmap.circle_radius_osupx * SLIDER_FOLLOW_CIRCLE_RADIUS_MULT
+    follow_radius := hitobject_radius_osupx(hobj) * SLIDER_FOLLOW_CIRCLE_RADIUS_MULT
 
     // note(isak): if a specific key hit the head, the opposite key being freshly pressed frees tracking to any key
     if slider.down_key != 0 && controller_key_pressed(slider.down_key == 1 ? 2 : 1) {

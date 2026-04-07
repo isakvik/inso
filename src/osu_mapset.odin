@@ -1023,6 +1023,10 @@ convert_circle_size_to_radius_osupx :: proc(cs: f64) -> f32 {
     return f32((54.4 - 4.48 * cs) * 1.00041)
 }
 
+convert_radius_osupx_to_circle_size :: proc(r: f32) -> f64 {
+    return (54.4 * 1.00041 - f64(r)) / (4.48 * 1.00041)
+}
+
 convert_overall_difficulty_to_timing_window :: proc(od: f64) -> Timing_Window {
     return {
         marvelous = 80 - 6 * od,

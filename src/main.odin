@@ -1,5 +1,7 @@
 package notosu
 
+VERSION :: #config(VERSION, "dev")
+
 import "base:runtime"
 import "core:container/queue"
 import "core:fmt"
@@ -387,8 +389,15 @@ main :: proc() {
                 profiler_push_memory_diag_text(renderer)
             }
 
+            push_text(renderer, VERSION,
+                pos     = {window.rect.w / 2, window.rect.h - 8},
+                size    = 14,
+                color   = {255, 255, 255, 70},
+                align_h = .Center,
+                align_v = .Bottom)
+
             end_frame(renderer)
-            
+
             if window.ui_enabled {
                 imgui.Render()
                 imgui_gl3.RenderDrawData(imgui.GetDrawData())

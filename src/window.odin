@@ -1,6 +1,7 @@
 package notosu
 
 import q "core:container/queue"
+import "core:fmt"
 import "core:log"
 
 import gl "vendor:OpenGL"
@@ -71,7 +72,9 @@ window_init :: proc(rect: Rect) {
     _platform_dpi_init()
 
     window.rect = rect
-    window.handle = sdl.CreateWindow("notosu!", i32(rect.w), i32(rect.h), sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
+    window.handle = sdl.CreateWindow(
+        fmt.ctprintf("notosu! - v%s", VERSION), 
+        i32(rect.w), i32(rect.h), sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
     window.aspect_ratio = f32(rect.h) / f32(rect.w)
 
     stbi.set_flip_vertically_on_load_thread(true)

@@ -37,6 +37,7 @@ game: struct {
     // note(isak): map game logic fields
     
     beatmap: Beatmap,
+    beatmap_active: bool,
     playfield_transform: Transform,
     playfield_dirty_transform: bool,
 
@@ -393,9 +394,6 @@ osu_on_init :: proc() {
 
     game.input.k1_key = sdl.Scancode.Z
     game.input.k2_key = sdl.Scancode.X
-
-    beatmap_on_init(game.active_map_ref, &game.beatmap)
-    game.playfield_transform = playfield_build_transform()
 }
 
 
@@ -404,7 +402,7 @@ osu_on_update :: proc(dt: f64) {
 
     updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
     if updated_systems[.OSU_FILE] || updated_systems[.NOTOSU_FILE] {
-        beatmap_reload(&game.beatmap, true)
+        beatmap_open(game.beatmap.map_reference, true)
     }
     if updated_systems[.SCRIPTS] {
         lua_reload(game.active_notosu_map.lua_entry_point)
@@ -659,7 +657,7 @@ handle_play_input_events :: proc() {
         beatmap_pause(&game.beatmap, !game.paused)
     }
     if key_is_pressed(.R) {
-        beatmap_reload(&game.beatmap, !key_is_down(.LSHIFT))
+        beatmap_open(game.beatmap.map_reference, !key_is_down(.LSHIFT))
     }
     
     if key_is_pressed(.HOME) {

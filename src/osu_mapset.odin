@@ -270,7 +270,7 @@ discover_maps :: proc(songs_dir: string, alloc: runtime.Allocator = context.allo
             count += 1
         }
     }
-    log.infof("discover_maps: found {} maps in '{}'", count, songs_dir)
+    notify_info("discover_maps: found %v maps in '%s'", count, songs_dir)
 }
 
 mapset_walk_directory :: proc(mapset: ^Mapset, path: string) {

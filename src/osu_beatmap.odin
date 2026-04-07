@@ -116,8 +116,8 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
         lua_call_beatmap_func("on_init")
     }
 
-    // note(isak): build deferred activation list for objects with custom preempt (set by lua at init time).
-    // these bypass the normal visibility iterator since per-object preempt breaks monotonic ordering.
+    // note(isak): deferred activation list for objects with custom preempt (set by lua at init time).
+    // these bypass the normal visible set iterator since per-object preempt breaks visibility ordering
     build_deferred_activations(beatmap)
 }
 
@@ -143,8 +143,7 @@ build_deferred_activations :: proc(beatmap: ^Beatmap) {
 
 beatmap_on_update :: proc(beatmap: ^Beatmap) {
     if sound_is_finished(&beatmap.music) {
-        beatmap_reload(beatmap)
-        sound_set_position_ms(&beatmap.music, 0)
+        beatmap_open(beatmap.map_reference)
     }
     
     if beatmap.music_time_ms < 0 {
@@ -212,60 +211,44 @@ beatmap_load :: proc(beatmap: ^Beatmap) {
     }
 }
 
-beatmap_reload :: proc(beatmap: ^Beatmap, keep_song_position: bool = false) {
-    music_time_before_load, engine_time_before_load: f64
-    if keep_song_position {
+beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false) {
+    load_start := time_s_since_beginning_of_program()
+
+    music_time_before_load: f64
+    if keep_position {
         music_time_before_load = game.beatmap.music_time_ms
-        engine_time_before_load = current_time_ms()
-    } 
-    
-    beatmap_on_destroy(beatmap)
-    
-    mapset_path := mapset_free(game.active_mapset)
-    ok: bool
-    game.active_mapset, ok = mapset_open_for_editing(beatmap.map_reference.folder_path, beatmap.map_reference.osu_filename)
-    assert(ok)
-    
-    game.active_map = &game.active_mapset.osu_map
-    game.active_notosu_map = &game.active_mapset.notosu_map
-    beatmap_on_init(beatmap.map_reference, beatmap)
-    sound_set_speed(&game.beatmap.music, game.time_rate)
-    game.playfield_dirty_transform = true
-    
-    if keep_song_position {
-        if music_time_before_load >= 0 {
-            beatmap_seek(beatmap, music_time_before_load)        
-        } else {
-            game.beatmap.music_time_ms = music_time_before_load
-        }
-        
-        if !game.paused {
-            sound_resume(&game.beatmap.music)
-        } 
     }
-}
 
-osu_switch_map :: proc(ref: Map_Reference) {
-    beatmap_on_destroy(&game.beatmap)
-    cleanup_textures_for_rendering()
+    if game.beatmap_active {
+        cleanup_textures_for_rendering()
+        beatmap_on_destroy(&game.beatmap)
+        mapset_free(game.active_mapset)
+    }
 
-    mapset_path := mapset_free(game.active_mapset)
     ok: bool
     game.active_map_ref = ref
-    for r, i in app.map_references {
-        if r.folder_path == ref.folder_path && r.osu_filename == ref.osu_filename {
-            window.map_dropdown.selected = i
-            break
-        }
-    }
     game.active_mapset, ok = mapset_open_for_editing(ref.folder_path, ref.osu_filename)
     assert(ok)
-    
     game.active_map = &game.active_mapset.osu_map
     game.active_notosu_map = &game.active_mapset.notosu_map
 
     prepare_textures_for_rendering()
     beatmap_on_init(ref, &game.beatmap)
+    sound_set_speed(&game.beatmap.music, game.time_rate)
+    game.beatmap_active = true
+
+    notify_info("loaded beatmap in %.3vs", time_s_since_beginning_of_program() - load_start)
+
+    if keep_position {
+        if music_time_before_load >= 0 {
+            beatmap_seek(&game.beatmap, music_time_before_load)
+        } else {
+            game.beatmap.music_time_ms = music_time_before_load
+        }
+        if !game.paused {
+            sound_resume(&game.beatmap.music)
+        }
+    }
 }
 
 beatmap_seek :: proc(beatmap: ^Beatmap, pos: f64) {

@@ -7,29 +7,6 @@ import "core:math/linalg"
 import imgui "./imgui"
 
 
-Debug_Dropdown :: struct {
-    label:    cstring,
-    items:    ^[dynamic]cstring,
-    selected: int,
-    changed:  bool, // note(isak): set to true for one frame when selection changes
-}
-
-debug_dropdown_update :: proc(dropdown: ^Debug_Dropdown) {
-    dropdown.changed = false
-    if len(dropdown.items^) == 0 do return
-    preview := dropdown.items^[dropdown.selected]
-    if !imgui.BeginCombo(dropdown.label, preview) do return
-    defer imgui.EndCombo()
-
-    for item, i in dropdown.items^ {
-        is_selected := i == dropdown.selected
-        if imgui.Selectable(item, is_selected) && !is_selected {
-            dropdown.selected = i
-            dropdown.changed  = true
-        }
-        if is_selected do imgui.SetItemDefaultFocus()
-    }
-}
 
 UI_Timeline :: struct {
     h_px: f32,

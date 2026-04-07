@@ -27,6 +27,7 @@ window: struct {
 
     ui_enabled: bool,
     map_dropdown: Debug_Dropdown,
+    skin_dropdown: Debug_Dropdown,
     offset_window_open: bool,
 
     // note(isak): graphical resources used by the drawing context go here
@@ -108,6 +109,7 @@ window_on_resize :: proc(new_w, new_h: i32) {
     window.swapchain.height = new_h
     window.aspect_ratio = window.rect.h / window.rect.w
     window.screenspace_transform = transform_from_bounds({0, 0, window.rect.w, window.rect.h}, 1)
+    
     game.playfield_transform = playfield_build_transform()
     game.playfield_dirty_transform = false
     

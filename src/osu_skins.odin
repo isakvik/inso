@@ -1,5 +1,6 @@
 package notosu
 
+import "base:runtime"
 import "core:fmt"
 import "core:log"
 import "core:mem/virtual"
@@ -126,6 +127,8 @@ Hitsound :: Sample
 
 
 skin_load :: proc(skin_path: string) -> (result: ^Skin) {
+    load_start := time_s_since_beginning_of_program()
+    
     context.allocator = memory.allocators[.SKIN]
     result = new(Skin)
     result.path, _ = strings.clone(skin_path)
@@ -135,6 +138,8 @@ skin_load :: proc(skin_path: string) -> (result: ^Skin) {
 
     skin_load_elements(result)
     skin_load_hitsounds(result)
+    
+    notify_info("loaded skin '%s' in %.3vs", skin_path, time_s_since_beginning_of_program() - load_start)
     return result
 }
 
@@ -232,4 +237,32 @@ skin_reload :: proc(skin: ^Skin) {
     temp_path := strings.clone(skin.path, context.temp_allocator)
     skin_unload(skin)
     skin_load(temp_path)
+}
+
+// note(isak): register every skin directory found in skins_dir
+// allocates with given alloc + context.temp_allocator
+discover_skins :: proc(skins_dir: string, alloc: runtime.Allocator = context.allocator) {
+    dir_handle, err := os.open(skins_dir)
+    if err != nil {
+        log.errorf("couldn't open '{}': {}", skins_dir, err)
+        return
+    }
+
+    clear(&app.skin_references)
+    clear(&app.skin_reference_names)
+
+    dirs, _ := os.read_dir(dir_handle, 256, context.temp_allocator)
+
+    count := 0
+    for dir in dirs {
+        if dir.type != .Directory do continue
+
+        folder_path  := strings.concatenate({skins_dir, dir.name, "/"}, alloc)
+        display_cstr := fmt.caprintf("%s", dir.name)
+
+        append(&app.skin_references, folder_path)
+        append(&app.skin_reference_names, display_cstr)
+        count += 1
+    }
+    notify_info("discover_skins: found %v skins in '%s'", count, skins_dir)
 }

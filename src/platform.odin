@@ -26,6 +26,9 @@ app: struct {
 
     map_references:      [dynamic]Map_Reference,
     map_reference_names: [dynamic]cstring, // note(isak): parallel to map_references, for imgui
+
+    skin_references:      [dynamic]string,
+    skin_reference_names: [dynamic]cstring, // note(isak): parallel to skin_references, for imgui
 }
 
 app_init :: proc() {

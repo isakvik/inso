@@ -87,28 +87,6 @@ memory_init :: proc() -> runtime.Allocator_Error {
     return .None
 }
 
-debug_ui_init :: proc() {
-    imgui.CHECKVERSION()
-    imgui.CreateContext()
-    io := imgui.GetIO()
-    io.ConfigFlags += {.NavEnableKeyboard}
-    imgui.FontAtlas_AddFontFromFileTTF(io.Fonts, "data/Roboto-Regular.ttf", 14)
-    imgui_gl3.Init("#version 460")
-    ok := sdl.StartTextInput(window.handle)
-    assert(ok)
-    
-    window.map_dropdown = Debug_Dropdown{
-        label    = "Map",
-        items    = &app.map_reference_names,
-        selected = 0,
-    }
-}
-
-debug_ui_cleanup :: proc() {
-    imgui_gl3.Shutdown()
-    imgui.DestroyContext()
-}
-
 
 main :: proc() {
     _program_start_tsc = sdl.GetPerformanceCounter()
@@ -148,42 +126,36 @@ main :: proc() {
     text_init()
     keyboard_init()
     
-    game.user_config = config_load("User.ini")
-    defer config_save("User.ini")
+    game.user_config = config_load("user.ini")
+    defer config_save("user.ini")
     window_apply_vsync(game.user_config.vsync_enabled)
     audio_set_volume(game.user_config.master_volume)
-    audio_set_category_volume(.MUSIC,    game.user_config.music_volume)
+    audio_set_category_volume(.MUSIC, game.user_config.music_volume)
     audio_set_category_volume(.HITSOUND, game.user_config.hitsound_volume)
 
-    //-- @temp todo(isak): discover_skins, skin select interface
+    shaders_watch := directory_watch_init("shaders/")
+    skins_watch := directory_watch_init("skins/")
+    defer directory_watch_close(&skins_watch)
+
+    // todo(isak): consider creating a song index (with allocator)
+    discover_maps("songs/")
+    discover_skins("skins/")
+
+    //-- @temp todo(isak): skin select interface, user_config last used skin
     game.active_skin = skin_load("skins/gn/")
     //--
-
-    shaders_watch := directory_watch_init("shaders/")
-
-    // todo(isak): consider creating a song_index allocator
-    discover_maps("songs/")
+    
+    notosu_load_time := time_s_since_beginning_of_program()
 
     //-- @temp todo(isak): handle this properly when menu mode is a thing
-    {
-        ok: bool
-        initial_map_ref := 
-            len(app.map_references) > 0 ? app.map_references[0] : Map_Reference{ folder_path = "songs/test/" }
-
-        game.active_mapset, ok = mapset_open_for_editing(initial_map_ref.folder_path, initial_map_ref.osu_filename)
-        game.active_notosu_map = &game.active_mapset.notosu_map
-        game.active_map = &game.active_mapset.osu_map
-        game.active_map_ref = initial_map_ref
-        
-        if !ok {
-            log.error("tried to open mapset, but failed:", initial_map_ref.folder_path)
-        }
-
-        prepare_textures_for_rendering()
-    }
+    initial_map_ref :=
+        len(app.map_references) > 0 ? app.map_references[0] : Map_Reference{ folder_path = "songs/test/" }
     //--
 
     osu_on_init()
+    notify_info("notosu! loaded in %.3vs", notosu_load_time)
+    beatmap_open(initial_map_ref)
+    notify_info("Press F8 to view previous notifications")
 
     time_current_frame := current_time_s()
     time_first_frame := time_current_frame
@@ -319,9 +291,10 @@ main :: proc() {
         {
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
             
-            handle_debug_ui_events(&window.map_dropdown)
+            handle_debug_ui_events()
             if key_is_pressed(.F5) {
                 discover_maps("songs/")
+                discover_skins("skins/")
             }
             
             dt_ms := (time_current_frame - time_last_frame) * 1000
@@ -380,6 +353,8 @@ main :: proc() {
                 profiler_push_memory_diag_text(renderer)
             }
 
+            notifications_draw(renderer)
+
             push_text(renderer, VERSION,
                 pos     = {window.rect.w / 2, window.rect.h - 8},
                 size    = 14,
@@ -411,6 +386,7 @@ main :: proc() {
             profiler_block_begin(.BETWEEN_FRAMES); defer profiler_block_end() 
 
             process_builtin_shader_changes(&shaders_watch)
+            process_skins_watch(&skins_watch)
 
             if app.debug_display_frame_profiler {
                 profiler_write_texture_column(frame_count, window.profiler_texture)
@@ -456,7 +432,7 @@ begin_frame :: proc(renderer: ^Renderer) {
     if window.ui_enabled {
         imgui_gl3.NewFrame()
         imgui.NewFrame()
-        write_debug_ui(&window.map_dropdown)
+        write_debug_ui()
     }
 }
 
@@ -467,11 +443,12 @@ end_frame :: proc(renderer: ^Renderer) {
 }
 
 
-write_debug_ui :: proc(map_dropdown: ^Debug_Dropdown) {
+write_debug_ui :: proc() {
     imgui.Begin("Info")
     defer imgui.End()
     
-    debug_dropdown_update(map_dropdown)
+    debug_dropdown_update(&window.map_dropdown)
+    debug_dropdown_update(&window.skin_dropdown)
     imgui.Separator()
 
     timer_str := strings.clone_to_cstring(time_ms_to_string(beatmap_music_time_ms(&game.beatmap)), context.temp_allocator)
@@ -525,10 +502,37 @@ write_offset_window :: proc() {
     imgui.End()
 }
 
-handle_debug_ui_events :: proc(map_dropdown: ^Debug_Dropdown) {
+handle_debug_ui_events :: proc() {
+    map_dropdown := &window.map_dropdown
     if map_dropdown.changed && map_dropdown.selected < len(app.map_references) {
-        osu_switch_map(app.map_references[map_dropdown.selected])
+        map_ref := app.map_references[map_dropdown.selected]
+        beatmap_open(map_ref)
+        
+        for r, i in app.map_references {
+            if r.folder_path == map_ref.folder_path && r.osu_filename == map_ref.osu_filename {
+                window.map_dropdown.selected = i
+                break
+            }
+        }
     }
+    
+    skin_dropdown := &window.skin_dropdown
+    if skin_dropdown.changed && skin_dropdown.selected < len(app.skin_references) {
+        cleanup_textures_for_rendering()
+        skin_unload(game.active_skin)
+        
+        skin_ref := app.skin_references[skin_dropdown.selected]
+        game.active_skin = skin_load(skin_ref)
+        prepare_textures_for_rendering()
+        
+        for r, i in app.skin_references {
+            if r == skin_ref {
+                window.skin_dropdown.selected = i
+                break
+            }
+        }
+    }
+    
     if key_is_pressed(.F1) {
         window.renderer.trace_frame = !window.renderer.trace_frame
     }
@@ -561,6 +565,9 @@ handle_debug_ui_events :: proc(map_dropdown: ^Debug_Dropdown) {
     if key_is_pressed(.F6) {
         app.debug_display_textures = !app.debug_display_textures
     }
+    if key_is_pressed(.F8) {
+        notify.show_all = !notify.show_all
+    }
 
     // note(isak): cursor visibility - show OS cursor when imgui wants the mouse
     want_mouse := imgui.GetIO().WantCaptureMouse
@@ -589,35 +596,13 @@ process_builtin_shader_changes :: proc(watch: ^Directory_Watch) {
     }
 }
 
-sdl_scancode_to_imgui :: proc(sc: sdl.Scancode) -> imgui.Key {
-    #partial switch sc {
-    case .TAB:        return .Tab
-    case .LEFT:       return .LeftArrow
-    case .RIGHT:      return .RightArrow
-    case .UP:         return .UpArrow
-    case .DOWN:       return .DownArrow
-    case .PAGEUP:     return .PageUp
-    case .PAGEDOWN:   return .PageDown
-    case .HOME:       return .Home
-    case .END:        return .End
-    case .INSERT:     return .Insert
-    case .DELETE:     return .Delete
-    case .BACKSPACE:  return .Backspace
-    case .SPACE:      return .Space
-    case .RETURN:     return .Enter
-    case .ESCAPE:     return .Escape
-    case .LCTRL:      return .LeftCtrl
-    case .LSHIFT:     return .LeftShift
-    case .LALT:       return .LeftAlt
-    case .RCTRL:      return .RightCtrl
-    case .RSHIFT:     return .RightShift
-    case .RALT:       return .RightAlt
-    case .A:          return .A
-    case .C:          return .C
-    case .V:          return .V
-    case .X:          return .X
-    case .Y:          return .Y
-    case .Z:          return .Z
+process_skins_watch :: proc(watch: ^Directory_Watch) {
+    directory_watch_poll(watch)
+    changed := false
+    for _, ok := directory_watch_next_file(watch); ok; _, ok = directory_watch_next_file(watch) {
+        changed = true
     }
-    return .None
+    if changed {
+        discover_skins("skins/")
+    }
 }

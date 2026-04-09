@@ -60,7 +60,6 @@ function on_init()
             :set_time(t, t+1200)
             
         hobj:set_ar(9-i/100)
-        --hobj:set_cs(i/100) -- todo(isak): breaks sliders
     end
     
     register_global_event("hehe", function()
@@ -80,6 +79,8 @@ function on_update(time_ms)
         
         hobj:set_pos(x,y)
         table[i]:set_pos(x,y)
+
+        hobj:set_cs(math.cos(time_ms*(0.003+i*0.000005))*2 + 3)
     end
     
     Playfield.set_rotation(math.sin(time_ms / 3000) * 0.1)

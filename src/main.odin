@@ -89,8 +89,15 @@ memory_init :: proc() -> runtime.Allocator_Error {
 
 
 main :: proc() {
+    when #config(WITH_CRASH_HANDLER, false) {
+        if !crash_handler_is_game_process() {
+            crash_handler_run()
+            return
+        }
+    }
+
     _program_start_tsc = sdl.GetPerformanceCounter()
-    
+
     if memory_init() != .None {
         panic("memory_init :: error")
     }
@@ -100,7 +107,7 @@ main :: proc() {
     context.temp_allocator = memory.allocators[.FRAME]
     
     app_init()
-    context.logger = app.logger 
+    context.logger = app.logger
     defer app_cleanup()
 
     if (!sdl.Init({.VIDEO})) {
@@ -149,6 +156,9 @@ main :: proc() {
     initial_map_ref :=
         len(app.map_references) > 0 ? app.map_references[0] : Map_Reference{ folder_path = "songs/test/" }
     //--
+
+    crash_stats_init()
+    defer crash_stats_cleanup()
 
     osu_on_init()
     notify_info("notosu! loaded in %.3vs", notosu_load_time)
@@ -394,8 +404,10 @@ main :: proc() {
                 }
             }
             
-            frame_count += 1
+            crash_stats_write(frame_count, (time_current_frame - time_last_frame) * 1000)
             
+            frame_count += 1
+
             vmem.arena_free_all(&memory.arenas[.FRAME])
             for layer in Layer {
                 queue.clear(&window.renderer.layer_command_queues[layer])

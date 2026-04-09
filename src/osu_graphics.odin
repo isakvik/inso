@@ -221,6 +221,7 @@ Drawable_Flags :: distinct bit_set[Drawable_Flag; u32]
 Drawable_Flag :: enum u32 {
     ACTIVE,
     LOOP_ANIMATION,
+    SCALE_POS_BY_RADIUS, // note(isak): when hobj_index is set, also scales d.pos by the hitobject's current radius. use for child drawables (e.g. digits) whose pos is an offset in radius units, not for world-space positioned drawables
 }
 
 // note(isak): graphical entity that is pushed to the renderer
@@ -247,6 +248,10 @@ Drawable :: struct {
     angle_vel: f32,
     
     start_time_ms, end_time_ms: f64,
+
+    // note(isak): index+1 into game.beatmap.hitobjects. 0 = no associated hitobject.
+    // when set, d.size is stored in radius units and multiplied by hitobject_radius_osupx at render time.
+    hobj_index: int,
 }
 
 
@@ -407,8 +412,6 @@ clear_hitobject_drawables :: proc(hobj: ^Hitobject) {
 write_hitobject_drawables :: proc(hobj: ^Hitobject) {
     if hobj.type != .CIRCLE && hobj.type != .SLIDER { return }
 
-    // todo(isak): check hobj.custom_elements[.ACTIVE] for lua-overridden elements
-
     combo_color := hitobject_combo_color(hobj)
     preempt := hitobject_preempt_ms(hobj)
 
@@ -419,51 +422,54 @@ write_hitobject_drawables :: proc(hobj: ^Hitobject) {
     hobj.gfx_handles = make([]Drawable_Handle, total_handles, memory.allocators[.DRAWABLES])
 
     // last 3 handles (rendered first, behind digits)
+    // note(isak): size is stored in radius units (1 = 1 radius). render_drawable multiplies by hitobject_radius_osupx at draw time.
     base := [?]Element_Type{.HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
     for el_type, i in base {
         end_ms := hobj.start_time_ms + (game.beatmap.timing_windows.ok if el_type != .APPROACH_CIRCLE else 0)
         hobj.gfx_handles[n_digits + i] = drawable_new(Drawable{
-            flags        = {.ACTIVE},
-            element      = builtin_element_slot(el_type),
-            layer        = .HITOBJECTS,
-            size         = hitobject_radius_osupx(hobj) * 2,
-            anchor       = .CENTER,
-            color        = (combo_color if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE else with_alpha(color_white, 1)),
+            flags         = {.ACTIVE},
+            element       = builtin_element_slot(el_type),
+            layer         = .HITOBJECTS,
+            size          = {2, 2},
+            anchor        = .CENTER,
+            color         = (combo_color if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE else with_alpha(color_white, 1)),
             start_time_ms = hobj.start_time_ms - preempt,
             end_time_ms   = end_ms,
+            hobj_index    = hobj.index + 1,
         })
     }
 
     // digit drawables
+    // note(isak): size and pos are in radius units so they scale correctly with CS changes at runtime.
     hc_size := game.active_skin.elements[.HITCIRCLE].metrics
-    number_scale := (hitobject_radius_osupx(hobj) * 2) / max(hc_size.x, 1) * COMBO_NUMBER_SCALE
+    number_scale_norm := 2 / max(hc_size.x, 1) * COMBO_NUMBER_SCALE
 
-    total_digits_w: f32
+    total_digits_w_norm: f32
     for digit in 0..<n_digits {
         digit_el := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[digit])
-        total_digits_w += game.active_skin.elements[digit_el].metrics.x * number_scale
+        total_digits_w_norm += game.active_skin.elements[digit_el].metrics.x * number_scale_norm
     }
-    x := -total_digits_w / 2
+    x_norm := -total_digits_w_norm / 2
     for di in 0..<n_digits {
         digit_el      := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[di])
         digit_metrics := game.active_skin.elements[digit_el].metrics
-        digit_size    := digit_metrics * number_scale
+        digit_size_norm := digit_metrics * number_scale_norm
         hobj.gfx_handles[di] = drawable_new(Drawable{
-            flags   = {.ACTIVE},
-            element = builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + digits[di])),
-            layer   = .HITOBJECTS,
-            pos     = {x + digit_size.x / 2, 0},
-            size    = digit_size,
-            anchor  = .CENTER,
-            color   = with_alpha(color_white, 1),
+            flags         = {.ACTIVE, .SCALE_POS_BY_RADIUS},
+            element       = builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + digits[di])),
+            layer         = .HITOBJECTS,
+            pos           = {x_norm + digit_size_norm.x / 2, 0},
+            size          = digit_size_norm,
+            anchor        = .CENTER,
+            color         = with_alpha(color_white, 1),
             start_time_ms = hobj.start_time_ms - preempt,
             end_time_ms   = hobj.start_time_ms + game.beatmap.timing_windows.ok,
+            hobj_index    = hobj.index + 1,
         })
-        x += digit_size.x
+        x_norm += digit_size_norm.x
     }
 }
 
-// note(isak): creates the expanding circle hit feedback as expiring drawables
 write_click_feedback_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_time: f64) {
     combo_color := hitobject_combo_color(hobj)
 
@@ -472,22 +478,24 @@ write_click_feedback_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_time: f6
         element = builtin_element_slot(.CLICKED_HIT_CIRCLE_OVERLAY),
         layer = .HITOBJECTS,
         pos = pos,
-        size = hitobject_radius_osupx(hobj) * 2,
+        size = {2, 2},
         anchor = .CENTER,
         color = color_white,
         start_time_ms = map_time,
-        end_time_ms = map_time + 250,
+        end_time_ms = map_time + OSU_HIT_ANIMATION_LENGTH,
+        hobj_index = hobj.index + 1,
     })
     drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
         flags = {.ACTIVE},
         element = builtin_element_slot(.CLICKED_HIT_CIRCLE),
         layer = .HITOBJECTS,
         pos = pos,
-        size = hitobject_radius_osupx(hobj) * 2,
+        size = {2, 2},
         anchor = .CENTER,
         color = combo_color,
         start_time_ms = map_time,
-        end_time_ms = map_time + 250,
+        end_time_ms = map_time + OSU_HIT_ANIMATION_LENGTH,
+        hobj_index = hobj.index + 1,
     })
 }
 
@@ -534,10 +542,18 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}, al
     tex := element.tex
     uv_layer: f32
 
+    current_radius: f32 = 1
+    if d.hobj_index != 0 {
+        hobj := &game.beatmap.hitobjects[d.hobj_index - 1]
+        current_radius = hitobject_radius_osupx(hobj)
+    }
+
     t_sec := f32(relative_time_at / 1000)
     phys_x := d.vel.x * t_sec + 0.5 * d.accel.x * t_sec * t_sec
     phys_y := d.vel.y * t_sec + 0.5 * d.accel.y * t_sec * t_sec
-    rect := Rect{d.pos.x + parent_pos.x + phys_x, d.pos.y + parent_pos.y + phys_y, d.size.x, d.size.y}
+    pos_x := d.pos.x * (current_radius if .SCALE_POS_BY_RADIUS in d.flags else 1)
+    pos_y := d.pos.y * (current_radius if .SCALE_POS_BY_RADIUS in d.flags else 1)
+    rect := Rect{pos_x + parent_pos.x + phys_x, pos_y + parent_pos.y + phys_y, d.size.x * current_radius, d.size.y * current_radius}
     angle := d.angle_rad + d.angle_vel * t_sec
     color := d.color
 
@@ -561,12 +577,13 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}, al
         // note(isak): we don't set attributes directly the same way osu SBs work, but i don't like it
         switch anim in animation {
             case Animation_Translate:
-                rect.x = d.pos.x * linalg.lerp(anim.start_pos.x, anim.end_pos.x, t)
-                rect.y = d.pos.y * linalg.lerp(anim.start_pos.y, anim.end_pos.y, t)
+                offset := linalg.lerp(anim.start_pos, anim.end_pos, t) * current_radius
+                rect.x = pos_x + parent_pos.x + phys_x + offset.x
+                rect.y = pos_y + parent_pos.y + phys_y + offset.y
 
             case Animation_Scale:
-                rect.w = d.size.x * linalg.lerp(anim.start_scale.x, anim.end_scale.x, t)
-                rect.h = d.size.y * linalg.lerp(anim.start_scale.y, anim.end_scale.y, t)
+                rect.w = d.size.x * current_radius * linalg.lerp(anim.start_scale.x, anim.end_scale.x, t)
+                rect.h = d.size.y * current_radius * linalg.lerp(anim.start_scale.y, anim.end_scale.y, t)
 
             case Animation_Rotate:
                 angle = linalg.lerp(anim.start_angle, anim.end_angle, t)
@@ -663,8 +680,6 @@ render_slider_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     // game.playfield_transform means any offset/rotation/scale on the playfield automatically 
     // applies to the slider pass too.
     
-    // todo(isak): slider path tessellation is baked at map load using global CS; per-object CS only
-    // affects visual scale here. if accurate per-object slider ball physics are needed, rebuild the path.
     r := hitobject_radius_osupx(hobj)
     cs_to_osupx := mat3{r, 0, 0, 0, r, 0, 0, 0, 1}
     slider_pf_transform := mat3_to_transform(transform_to_mat3(game.playfield_transform) * cs_to_osupx)
@@ -696,6 +711,7 @@ render_slider_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
         border_color       = with_alpha(color_white, 0.9),
         body_color         = with_alpha(color_white, 0.7),
         script_translation = translation,
+        radius_osupx       = r,
     })
     
     r_bind_framebuffer({ read = .SLIDERS })
@@ -835,14 +851,14 @@ TEST_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Hand
     tex, ok := mapset_texture(bg_path)
     if ok {
         bg_aspect_ratio := f32(tex.h) / f32(tex.w)
-        bg_size := vec2{playfield_size_osupx, playfield_size_osupx} / {(bg_aspect_ratio), 1}
+        bg_size := vec2{PLAYFIELD_SIZE_OSUPX, PLAYFIELD_SIZE_OSUPX} / {(bg_aspect_ratio), 1}
         
         if window.aspect_ratio <= bg_aspect_ratio {
             bg_size *= (window.rect.w / bg_size.x)
         } else {
             bg_size *= (window.rect.h / bg_size.y)
         }
-        bg_size *= playfield_size_osupx / window.rect.h
+        bg_size *= PLAYFIELD_SIZE_OSUPX / window.rect.h
         
         return drawable_new_expiring(&game.beatmap.map_expiring_gfx, {
             flags = {.ACTIVE},

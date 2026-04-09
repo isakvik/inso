@@ -6,12 +6,11 @@ scripting
     draft more api
 
 game mechanics (not score, replays, etc)
-    per-hitobject size
-        
     finish animations
         texture array handling is kinda half baked
 
 rendering
+    postprocessing
     render to FBO
     lua frame object
 
@@ -24,7 +23,7 @@ TEST
 rendering
     locking bugfix
     3d pipeline support
-    renderer limit handling; eventual packing
+    renderer limit handling
     
 gameplay
     notelock

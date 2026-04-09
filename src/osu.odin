@@ -12,8 +12,9 @@ import "core:strings"
 import sdl "vendor:sdl3"
 
 
-playfield_size_osupx :: f32(512)
-osu_slider_curve_points_separation :: f32(2.5)
+PLAYFIELD_SIZE_OSUPX :: f32(512)
+OSU_SLIDER_CURVE_POINTS_SEPARATION :: f32(2.5)
+OSU_HIT_ANIMATION_LENGTH :: 250
 
 // note(isak): osu!'s actual play area is 512x384 within the 512x512 osu!px coordinate space,
 // with a small vertical offset for the HUD. these constants define that base placement and
@@ -201,7 +202,7 @@ hitobject_visible_start_time :: proc(hobj: ^Hitobject) -> (result: f64) {
 hitobject_visible_end_time :: proc(hobj: ^Hitobject) -> (result: f64) {
     end_time := hobj.end_time_ms        
     #partial switch hobj.type {
-    case .CIRCLE, .SLIDER: end_time += game.beatmap.timing_windows.ok
+    case .CIRCLE, .SLIDER: end_time += OSU_HIT_ANIMATION_LENGTH
     }
     return end_time
 }
@@ -366,7 +367,7 @@ playfield_build_transform :: proc "contextless" () -> Transform {
     effective_scale       := playfield_base_scale * game.beatmap.playfield_scale
     effective_translation := playfield_base_translation_osupx + game.beatmap.playfield_translation_osupx
 
-    k  := effective_scale * window.rect.h / playfield_size_osupx
+    k  := effective_scale * window.rect.h / PLAYFIELD_SIZE_OSUPX
     cx := window.rect.w * 0.5 + effective_translation.x * k
     cy := window.rect.h * 0.5 + effective_translation.y * k
 
@@ -376,8 +377,8 @@ playfield_build_transform :: proc "contextless" () -> Transform {
         0,                 0,                  1,
     }
     t_center := mat3{
-        1, 0, -playfield_size_osupx * 0.5,
-        0, 1, -playfield_size_osupx * 0.5,
+        1, 0, -PLAYFIELD_SIZE_OSUPX * 0.5,
+        0, 1, -PLAYFIELD_SIZE_OSUPX * 0.5,
         0, 0,  1,
     }
 
@@ -504,27 +505,21 @@ osu_on_update :: proc(dt: f64) {
 
     r_bind_layer_and_push_current_state(.HITOBJECTS)
 
-    // todo(isak) @beta sliders SHOULD go on top of hitobjects appearing later, so the
-    // render hitobjects loop should be integrated into this
-
-    for &hobj in visible_hobjs {
-        if map_time < hobj.start_time_ms - hitobject_preempt_ms(&hobj) || hobj.end_time_ms < map_time {
-            continue
-        }
-        if hobj.type == .SLIDER {
-            path := &game.beatmap.slider_paths[hobj.slider_path_index]
-            render_slider_path(&window.renderer, &hobj, path)
-
-            r_push_transform(game.playfield_transform)
-            render_slider_quads(&hobj, path, map_time)
-        }
-    }
-
-    r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
-    r_push_transform(game.playfield_transform)
-
-    // note(isak): render hitobject elements back to front for correct blending
     #reverse for &hobj in visible_hobjs {
+        if hobj.start_time_ms - hitobject_preempt_ms(&hobj) <= map_time && map_time <= hobj.end_time_ms {
+            
+            if hobj.type == .SLIDER {
+                path := &game.beatmap.slider_paths[hobj.slider_path_index]
+                render_slider_path(&window.renderer, &hobj, path)
+    
+                r_push_transform(game.playfield_transform)
+                render_slider_quads(&hobj, path, map_time)
+            }
+        }
+        
+        r_push_transform(game.playfield_transform)
+        r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
+        
         alpha_mul: f32 = 1.0
         if hobj.judgement_index == 0 {
             preempt := hitobject_preempt_ms(&hobj)
@@ -555,7 +550,7 @@ osu_on_update :: proc(dt: f64) {
         // playfield border
         cs := game.beatmap.circle_radius_osupx
         pf_outline := Rect{
-            -cs, -cs, playfield_size_osupx+2*cs, (playfield_size_osupx*3/4)+2*cs
+            -cs, -cs, PLAYFIELD_SIZE_OSUPX+2*cs, (PLAYFIELD_SIZE_OSUPX*3/4)+2*cs
         }
         r_draw_rect_outline(&window.renderer.quad_geometry, pf_outline, with_alpha(color_white, 0.1), 2)
     }

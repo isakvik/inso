@@ -28,13 +28,14 @@ layout (binding = 6, std140) uniform sliderParams {
     vec4 body_color;
     vec2 script_translation_osupx;
     uint baseInstance;
+    float radiusOsupx;
 };
 
 out float color;
 
 void main() {
     Vertex v = vertices[gl_VertexID];
-    vec2 ppos = vec2(v.pos.x, v.pos.y) + (points[baseInstance + gl_InstanceID] + script_translation_osupx) / circleSizeOsupx;
+    vec2 ppos = vec2(v.pos.x, v.pos.y) + (points[baseInstance + gl_InstanceID] + script_translation_osupx) / radiusOsupx;
     vec3 pos = t * vec3(ppos, 1.0);
 
     color = 1.0 - length(v.pos.xy); // true radial distance: 0 at edge, 1 at center

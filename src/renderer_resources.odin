@@ -78,6 +78,7 @@ Slider_Params :: struct {
     body_color:         vec4,
     script_translation: vec2,  // osu!px, applied in VS before coord normalization
     base_instance:      u32,   // replaces gl_BaseInstance for intel compat
+    radius_osupx:       f32,   // per-object radius, used in VS instead of global circleSizeOsupx
 }
 
 

@@ -498,6 +498,7 @@ Command_Draw_Slider :: struct {
     border_color:       Color,
     body_color:         Color,
     script_translation: vec2,
+    radius_osupx:       f32,
 }
 
 Command_Bind_Pipeline :: struct {
@@ -877,6 +878,7 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                         body_color         = color_to_vec(cmd.body_color),
                         script_translation = cmd.script_translation,
                         base_instance      = cmd.base_instance,
+                        radius_osupx       = cmd.radius_osupx,
                     }
                     gl.NamedBufferSubData(window.slider_param_buffer.id, 0, size_of(Slider_Params), &slider_globals)
                     ubo_bind(&window.slider_param_buffer, u32(Shader_SSBO_Bind_Slot.SLIDER_PARAMS))

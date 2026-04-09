@@ -43,6 +43,8 @@ lua_beatmap: struct {
     scheduled_events:    [dynamic]Scheduled_Event,
 
     music_time_ms: f64, // todo(isak) unnecessary since it's read every frame - access this through global
+
+    last_callback: cstring, // last event name dispatched, for crash diagnostics
 }
 
 Lua_Beatmap_Event_Type :: enum {
@@ -682,6 +684,7 @@ lua_beatmap_on_judgement :: proc(hobj_index: int, judgement: Judgement_Type, tim
 
 _lua_call_beatmap_func_with_params :: proc(name: cstring, data: $T, param_writer: proc(data: T) -> i32) {
     L:= lua_beatmap.state
+    lua_beatmap.last_callback = name
     lua_register_instruction_count_hook()
     lua.getglobal(L, name)
     
@@ -693,6 +696,7 @@ _lua_call_beatmap_func_with_params :: proc(name: cstring, data: $T, param_writer
 
 _lua_call_beatmap_func_no_params :: proc(name: cstring) {
     L:= lua_beatmap.state
+    lua_beatmap.last_callback = name
     lua_register_instruction_count_hook()
     lua.getglobal(L, name)
     if (lua.pcall(L, 0, 0, 0) != lua.OK) {

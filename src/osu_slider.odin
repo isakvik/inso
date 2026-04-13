@@ -295,13 +295,14 @@ write_instances_over_distance :: proc(instance_buf: ^Buffer(vec2), path: ^Slider
     write_instances_from_straight(instance_buf, path, l1, l1 + l_vector * l_distance_mult, curve_distance)
 }
 
-/* todo(yokes): make new proc which calculates instances with distance (or close to) base_dist between each
+/*todo(yokes): make new proc which calculates instances with distance (or close to) base_dist between each
     many parameters with unknown origins, find out what they are and how to use them, evt. which parameters we already have which can replace them:
     - this_curve
     - curr_curve_points
     - m_curve_points
-    - m_curve_point_segments
-
+    - m_curve_point_segments | looks like a queue with vec2s
+*/
+/*
 calculate_equal_points_between_instances :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, output: ^queue.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
     m_i_curve := min(i32(path.distance_osupx / f64(clamp(osu_slider_curve_points_separation, 1.0, 100.0))), path.instance_count)
     curr_curve_index := 0

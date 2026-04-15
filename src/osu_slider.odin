@@ -146,11 +146,11 @@ calculate_bezier_curve_distance :: proc(hobj: ^Hitobject, path: ^Slider_Path, cu
         queue.push(&to_flatten, parent)
     }
 
-    distance = calculate_distance_from_piecewise(path, &output, hobj.slider_state.distance)
+    distance = calculate_approx_distance_from_piecewise(path, &output, hobj.slider_state.distance)
     return distance
 }
 
-calculate_distance_from_piecewise :: proc(path: ^Slider_Path, output: ^queue.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
+calculate_approx_distance_from_piecewise :: proc(path: ^Slider_Path, output: ^queue.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
     for point, i in output.data[:output.len] {
         if i < int(output.len) - 1 {
             curr_distance := f64(linalg.vector_length(queue.get(output, i + 1) - queue.get(output, i)))
@@ -179,8 +179,8 @@ calculate_bezier_point_from_time :: proc(hobj: ^Hitobject, time_at: f64, path: ^
         return vec2({0,0})
     }
     
-    curve_m_i := min(i64(path.distance_osupx / clamp(base_dist, 1.0, 100.0)), i64(slider_max_points), i64(len(path_instances) - 1))
-    //curve_m_i := min(i64(slider_max_points), i64(len(path_instances) - 1))
+    //curve_m_i := min(i64(path.distance_osupx / clamp(base_dist, 1.0, 100.0)), i64(slider_max_points), i64(len(path_instances) - 1))
+    curve_m_i := min(i64(slider_max_points), i64(len(path_instances) - 1))
 
     duration := hobj.end_time_ms - hobj.start_time_ms
     elapsed  := clamp(time_at - hobj.start_time_ms, 0, duration)
@@ -302,9 +302,8 @@ write_instances_over_distance :: proc(instance_buf: ^Buffer(vec2), path: ^Slider
     - m_curve_points
     - m_curve_point_segments | looks like a queue with vec2s
 */
-/*
-calculate_equal_points_between_instances :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, output: ^queue.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
-    m_i_curve := min(i32(path.distance_osupx / f64(clamp(osu_slider_curve_points_separation, 1.0, 100.0))), path.instance_count)
+calculate_equal_points_from_curve :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, output: ^queue.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
+    m_i_curve := min(i32(path.distance_osupx / f64(clamp(base_dist, 1.0, 100.0))), i32(slider_max_points))
     curr_curve_index := 0
     curr_point := 0
 
@@ -313,12 +312,22 @@ calculate_equal_points_between_instances :: proc(instance_buf: ^Buffer(vec2), pa
 
     curr_curve := path.curves[curr_curve_index]
     //todo(yokes): check if len(curr_curve) < 1
+    if len(curr_curve) < 1 {
+        log.debug("calculate_equal_points_from_curve: len(curr_curve) == 0")
 
+        return 0
+    }
 
     last_curve := curr_curve[curr_point]
 
     last_curve_point_for_next_segment_start : vec2
-    curr_curve_points : vec2
+    curr_curve_points : queue.Queue(vec2)
+    m_curve_points : queue.Queue(vec2)
+    m_curve_point_segments : queue.Queue(queue.Queue(vec2))
+
+    queue.init(&curr_curve_points, allocator = context.temp_allocator)
+    queue.init(&m_curve_points, allocator = context.temp_allocator)
+    queue.init(&m_curve_point_segments, allocator = context.temp_allocator)
 
     for i in 0..<m_i_curve + 1 {
         pref_distance := i32(f64(i) * path.distance_osupx) / m_i_curve
@@ -333,83 +342,89 @@ calculate_equal_points_between_instances :: proc(instance_buf: ^Buffer(vec2), pa
             if curr_point >= len(curr_curve) {
                 curr_curve_index += 1
 
-                if len(curr_curve_points) > 0 {
-                    //m_curve_point_segments.push_back(curr_curve_points)
+                if curr_curve_points.len > 0 {
+                    queue.push_back_elems(&m_curve_point_segments, curr_curve_points)
                     //curr_curve_points.clear()
 
-                    if len(m_curve_points) > 0 {
-                        curr_curve_points.push_back(last_curve_point_for_next_segment_start)
-                    }
-                
-                    if curr_curve_index < len(path.curves) {
-                        curr_curve = path.curves[curr_curve_index]
-                        curr_point = 0
-                    } else {
-                        curr_point = len(curr_curve) - 1
-                        if last_distance_at == distance_at {
-                            break
-                        }
+                    if output.len > 0 {
+                        queue.push_back(&curr_curve_points, last_curve_point_for_next_segment_start)
                     }
                 }
-                if len(curr_curve) - 1 > 0 && curr_point > -1 && curr_point < len(path.curves) - 1 {
-                    //distance_at += distance of curr_curve (path.curves[curr_curve_index])
-                    break
-                }
-            }
 
-            this_curve : vec2 = len(curr_curve) > 0 && curr_point > -1 && curr_point < len(curr_curve) ? curr_curve[curr_point] : vec2({0, 0})
-
-            m_curve_points.push_back(vec2({0, 0}))
-            curr_curve_points.push_back(vec2({0, 0}))
-            if distance_at - last_distance_at > 1 {
-                t : f64 = (f64(pref_distance) - last_distance_at) / (distance_at - last_distance_at)
-                m_curve_points[i] = vec2({math.lerp(last_curve.x, this_curve.x, t), math.lerp(last_curve.y, this_curve.y, t)})
-            } else {
-                m_curve_points[i] = this_curve
-            }
-
-            last_curve_point_for_next_segment_start = this_curve
-            curr_curve_points[len(curr_curve_points) - 1] = this_curve
-        }
-
-        if len(curr_curve_points) > 0 {
-            m_curve_point_segments.push_back(curr_curve_points)
-        }
-
-        if len(m_curve_points) == 0 {
-            log.debug("calculate_equal_points_between_instances: len(m_curve_points) == 0")
-        }
-
-        segmented_length := 0.0
-        for s in 0..<len(m_curve_point_segments) {
-            for p in 0..<len(m_curve_point_segments[s]) {
-                segmented_length += p == 0 ? 0 : linalg.length(m_curve_point_segments[s][p] - m_curve_point_segments[s][p-1])
-            }
-        }
-
-        //todo(yokes): according to mcosu source code this is incorrect
-        if segmented_length > path.distance_osupx && len(m_curve_point_segments) > 1 && len(m_curve_point_segments[0]) > 1 {
-            excess : f64 = segmented_length - path.distance_osupx
-            for excess > 0 {
-                for s := (len(m_curve_point_segments)-1); s >= 0; s -= 1 {
-                    for p := (len(m_curve_point_segments[s])-1); p >= 0; p -= 1 {
-                        curr_length := p == 0 ? 0 : linalg.length(m_curve_point_segments[s][p] - m_curve_point_segments[s][p-1])
-                        if curr_length >= excess && p != 0 {
-                            segment_vector := linalg.normalize(m_curve_point_segments[s][p] - m_curve_point_segments[s][p-1])
-                            m_curve_point_segments[s][p] -= segment_vector * excess
-                            excess = 0.0
-                            break
-                        } else { // ???? what??
-                            m_curve_point_segments[s].erase(m_curve_point_segments[s].begin() + p)
-                            excess -= curr_length
-                        }
+                if curr_curve_index < len(path.curves) {
+                    curr_curve = path.curves[curr_curve_index]
+                    curr_point = 0
+                } else {
+                    curr_point = len(curr_curve) - 1
+                    if last_distance_at == distance_at {
+                        break
                     }
                 }
             }
+
+            if len(curr_curve) - 1 > 0 && curr_point > -1 && curr_point < len(path.curves) - 1 {
+                //distance_at += distance of curr_curve (path.curves[curr_curve_index])
+                break
+            }
+        }
+
+        this_curve : vec2 = len(curr_curve) > 0 && curr_point > -1 && curr_point < len(curr_curve) ? curr_curve[curr_point] : vec2({0, 0})
+
+        queue.push_back(&m_curve_points, vec2({0, 0}))
+        queue.push_back(&curr_curve_points, vec2({0, 0}))
+        if distance_at - last_distance_at > 1 {
+            t : f64 = (f64(pref_distance) - last_distance_at) / (distance_at - last_distance_at)
+            m_curve_points.data[i] = vec2({math.lerp(last_curve.x, this_curve.x, t), math.lerp(last_curve.y, this_curve.y, t)})
+        } else {
+            m_curve_points.data[i] = this_curve
+        }
+
+        last_curve_point_for_next_segment_start = this_curve
+        curr_curve_points.data[curr_curve_points.len - 1] = this_curve
+    }
+
+    if curr_curve_points.len > 0 {
+        queue.push_back(&m_curve_point_segments, curr_curve_points)
+    }
+
+    if m_curve_points.len == 0 {
+        log.debug("calculate_equal_points_between_instances: len(m_curve_points) == 0")
+    }
+
+    segmented_length := 0.0
+    for s in 0..<m_curve_point_segments.len {
+        for p in 0..<m_curve_point_segments.data[s].len {
+            segmented_length += p == 0 ? 0 : f64(linalg.length(m_curve_point_segments.data[s].data[p] - m_curve_point_segments.data[s].data[p-1]))
         }
     }
+
+    //todo(yokes): according to mcosu source code this is incorrect
+    if segmented_length > path.distance_osupx && m_curve_point_segments.len > 1 && m_curve_point_segments.data[0].len > 1 {
+        excess : f64 = segmented_length - path.distance_osupx
+        for excess > 0 {
+            for s : int = int(m_curve_point_segments.len-1); s >= 0; s -= 1 {
+                for p : int = int(m_curve_point_segments.data[s].len-1); p >= 0; p -= 1 {
+                    curr_length := p == 0 ? 0 : linalg.length(m_curve_point_segments.data[s].data[p] - m_curve_point_segments.data[s].data[p-1])
+                    if f64(curr_length) >= excess && p != 0 {
+                        segment_vector := linalg.normalize(m_curve_point_segments.data[s].data[p] - m_curve_point_segments.data[s].data[p-1])
+                        m_curve_point_segments.data[s].data[p] -= segment_vector * f32(excess)
+                        excess = 0.0
+                        break
+                    } else {
+                        /*
+                        todo(yokes): mcosu uses a vector while i use a queue, there is no erase function
+                        need to look at this closer
+                        */
+                        queue.pop_back(&m_curve_point_segments.data[s])
+                        excess -= f64(curr_length)
+                    }
+                }
+            }
+        }
+    } // todo(yokes): change this back when i've redone the procedures
+    return 0 //calculate_approx_distance_from_piecewise(path, output)
 }
-*/
+
 calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, output: ^queue.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
     for point, i in output.data[:output.len] {
         curr_distance : f64 = 0
@@ -735,14 +750,8 @@ write_instances_from_curve :: proc(
         if type == .LINEAR || len(curve) < 3 {
             travelled_distance = write_instances_from_straight(instance_buf, path, curve[0], curve[1], curve_distance)
         } else if type == .ARC {
-            //todo(yokes): copy the tolerance from lazer code to check if a slider is parallel
-            is_parallel: bool
-    
-            if is_parallel {
-                travelled_distance = write_instances_from_straight(instance_buf, path, curve[0], curve[2], curve_distance)
-            } else {
-                travelled_distance = circular_arc_to_piecewise_linear(instance_buf, path, curve, curve_distance)
-            }
+            //note(yokes): circular_arc_to_piecewise_linear checks if the slider is too straight and draws accordingly
+            travelled_distance = circular_arc_to_piecewise_linear(instance_buf, path, curve, curve_distance)
         } else if type == .BEZIER {
             //instance_count, instances_at
             _, _, travelled_distance = b_spline_to_piecewise_linear(instance_buf, path, curve, max(1, len(curve)), curve_distance)

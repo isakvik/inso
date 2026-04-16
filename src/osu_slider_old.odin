@@ -7,8 +7,8 @@ import "core:container/queue"
 import "core:math"
 import "core:math/linalg"
 import "core:slice"
-
-/*base_dist : f64 = 2.5
+/*
+base_dist : f64 = 2.5
 slider_max_points : f64 = 9999
 
 split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> (result: []Slider_Curve) {
@@ -92,7 +92,7 @@ calculate_curve_from_time :: proc(hobj: ^Hitobject, time_at: f64, path: ^Slider_
     return pos_at + hobj.script_pos_translation
 }
 
-calculate_bezier_curve_distance_new :: proc(path: ^Slider_Path, output: ^queue.Queue(vec2), curve: Slider_Curve, curve_distance: f64) -> (distance: f64) {
+calculate_bezier_curve_distance :: proc(hobj: ^Hitobject, path: ^Slider_Path, curve: Slider_Curve) -> (distance: f64) {
 
     // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L86
     if len(curve) < 2 {
@@ -105,7 +105,8 @@ calculate_bezier_curve_distance_new :: proc(path: ^Slider_Path, output: ^queue.Q
     point_count : int = len(curve) - 1
     degree := min(max(1, len(curve) - 1), point_count)
 
-    queue.init(output, allocator = context.temp_allocator)
+    output : queue.Queue(vec2)
+    queue.init(&output, allocator = context.temp_allocator)
     
     to_flatten : queue.Queue([]vec2) //todo(yokes): should contain all curves which are not approximated well enough yet
     temp_points: queue.Queue(vec2)
@@ -127,7 +128,7 @@ calculate_bezier_curve_distance_new :: proc(path: ^Slider_Path, output: ^queue.Q
         
         // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L119
         if bezier_is_flat_enough(parent) {
-            bezier_approximate(parent, output, subdivision_buffer_1, subdivision_buffer_2, degree + 1)
+            bezier_approximate(parent, &output, subdivision_buffer_1, subdivision_buffer_2, degree + 1)
 
             queue.push(&free_buffers, parent)
             continue
@@ -145,11 +146,11 @@ calculate_bezier_curve_distance_new :: proc(path: ^Slider_Path, output: ^queue.Q
         queue.push(&to_flatten, parent)
     }
 
-    distance = calculate_approx_distance_from_piecewise(path, output)
+    distance = calculate_approx_distance_from_piecewise(path, &output, hobj.slider_state.distance)
     return distance
 }
 
-calculate_approx_distance_from_piecewise :: proc(path: ^Slider_Path, output: ^queue.Queue(vec2)) -> (total_distance: f64) {
+calculate_approx_distance_from_piecewise :: proc(path: ^Slider_Path, output: ^queue.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
     for point, i in output.data[:output.len] {
         if i < int(output.len) - 1 {
             curr_distance := f64(linalg.vector_length(queue.get(output, i + 1) - queue.get(output, i)))
@@ -301,7 +302,6 @@ write_instances_over_distance :: proc(instance_buf: ^Buffer(vec2), path: ^Slider
     - m_curve_points
     - m_curve_point_segments | looks like a queue with vec2s
 */
-
 calculate_equal_points_from_curve :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, output: ^queue.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
     m_i_curve := min(i32(path.distance_osupx / f64(clamp(base_dist, 1.0, 100.0))), i32(slider_max_points))
     curr_curve_index := 0
@@ -421,8 +421,8 @@ calculate_equal_points_from_curve :: proc(instance_buf: ^Buffer(vec2), path: ^Sl
                 }
             }
         }
-    }
-    return calculate_approx_distance_from_piecewise(path, output)
+    } // todo(yokes): change this back when i've redone the procedures
+    return 0 //calculate_approx_distance_from_piecewise(path, output)
 }
 
 calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, output: ^queue.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
@@ -741,24 +741,20 @@ write_instances_from_straight :: proc(
     return f64(travelled_distance)
 }
 
-/* todo(yokes): redo entire thing? mcosu does it differently
-    - calculate where instances should go, but do not push them
-    - entire slider is filled before calculate_equal_points_between_instances is called
-*/
-write_points_from_curve :: proc(
-    instance_buf: ^Buffer(vec2), path: ^Slider_Path, output: ^queue.Queue(vec2), curve: Slider_Curve, type: Slider_Path_Type, curve_distance: f64
+write_instances_from_curve :: proc(
+    instance_buf: ^Buffer(vec2), path: ^Slider_Path, curve: Slider_Curve, type: Slider_Path_Type, curve_distance: f64
 ) -> (travelled_distance: f64) {
     
     if len(curve) > 1 {
         // todo(yokes): if the slider is linear each node counts as "red"
         if type == .LINEAR || len(curve) < 3 {
-            travelled_distance = calculate_bezier_curve_distance_new(path, &output, curve, curve_distance)
+            travelled_distance = write_instances_from_straight(instance_buf, path, curve[0], curve[1], curve_distance)
         } else if type == .ARC {
             //note(yokes): circular_arc_to_piecewise_linear checks if the slider is too straight and draws accordingly
             travelled_distance = circular_arc_to_piecewise_linear(instance_buf, path, curve, curve_distance)
         } else if type == .BEZIER {
             //instance_count, instances_at
-            _, _, travelled_distance = calculate_bezier_curve_distance_new(path, &output, curve, curve_distance)
+            _, _, travelled_distance = b_spline_to_piecewise_linear(instance_buf, path, curve, max(1, len(curve)), curve_distance)
         } 
     }
     return travelled_distance
@@ -774,25 +770,21 @@ write_instances_from_path :: proc(
     instance_offset = instance_buf.count
 
     path.curves = split_path_into_curves(path, alloc)
-    output : queue.Queue(vec2)
 
     buffer_push(instance_buf, path.nodes[0])
     distance_to_cover := path.distance_osupx
     for curve, i in path.curves {
         
         if distance_to_cover > 0 {
-            approx_distance_covered_by_curve := 
-                write_points_from_curve(instance_buf,
+            distance_covered_by_curve := 
+                write_instances_from_curve(instance_buf,
                                            path,
-                                           &output,
-                                           curve,
+                                           curve, 
                                            path.type,
                                            distance_to_cover)
-            distance_to_cover -= approx_distance_covered_by_curve
+            distance_to_cover -= distance_covered_by_curve
         }
     }
-
-    calculate_equal_points_from_curve(instance_buf, path, &output, path.distance_osupx)
 
     if distance_to_cover > 0 {
         write_instances_over_distance(instance_buf, path, distance_to_cover)

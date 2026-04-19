@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd.exe /c build.bat)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(grep:*)",
+      "Bash(ln:*)",
+      "Bash(nm /mnt/f/Code/odin/notosu/src/imgui/imgui_linux_x64.a)",
+      "Bash(find /home/isak/code/odin/notosu -path */vendor/sokol* -name *.odin)",
+      "Bash(find '/mnt/f/Program Files/odin/vendor/sokol/gfx' -type f -name *.odin)",
+      "Bash(wc -l /mnt/f/Code/odin/notosu/src/*.odin /mnt/f/Code/odin/notosu/src/**/*.odin)",
+      "Bash(/tmp/check_debug_apis.txt:*)",
+      "Read(//tmp/**)",
+      "Bash(cmd.exe /c 'odin check ./supervisor -target:windows_amd64' 2>&1)",
+      "Bash(odin check:*)"
+    ]
+  }
+}

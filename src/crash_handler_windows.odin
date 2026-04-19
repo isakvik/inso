@@ -441,7 +441,7 @@ crash_handler_write_log :: proc(
 // crash stats section
 
 _CRASH_HANDLER_ARENA_NAMES := [CRASH_STATS_ARENAS]string{
-    "global", "mapset", "drawables", "judgements", "skin", "sound", "frame",
+    "global", "mapset", "drawables", "judgements", "skin", "sound", "script elements", "frame",
 }
 
 _CRASH_HANDLER_MODE_NAMES := [4]string{

@@ -182,6 +182,7 @@ mapset_free :: proc(mapset: ^Mapset) -> string {
     mapset_path := strings.clone(mapset.folder_path, context.temp_allocator)
 
     virtual.arena_free_all(&memory.arenas[.DRAWABLES])
+    virtual.arena_free_all(&memory.arenas[.SCRIPT_ELEMENTS])
     virtual.arena_free_all(&memory.arenas[.MAPSET])
 
     return mapset_path

@@ -40,7 +40,7 @@ lua_beatmap: struct {
     odin_context: runtime.Context,
     registered_events: bit_set[Lua_Beatmap_Event_Type],
     event_registrations: [dynamic]Lua_Event_Registration,
-    scheduled_events:    [dynamic]Scheduled_Event,
+    scheduled_events: [dynamic]Scheduled_Event,
 
     last_callback: cstring, // last event name dispatched, for crash diagnostics
 }
@@ -542,7 +542,7 @@ luaapi_controller_is_up :: proc "c" (L: ^lua.State) -> i32 {
 }
 
 lua_scancode_from_key_arg :: proc(L: ^lua.State, arg_index: i32) -> (sdl.Scancode, bool) {
-    if lua.type(L, arg_index) == lua.TNUMBER {
+    if lua.type(L, lua.Index(arg_index)) == lua.TNUMBER {
         scancode_index := int(lua.L_checkinteger(L, arg_index))
         if scancode_index < 0 || scancode_index >= len(Keyboard_State) {
             return cast(sdl.Scancode)0, false
@@ -555,6 +555,7 @@ lua_scancode_from_key_arg :: proc(L: ^lua.State, arg_index: i32) -> (sdl.Scancod
 }
 
 luaapi_key_is_down :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
     scancode, ok := lua_scancode_from_key_arg(L, 1)
     if !ok {
         lua.pushboolean(L, b32(false))
@@ -565,6 +566,7 @@ luaapi_key_is_down :: proc "c" (L: ^lua.State) -> i32 {
 }
 
 luaapi_key_is_up :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
     scancode, ok := lua_scancode_from_key_arg(L, 1)
     if !ok {
         lua.pushboolean(L, b32(false))
@@ -751,7 +753,10 @@ luaapi_hitobject_instance_funcs := []lua.L_Reg {
   { "get_end_time", luaapi_hitobject_get_end_time },
   { "set_end_time", luaapi_hitobject_set_end_time },
   { "get_phase", luaapi_hitobject_get_phase },
-  { "set_element_for_phase", luaapi_hitobject_set_element_for_phase },
+  { "add_element_for_phase", luaapi_hitobject_add_element_for_phase },
+  { "clear_drawables", luaapi_hitobject_clear_drawables },
+  { "get_hit_animation_length", luaapi_hitobject_get_hit_animation_length },
+  { "set_hit_animation_length", luaapi_hitobject_set_hit_animation_length },
   { "get_preempt", luaapi_hitobject_get_preempt },
   { "set_preempt", luaapi_hitobject_set_preempt },
   { "get_ar", luaapi_hitobject_get_ar },
@@ -914,11 +919,44 @@ luaapi_hitobject_get_phase :: proc "c" (L: ^lua.State) -> (result: i32) {
     })
 }
 
-luaapi_hitobject_set_element_for_phase :: proc "c" (L: ^lua.State) -> (result: i32) {
+luaapi_hitobject_clear_drawables :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        context = lua_beatmap.odin_context
+        clear_hitobject_drawables(hobj)
+        return 0
+    })
+}
+
+luaapi_hitobject_add_element_for_phase :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         phase := Hitobject_Phase(lua_int(2))
-        element_id := Element_ID(lua_int(3))
-        hobj.custom_elements[phase] = element_id
+        el_id := (cast(^Element_ID)lua.L_checkudata(L, 3, lua_classes[.ELEMENT].name))^
+
+        if hobj.custom_elements[phase] == nil {
+            context = lua_beatmap.odin_context
+            hobj.custom_elements[phase] = reserve_hitobject_phase_elements(hobj, phase)
+        }
+
+        el_index := hobj.custom_element_nums[phase]
+        hobj.custom_elements[phase][el_index] = el_id
+        hobj.custom_element_nums[phase] += 1
+        return 0
+    })
+}
+
+luaapi_hitobject_get_hit_animation_length :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        context = lua_beatmap.odin_context
+        hit_anim_len := hobj.custom_hit_animation_len_ms if hobj.custom_hit_animation_len_ms != 0 else OSU_HIT_ANIMATION_LENGTH
+        lua.pushnumber(L, lua.Number(hit_anim_len))
+        return 0
+    })
+}
+
+luaapi_hitobject_set_hit_animation_length :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        context = lua_beatmap.odin_context
+        hobj.custom_hit_animation_len_ms = f64(lua_number(2))
         return 0
     })
 }
@@ -934,22 +972,7 @@ luaapi_hitobject_get_preempt :: proc "c" (L: ^lua.State) -> (result: i32) {
 luaapi_hitobject_set_preempt :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         context = lua_beatmap.odin_context
-        preempt := f64(lua_number(2))
-        hobj.custom_preempt_ms = preempt
-
-        // update or insert deferred activation entry
-        beatmap := &game.beatmap
-        visible_start := hobj.start_time_ms - preempt
-        if hobj.deferred_activation_index != 0 {
-            beatmap.deferred_activations[hobj.deferred_activation_index - 1].visible_start_time_ms = visible_start
-        } else {
-            append(&beatmap.deferred_activations, Deferred_Activation{hobj.index, visible_start})
-            hobj.deferred_activation_index = len(beatmap.deferred_activations) // index+1
-        }
-
-        if preempt > beatmap.max_preempt_ms {
-            beatmap.max_preempt_ms = preempt
-        }
+        hitobject_set_preempt(hobj, f64(lua_number(2)))
         return 0
     })
 }
@@ -966,7 +989,7 @@ luaapi_hitobject_get_ar :: proc "c" (L: ^lua.State) -> (result: i32) {
 luaapi_hitobject_set_ar :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         context = lua_beatmap.odin_context
-        hobj.custom_preempt_ms = convert_approach_rate_to_preempt_ms(f64(lua_number(2)))
+        hitobject_set_preempt(hobj, convert_approach_rate_to_preempt_ms(f64(lua_number(2))))
         return 0
     })
 }

@@ -1,0 +1,6 @@
+SliderTrackOverride : 100,200,200
+[Colours]
+Combo1 : 112,196,193
+Combo2 : 243,89,34
+Combo3 : 112,196,193
+Combo4 : 243,89,34

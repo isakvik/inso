@@ -2,12 +2,11 @@ priority list for beta
 
 -- POST MAPPER ALPHA RELEASE -- 
 
-scripting
-    draft more api
+osu editor integration (custom map_reference)
 
-game mechanics (not score, replays, etc)
-    finish animations
-        texture array handling is kinda half baked
+scripting
+    Animated_Drawable - pass a spritesheet
+    multiple custom drawables per step
 
 rendering
     postprocessing
@@ -26,9 +25,13 @@ rendering
     renderer limit handling
     
 gameplay
+    non-scalar playfield scale
     notelock
     score system
     replays
+    
+    finish animations
+        texture array handling is kinda half baked
     
     phase 2 visuals
         cursortrail (mcosu uses a custom shader here)

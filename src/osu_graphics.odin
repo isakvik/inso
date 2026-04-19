@@ -1,5 +1,6 @@
 package notosu
 
+import "base:runtime"
 import "base:intrinsics"
 import q "core:container/queue"
 import "core:math"
@@ -7,6 +8,7 @@ import "core:math/ease"
 import "core:math/linalg"
 import sb "swap_buffer"
 import "slotmap"
+import "core:slice"
 
 
 // note(isak): texture id lookup table for skin elements
@@ -222,6 +224,7 @@ Drawable_Flag :: enum u32 {
     ACTIVE,
     LOOP_ANIMATION,
     SCALE_POS_BY_RADIUS, // note(isak): when hobj_index is set, also scales d.pos by the hitobject's current radius. use for child drawables (e.g. digits) whose pos is an offset in radius units, not for world-space positioned drawables
+    FADE_IN,             // note(isak): fades alpha from 0 to 1 over the first 40% of the drawable's lifetime (capped at 400ms). set on preempt-phase drawables so they fade in using baked timing, not live hitobject preempt.
 }
 
 // note(isak): graphical entity that is pushed to the renderer
@@ -275,7 +278,7 @@ element_new :: proc(el: Element) -> (result: Element_ID) {
     return result
 }
 
-write_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Animation)) {
+create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Animation)) {
     q.reserve(elements, len(Element_Type))
     elements.len += len(Element_Type)
     
@@ -407,37 +410,79 @@ clear_hitobject_drawables :: proc(hobj: ^Hitobject) {
     hobj.gfx_handles = {}
 }
 
-// note(isak): creates default drawables for a hitobject entering ACTIVE phase.
-// respects custom_elements if set by lua at init time.
-write_hitobject_drawables :: proc(hobj: ^Hitobject) {
+reserve_hitobject_phase_elements :: proc(
+    hobj: ^Hitobject, phase: Hitobject_Phase, num_elements: u32 = 16
+) -> (result: []Element_ID) {
+    return make([]Element_ID, 16, memory.allocators[.SCRIPT_ELEMENTS])
+}
+
+// note(isak): creates drawables for a hitobject entering the given phase. for PREEMPT, falls back to 
+// the default graphics if no custom elements are set. for other phases, only writes drawables if 
+// custom elements are set. phase_start_time is the map time at which this phase began
+create_hitobject_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phase, phase_start_time: f64) {
     if hobj.type != .CIRCLE && hobj.type != .SLIDER { return }
 
     combo_color := hitobject_combo_color(hobj)
     preempt := hitobject_preempt_ms(hobj)
+    n_custom := hobj.custom_element_nums[phase]
 
     digits: [4]int
-    n_digits := _combo_digits(int(hobj.combo_number), &digits)
-    total_handles := n_digits + 3
+    n_digits := _combo_digits(int(hobj.combo_number), &digits) if phase == .PREEMPT else 0
+    n_base := n_custom if n_custom > 0 else (3 if phase == .PREEMPT else 0)
+    total_handles := n_digits + n_base
+
+    if total_handles == 0 { return }
 
     hobj.gfx_handles = make([]Drawable_Handle, total_handles, memory.allocators[.DRAWABLES])
 
-    // last 3 handles (rendered first, behind digits)
-    // note(isak): size is stored in radius units (1 = 1 radius). render_drawable multiplies by hitobject_radius_osupx at draw time.
-    base := [?]Element_Type{.HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
-    for el_type, i in base {
-        end_ms := hobj.start_time_ms + (game.beatmap.timing_windows.ok if el_type != .APPROACH_CIRCLE else 0)
-        hobj.gfx_handles[n_digits + i] = drawable_new(Drawable{
-            flags         = {.ACTIVE},
-            element       = builtin_element_slot(el_type),
-            layer         = .HITOBJECTS,
-            size          = {2, 2},
-            anchor        = .CENTER,
-            color         = (combo_color if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE else with_alpha(color_white, 1)),
-            start_time_ms = hobj.start_time_ms - preempt,
-            end_time_ms   = end_ms,
-            hobj_index    = hobj.index + 1,
-        })
+    // note(isak): size is stored in radius units (1 = 1 radius). render_drawable multiplies by hitobject_radius_osupx
+    // at draw time.
+
+    if n_custom > 0 {
+        // note(isak): maps animation time over the natural duration of each phase
+        phase_end_time: f64
+        switch phase {
+            case .PREEMPT:    phase_end_time = phase_start_time + preempt
+            case .HOLD:       phase_end_time = phase_start_time + hobj.end_time_ms - hobj.start_time_ms
+            case .NONE:       phase_end_time = phase_start_time + f64(0)
+            case .HIT, .MISS: 
+                hit_animation_time := hobj.custom_hit_animation_len_ms != 0 ? hobj.custom_hit_animation_len_ms : OSU_HIT_ANIMATION_LENGTH
+                phase_end_time = phase_start_time + f64(hit_animation_time)
+        }
+        
+        for i in 0..<hobj.custom_element_nums[phase] {
+            el_id := hobj.custom_elements[phase][i]
+            el_flags := Drawable_Flags{.ACTIVE} | (Drawable_Flags{.FADE_IN} if phase == .PREEMPT else {})
+            hobj.gfx_handles[n_digits + i] = drawable_new(Drawable{
+                flags         = el_flags,
+                element       = el_id,
+                layer         = .HITOBJECTS,
+                size          = {2, 2},
+                anchor        = .CENTER,
+                color         = combo_color,
+                start_time_ms = phase_start_time,
+                end_time_ms   = phase_end_time,
+                hobj_index    = hobj.index + 1,
+            })
+        }
+    } else {
+        base := [?]Element_Type{.HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
+        for el_type, i in base {
+            end_ms := hobj.start_time_ms + (game.beatmap.timing_windows.ok if el_type != .APPROACH_CIRCLE else 0)
+            hobj.gfx_handles[n_digits + i] = drawable_new(Drawable{
+                flags         = {.ACTIVE, .FADE_IN},
+                element       = builtin_element_slot(el_type),
+                layer         = .HITOBJECTS,
+                size          = {2, 2},
+                anchor        = .CENTER,
+                color         = (combo_color if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE else with_alpha(color_white, 1)),
+                start_time_ms = hobj.start_time_ms - preempt,
+                end_time_ms   = end_ms,
+                hobj_index    = hobj.index + 1,
+            })
+        }
     }
+    
 
     // digit drawables
     // note(isak): size and pos are in radius units so they scale correctly with CS changes at runtime.
@@ -455,7 +500,7 @@ write_hitobject_drawables :: proc(hobj: ^Hitobject) {
         digit_metrics := game.active_skin.elements[digit_el].metrics
         digit_size_norm := digit_metrics * number_scale_norm
         hobj.gfx_handles[di] = drawable_new(Drawable{
-            flags         = {.ACTIVE, .SCALE_POS_BY_RADIUS},
+            flags         = {.ACTIVE, .FADE_IN, .SCALE_POS_BY_RADIUS},
             element       = builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + digits[di])),
             layer         = .HITOBJECTS,
             pos           = {x_norm + digit_size_norm.x / 2, 0},
@@ -470,7 +515,7 @@ write_hitobject_drawables :: proc(hobj: ^Hitobject) {
     }
 }
 
-write_click_feedback_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_time: f64) {
+create_click_feedback_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_time: f64) {
     combo_color := hitobject_combo_color(hobj)
 
     drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
@@ -506,30 +551,37 @@ process_hitobject_phase_transitions :: proc() {
     for transition in game.beatmap.phase_transitions.current {
         hobj := &game.beatmap.hitobjects[transition.hitobject_index]
 
+        preempt := hitobject_preempt_ms(hobj)
         switch transition.to {
-        case .ACTIVE:
-            write_hitobject_drawables(hobj)
+        case .PREEMPT:
+            create_hitobject_phase_drawables(hobj, .PREEMPT, hobj.start_time_ms - preempt)
         case .HOLD:
             clear_hitobject_drawables(hobj)
-            write_click_feedback_drawables(hobj, hitobject_pos(hobj), map_time)
+            
+            create_click_feedback_drawables(hobj, hitobject_pos(hobj), map_time)
+            create_hitobject_phase_drawables(hobj, .HOLD, hobj.start_time_ms)
         case .HIT:
             clear_hitobject_drawables(hobj)
-            if transition.from == .ACTIVE {
-                write_click_feedback_drawables(hobj, hitobject_pos(hobj), map_time)
-            } else if transition.from == .HOLD {
-                path := &game.beatmap.slider_paths[hobj.slider_path_index]
-                tail_pos := (path.pos if hobj.slider_state.path_travel_count % 2 == 0 else path.end_pos) + hobj.script_pos_translation
-                write_click_feedback_drawables(hobj, tail_pos, map_time)
+            
+            // note(isak): custom hit animations override the default circle expanding animation
+            if hobj.custom_element_nums[.HIT] == 0 {
+                if transition.from == .PREEMPT {
+                    create_click_feedback_drawables(hobj, hitobject_pos(hobj), map_time)
+                } else if transition.from == .HOLD {
+                    create_click_feedback_drawables(hobj, hitobject_tail_pos(hobj), map_time)
+                }
             }
+            create_hitobject_phase_drawables(hobj, .HIT, map_time)
         case .MISS:
             clear_hitobject_drawables(hobj)
+            create_hitobject_phase_drawables(hobj, .MISS, map_time)
         case .NONE:
         }
     }
     sb.swap(&game.beatmap.phase_transitions)
 }
 
-render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}, alpha_mul: f32 = 1.0) -> bool {
+render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) -> bool {
     if at_time < d.start_time_ms {
         return true
     }
@@ -543,9 +595,11 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}, al
     uv_layer: f32
 
     current_radius: f32 = 1
+    fade_ref_ms := d.end_time_ms // note(isak): for FADE_IN, the baked hit time is used if hobj_index is set
     if d.hobj_index != 0 {
         hobj := &game.beatmap.hitobjects[d.hobj_index - 1]
         current_radius = hitobject_radius_osupx(hobj)
+        fade_ref_ms = hobj.start_time_ms
     }
 
     t_sec := f32(relative_time_at / 1000)
@@ -574,7 +628,7 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}, al
         t := f32((anim_time_at - base.start_time) / (base.end_time - base.start_time))
         t = tween_apply(base.tween, min(t, 1))
 
-        // note(isak): we don't set attributes directly the same way osu SBs work, but i don't like it
+        // note(isak): we don't set (override) attributes directly the same way osu SBs work, but i don't like it
         switch anim in animation {
             case Animation_Translate:
                 offset := linalg.lerp(anim.start_pos, anim.end_pos, t) * current_radius
@@ -615,7 +669,10 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}, al
         seen_animation_of_type[animation_variant(animation)] = true
     }
 
-    color.a = u8(f32(color.a) * alpha_mul)
+    if .FADE_IN in d.flags {
+        fade_in_ms := min((fade_ref_ms - d.start_time_ms) * 0.4, 400.0)
+        color.a = u8(f32(color.a) * f32(clamp(relative_time_at / fade_in_ms, 0, 1)))
+    }
 
     r_check_and_bind_pipeline({element.shader})
     r_check_and_bind_layer(d.layer)

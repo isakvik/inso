@@ -5,7 +5,7 @@ import win "core:sys/windows"
 import "core:fmt"
 import gl "vendor:OpenGL"
 
-CRASH_STATS_ARENAS :: 7 // must match len(Memory_Arena_Type)
+CRASH_STATS_ARENAS :: 8 // must match len(Memory_Arena_Type)
 
 // vendor-specific GL enums for VRAM queries. not in the standard gl package
 // since they're extensions, but glGetIntegerv with an unsupported enum just

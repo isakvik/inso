@@ -42,6 +42,9 @@ Memory_Arena_Type :: enum {
     // note(isak): active sound channels (Sound_Channel slotmap). freed and reinited on game_clear_sounds
     SOUND,
 
+    // note(isak): per-hitobject custom drawables assigned by lua scripts. cleared on mapset reload and lua hot-reload
+    SCRIPT_ELEMENTS,
+
     // note(isak): temporary allocator. cleared on frame end
     FRAME,
 }
@@ -49,10 +52,11 @@ Memory_Arena_Type :: enum {
 memory_arena_names := [?]string {
     "Global",
     "Mapset",
-    "Entities",
+    "Drawables",
     "Judgements",
     "Skin",
     "Sound",
+    "Script elements",
     "Frame",
     "Command buffer[BACKGROUND]",
     "Command buffer[FOREGROUND]",
@@ -224,13 +228,13 @@ main :: proc() {
                     imgui.IO_AddMouseWheelEvent(imgui.GetIO(), event.wheel.x, event.wheel.y)
 
                 case sdl.EventType.KEY_DOWN:
-                    lua_enqueue_key_event(event.key.scancode, true)
+                    //lua_enqueue_key_event(event.key.scancode, true)
                     imgui.IO_AddKeyEvent(imgui.GetIO(), sdl_scancode_to_imgui(event.key.scancode), true)
                     if event.key.scancode == .RETURN && (event.key.mod & sdl.KMOD_ALT) != {} {
                         window_toggle_fullscreen()
                     }
                 case sdl.EventType.KEY_UP:
-                    lua_enqueue_key_event(event.key.scancode, false)
+                    //lua_enqueue_key_event(event.key.scancode, false)
                     imgui.IO_AddKeyEvent(imgui.GetIO(), sdl_scancode_to_imgui(event.key.scancode), false)
                 case sdl.EventType.TEXT_INPUT:
                     imgui.IO_AddInputCharactersUTF8(imgui.GetIO(), event.text.text)

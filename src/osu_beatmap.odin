@@ -101,7 +101,7 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     queue.append(&beatmap.elements, null_element)
     queue.init(&beatmap.animations, 1024, memory.allocators[.MAPSET])
 
-    write_default_elements(&beatmap.elements, &beatmap.animations)
+    create_default_elements(&beatmap.elements, &beatmap.animations)
     
     sb.init(&beatmap.phase_transitions, 256, memory.allocators[.DRAWABLES])
 
@@ -119,26 +119,6 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     // note(isak): deferred activation list for objects with custom preempt (set by lua at init time).
     // these bypass the normal visible set iterator since per-object preempt breaks visibility ordering
     build_deferred_activations(beatmap)
-}
-
-build_deferred_activations :: proc(beatmap: ^Beatmap) {
-    max_preempt := beatmap.preempt_ms
-    count := 0
-    for &hobj in beatmap.hitobjects {
-        if hobj.custom_preempt_ms != 0 {
-            count += 1
-            if hobj.custom_preempt_ms > max_preempt do max_preempt = hobj.custom_preempt_ms
-        }
-    }
-    beatmap.max_preempt_ms = max_preempt
-
-    beatmap.deferred_activations = make([dynamic]Deferred_Activation, 0, count, memory.allocators[.MAPSET])
-    for &hobj in beatmap.hitobjects {
-        if hobj.custom_preempt_ms != 0 {
-            append(&beatmap.deferred_activations, Deferred_Activation{hobj.index, hobj.start_time_ms - hobj.custom_preempt_ms})
-            hobj.deferred_activation_index = len(beatmap.deferred_activations) // index+1
-        }
-    }
 }
 
 beatmap_on_update :: proc(beatmap: ^Beatmap) {
@@ -444,6 +424,26 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
         })
     }
     
+}
+
+build_deferred_activations :: proc(beatmap: ^Beatmap) {
+    max_preempt := beatmap.preempt_ms
+    count := 0
+    for &hobj in beatmap.hitobjects {
+        if hobj.custom_preempt_ms != 0 {
+            count += 1
+            if hobj.custom_preempt_ms > max_preempt do max_preempt = hobj.custom_preempt_ms
+        }
+    }
+    beatmap.max_preempt_ms = max_preempt
+
+    beatmap.deferred_activations = make([dynamic]Deferred_Activation, 0, count, memory.allocators[.MAPSET])
+    for &hobj in beatmap.hitobjects {
+        if hobj.custom_preempt_ms != 0 {
+            append(&beatmap.deferred_activations, Deferred_Activation{hobj.index, hobj.start_time_ms - hobj.custom_preempt_ms})
+            hobj.deferred_activation_index = len(beatmap.deferred_activations) // index+1
+        }
+    }
 }
 
 process_expiring_hitobjects :: proc(expiring_hitobjects: ^sb.Swap_Buffer(int)) {

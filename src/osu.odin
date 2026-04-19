@@ -102,7 +102,7 @@ Hitobject_Flag :: enum {
 
 Hitobject_Phase :: enum u8 {
     NONE,
-    ACTIVE,  // on screen, hittable
+    PREEMPT, // on screen, hittable
     HOLD,    // slider: tracking the ball
     HIT,
     MISS,
@@ -137,10 +137,12 @@ Hitobject :: struct {
     slider_state: Slider_State,
 
     phase: Hitobject_Phase,
-    custom_preempt_ms: f64,          // note(isak): per-object approach rate override. 0 = use global
-    deferred_activation_index: int,  // note(isak): index+1 into beatmap.deferred_activations. 0 = not in list
+    custom_preempt_ms: f64,          // note(isak): per-object approach time override. 0 = use global
     custom_radius_osupx: f32,        // note(isak): per-object circle size override. 0 = use global
-    custom_elements: [Hitobject_Phase]Element_ID,
+    deferred_activation_index: int,  // note(isak): index+1 into beatmap.deferred_activations. 0 = not in list
+    custom_elements: [Hitobject_Phase][]Element_ID,
+    custom_element_nums: [Hitobject_Phase]int,
+    custom_hit_animation_len_ms: f64,
 
     judgement_index: int,
     gfx_handles: []Drawable_Handle,
@@ -177,6 +179,12 @@ hitobject_pos :: proc(hobj: ^Hitobject) -> vec2 {
     return hobj.pos + hobj.script_pos_translation
 }
 
+hitobject_tail_pos :: proc(hobj: ^Hitobject) -> vec2 {
+    path := &game.beatmap.slider_paths[hobj.slider_path_index]
+    tail_pos := (path.pos if hobj.slider_state.path_travel_count % 2 == 0 else path.end_pos) + hobj.script_pos_translation
+    return tail_pos + hobj.script_pos_translation
+}
+
 hitobject_duration :: proc(hobj: ^Hitobject) -> (result: f64) {
     return hobj.end_time_ms - hobj.start_time_ms
 }
@@ -200,9 +208,10 @@ hitobject_visible_start_time :: proc(hobj: ^Hitobject) -> (result: f64) {
 }
 
 hitobject_visible_end_time :: proc(hobj: ^Hitobject) -> (result: f64) {
-    end_time := hobj.end_time_ms        
+    end_time := hobj.end_time_ms
+    hit_anim_len := hobj.custom_hit_animation_len_ms != 0 ? hobj.custom_hit_animation_len_ms : OSU_HIT_ANIMATION_LENGTH
     #partial switch hobj.type {
-    case .CIRCLE, .SLIDER: end_time += OSU_HIT_ANIMATION_LENGTH
+    case .CIRCLE, .SLIDER: end_time += hit_anim_len
     }
     return end_time
 }
@@ -223,6 +232,21 @@ hitobject_combo_color :: proc(hobj: ^Hitobject) -> (result: Color) {
         result = DEFAULT_COMBO_COLORS[color_index]
     }
     return result
+}
+
+hitobject_set_preempt :: proc(hobj: ^Hitobject, preempt: f64) {
+    hobj.custom_preempt_ms = preempt
+    beatmap := &game.beatmap
+    visible_start := hobj.start_time_ms - preempt
+    if hobj.deferred_activation_index != 0 {
+        beatmap.deferred_activations[hobj.deferred_activation_index - 1].visible_start_time_ms = visible_start
+    } else {
+        append(&beatmap.deferred_activations, Deferred_Activation{hobj.index, visible_start})
+        hobj.deferred_activation_index = len(beatmap.deferred_activations)
+    }
+    if preempt > beatmap.max_preempt_ms {
+        beatmap.max_preempt_ms = preempt
+    }
 }
 
 hitobject_emit_phase_transition :: proc(hobj: ^Hitobject, to: Hitobject_Phase) {
@@ -361,8 +385,8 @@ Osu_Map :: struct {
 }
 
 // note(isak): builds game.playfield_transform from playfield_offset_osupx, playfield_scale,
-// and playfield_rotation_rad. maps osu!px -> NDC with full affine support (translate, scale,
-// rotate). the inverse correctly maps window pixels back to osu!px without extra adjustment.
+// and playfield_rotation_rad. maps osu!px -> NDC with full affine support (translate, scale, rotate). 
+// the inverse correctly maps window pixels back to osu!px without extra adjustment.
 playfield_build_transform :: proc "contextless" () -> Transform {
     effective_scale       := playfield_base_scale * game.beatmap.playfield_scale
     effective_translation := playfield_base_translation_osupx + game.beatmap.playfield_translation_osupx
@@ -402,14 +426,8 @@ osu_on_update :: proc(dt: f64) {
     game.dt = dt
 
     updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
-    if updated_systems[.OSU_FILE] || updated_systems[.NOTOSU_FILE] {
+    if updated_systems[.OSU_FILE] || updated_systems[.NOTOSU_FILE] || updated_systems[.SCRIPTS] {
         beatmap_open(game.beatmap.map_reference, true)
-    }
-    if updated_systems[.SCRIPTS] {
-        lua_reload(game.active_notosu_map.lua_entry_point)
-        if lua_cares_about_event(.ON_INIT) {
-            lua_call_beatmap_func(lua_beatmap_event_names[.ON_INIT])
-        }
     }
     if updated_systems[.SHADERS] {
         mapset_reinit_custom_shaders(game.active_mapset)
@@ -428,11 +446,11 @@ osu_on_update :: proc(dt: f64) {
     map_time := beatmap_music_time_ms(&game.beatmap)
     visible_hobjs := get_visible_hitobjects(&game.beatmap.visible_hitobject_state, map_time)
     
-    // note(isak): phase emitter - advance hitobjects entering the visibility window
+    // note(isak): handle hitobject phase changes
     for &hobj in visible_hobjs {
         if hobj.phase == .NONE && hobj.custom_preempt_ms == 0 {
             if hitobject_visible_start_time(&hobj) < map_time && map_time < hitobject_visible_end_time(&hobj) {
-                hitobject_emit_phase_transition(&hobj, .ACTIVE)
+                hitobject_emit_phase_transition(&hobj, .PREEMPT)
                 hobj.flags |= {.VISIBLE}
                 sb.append(&game.beatmap.expiring_hitobjects, hobj.index)
             }
@@ -444,7 +462,7 @@ osu_on_update :: proc(dt: f64) {
         if da.visible_start_time_ms > map_time do continue
         hobj := &game.beatmap.hitobjects[da.hitobject_index]
         if hobj.phase == .NONE {
-            hitobject_emit_phase_transition(hobj, .ACTIVE)
+            hitobject_emit_phase_transition(hobj, .PREEMPT)
             hobj.flags |= {.VISIBLE}
             sb.append(&game.beatmap.expiring_hitobjects, hobj.index)
         }
@@ -469,7 +487,7 @@ osu_on_update :: proc(dt: f64) {
         game.input.last_valid_press_at = map_time
 
         for &hobj, i in visible_hobjs {
-            if hobj.phase != .ACTIVE {
+            if hobj.phase != .PREEMPT {
                 continue
             }
             hobj_pos := hitobject_pos(&hobj)
@@ -520,17 +538,10 @@ osu_on_update :: proc(dt: f64) {
         r_push_transform(game.playfield_transform)
         r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
         
-        alpha_mul: f32 = 1.0
-        if hobj.judgement_index == 0 {
-            preempt := hitobject_preempt_ms(&hobj)
-            fade_in_ms := min(preempt * 0.4, 400.0)
-            visible_start := hobj.start_time_ms - preempt
-            alpha_mul = f32(clamp((map_time - visible_start) / fade_in_ms, 0, 1))
-        }
         #reverse for handle in hobj.gfx_handles {
             e := slotmap.get(&game.beatmap.drawables, handle) or_continue
             if .ACTIVE in e.flags {
-                render_drawable(e, map_time, hitobject_pos(&hobj), alpha_mul)
+                render_drawable(e, map_time, hitobject_pos(&hobj))
             }
         }
     }

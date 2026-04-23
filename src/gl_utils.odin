@@ -39,13 +39,13 @@ buffer_init :: proc(N: i32, data: []$T) -> Buffer(T) {
 }
 
 buffer_push :: proc(buf: ^Buffer($T), t: T) {
-    assert(buf.count + 1 < buf.size)
+    assert(buf.count + 1 <= buf.size)
     buf.data[buf.count] = t
     buf.count += 1
 }
 
 buffer_push_slice :: proc(buf: ^Buffer($T), t_slice: []T) {
-    assert(buf.count + 1 < buf.size)
+    assert(buf.count + len(t_slice) <= buf.size)
     for i in 0..<len(t_slice) {
         buf.data[buf.count + i] = t[i]
     }

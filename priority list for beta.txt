@@ -54,6 +54,14 @@ platform
     lua profiling (nested profiler block support)
     input thread
     builtin resource pack
+    file watch parity across platforms
+        linux recursive watch support
+        windows unicode filename conversion
+
+beta hardening
+    replace user/data-path asserts with recoverable errors
+        map parsing
+        config io
 
 YEAST mode
     screen capture must work

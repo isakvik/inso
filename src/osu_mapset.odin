@@ -571,10 +571,11 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                                 timing_point.meter = u8(meter)
                             case 3: sample_set, ok := strconv.parse_u64(value); assert(ok)
                                 switch sample_set {
-                                    case 0: result.sample_set = .NORMAL
-                                    case 1: result.sample_set = .SOFT
-                                    case 2: result.sample_set = .DRUM
-                                    case 3: result.sample_set = .NORMAL
+                                    case 0: timing_point.sample_set = u8(result.sample_set)
+                                    case 1: timing_point.sample_set = u8(Osu_Map_Sample_Set.NORMAL)
+                                    case 2: timing_point.sample_set = u8(Osu_Map_Sample_Set.SOFT)
+                                    case 3: timing_point.sample_set = u8(Osu_Map_Sample_Set.DRUM)
+                                    case: timing_point.sample_set = u8(result.sample_set)
                                 }
                             case 4: // sample index
                             case 5: timing_point.volume, ok = strconv.parse_f64(value); assert(ok)

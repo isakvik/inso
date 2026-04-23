@@ -116,12 +116,28 @@ file_size :: proc(path: string) -> (result: i64, err: os.Error) {
 }
 
 read_entire_file :: proc(path: string, allocator := context.allocator) -> (result: []u8, err: os.Error) {
-    loop_count: int
-    for len(result) == 0 && err == os.General_Error.None && loop_count < 1000 {
-        result, err = os.read_entire_file(path, allocator)
-        loop_count += 1
+    expected_size, size_err := file_size(path)
+    if size_err != os.General_Error.None {
+        return os.read_entire_file(path, allocator)
     }
-    null_guard := new(u8, allocator)
+
+    retries := 1
+    if expected_size > 0 {
+        retries = 8
+    }
+
+    for attempt in 0..<retries {
+        result, err = os.read_entire_file(path, allocator)
+        if err != os.General_Error.None {
+            return result, err
+        }
+        if len(result) > 0 || expected_size == 0 {
+            return result, err
+        }
+        if attempt + 1 < retries {
+            sdl.Delay(1)
+        }
+    }
     return result, err
 }
 
@@ -132,6 +148,16 @@ read_entire_file_to_string :: proc(path: string, allocator := context.allocator)
 
 read_entire_file_to_cstring :: proc(path: string, allocator := context.allocator) -> (cstring, int, os.Error) {
     data, err := read_entire_file(path, allocator)
-    len := len(data)
-    return cstring(raw_data(data)), len, err
+    if err != os.General_Error.None {
+        return nil, 0, err
+    }
+
+    data_len := len(data)
+    cdata := make([]u8, data_len + 1, allocator)
+    if data_len > 0 {
+        copy(cdata[:data_len], data)
+    }
+    cdata[data_len] = 0
+    delete(data)
+    return cstring(raw_data(cdata)), data_len, err
 }

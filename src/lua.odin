@@ -42,8 +42,6 @@ lua_beatmap: struct {
     event_registrations: [dynamic]Lua_Event_Registration,
     scheduled_events:    [dynamic]Scheduled_Event,
 
-    music_time_ms: f64, // todo(isak) unnecessary since it's read every frame - access this through global
-
     last_callback: cstring, // last event name dispatched, for crash diagnostics
 }
 
@@ -247,6 +245,17 @@ lua_register_instruction_count_hook :: proc() {
     lua.sethook(L, lua_watchdog_instruction_count_hook, i32(lua.MASKCOUNT), LUA_WATCHDOG_INSTRUCTION_COUNT)
 }
 
+// note(isak): reset count hook before each protected call so the watchdog budget
+// is per callback dispatch, not cumulative across frames.
+lua_pcall_with_watchdog :: proc(L: ^lua.State, nargs, nresults: i32, error_prefix: string = "Lua error:") -> bool {
+    lua_register_instruction_count_hook()
+    if lua.pcall(L, nargs, nresults, 0) != lua.OK {
+        lua_log_error(error_prefix)
+        return false
+    }
+    return true
+}
+
 lua_register_global_funcs :: proc(L: ^lua.State) {
     for global_func in luaapi_global_funcs {
         lua.pushcfunction(L, global_func.func)
@@ -309,9 +318,8 @@ lua_check_registered_events :: proc(L: ^lua.State) {
         lua.getglobal(L, lua_beatmap_event_names[event])
         if (lua.isfunction(L, -1)) {
             lua_beatmap.registered_events |= {event}
-        } else {
-            lua.pop(L, 1)
         }
+        lua.pop(L, 1)
     }
 }
 
@@ -421,9 +429,7 @@ luaapi_trigger_event :: proc "c" (L: ^lua.State) -> i32 {
             lua.pushvalue(L, lua.Index(2 + i))
         }
         n_args := n_extra_args if reg.is_global else 1 + n_extra_args
-        if lua.pcall(L, n_args, 0, 0) != lua.OK {
-            lua_log_error("trigger_event error:")
-        }
+        lua_pcall_with_watchdog(L, n_args, 0, "trigger_event error:")
     }
     return 0
 }
@@ -454,7 +460,7 @@ luaapi_schedule_event :: proc "c" (L: ^lua.State) -> i32 {
     delay_ms   := f64(lua.L_checknumber(L, 2))
     append(&lua_beatmap.scheduled_events, Scheduled_Event{
         event_name = event_name,
-        fire_at_ms = lua_beatmap.music_time_ms + delay_ms,
+        fire_at_ms = beatmap_music_time_ms(&game.beatmap) + delay_ms,
     })
     return 0
 }
@@ -464,7 +470,6 @@ luaapi_schedule_event :: proc "c" (L: ^lua.State) -> i32 {
 lua_drain_scheduled_events :: proc(time_ms: f64) {
     L := lua_beatmap.state
     if L == nil do return
-    lua_beatmap.music_time_ms = time_ms
     i := 0
     for i < len(lua_beatmap.scheduled_events) {
         ev := lua_beatmap.scheduled_events[i]
@@ -477,9 +482,7 @@ lua_drain_scheduled_events :: proc(time_ms: f64) {
                     _lua_push_event_target(L, reg.class, reg.handle_key)
                 }
                 n_args := i32(0) if reg.is_global else i32(1)
-                if lua.pcall(L, n_args, 0, 0) != lua.OK {
-                    lua_log_error("schedule_event error:")
-                }
+                lua_pcall_with_watchdog(L, n_args, 0, "schedule_event error:")
             }
         } else {
             i += 1
@@ -538,16 +541,35 @@ luaapi_controller_is_up :: proc "c" (L: ^lua.State) -> i32 {
     return 1
 }
 
+lua_scancode_from_key_arg :: proc(L: ^lua.State, arg_index: i32) -> (sdl.Scancode, bool) {
+    if lua.type(L, arg_index) == lua.TNUMBER {
+        scancode_index := int(lua.L_checkinteger(L, arg_index))
+        if scancode_index < 0 || scancode_index >= len(Keyboard_State) {
+            return cast(sdl.Scancode)0, false
+        }
+        return cast(sdl.Scancode)scancode_index, true
+    }
+
+    key_name := lua.L_checkstring(L, arg_index)
+    return sdl.GetScancodeFromName(key_name), true
+}
+
 luaapi_key_is_down :: proc "c" (L: ^lua.State) -> i32 {
-    key_name := lua.L_checkstring(L, 1)
-    scancode := sdl.GetScancodeFromName(key_name)
+    scancode, ok := lua_scancode_from_key_arg(L, 1)
+    if !ok {
+        lua.pushboolean(L, b32(false))
+        return 1
+    }
     lua.pushboolean(L, b32(key_is_down(scancode)))
     return 1
 }
 
 luaapi_key_is_up :: proc "c" (L: ^lua.State) -> i32 {
-    key_name := lua.L_checkstring(L, 1)
-    scancode := sdl.GetScancodeFromName(key_name)
+    scancode, ok := lua_scancode_from_key_arg(L, 1)
+    if !ok {
+        lua.pushboolean(L, b32(false))
+        return 1
+    }
     lua.pushboolean(L, b32(!key_is_down(scancode)))
     return 1
 }
@@ -685,23 +707,17 @@ lua_beatmap_on_judgement :: proc(hobj_index: int, judgement: Judgement_Type, tim
 _lua_call_beatmap_func_with_params :: proc(name: cstring, data: $T, param_writer: proc(data: T) -> i32) {
     L:= lua_beatmap.state
     lua_beatmap.last_callback = name
-    lua_register_instruction_count_hook()
     lua.getglobal(L, name)
     
     param_count := param_writer(data)
-    if (lua.pcall(L, param_count, 0, 0) != lua.OK) {
-        lua_log_error()
-    }
+    lua_pcall_with_watchdog(L, param_count, 0)
 }
 
 _lua_call_beatmap_func_no_params :: proc(name: cstring) {
     L:= lua_beatmap.state
     lua_beatmap.last_callback = name
-    lua_register_instruction_count_hook()
     lua.getglobal(L, name)
-    if (lua.pcall(L, 0, 0, 0) != lua.OK) {
-        lua_log_error()
-    }
+    lua_pcall_with_watchdog(L, 0, 0)
 } 
 
 lua_call_beatmap_func :: proc {
@@ -1636,9 +1652,23 @@ luaapi_buffer_write_f32s :: proc "c" (L: ^lua.State) -> i32 {
     if buf.data == nil {
         return lua.L_error(L, "Buffer:write_f32s: buffer is not writable")
     }
-    for i in 3..=n_args {
-        val := f32(lua.L_checknumber(L, i32(i)))
-        write_at := byte_offset + (i - 3) * size_of(f32)
+    n_values := n_args - 2
+    if n_values <= 0 {
+        return lua.L_error(L, "Buffer:write_f32s: expected at least one value")
+    }
+    if byte_offset < 0 {
+        return lua.L_error(L, "Buffer:write_f32s: byte_offset must be >= 0")
+    }
+    if byte_offset % size_of(f32) != 0 {
+        return lua.L_error(L, "Buffer:write_f32s: byte_offset must be 4-byte aligned")
+    }
+    bytes_to_write := n_values * size_of(f32)
+    if bytes_to_write < 0 || byte_offset > buf.size - bytes_to_write {
+        return lua.L_error(L, "Buffer:write_f32s: write out of bounds")
+    }
+    for i in 0..<n_values {
+        val := f32(lua.L_checknumber(L, i32(3 + i)))
+        write_at := byte_offset + i * size_of(f32)
 
         (cast(^f32)&buf.data[write_at])^ = val
     }
@@ -1650,6 +1680,9 @@ luaapi_buffer_write_vec4 :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     slot_index := cast(^u32)lua.L_checkudata(L, 1, lua_classes[.BUFFER].name)
     vec_index  := int(lua_int(2))
+    if vec_index < 0 {
+        return lua.L_error(L, "Buffer:write_vec4: vec4_index must be >= 0")
+    }
     x := f32(lua.L_checknumber(L, 3))
     y := f32(lua.L_checknumber(L, 4))
     z := f32(lua.L_checknumber(L, 5))
@@ -1660,7 +1693,7 @@ luaapi_buffer_write_vec4 :: proc "c" (L: ^lua.State) -> i32 {
         return lua.L_error(L, "Buffer:write_vec4: buffer is not writable")
     }
     byte_offset := vec_index * 16
-    if byte_offset + 16 > buf.size {
+    if byte_offset > buf.size - 16 {
         return lua.L_error(L, "Buffer:write_vec4: write out of bounds")
     }
     floats := cast(^[4]f32)&buf.data[byte_offset]

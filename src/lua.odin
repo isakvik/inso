@@ -745,6 +745,8 @@ luaapi_hitobject_instance_funcs := []lua.L_Reg {
   { "register_event", luaapi_hitobject_register_event },
   { "hide", luaapi_hitobject_hide },
   { "unhide", luaapi_hitobject_unhide },
+  { "hide_combo_numbers", luaapi_hitobject_hide_combo_numbers },
+  { "unhide_combo_numbers", luaapi_hitobject_unhide_combo_numbers },
   { "get_index", luaapi_hitobject_get_index },
   { "get_pos", luaapi_hitobject_get_pos },
   { "set_pos", luaapi_hitobject_set_pos },
@@ -858,6 +860,20 @@ luaapi_hitobject_unhide :: proc "c" (L: ^lua.State) -> (result: i32) {
             d, found := slotmap.get(&game.beatmap.drawables, handle)
             if found do d.flags |= {.ACTIVE}
         }
+        return 0
+    })
+}
+
+luaapi_hitobject_hide_combo_numbers :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        hobj.flags |= {.HIDE_COMBO_NUMBERS}
+        return 0
+    })
+}
+
+luaapi_hitobject_unhide_combo_numbers :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        hobj.flags &~= {.HIDE_COMBO_NUMBERS}
         return 0
     })
 }

@@ -424,39 +424,49 @@ create_hitobject_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
 
     combo_color := hitobject_combo_color(hobj)
     preempt := hitobject_preempt_ms(hobj)
-    n_custom := hobj.custom_element_nums[phase]
+    num_custom := hobj.custom_element_nums[phase]
 
     digits: [4]int
-    n_digits := _combo_digits(int(hobj.combo_number), &digits) if phase == .PREEMPT else 0
-    n_base := n_custom if n_custom > 0 else (3 if phase == .PREEMPT else 0)
-    total_handles := n_digits + n_base
+    num_digits: int
+    if .HIDE_COMBO_NUMBERS not_in hobj.flags && phase == .PREEMPT {
+        num_digits = write_combo_digits(&digits, int(hobj.combo_number))
+    }
+    
+    num_base := num_custom if num_custom > 0 else (3 if phase == .PREEMPT else 0)
+    total_handles := num_digits + num_base
 
     if total_handles == 0 { return }
 
     hobj.gfx_handles = make([]Drawable_Handle, total_handles, memory.allocators[.DRAWABLES])
 
-    // note(isak): size is stored in radius units (1 = 1 radius). render_drawable multiplies by hitobject_radius_osupx
-    // at draw time.
-
-    if n_custom > 0 {
+    if num_custom > 0 {
         // note(isak): maps animation time over the natural duration of each phase
         phase_end_time: f64
+        rel_pos: vec2
         switch phase {
-            case .PREEMPT:    phase_end_time = phase_start_time + preempt
-            case .HOLD:       phase_end_time = phase_start_time + hobj.end_time_ms - hobj.start_time_ms
-            case .NONE:       phase_end_time = phase_start_time + f64(0)
+            case .PREEMPT: phase_end_time = phase_start_time + preempt
+            case .HOLD:    phase_end_time = phase_start_time + hobj.end_time_ms - hobj.start_time_ms
+            case .NONE:    phase_end_time = phase_start_time + f64(0)
             case .HIT, .MISS: 
                 hit_animation_time := hobj.custom_hit_animation_len_ms != 0 ? hobj.custom_hit_animation_len_ms : OSU_HIT_ANIMATION_LENGTH
                 phase_end_time = phase_start_time + f64(hit_animation_time)
+
+                if hobj.type == .SLIDER {
+                    rel_pos = hitobject_tail_pos(hobj) - hitobject_pos(hobj)
+                }
         }
+        
+        // note(isak): size is stored in radius units (1 = 1 radius). render_drawable multiplies by 
+        // hitobject_radius_osupx at draw time
         
         for i in 0..<hobj.custom_element_nums[phase] {
             el_id := hobj.custom_elements[phase][i]
             el_flags := Drawable_Flags{.ACTIVE} | (Drawable_Flags{.FADE_IN} if phase == .PREEMPT else {})
-            hobj.gfx_handles[n_digits + i] = drawable_new(Drawable{
+            hobj.gfx_handles[num_digits + i] = drawable_new(Drawable{
                 flags         = el_flags,
                 element       = el_id,
                 layer         = .HITOBJECTS,
+                pos           = rel_pos,
                 size          = {2, 2},
                 anchor        = .CENTER,
                 color         = combo_color,
@@ -469,10 +479,11 @@ create_hitobject_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
         base := [?]Element_Type{.HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
         for el_type, i in base {
             end_ms := hobj.start_time_ms + (game.beatmap.timing_windows.ok if el_type != .APPROACH_CIRCLE else 0)
-            hobj.gfx_handles[n_digits + i] = drawable_new(Drawable{
+            hobj.gfx_handles[num_digits + i] = drawable_new(Drawable{
                 flags         = {.ACTIVE, .FADE_IN},
                 element       = builtin_element_slot(el_type),
                 layer         = .HITOBJECTS,
+                pos           = vec2{0, 0},
                 size          = {2, 2},
                 anchor        = .CENTER,
                 color         = (combo_color if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE else with_alpha(color_white, 1)),
@@ -482,36 +493,37 @@ create_hitobject_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
             })
         }
     }
+
+    if num_digits > 0 {
+        // digit drawables
+        // note(isak): size and pos are in radius units so they scale correctly with CS changes at runtime.
+        hc_size := game.active_skin.elements[.HITCIRCLE].metrics
+        number_scale_norm := 2 / max(hc_size.x, 1) * COMBO_NUMBER_SCALE
     
-
-    // digit drawables
-    // note(isak): size and pos are in radius units so they scale correctly with CS changes at runtime.
-    hc_size := game.active_skin.elements[.HITCIRCLE].metrics
-    number_scale_norm := 2 / max(hc_size.x, 1) * COMBO_NUMBER_SCALE
-
-    total_digits_w_norm: f32
-    for digit in 0..<n_digits {
-        digit_el := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[digit])
-        total_digits_w_norm += game.active_skin.elements[digit_el].metrics.x * number_scale_norm
-    }
-    x_norm := -total_digits_w_norm / 2
-    for di in 0..<n_digits {
-        digit_el      := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[di])
-        digit_metrics := game.active_skin.elements[digit_el].metrics
-        digit_size_norm := digit_metrics * number_scale_norm
-        hobj.gfx_handles[di] = drawable_new(Drawable{
-            flags         = {.ACTIVE, .FADE_IN, .SCALE_POS_BY_RADIUS},
-            element       = builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + digits[di])),
-            layer         = .HITOBJECTS,
-            pos           = {x_norm + digit_size_norm.x / 2, 0},
-            size          = digit_size_norm,
-            anchor        = .CENTER,
-            color         = with_alpha(color_white, 1),
-            start_time_ms = hobj.start_time_ms - preempt,
-            end_time_ms   = hobj.start_time_ms + game.beatmap.timing_windows.ok,
-            hobj_index    = hobj.index + 1,
-        })
-        x_norm += digit_size_norm.x
+        total_digits_w_norm: f32
+        for digit in 0..<num_digits {
+            digit_el := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[digit])
+            total_digits_w_norm += game.active_skin.elements[digit_el].metrics.x * number_scale_norm
+        }
+        x_norm := -total_digits_w_norm / 2
+        for di in 0..<num_digits {
+            digit_el      := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[di])
+            digit_metrics := game.active_skin.elements[digit_el].metrics
+            digit_size_norm := digit_metrics * number_scale_norm
+            hobj.gfx_handles[di] = drawable_new(Drawable{
+                flags         = {.ACTIVE, .FADE_IN, .SCALE_POS_BY_RADIUS},
+                element       = builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + digits[di])),
+                layer         = .HITOBJECTS,
+                pos           = {x_norm + digit_size_norm.x / 2, 0},
+                size          = digit_size_norm,
+                anchor        = .CENTER,
+                color         = with_alpha(color_white, 1),
+                start_time_ms = hobj.start_time_ms - preempt,
+                end_time_ms   = hobj.start_time_ms + game.beatmap.timing_windows.ok,
+                hobj_index    = hobj.index + 1,
+            })
+            x_norm += digit_size_norm.x
+        }
     }
 }
 
@@ -888,7 +900,7 @@ render_slider_quads :: proc(hobj: ^Hitobject, path: ^Slider_Path, map_time: f64)
 
 
 // note(isak): extracts up to 4 decimal digits of n into buf (most-significant first), returns count
-_combo_digits :: proc(n: int, buf: ^[4]int) -> (count: int) {
+write_combo_digits :: proc(buf: ^[4]int, n: int) -> (count: int) {
     v := max(n, 1)
     for v > 0 && count < 4 {
         buf[count] = v % 10

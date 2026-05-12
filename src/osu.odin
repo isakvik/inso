@@ -98,6 +98,8 @@ Hitobject_Flag :: enum {
     WHISTLE,
     FINISH,
     CLAP,
+
+    HIDE_COMBO_NUMBERS,
 }
 
 Hitobject_Phase :: enum u8 {

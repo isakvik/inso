@@ -27,12 +27,13 @@ local rand = load_file("rand.lua")
 
 function on_init()
     a = Animation.new()
-        :color(0, 0.5, Color.rgb(255,0,0), Color.rgb(0,0,255))
+        :color(0, 1, Color.rgb(255,0,0), Color.rgb(0,0,255))
         :scale(0, 1, 1,1, 8,8, Tween.CUBIC_OUT)
+        :rotate(0, 1, 0, 999999)
         :texture(2000, 3000, "nonexisting.jpg") -- throws error, but defaults to white pixel
     
     el = Element.new()
-        :set_tex("a.png")
+        :set_tex("reversearrow.png")
         :set_animation(a)
         :set_shader("wave")
         
@@ -56,14 +57,19 @@ function on_init()
     
     
     
-    from_left = Animation.new():move(0, 1, 0, -3, 0, 0)
-    from_right = Animation.new():move(0, 1, 0, 3, 0, 0):rotate(0, 0, 3.1415, 3.1415)
+    from_left = Animation.new()
+        :color(0, 1, Color.rgb(0,0,0), Color.rgb(255,255,255))
+        :move(0, 1, -3, 0, 0, 0):scale(0,1, 2,2, 2,2)
+    from_right = Animation.new()
+        :color(0, 1, Color.rgb(0,0,0), Color.rgb(255,255,255))
+        :move(0, 1, 3, 0, 0, 0):scale(0,1, 2,2, 2,2):rotate(0, 0, 3.1415, 3.1415)
         
     custom_left = Element.new()
-        :set_tex("reversearrsow.png")
+        :set_tex("reversearrow.png")
         :set_animation(from_left)
+    
     custom_right = Element.new()
-        :set_tex("reversearrosw.png")
+        :set_tex("reversearrow.png")
         :set_animation(from_right)
 
     
@@ -73,7 +79,8 @@ function on_init()
         hobj:add_element_for_phase(Phase.PREEMPT, custom_right)
         
         hobj:add_element_for_phase(Phase.HIT, el)
-        hobj:set_hit_animation_length(2500)
+        hobj:set_hit_animation_length(400)
+        hobj:hide_combo_numbers()
     end 
     
     

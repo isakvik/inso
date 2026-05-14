@@ -27,35 +27,14 @@ local rand = load_file("rand.lua")
 
 function on_init()
     a = Animation.new()
-        :color(0, 1, Color.rgb(255,0,0), Color.rgb(0,0,255))
         :scale(0, 1, 1,1, 8,8, Tween.CUBIC_OUT)
+        :color(0, 1, Color.rgba(255,0,0,255), Color.rgba(0,0,0,0))
         :rotate(0, 1, 0, 999999)
-        :texture(2000, 3000, "nonexisting.jpg") -- throws error, but defaults to white pixel
     
     el = Element.new()
         :set_tex("reversearrow.png")
         :set_animation(a)
         :set_shader("wave")
-        
-    dd = Drawable.new(el, 0, 0)
-        :set_size(100,100)
-        :set_anchor(Anchor.CENTER)
-        :set_layer(Layer.BACKGROUND)
-        :register_event("saft", function (d, beat_n) 
-            print("custom event @ beat: " .. beat_n) 
-        end)
-        
-    list = Hitobject.get_in_range_ms(0, 425000)
-    
-    table = {}
-    for i, hobj in ipairs(list) do
-        --hobj:hide() -- todo(isak): stopped working because of the deferred spawn system
-        t = hobj:get_start_time()
-    
-        hobj:set_ar(9-i/100)
-    end
-    
-    
     
     anim_left = Animation.new()
         :move(0, 1, -3, 0, 0, 0)
@@ -74,31 +53,50 @@ function on_init()
         :set_animation(anim_right)
         :use_combo_color(true)
         
-    anim_hitleft = Animation.new()
+    anim_stillleft = Animation.new()
         :alpha(0, 1, 1, 0)
         :scale(0, 0, 2,2, 2,2)
-    anim_hitright = Animation.new()
+    anim_stillright = Animation.new()
         :alpha(0, 1, 1, 0)
         :scale(0, 0, 2,2, 2,2)
         :rotate(0, 0, 3.1415, 3.1415)
         
-    custom_hitleft = custom_left:clone()
-        :set_animation(anim_hitleft)
-    custom_hitright = custom_right:clone()
-        :set_animation(anim_hitright)
+    custom_stillleft = custom_left:clone()
+        :set_animation(anim_stillleft)
+    custom_stillright = custom_right:clone()
+        :set_animation(anim_stillright)
     
     for i, hobj in ipairs(Hitobject.get_in_range_ms(0, 30000)) do
         hobj:clear_drawables()
         hobj:add_element_for_phase(Phase.PREEMPT, custom_left)
         hobj:add_element_for_phase(Phase.PREEMPT, custom_right)
-        hobj:add_element_for_phase(Phase.POSTEMPT, custom_hitleft)
-        hobj:add_element_for_phase(Phase.POSTEMPT, custom_hitright)
+        hobj:add_element_for_phase(Phase.POSTEMPT, custom_stillleft)
+        hobj:add_element_for_phase(Phase.POSTEMPT, custom_stillright)
         
         hobj:add_element_for_phase(Phase.HIT, el)
         hobj:set_hit_animation_length(400)
         hobj:hide_combo_numbers()
-    end 
+    end
     
+
+    -- unused
+    dd = Drawable.new(el, 0, 0)
+        :set_size(100,100)
+        :set_anchor(Anchor.CENTER)
+        :set_layer(Layer.BACKGROUND)
+        :register_event("saft", function (d, beat_n) 
+            print("custom event @ beat: " .. beat_n) 
+        end)
+    
+    list = Hitobject.get_in_range_ms(0, 425000)
+    
+    table = {}
+    for i, hobj in ipairs(list) do
+        --hobj:hide() -- todo(isak): stopped working because of the deferred spawn system
+        t = hobj:get_start_time()
+    
+        hobj:set_ar(9-i/100)
+    end
     
     register_global_event("hehe", function()
         -- note that this drifts over time, it's not a clean repeat every 250ms

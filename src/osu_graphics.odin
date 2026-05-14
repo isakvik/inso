@@ -474,7 +474,8 @@ create_hitobject_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
             el := q.get(&game.beatmap.elements, el_id)
 
             drawable_color := hitobject_combo_color(hobj) if .USE_COMBO_COLOR in el.flags else color_white
-            drawable_flags := Drawable_Flags{.ACTIVE} | (Drawable_Flags{.FADE_IN} if phase == .PREEMPT else {})
+            drawable_flags := Drawable_Flags{.ACTIVE}
+            if in_visible_phase do drawable_flags |= {.FADE_IN}
             
             hobj.gfx_handles[num_digits + i] = drawable_new(Drawable{
                 flags         = drawable_flags,
@@ -600,7 +601,7 @@ process_hitobject_phase_transitions :: proc() {
             
             // note(isak): custom hit animations override the default circle expanding animation
             if hobj.custom_element_nums[.HIT] == 0 {
-                if transition.from == .PREEMPT {
+                if transition.from == .PREEMPT || transition.from == .POSTEMPT {
                     create_default_hitcircle_hit_drawables(hobj, hitobject_pos(hobj), map_time)
                 } else if transition.from == .HOLD {
                     create_default_hitcircle_hit_drawables(hobj, hitobject_tail_pos(hobj), map_time)

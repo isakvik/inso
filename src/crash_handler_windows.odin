@@ -332,7 +332,7 @@ crash_handler_write_log :: proc(
     exe_buf: [261]win.WCHAR
     win.GetModuleFileNameW(nil, &exe_buf[0], 260)
     exe_path, _ := win.wstring_to_utf8(cstring16(&exe_buf[0]), -1)
-    log_dir := filepath.dir(exe_path, context.temp_allocator)
+    log_dir := filepath.dir(exe_path)
 
     st: win.SYSTEMTIME
     GetLocalTime(&st)

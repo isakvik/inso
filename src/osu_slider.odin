@@ -1,10 +1,17 @@
 package notosu
 
+import "core:path/slashpath"
+import "core:log"
 import "base:runtime"
 import "core:container/queue"
 import "core:math"
 import "core:math/linalg"
 import "core:slice"
+
+base_dist : f64 = 2.5
+slider_max_points : f64 = 9999
+
+//todo(yokes): check which procs aren't used anymore
 
 split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> (result: []Slider_Curve) {
     
@@ -45,37 +52,405 @@ split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> 
     return result
 }
 
-// https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L878
-// note(yokes): "t" is for time which means we need to calculate the time it takes to get "d" distance beforehand
-calculate_bezier_point_from_time :: proc(t: f64, curve: Slider_Curve) {
-    
-    //int i := 0;
-    for point in curve {
-        
+calculate_curve_from_time :: proc(hobj: ^Hitobject, time_at: f64, path: ^Slider_Path) -> (pos_at: vec2) {
+    //time stuff: osu_mapset.odin ~#L825
+    if hobj.type != .SLIDER {
+        return hobj.pos
     }
+    //todo(yokes): find which slider and curve is currently active using time_at
+    //bezier: needs logic fixes, sliderball does not move linearly
+    //arc: done
+    //straight: done
+    slider_duration := (hobj.end_time_ms - hobj.start_time_ms) / f64(hobj.slider_state.path_travel_count)
+    current_repeat := int(math.floor_f64((time_at - hobj.start_time_ms) / slider_duration))
+    time_ref := time_at - slider_duration * f64(current_repeat)
+    t := (time_at - hobj.start_time_ms) / (hobj.end_time_ms - hobj.start_time_ms)
 
+    if path.type == .BEZIER {
+        distance_duration : f64 = 0
+        duration_checkpoint : f64 = 0 // holds the ms of previous distance_duration
+        curve_distance : f64 = 0
+        distance_travelled : f64 = 0
+        // note(yokes): i believe total distance resets every frame, so it doesn't actually check future curves
+        distance_to_travel : f64 = path.distance_osupx
 
+        // todo(yokes): make new logic for calculating slider ball pos on bezier (should only need to get "t" correctly)
+
+        pos_at = calculate_bezier_point_from_time(hobj, time_at, path)
+        
+    } else if path.type == .ARC {
+        pos_at = calculate_bezier_point_from_time(hobj, time_at, path)
+        /*
+        curve := path.curves[0]
+        if current_repeat % 2 == 0 {pos_at.x += path.pos.x
+            pos_at = calculate_arc_point_from_time(time_ref, hobj.start_time_ms, hobj.end_time_ms, curve, false)
+        } else {
+            pos_at = calculate_arc_point_from_time(time_ref, hobj.start_time_ms, hobj.end_time_ms, curve, true)
+
+        }*/
+    } else if path.type == .LINEAR {
+        pos_at = calculate_straight_point_from_time(hobj, time_at, path)
+    }
+    return pos_at + hobj.script_pos_translation
 }
 
-base_dist : f64 = 2.5
+// todo(yokes): red nodes get repeated
+//todo(yokes): output is refrenced so calculate_approx_distance_from_piecewise uses all of output leading to distances from previous curves being counted multiple times
+calculate_bezier_curve_distance :: proc(path: ^Slider_Path, output: ^queue.Queue(vec2), curve: Slider_Curve, curve_distance: f64) -> (distance: f64) {
 
-//todo(yokes): make a procedure for calculating points on bezier and arch sliders when the curve is too slight
-//check todos under circular_arc_to_piecewise_linear and bezier_to_piecewise_linear
-calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, output: ^queue.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
+    // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L86
+    if len(curve) < 2 {
+        return 0
+    }
+
+    new_curve := slice.clone(curve, context.temp_allocator)
+
+    // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L91
+    point_count : int = len(curve) - 1
+    degree := min(max(1, len(curve) - 1), point_count)
+
+    //queue.init(output, allocator = context.temp_allocator)
+    
+    to_flatten : queue.Queue([]vec2) //todo(yokes): should contain all curves which are not approximated well enough yet
+    temp_points: queue.Queue(vec2)
+    queue.init(&temp_points, allocator = context.temp_allocator)
+    queue.init(&to_flatten, allocator = context.temp_allocator) //todo(yokes): check capacity, default for now
+    queue.append_elems(&to_flatten, b_spline_to_bezier_internal(&temp_points, new_curve, degree))
+    free_buffers : queue.Queue([]vec2)
+    queue.init(&free_buffers, allocator = context.temp_allocator) //todo(yokes): check capacity, default for now
+
+    // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L102
+
+    subdivision_buffer_1 := make([]vec2, degree + 1, allocator = context.temp_allocator)
+    subdivision_buffer_2 := make([]vec2, degree * 2 + 1, allocator = context.temp_allocator)
+
+    left_child : []vec2 = subdivision_buffer_2
+
+    for to_flatten.len > 0 {
+        parent : []vec2 = queue.pop_back(&to_flatten)
+        
+        // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L119
+        if bezier_is_flat_enough(parent) {
+            bezier_approximate(parent, output, subdivision_buffer_1, subdivision_buffer_2, degree + 1)
+
+            queue.push(&free_buffers, parent)
+            continue
+        }
+
+        // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L129
+        right_child : []vec2 = free_buffers.len > 0 ? queue.pop_back(&free_buffers) : make([]vec2, degree + 1, context.temp_allocator)
+        bezier_subdivide(parent, left_child, right_child, subdivision_buffer_1, degree + 1)
+
+        for i in 0..<degree + 1 {
+            parent[i] = left_child[i]
+        }
+
+        queue.push(&to_flatten, right_child)
+        queue.push(&to_flatten, parent)
+    }
+    queue.push(output, curve[len(curve)-1])
+
+    distance = calculate_approx_distance_from_piecewise(path, output)
+    return distance
+}
+
+calculate_approx_distance_from_piecewise :: proc(path: ^Slider_Path, output: ^queue.Queue(vec2)) -> (total_distance: f64) {
     for point, i in output.data[:output.len] {
         if i < int(output.len) - 1 {
             curr_distance := f64(linalg.vector_length(queue.get(output, i + 1) - queue.get(output, i)))
             total_distance += curr_distance
+            /*
+            if total_distance > curve_distance {
+                break
+            }*/
+        }
+        
+        path.bounds_min.x, path.bounds_min.y = min(path.bounds_min.x, point.x), min(path.bounds_min.y, point.y)
+        path.bounds_max.x, path.bounds_max.y = max(path.bounds_max.x, point.x), max(path.bounds_max.y, point.y)
+    }
+    return total_distance
+}
+
+calculate_approx_distance_from_curve :: proc(p0: vec2, p1: vec2) -> (total_distance: f64) {
+    curr_distance := f64(linalg.vector_length(p1 - p0))
+    total_distance += curr_distance
+
+    return total_distance
+}
+
+// https://github.com/McKay42/McOsu/blob/db2add20ea291f6f3b6d022fcd4eba100a5bd161/src/App/Osu/OsuSliderCurves.cpp#L230
+// https://github.com/McKay42/McOsu/blob/master/src/App/Osu/OsuSliderCurves.cpp#L435
+// todo(yokes): beziers are slower than arcs and straights. why?
+// note(yokes): "t" is for time which means we need to calculate the time it takes to get "d" distance beforehand
+calculate_bezier_point_from_time :: proc(hobj: ^Hitobject, time_at: f64, path: ^Slider_Path) -> (point: vec2) {
+
+    path_instances := window.renderer.slider_instances.data[path.first_instance_at:path.first_instance_at+path.instance_count]
+
+    if len(path_instances) < 1 {
+        return vec2({0,0})
+    }
+    
+    //curve_m_i := min(i64(path.distance_osupx / clamp(base_dist, 1.0, 100.0)), i64(slider_max_points), i64(len(path_instances) - 1))
+    curve_m_i := min(i64(slider_max_points), i64(len(path_instances) - 1))
+
+    duration := hobj.end_time_ms - hobj.start_time_ms
+    elapsed  := clamp(time_at - hobj.start_time_ms, 0, duration)
+
+    repeat_count := hobj.slider_state.path_travel_count
+    t_passes  := (elapsed / duration) * f64(repeat_count)
+    pass_idx  := min(int(t_passes), repeat_count - 1)
+    pass_frac := t_passes - f64(pass_idx)
+
+    t_on_path := pass_frac if pass_idx % 2 == 0 else 1.0 - pass_frac
+
+    index_f := t_on_path * f64(curve_m_i)
+    index := i64(index_f)
+
+    if index >= curve_m_i {
+        if curve_m_i > -1 && curve_m_i < i64(len(path_instances)) {
+            return path_instances[curve_m_i]
+        }
+    } else {
+        pos_i := path_instances[index]
+        pos_i2 := path_instances[index + 1]
+
+        t2 : f64 = index_f - f64(index)
+
+        return vec2({linalg.lerp(pos_i.x, pos_i2.x, f32(t2)), linalg.lerp(pos_i.y, pos_i2.y, f32(t2))})
+    }
+    return vec2({0, 0})
+}
+
+calculate_arc_point_from_time :: proc(time_at: f64, time_start: f64, time_end: f64, curve: Slider_Curve, reversed: bool) -> (point: vec2) {
+    pr : Circular_Arc_Properties = circular_arc_properties_from_triangle(curve)
+
+    t := (time_at - time_start) / (time_end - time_start)
+    if reversed {
+    t = 1 - t
+    }
+    theta := pr.theta_start + pr.direction * t * pr.theta_range
+    return pr.center + {math.cos(f32(theta)), math.sin(f32(theta))} * pr.radius
+}
+
+calculate_straight_point_from_time :: proc(hobj: ^Hitobject, time_at: f64, path: ^Slider_Path) -> (point: vec2) {
+    duration := hobj.end_time_ms - hobj.start_time_ms
+    elapsed  := clamp(time_at - hobj.start_time_ms, 0, duration)
+
+    // t_passes goes from 0 to slider_repeats over the full duration
+    repeat_count := hobj.slider_state.path_travel_count
+    t_passes  := (elapsed / duration) * f64(repeat_count)
+    pass_idx  := min(int(t_passes), repeat_count - 1)
+    pass_frac := t_passes - f64(pass_idx)
+
+    // even passes go forward (0->1), odd passes go backward (1->0)
+    t_on_path := pass_frac if pass_idx % 2 == 0 else 1.0 - pass_frac
+
+    return linalg.lerp(path.pos, path.end_pos, vec2{f32(t_on_path), f32(t_on_path)})
+}
+
+calculate_distance_of_straight_bezier :: proc(
+    hobj: ^Hitobject, path: ^Slider_Path, start_pos: vec2, end_pos: vec2
+) -> f64 {
+    //remaining_distance := curve_distance
+    curr_distance : f64 = 0
+    /*xy_vector : vec2 = end_pos - start_pos
+    
+    iterations := linalg.length(xy_vector) / f32(base_dist)
+    xy_step := xy_vector / iterations
+    last_point_added := start_pos
+
+    for i in 1..<(iterations + 1) {
+        if (curr_distance + base_dist) > curve_distance {
+            remaining_distance = remaining_distance - f64(curr_distance)
+            iterations_remaining := remaining_distance / base_dist
+            last_point_added += xy_step * f32(iterations_remaining)
+
+            break
+        }
+
+        curr_distance += base_dist
+        last_point_added = start_pos + i * xy_step
+    }
+    
+    pts := [?]vec2{start_pos, last_point_added}
+    for point in pts {
+        path.bounds_min.x, path.bounds_min.y = min(path.bounds_min.x, point.x), min(path.bounds_min.y, point.y)
+        path.bounds_max.x, path.bounds_max.y = max(path.bounds_max.x, point.x), max(path.bounds_max.y, point.y)
+    }
+
+    travelled_distance := math.pow(math.pow(last_point_added.y - start_pos.y, 2) + math.pow(last_point_added.x - start_pos.x, 2), 0.5)
+    remaining_distance = curve_distance - f64(travelled_distance)
+    if remaining_distance < 0.01 {
+        return curve_distance
+    }
+    return f64(travelled_distance)*/
+
+    pts := [?]vec2{start_pos, end_pos}
+    for point in pts {
+        path.bounds_min.x, path.bounds_min.y = min(path.bounds_min.x, point.x), min(path.bounds_min.y, point.y)
+        path.bounds_max.x, path.bounds_max.y = max(path.bounds_max.x, point.x), max(path.bounds_max.y, point.y)
+    }
+
+    travelled_distance := math.pow(math.pow(end_pos.y - start_pos.y, 2) + math.pow(end_pos.x - start_pos.x, 2), 0.5)
+    return f64(travelled_distance)
+
+}
+
+write_instances_over_distance :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, curve_distance: f64) {
+    last := instance_buf.count - 1
+    l0 := instance_buf.data[last - 1]
+    l1 := instance_buf.data[last]
+    l_vector : vec2 = (l1 - l0)
+    l_distance_mult := f32(curve_distance) / linalg.length(l_vector)
+
+    write_instances_from_straight(instance_buf, path, l1, l1 + l_vector * l_distance_mult, curve_distance)
+}
+
+calculate_equal_points_from_curves :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, output: ^queue.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
+    m_i_curve := min(i32(path.distance_osupx / f64(clamp(base_dist, 1.0, 100.0))), i32(slider_max_points))
+    curr_curve_index := 0
+    curr_point := 0
+
+    distance_at := 0.0
+    last_distance_at := 0.0
+
+    curr_curve := output.data
+    curr_curve_len := int(output.len)
+    if curr_curve_len < 1 {
+        log.debug("calculate_equal_points_from_curves: curr_curve_len == 0")
+
+        return 0
+    }
+
+    last_curve := curr_curve[curr_point]
+
+    last_curve_point_for_next_segment_start : vec2
+    curr_curve_points : queue.Queue(vec2)
+    m_curve_points : queue.Queue(vec2)
+    m_curve_point_segments : queue.Queue(queue.Queue(vec2))
+
+    queue.init(&curr_curve_points, allocator = context.temp_allocator)
+    queue.init(&m_curve_points, allocator = context.temp_allocator)
+    queue.init(&m_curve_point_segments, allocator = context.temp_allocator)
+
+    for i in 0..<m_i_curve + 1 {
+        // note(yokes): why is this i32? seems to work though
+        pref_distance := i32(f64(i) * path.distance_osupx) / m_i_curve
+
+        for distance_at < f64(pref_distance) {
+            last_distance_at = distance_at
+            if curr_curve_len > 0 && curr_point > -1 && curr_point < curr_curve_len {
+                last_curve = curr_curve[curr_point]
+            }
+            curr_point += 1
+
+            if curr_point >= curr_curve_len {
+                curr_point = curr_curve_len - 1
+                //note(yokes): this means output.data is out of points
+                if last_distance_at == distance_at {
+                    break
+                }
+            }
+
+            if curr_curve_len > 0 && curr_point > 0 && curr_point < curr_curve_len {
+                distance_at += calculate_approx_distance_from_curve(curr_curve[curr_point - 1], curr_curve[curr_point])
+                break
+            }
+        }
+        
+        // todo(yokes): rename parameter, it's not a curve, it's a point
+        this_curve : vec2 = curr_curve_len > 0 && curr_point > -1 && curr_point < curr_curve_len ? curr_curve[curr_point] : vec2({0, 0})
+
+        queue.push_back(&m_curve_points, vec2({0, 0}))
+        queue.push_back(&curr_curve_points, vec2({0, 0}))
+        if distance_at - last_distance_at > 1 {
+            t : f64 = (f64(pref_distance) - last_distance_at) / (distance_at - last_distance_at)
+            m_curve_points.data[i] = vec2({math.lerp(last_curve.x, this_curve.x, f32(t)), math.lerp(last_curve.y, this_curve.y, f32(t))})
+        } else {
+            m_curve_points.data[i] = this_curve
+        }
+
+        last_curve_point_for_next_segment_start = this_curve
+        curr_curve_points.data[curr_curve_points.len - 1] = this_curve
+    }
+
+    if curr_curve_points.len > 0 {
+        // note(yokes): based of testing, m_curve_points should be pushed, not curr_curve_points
+        queue.push_back(&m_curve_point_segments, m_curve_points)
+    }
+
+    if m_curve_points.len == 0 {
+        log.debug("calculate_equal_points_between_instances: len(m_curve_points) == 0")
+    }
+
+    segmented_length := 0.0
+    for s in 0..<m_curve_point_segments.len {
+        for p in 0..<m_curve_point_segments.data[s].len {
+            segmented_length += p == 0 ? 0 : f64(linalg.length(m_curve_point_segments.data[s].data[p] - m_curve_point_segments.data[s].data[p-1]))
+        }
+    }
+
+    //todo?(yokes): according to mcosu source code this is incorrect
+    if segmented_length > path.distance_osupx && m_curve_point_segments.len > 1 && m_curve_point_segments.data[0].len > 1 {
+        excess : f64 = segmented_length - path.distance_osupx
+        for excess > 0 {
+            for s : int = int(m_curve_point_segments.len-1); s >= 0; s -= 1 {
+                for p : int = int(m_curve_point_segments.data[s].len-1); p >= 0; p -= 1 {
+                    curr_length := p == 0 ? 0 : linalg.length(m_curve_point_segments.data[s].data[p] - m_curve_point_segments.data[s].data[p-1])
+                    if f64(curr_length) >= excess && p != 0 {
+                        segment_vector := linalg.normalize(m_curve_point_segments.data[s].data[p] - m_curve_point_segments.data[s].data[p-1])
+                        m_curve_point_segments.data[s].data[p] -= segment_vector * f32(excess)
+                        excess = 0.0
+                        break
+                    } else {
+                        /*
+                        todo(yokes): mcosu uses a vector while i use a queue, there is no erase function
+                        need to look at this closer
+                        */
+                        queue.pop_back(&m_curve_point_segments.data[s])
+                        excess -= f64(curr_length)
+                    }
+                }
+            }
+        }
+    }
+
+    output_curr_len := output.len
+    for i in 0..<output_curr_len {
+        queue.pop_back(output)
+    }
+
+    for i in 0..<m_curve_point_segments.data[m_curve_point_segments.len-1].len {
+        queue.push_back(output, m_curve_point_segments.data[m_curve_point_segments.len-1].data[i])
+    }
+
+    return calculate_approx_distance_from_piecewise(path, &m_curve_point_segments.data[m_curve_point_segments.len-1])
+}
+
+calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, output: ^queue.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
+    for point, i in output.data[:output.len] {
+        curr_distance : f64 = 0
+        if i < int(output.len) - 1 {
+            curr_distance = f64(linalg.vector_length(queue.get(output, i + 1) - queue.get(output, i)))
+
+            if total_distance + curr_distance > curve_distance {
+                remaining_distance := abs(curve_distance - total_distance)
+                distance_between_last := linalg.vector_length(output.data[i+1] - point)
+                vec2_between_last := output.data[i+1] - point
+
+                buffer_push(instance_buf, point + vec2_between_last * f32(remaining_distance) / distance_between_last)
+                total_distance += remaining_distance
+                break
+            }
 
             if curr_distance > base_dist {
                 //todo(yokes): at the moment the end point overlaps an instance with the start point of the next output.data
                 write_instances_from_straight(instance_buf, path, queue.get(output, i), queue.get(output, i + 1), curr_distance)
-            } else {
+            } else if i != 0 {
                 buffer_push(instance_buf, point)
             }
 
-        } else {
-            buffer_push(instance_buf, point)
+            total_distance += curr_distance
         }
         
         path.bounds_min.x, path.bounds_min.y = min(path.bounds_min.x, point.x), min(path.bounds_min.y, point.y)
@@ -170,7 +545,6 @@ bezier_to_piecewise_linear :: proc(
     instance_buf: ^Buffer(vec2), path: ^Slider_Path, curve: Slider_Curve, curve_distance: f64
 ) -> (instance_count, instances_at: i32, total_distance: f64) {
     return b_spline_to_piecewise_linear(instance_buf, path, curve, max(1, len(curve) - 1), curve_distance)
-    
 }
 
 b_spline_to_piecewise_linear :: proc(
@@ -183,6 +557,8 @@ b_spline_to_piecewise_linear :: proc(
         return 0, instance_buf.count, 0
     }
 
+    new_curve := slice.clone(curve, context.temp_allocator)
+
     // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L91
     point_count : int = len(curve) - 1
     degree := min(degree, point_count)
@@ -194,7 +570,7 @@ b_spline_to_piecewise_linear :: proc(
     temp_points: queue.Queue(vec2)
     queue.init(&temp_points, allocator = context.temp_allocator)
     queue.init(&to_flatten, allocator = context.temp_allocator) //todo(yokes): check capacity, default for now
-    queue.append_elems(&to_flatten, b_spline_to_bezier_internal(&temp_points, curve, degree))
+    queue.append_elems(&to_flatten, b_spline_to_bezier_internal(&temp_points, new_curve, degree))
     free_buffers : queue.Queue([]vec2)
     queue.init(&free_buffers, allocator = context.temp_allocator) //todo(yokes): check capacity, default for now
 
@@ -230,13 +606,20 @@ b_spline_to_piecewise_linear :: proc(
 
     //main goal is to edit the curve such that the instances pushed are the new coordinates where the slider is drawn
     instances_at = instance_buf.count
+    if output.data[output.len-1] != curve[len(curve)-1] {
+        instances_at += 1
+        queue.push(&output, curve[len(curve)-1])
+    }
     total_distance = calculate_points_between_instances(instance_buf, path, &output, curve_distance)
+    
+    
     return i32(output.len), instances_at, total_distance
 }
 
 bezier_tolerance : f32 = 0.25
 bezier_is_flat_enough :: proc(curve: Slider_Curve) -> bool {
     for i in 1..<len(curve) - 1 {
+        test := linalg.vector_length2((curve[i - 1] - 2 * curve[i] + curve[i + 1]))
         if linalg.vector_length2((curve[i - 1] - 2 * curve[i] + curve[i + 1])) > bezier_tolerance * bezier_tolerance * 4 {
             return false
         }
@@ -289,6 +672,7 @@ b_spline_to_bezier_internal :: proc(result: ^queue.Queue(vec2), curve: Slider_Cu
     if degree == point_count {
         queue.push_back_elems(result, ..curve[:]) // Uses push_back to avoid reversing the stack later
         return curve[:]
+        //return result.data[:]
     }
     else
     {
@@ -307,8 +691,10 @@ b_spline_to_bezier_internal :: proc(result: ^queue.Queue(vec2), curve: Slider_Cu
             sub_bezier[degree] = curve[i + 1]
             queue.push_back_elems(result, ..sub_bezier[:])
         }
+        slice_from := result.len
         queue.push_back_elems(result, ..curve[(point_count - degree):])
         return curve[(point_count - degree):]
+        //return result.data[slice_from:]
     }
 }
 
@@ -323,53 +709,59 @@ write_instances_from_straight :: proc(
     xy_step := xy_vector / iterations
     last_point_added := start_pos
 
-    for i in 0..<iterations {
-        last_point_added = start_pos + i * xy_step
-        buffer_push(instance_buf, last_point_added)
-        
-        if (curr_distance + base_dist) >= remaining_distance {
+    for i in 1..<(iterations+1) {
+        if (curr_distance + base_dist) >= curve_distance {
             remaining_distance = remaining_distance - f64(curr_distance)
             iterations_remaining := remaining_distance / base_dist
             buffer_push(instance_buf, last_point_added + xy_step * f32(iterations_remaining))
             break
         }
+
         curr_distance += base_dist
+        last_point_added = start_pos + i * xy_step
+        buffer_push(instance_buf, last_point_added)
     }
-    
+
     pts := [?]vec2{start_pos, last_point_added}
+    /*if curr_distance < curve_distance {
+        buffer_push(instance_buf, end_pos)
+        curr_distance += f64(linalg.length(end_pos - last_point_added))
+
+        pts = [?]vec2{start_pos, end_pos}
+    }*/
+    
     for point in pts {
         path.bounds_min.x, path.bounds_min.y = min(path.bounds_min.x, point.x), min(path.bounds_min.y, point.y)
         path.bounds_max.x, path.bounds_max.y = max(path.bounds_max.x, point.x), max(path.bounds_max.y, point.y)
     }
 
-    travelled_distance := math.pow(math.pow(end_pos.y - start_pos.y, 2) + math.pow(end_pos.x - start_pos.x, 2), 0.5)
+    travelled_distance := linalg.length(end_pos - start_pos)
     remaining_distance = curve_distance - f64(travelled_distance)
     if remaining_distance < 0.01 {
-        return 0
+        return curve_distance
     }
     return f64(travelled_distance)
 }
 
-write_instances_from_curve :: proc(
-    instance_buf: ^Buffer(vec2), path: ^Slider_Path, curve: Slider_Curve, type: Slider_Path_Type, curve_distance: f64
+/* todo(yokes): redo entire thing? mcosu does it differently
+    - calculate where instances should go, but do not push them
+    - entire slider is filled before calculate_equal_points_between_instances is called
+*/
+write_points_from_curve :: proc(
+    instance_buf: ^Buffer(vec2), path: ^Slider_Path, output: ^queue.Queue(vec2), curve: Slider_Curve, type: Slider_Path_Type, curve_distance: f64
 ) -> (travelled_distance: f64) {
     
     if len(curve) > 1 {
+        // todo(yokes): if the slider is linear each node counts as "red"
         if type == .LINEAR || len(curve) < 3 {
-            travelled_distance = write_instances_from_straight(instance_buf, path, curve[0], curve[1], curve_distance)
+            travelled_distance = calculate_bezier_curve_distance(path, output, curve, curve_distance)
         } else if type == .ARC {
-            //todo(yokes): copy the tolerance from lazer code to check if a slider is parallel
-            is_parallel: bool
-    
-            if is_parallel {
-                travelled_distance = write_instances_from_straight(instance_buf, path, curve[0], curve[2], curve_distance)
-            } else {
-                travelled_distance = circular_arc_to_piecewise_linear(instance_buf, path, curve, curve_distance)
-            }
+            //note(yokes): circular_arc_to_piecewise_linear checks if the slider is too straight and draws accordingly
+            travelled_distance = circular_arc_to_piecewise_linear(instance_buf, path, curve, curve_distance)
         } else if type == .BEZIER {
             //instance_count, instances_at
-            _, _, travelled_distance = b_spline_to_piecewise_linear(instance_buf, path, curve, max(1, len(curve)), curve_distance)
-        } 
+            travelled_distance = calculate_bezier_curve_distance(path, output, curve, curve_distance)
+        }
     }
     return travelled_distance
 }
@@ -384,28 +776,40 @@ write_instances_from_path :: proc(
     instance_offset = instance_buf.count
 
     path.curves = split_path_into_curves(path, alloc)
+    approx_distance_covered_by_curve : f64 = 0
+    output : queue.Queue(vec2)
 
+    buffer_push(instance_buf, path.nodes[0])
     distance_to_cover := path.distance_osupx
     for curve, i in path.curves {
         
         if distance_to_cover > 0 {
-            distance_covered_by_curve := 
-                write_instances_from_curve(instance_buf,
+            approx_distance_covered_by_curve = 
+                write_points_from_curve(instance_buf,
                                            path,
-                                           curve, 
+                                           &output,
+                                           curve,
                                            path.type,
                                            distance_to_cover)
-            distance_to_cover -= distance_covered_by_curve
+            if approx_distance_covered_by_curve > distance_to_cover {
+                break
+            }
         }
     }
+
+    //todo(yokes): (optimization) can buffer_push in calculate_equal_points_from_curves, then in write_instances_over_distance instead of adding them to output and pushing them later
+    calculate_equal_points_from_curves(instance_buf, path, &output, path.distance_osupx)
+
+    if distance_to_cover > approx_distance_covered_by_curve {
+        write_instances_over_distance(instance_buf, path, distance_to_cover - approx_distance_covered_by_curve)
+    }
+
+    for i in 0..<output.len {
+        buffer_push(instance_buf, output.data[i])
+    }
+    
     
     path.pos, path.end_pos = instance_buf.data[instance_offset], instance_buf.data[max(instance_buf.count-1, 0)]
-
-    // todo(yokes): if we still have distance left over but zero curves, a linear path needs to cover
-    // the remaining distance. maybe mcosu has something neat for this?
-    if distance_to_cover > 0 {
-
-    }
     
     instance_count = instance_buf.count - instance_offset
     if instance_count >= 2 {

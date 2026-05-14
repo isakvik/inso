@@ -5,7 +5,7 @@ import imgui_gl3 "imgui/imgui_impl_opengl3"
 import sdl "vendor:sdl3"
 
 
-debug_ui_init :: proc() {
+imgui_init :: proc() {
     imgui.CHECKVERSION()
     imgui.CreateContext()
     io := imgui.GetIO()
@@ -15,32 +15,32 @@ debug_ui_init :: proc() {
     ok := sdl.StartTextInput(window.handle)
     assert(ok)
     
-    app.map_dropdown = Debug_Dropdown{
+    app.map_dropdown = Imgui_Dropdown{
         label    = "Map",
         items    = &app.map_reference_names,
         selected = 0,
     }
-    app.skin_dropdown = Debug_Dropdown{
+    app.skin_dropdown = Imgui_Dropdown{
         label    = "Skin",
         items    = &app.skin_reference_names,
         selected = 0,
     }
 }
 
-debug_ui_cleanup :: proc() {
+imgui_cleanup :: proc() {
     imgui_gl3.Shutdown()
     imgui.DestroyContext()
 }
 
 
-Debug_Dropdown :: struct {
+Imgui_Dropdown :: struct {
     label:    cstring,
     items:    ^[dynamic]cstring,
     selected: int,
     changed:  bool, // note(isak): set to true for one frame when selection changes
 }
 
-debug_dropdown_update :: proc(dropdown: ^Debug_Dropdown) {
+imgui_dropdown_update :: proc(dropdown: ^Imgui_Dropdown) {
     dropdown.changed = false
     if len(dropdown.items^) == 0 do return
     preview := dropdown.items^[dropdown.selected]

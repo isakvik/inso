@@ -206,7 +206,6 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false) {
     }
 
     ok: bool
-    game.active_map_ref = ref
     game.active_mapset, ok = mapset_open_for_editing(ref.folder_path, ref.osu_filename)
     assert(ok)
     game.active_map = &game.active_mapset.osu_map

@@ -5,6 +5,7 @@ import "base:runtime"
 
 import "core:container/queue"
 import "core:fmt"
+import "core:hash"
 import "core:log"
 import "core:math"
 import "core:mem"
@@ -183,6 +184,7 @@ mapset_free :: proc(mapset: ^Mapset) -> string {
 
     virtual.arena_free_all(&memory.arenas[.DRAWABLES])
     virtual.arena_free_all(&memory.arenas[.SCRIPT_ELEMENTS])
+    virtual.arena_free_all(&memory.arenas[.JUDGEMENTS])
     virtual.arena_free_all(&memory.arenas[.MAPSET])
 
     return mapset_path
@@ -208,7 +210,6 @@ mapset_open_for_editing :: proc(path: string, osu_filename: string = "") -> (^Ma
 
     mapset.folder_path  = mapset_path
     mapset.osu_filename = strings.clone(osu_filename, context.allocator)
-    
 
     // note(isak): file contents cannot exit this function, don't leave strings allocated here
     defer mem.free_all(context.temp_allocator)
@@ -227,14 +228,17 @@ mapset_open_for_editing :: proc(path: string, osu_filename: string = "") -> (^Ma
     mapset_walk_directory(mapset, path)
 
     mapset.watch = directory_watch_init(path)
-    log.info("initialized directory watch for path:", path)
     
+    log.info("opened mapset with directory watch:", path)
     return mapset, true
 }
 
 // note(isak): register every .osu file found in mapset subdirectories
-// allocates with given alloc + context.temp_allocator
-discover_maps :: proc(songs_dir: string, alloc: runtime.Allocator = context.allocator) {
+discover_maps :: proc(
+    songs_dir: string, 
+    alloc: runtime.Allocator = context.allocator,
+    temp_alloc: runtime.Allocator = context.temp_allocator
+) {
     dir_handle, err := os.open(songs_dir)
     if err != nil {
         log.errorf("discover_maps: couldn't open '{}': {}", songs_dir, err)
@@ -244,7 +248,7 @@ discover_maps :: proc(songs_dir: string, alloc: runtime.Allocator = context.allo
     clear(&app.map_references)
     clear(&app.map_reference_names)
     
-    dirs, _ := os.read_dir(dir_handle, 1024, context.temp_allocator)
+    dirs, _ := os.read_dir(dir_handle, 1024, temp_alloc)
 
     count := 0
     for dir in dirs {
@@ -254,7 +258,7 @@ discover_maps :: proc(songs_dir: string, alloc: runtime.Allocator = context.allo
 
         sub_handle, sub_err := os.open(folder_path)
         if sub_err != nil do continue
-        sub_files, _ := os.read_dir(sub_handle, 256, context.temp_allocator)
+        sub_files, _ := os.read_dir(sub_handle, 256, temp_alloc)
 
         for sub_file in sub_files {
             if filepath.ext(sub_file.name) != ".osu" do continue
@@ -263,9 +267,11 @@ discover_maps :: proc(songs_dir: string, alloc: runtime.Allocator = context.allo
             stem          := filepath.stem(sub_file.name)
             display_cstr  := fmt.caprintf("%s / %s", dir.name, stem)
 
+            hash := hash.fnv64a(transmute([]u8)sub_file.name)
             append(&app.map_references, Map_Reference{
                 folder_path  = folder_path,
                 osu_filename = osu_filename,
+                hash = hash,
             })
             append(&app.map_reference_names, display_cstr)
             count += 1

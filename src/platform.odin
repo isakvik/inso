@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:log"
 import "core:mem"
 import os "core:os"
+import "core:sys/windows"
 import "core:path/filepath"
 
 import sdl "vendor:sdl3"
@@ -11,6 +12,7 @@ import sdl "vendor:sdl3"
 Map_Reference :: struct {
     folder_path:  string,
     osu_filename: string, // note(isak): which .osu file to load within the folder
+    hash: u64,
 }
 
 app: struct {
@@ -25,14 +27,16 @@ app: struct {
     debug_display_textures:        bool,
 
     map_references:      [dynamic]Map_Reference,
-    map_reference_names: [dynamic]cstring, // note(isak): parallel to map_references, for imgui
+    map_reference_names: [dynamic]cstring, // note(isak): parallel for imgui
 
+    external_map_open: bool,
+    
     skin_references:      [dynamic]string,
-    skin_reference_names: [dynamic]cstring, // note(isak): parallel to skin_references, for imgui
+    skin_reference_names: [dynamic]cstring, // note(isak): parallel for imgui
     
     ui_enabled: bool,
-    map_dropdown: Debug_Dropdown,
-    skin_dropdown: Debug_Dropdown,
+    map_dropdown: Imgui_Dropdown,
+    skin_dropdown: Imgui_Dropdown,
     offset_window_open: bool,
 }
 

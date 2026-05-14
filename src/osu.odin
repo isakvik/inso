@@ -28,13 +28,12 @@ game: struct {
     active_mapset: ^Mapset,
     active_notosu_map: ^Notosu_Map,
     active_map: ^Osu_Map,
-    active_map_ref: Map_Reference,
     active_skin: ^Skin,
     
     mode: Game_Mode,
     
     user_config: User_Configuration,
-    
+
     // note(isak): map game logic fields
     
     beatmap: Beatmap,
@@ -787,6 +786,7 @@ game_sounds_clear :: proc() {
         sound_destroy(&s)
     }
     slotmap.destroy(&game.sounds)
+    vmem.arena_free_all(&memory.arenas[.SOUND])
     slotmap.init(&game.sounds, allocator = memory.allocators[.SOUND], capacity = 128)
     null_sound_handle := slotmap.insert(&game.sounds, null_sound)
 }

@@ -108,9 +108,12 @@ crash_stats_write :: proc(frame_count: u64, dt_ms: f64) {
         copy(dst[:n], src[:n])
         dst[n] = 0
     }
-    copy_fixed(s.map_folder[:], game.active_map_ref.folder_path)
-    copy_fixed(s.map_file[:],   game.active_map_ref.osu_filename)
     copy_fixed(s.skin_path[:],  game.user_config.skin_path)
+
+    if s.beatmap_active == 1 {
+        copy_fixed(s.map_folder[:], game.beatmap.map_reference.folder_path)
+        copy_fixed(s.map_file[:],   game.beatmap.map_reference.osu_filename)
+    }
 
     s.mouse_x = mouse.pos.x
     s.mouse_y = mouse.pos.y

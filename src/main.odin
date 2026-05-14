@@ -5,11 +5,13 @@ VERSION :: #config(VERSION, "dev (unversioned)")
 import "base:runtime"
 import "core:container/queue"
 import "core:fmt"
+import "core:hash"
 import "core:log"
 import "core:strings"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
+import "core:path/filepath"
 import "core:time"
 import vmem "core:mem/virtual"
 
@@ -132,8 +134,8 @@ main :: proc() {
 
     window_on_resize(i32(window.rect.w), i32(window.rect.h))
 
-    debug_ui_init()
-    defer debug_ui_cleanup()
+    imgui_init()
+    defer imgui_cleanup()
     text_init()
     keyboard_init()
     
@@ -448,7 +450,7 @@ begin_frame :: proc(renderer: ^Renderer) {
     if app.ui_enabled {
         imgui_gl3.NewFrame()
         imgui.NewFrame()
-        write_debug_ui()
+        imgui_update()
     }
 }
 
@@ -459,12 +461,45 @@ end_frame :: proc(renderer: ^Renderer) {
 }
 
 
-write_debug_ui :: proc() {
+open_external_map :: proc(external_map_path: string) -> (success: bool) {
+    idx := strings.last_index_any(external_map_path, "/\\")
+    hash := hash.fnv64a(transmute([]u8)external_map_path)
+    
+    for ref in app.map_references {
+        if ref.hash == hash {
+            return false
+        }
+    }
+
+    append(&app.map_references, Map_Reference {
+        folder_path = external_map_path[:idx + 1],
+        osu_filename = filepath.base(external_map_path),
+        hash = hash,
+    })
+    ref := app.map_references[len(app.map_references) - 1]
+    ref_display_cstr  := fmt.caprintf("%s", ref.osu_filename)
+    append(&app.map_reference_names, ref_display_cstr)
+    
+    beatmap_open(ref)
+    
+    app.external_map_open = true
+    return true
+}
+
+imgui_update :: proc() {
     imgui.Begin("Info")
     defer imgui.End()
     
-    debug_dropdown_update(&app.map_dropdown)
-    debug_dropdown_update(&app.skin_dropdown)
+    imgui_dropdown_update(&app.map_dropdown)
+    if imgui.SmallButton("open external") {
+        external_map_path, ok := platform_file_dialog_open_osu(memory.allocators[.GLOBAL])
+        if ok {
+            open_external_map(external_map_path)
+        }
+    }
+    imgui.Separator()
+    
+    imgui_dropdown_update(&app.skin_dropdown)
     imgui.Separator()
 
     timer_str := strings.clone_to_cstring(time_ms_to_string(beatmap_music_time_ms(&game.beatmap)), context.temp_allocator)

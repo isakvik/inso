@@ -104,8 +104,9 @@ Hitobject_Flag :: enum {
 
 Hitobject_Phase :: enum u8 {
     NONE,
-    PREEMPT, // on screen, hittable
-    HOLD,    // slider: tracking the ball
+    PREEMPT,  // visible before note time
+    POSTEMPT, // visible after note time
+    HOLD,     // slider: tracking the ball
     HIT,
     MISS,
 }
@@ -210,7 +211,7 @@ hitobject_visible_start_time :: proc(hobj: ^Hitobject) -> (result: f64) {
 }
 
 hitobject_visible_end_time :: proc(hobj: ^Hitobject) -> (result: f64) {
-    end_time := hobj.end_time_ms
+    end_time := hobj.end_time_ms + game.beatmap.timing_windows.ok
     hit_anim_len := hobj.custom_hit_animation_len_ms != 0 ? hobj.custom_hit_animation_len_ms : OSU_HIT_ANIMATION_LENGTH
     #partial switch hobj.type {
     case .CIRCLE, .SLIDER: end_time += hit_anim_len
@@ -456,6 +457,8 @@ osu_on_update :: proc(dt: f64) {
                 hobj.flags |= {.VISIBLE}
                 sb.append(&game.beatmap.expiring_hitobjects, hobj.index)
             }
+        } else if hobj.phase == .PREEMPT && hobj.start_time_ms < map_time {
+            hitobject_emit_phase_transition(&hobj, .POSTEMPT)
         }
     }
 
@@ -472,8 +475,6 @@ osu_on_update :: proc(dt: f64) {
 
     process_expiring_hitobjects(&game.beatmap.expiring_hitobjects)
 
-
-    // todo(isak): valid key presses system needs testing
     game.input.available_presses = 0
     if game.input.mouse_keys_enabled {
         if button_is_pressed(game.input.k1) && !button_is_down(game.input.m1) do game.input.available_presses += 1
@@ -489,7 +490,7 @@ osu_on_update :: proc(dt: f64) {
         game.input.last_valid_press_at = map_time
 
         for &hobj, i in visible_hobjs {
-            if hobj.phase != .PREEMPT {
+            if hobj.phase != .PREEMPT && hobj.phase != .POSTEMPT {
                 continue
             }
             hobj_pos := hitobject_pos(&hobj)

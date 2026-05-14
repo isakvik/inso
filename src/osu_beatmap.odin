@@ -459,7 +459,7 @@ process_expiring_hitobjects :: proc(expiring_hitobjects: ^sb.Swap_Buffer(int)) {
         case .SLIDER:
             expired = slider_process(hobj, map_time)
         case:
-            expired = hitcircle_process(hobj, map_time)
+            expired = hitcircle_process_expiry(hobj, map_time)
         }
         
         if !expired {
@@ -469,7 +469,7 @@ process_expiring_hitobjects :: proc(expiring_hitobjects: ^sb.Swap_Buffer(int)) {
     sb.swap(expiring_hitobjects)
 }
 
-hitcircle_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
+hitcircle_process_expiry :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
     end_time := hitobject_visible_end_time(hobj)
     if end_time < map_time {
         judgement_new(hobj, .MISS, end_time - hobj.end_time_ms)
@@ -480,7 +480,7 @@ hitcircle_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
         expired = true
     }
     return expired
-}   
+}
 
 
 //////////////////////////////////////////////////////

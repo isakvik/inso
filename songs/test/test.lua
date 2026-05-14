@@ -57,26 +57,42 @@ function on_init()
     
     
     
-    from_left = Animation.new()
-        :color(0, 1, Color.rgb(0,0,0), Color.rgb(255,255,255))
-        :move(0, 1, -3, 0, 0, 0):scale(0,1, 2,2, 2,2)
-    from_right = Animation.new()
-        :color(0, 1, Color.rgb(0,0,0), Color.rgb(255,255,255))
-        :move(0, 1, 3, 0, 0, 0):scale(0,1, 2,2, 2,2):rotate(0, 0, 3.1415, 3.1415)
+    anim_left = Animation.new()
+        :move(0, 1, -3, 0, 0, 0)
+        :scale(0,1, 2,2, 2,2)
+    anim_right = Animation.new()
+        :move(0, 1, 3, 0, 0, 0)
+        :scale(0,1, 2,2, 2,2)
+        :rotate(0, 0, 3.1415, 3.1415)
         
     custom_left = Element.new()
         :set_tex("reversearrow.png")
-        :set_animation(from_left)
-    
+        :set_animation(anim_left)
+        :use_combo_color(true)
     custom_right = Element.new()
         :set_tex("reversearrow.png")
-        :set_animation(from_right)
-
+        :set_animation(anim_right)
+        :use_combo_color(true)
+        
+    anim_hitleft = Animation.new()
+        :alpha(0, 1, 1, 0)
+        :scale(0, 0, 2,2, 2,2)
+    anim_hitright = Animation.new()
+        :alpha(0, 1, 1, 0)
+        :scale(0, 0, 2,2, 2,2)
+        :rotate(0, 0, 3.1415, 3.1415)
+        
+    custom_hitleft = custom_left:clone()
+        :set_animation(anim_hitleft)
+    custom_hitright = custom_right:clone()
+        :set_animation(anim_hitright)
     
     for i, hobj in ipairs(Hitobject.get_in_range_ms(0, 30000)) do
         hobj:clear_drawables()
         hobj:add_element_for_phase(Phase.PREEMPT, custom_left)
         hobj:add_element_for_phase(Phase.PREEMPT, custom_right)
+        hobj:add_element_for_phase(Phase.POSTEMPT, custom_hitleft)
+        hobj:add_element_for_phase(Phase.POSTEMPT, custom_hitright)
         
         hobj:add_element_for_phase(Phase.HIT, el)
         hobj:set_hit_animation_length(400)

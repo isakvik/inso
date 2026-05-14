@@ -195,12 +195,18 @@ Element_Type :: enum {
     CUSTOM_ELEMENT
 }
 
+Element_Flags :: distinct bit_set[Element_Flag; u32]
+Element_Flag :: enum u32 {
+    USE_COMBO_COLOR,
+    STATIC_GEOMETRY,
+}
+
 Element_ID :: u32
 Element :: struct {
     type: Element_Type, // note(isak): this is just for debug purposes
+    flags: Element_Flags,
 
     shader: Pipeline_ID,
-    static_geometry: bool,
     ssbo: u32,
     ssbo_size: int,
     index_count: u32,
@@ -294,6 +300,7 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
 
     elements.data[builtin_element_slot(.HIT_CIRCLE)] = {
         tex = skin_texture(.HITCIRCLE),
+        flags = {.USE_COMBO_COLOR},
 
         animations = animation_new(anims,
             Animation_Scale{
@@ -319,6 +326,7 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
     
     elements.data[builtin_element_slot(.APPROACH_CIRCLE)] = {
         tex = skin_texture(.APPROACHCIRCLE),
+        flags = {.USE_COMBO_COLOR},
 
         animations = animation_new(anims, Animation_Scale{
             start_time = 0, 
@@ -420,22 +428,23 @@ reserve_hitobject_phase_elements :: proc(
 // the default graphics if no custom elements are set. for other phases, only writes drawables if 
 // custom elements are set. phase_start_time is the map time at which this phase began
 create_hitobject_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phase, phase_start_time: f64) {
-    if hobj.type != .CIRCLE && hobj.type != .SLIDER { return }
+    if hobj.type != .CIRCLE && hobj.type != .SLIDER do return
 
-    combo_color := hitobject_combo_color(hobj)
     preempt := hitobject_preempt_ms(hobj)
     num_custom := hobj.custom_element_nums[phase]
 
+    in_visible_phase := phase == .PREEMPT || phase == .POSTEMPT
+
     digits: [4]int
     num_digits: int
-    if .HIDE_COMBO_NUMBERS not_in hobj.flags && phase == .PREEMPT {
+    if .HIDE_COMBO_NUMBERS not_in hobj.flags && in_visible_phase {
         num_digits = write_combo_digits(&digits, int(hobj.combo_number))
     }
     
-    num_base := num_custom if num_custom > 0 else (3 if phase == .PREEMPT else 0)
+    num_base := num_custom if num_custom > 0 else (3 if in_visible_phase else 0)
     total_handles := num_digits + num_base
 
-    if total_handles == 0 { return }
+    if total_handles == 0 do return
 
     hobj.gfx_handles = make([]Drawable_Handle, total_handles, memory.allocators[.DRAWABLES])
 
@@ -444,9 +453,10 @@ create_hitobject_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
         phase_end_time: f64
         rel_pos: vec2
         switch phase {
-            case .PREEMPT: phase_end_time = phase_start_time + preempt
-            case .HOLD:    phase_end_time = phase_start_time + hobj.end_time_ms - hobj.start_time_ms
-            case .NONE:    phase_end_time = phase_start_time + f64(0)
+            case .PREEMPT:  phase_end_time = phase_start_time + preempt
+            case .POSTEMPT: phase_end_time = phase_start_time + game.beatmap.timing_windows.ok
+            case .HOLD:     phase_end_time = phase_start_time + hobj.end_time_ms - hobj.start_time_ms
+            case .NONE:     phase_end_time = phase_start_time + f64(0)
             case .HIT, .MISS: 
                 hit_animation_time := hobj.custom_hit_animation_len_ms != 0 ? hobj.custom_hit_animation_len_ms : OSU_HIT_ANIMATION_LENGTH
                 phase_end_time = phase_start_time + f64(hit_animation_time)
@@ -461,15 +471,19 @@ create_hitobject_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
         
         for i in 0..<hobj.custom_element_nums[phase] {
             el_id := hobj.custom_elements[phase][i]
-            el_flags := Drawable_Flags{.ACTIVE} | (Drawable_Flags{.FADE_IN} if phase == .PREEMPT else {})
+            el := q.get(&game.beatmap.elements, el_id)
+
+            drawable_color := hitobject_combo_color(hobj) if .USE_COMBO_COLOR in el.flags else color_white
+            drawable_flags := Drawable_Flags{.ACTIVE} | (Drawable_Flags{.FADE_IN} if phase == .PREEMPT else {})
+            
             hobj.gfx_handles[num_digits + i] = drawable_new(Drawable{
-                flags         = el_flags,
+                flags         = drawable_flags,
                 element       = el_id,
                 layer         = .HITOBJECTS,
                 pos           = rel_pos,
                 size          = {2, 2},
                 anchor        = .CENTER,
-                color         = combo_color,
+                color         = drawable_color,
                 start_time_ms = phase_start_time,
                 end_time_ms   = phase_end_time,
                 hobj_index    = hobj.index + 1,
@@ -478,15 +492,20 @@ create_hitobject_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
     } else {
         base := [?]Element_Type{.HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
         for el_type, i in base {
+            el_id := builtin_element_slot(el_type)
+            el := q.get(&game.beatmap.elements, el_id)
+            
+            drawable_color := hitobject_combo_color(hobj) if .USE_COMBO_COLOR in el.flags else color_white
+            
             end_ms := hobj.start_time_ms + (game.beatmap.timing_windows.ok if el_type != .APPROACH_CIRCLE else 0)
             hobj.gfx_handles[num_digits + i] = drawable_new(Drawable{
                 flags         = {.ACTIVE, .FADE_IN},
-                element       = builtin_element_slot(el_type),
+                element       = el_id,
                 layer         = .HITOBJECTS,
                 pos           = vec2{0, 0},
                 size          = {2, 2},
                 anchor        = .CENTER,
-                color         = (combo_color if el_type == .HIT_CIRCLE || el_type == .APPROACH_CIRCLE else with_alpha(color_white, 1)),
+                color         = drawable_color,
                 start_time_ms = hobj.start_time_ms - preempt,
                 end_time_ms   = end_ms,
                 hobj_index    = hobj.index + 1,
@@ -527,7 +546,7 @@ create_hitobject_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
     }
 }
 
-create_click_feedback_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_time: f64) {
+create_default_hitcircle_hit_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_time: f64) {
     combo_color := hitobject_combo_color(hobj)
 
     drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
@@ -567,10 +586,14 @@ process_hitobject_phase_transitions :: proc() {
         switch transition.to {
         case .PREEMPT:
             create_hitobject_phase_drawables(hobj, .PREEMPT, hobj.start_time_ms - preempt)
+
+        case .POSTEMPT:
+            create_hitobject_phase_drawables(hobj, .POSTEMPT, hobj.start_time_ms)
+        
         case .HOLD:
             clear_hitobject_drawables(hobj)
             
-            create_click_feedback_drawables(hobj, hitobject_pos(hobj), map_time)
+            create_default_hitcircle_hit_drawables(hobj, hitobject_pos(hobj), map_time)
             create_hitobject_phase_drawables(hobj, .HOLD, hobj.start_time_ms)
         case .HIT:
             clear_hitobject_drawables(hobj)
@@ -578,9 +601,9 @@ process_hitobject_phase_transitions :: proc() {
             // note(isak): custom hit animations override the default circle expanding animation
             if hobj.custom_element_nums[.HIT] == 0 {
                 if transition.from == .PREEMPT {
-                    create_click_feedback_drawables(hobj, hitobject_pos(hobj), map_time)
+                    create_default_hitcircle_hit_drawables(hobj, hitobject_pos(hobj), map_time)
                 } else if transition.from == .HOLD {
-                    create_click_feedback_drawables(hobj, hitobject_tail_pos(hobj), map_time)
+                    create_default_hitcircle_hit_drawables(hobj, hitobject_tail_pos(hobj), map_time)
                 }
             }
             create_hitobject_phase_drawables(hobj, .HIT, map_time)
@@ -689,7 +712,7 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
     r_check_and_bind_pipeline({element.shader})
     r_check_and_bind_layer(d.layer)
 
-    if element.static_geometry {
+    if .STATIC_GEOMETRY in element.flags {
         r_bind_ssbo_raw(element.ssbo, element.ssbo_size, .VERTEX_BUFFER)
         r_push_draw_mesh(i32(element.index_count))
         // note(isak): restore quad VERTEX_BUFFER for subsequent quad draws

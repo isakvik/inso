@@ -329,6 +329,7 @@ lua_cares_about_event :: proc(event: Lua_Beatmap_Event_Type) -> bool {
 
 lua_int :: proc "c" (at: i32) -> lua.Integer { return lua.L_checkinteger(lua_beatmap.state, at) }
 lua_number :: proc "c" (at: i32) -> lua.Number { return lua.L_checknumber(lua_beatmap.state, at) }
+lua_boolean :: proc "c" (at: i32) -> b32 { return lua.toboolean(lua_beatmap.state, lua.Index(at)) }
 lua_string :: proc "c" (at: i32) -> string {
     len: uint
     ptr := transmute(^u8)lua.L_checklstring(lua_beatmap.state, at, &len)
@@ -1116,7 +1117,6 @@ luaapi_drawable_new :: proc "c" (L: ^lua.State) -> (result: i32) {
 }
 
 
-
 luaapi_drawable_clone :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_beatmap.odin_context
     
@@ -1297,12 +1297,14 @@ luaapi_element_static_funcs := []lua.L_Reg {
 @(private="file")
 luaapi_element_instance_funcs := []lua.L_Reg {
   { "__gc", luaapi_element_gc },
+  { "clone", luaapi_element_clone },
   { "register_event", luaapi_element_register_event },
   { "set_tex", luaapi_element_set_tex },
   { "set_uv", luaapi_element_set_uv },
   { "set_shader", luaapi_element_set_shader },
   { "set_animation", luaapi_element_set_animation },
   { "set_mesh", luaapi_element_set_mesh },
+  { "use_combo_color", luaapi_element_use_combo_color },
   { nil, nil },
 }
 
@@ -1311,12 +1313,6 @@ luaapi_element_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
     handle := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
     _unregister_events_for_handle(.ELEMENT, u64(handle^))
     return result
-}
-
-luaapi_element_register_event :: proc "c" (L: ^lua.State) -> i32 {
-    context = lua_beatmap.odin_context
-    handle := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
-    return _register_event(L, .ELEMENT, u64(handle^))
 }
 
 luaapi_element_new :: proc "c" (L: ^lua.State) -> (result: i32) {
@@ -1333,6 +1329,32 @@ luaapi_element_new :: proc "c" (L: ^lua.State) -> (result: i32) {
     return 1
 }
 
+
+luaapi_element_clone :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    userdata := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
+    el_id := uint(userdata^)
+
+    if el_id < game.beatmap.elements.len {
+        el := q.get(&game.beatmap.elements, el_id)
+        
+        lua.pop(L, 1)
+        handle := cast(^Element_ID)lua.newuserdata(L, size_of(Element_ID))
+        handle^ = element_new(el)
+        
+        lua.L_getmetatable(L, lua_classes[.ELEMENT].name)
+        lua.setmetatable(L, -2)
+        
+        result = 1
+    }
+    return
+}
+
+luaapi_element_register_event :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    handle := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
+    return _register_event(L, .ELEMENT, u64(handle^))
+}
 
 luaapi_element_set_tex :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_beatmap.odin_context
@@ -1416,10 +1438,27 @@ luaapi_element_set_mesh :: proc "c" (L: ^lua.State) -> (result: i32) {
     }
     if el_id < game.beatmap.elements.len {
         el := q.get_ptr(&game.beatmap.elements, el_id)
-        el.static_geometry = true
+        el.flags |= {.STATIC_GEOMETRY}
         el.ssbo            = buf.id
         el.ssbo_size       = buf.size
         el.index_count     = u32(vertex_count)
+    }
+    return lua_return_self()
+}
+
+luaapi_element_use_combo_color :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    userdata := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
+    
+    el_id := uint(userdata^)
+    if el_id < game.beatmap.elements.len {
+        el := q.get_ptr(&game.beatmap.elements, el_id)
+
+        if lua_boolean(2) {
+            el.flags |= {.USE_COMBO_COLOR}
+        } else {
+            el.flags &~= {.USE_COMBO_COLOR}
+        }
     }
     return lua_return_self()
 }

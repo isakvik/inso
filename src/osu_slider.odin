@@ -11,6 +11,8 @@ import "core:slice"
 base_dist : f64 = 2.5
 slider_max_points : f64 = 9999
 
+//todo(yokes): check which procs aren't used anymore
+
 split_path_into_curves :: proc(path: ^Slider_Path, alloc: runtime.Allocator) -> (result: []Slider_Curve) {
     
     curves := make([dynamic]Slider_Curve)
@@ -93,6 +95,7 @@ calculate_curve_from_time :: proc(hobj: ^Hitobject, time_at: f64, path: ^Slider_
 }
 
 // todo(yokes): red nodes get repeated
+//todo(yokes): output is refrenced so calculate_approx_distance_from_piecewise uses all of output leading to distances from previous curves being counted multiple times
 calculate_bezier_curve_distance :: proc(path: ^Slider_Path, output: ^queue.Queue(vec2), curve: Slider_Curve, curve_distance: f64) -> (distance: f64) {
 
     // https://github.com/ppy/osu-framework/blob/master/osu.Framework/Utils/PathApproximator.cs#L86
@@ -168,17 +171,10 @@ calculate_approx_distance_from_piecewise :: proc(path: ^Slider_Path, output: ^qu
     return total_distance
 }
 
-calculate_approx_distance_from_curve :: proc(curve: []Slider_Node, p0: vec2, p1: vec2) -> (total_distance: f64) {
-    for point, i in curve {
-        if i < len(curve) - 1 {
-            curr_distance := f64(linalg.vector_length(p1 - p0))
-            total_distance += curr_distance
-            /*
-            if total_distance > curve_distance {
-                break
-            }*/
-        }
-    }
+calculate_approx_distance_from_curve :: proc(p0: vec2, p1: vec2) -> (total_distance: f64) {
+    curr_distance := f64(linalg.vector_length(p1 - p0))
+    total_distance += curr_distance
+
     return total_distance
 }
 
@@ -310,16 +306,7 @@ write_instances_over_distance :: proc(instance_buf: ^Buffer(vec2), path: ^Slider
     write_instances_from_straight(instance_buf, path, l1, l1 + l_vector * l_distance_mult, curve_distance)
 }
 
-/*todo(yokes): make new proc which calculates instances with distance (or close to) base_dist between each
-    many parameters with unknown origins, find out what they are and how to use them, evt. which parameters we already have which can replace them:
-    - this_curve
-    - curr_curve_points
-    - m_curve_points
-    - m_curve_point_segments | looks like a queue with vec2s
-*/
-
-// todo(yokes): output should be used in here, i believe it'll just make straight lines as of now
-calculate_equal_points_from_curve :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, output: ^queue.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
+calculate_equal_points_from_curves :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, output: ^queue.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
     m_i_curve := min(i32(path.distance_osupx / f64(clamp(base_dist, 1.0, 100.0))), i32(slider_max_points))
     curr_curve_index := 0
     curr_point := 0
@@ -327,9 +314,10 @@ calculate_equal_points_from_curve :: proc(instance_buf: ^Buffer(vec2), path: ^Sl
     distance_at := 0.0
     last_distance_at := 0.0
 
-    curr_curve := path.curves[curr_curve_index]
-    if len(curr_curve) < 1 {
-        log.debug("calculate_equal_points_from_curve: len(curr_curve) == 0")
+    curr_curve := output.data
+    curr_curve_len := int(output.len)
+    if curr_curve_len < 1 {
+        log.debug("calculate_equal_points_from_curves: curr_curve_len == 0")
 
         return 0
     }
@@ -351,43 +339,27 @@ calculate_equal_points_from_curve :: proc(instance_buf: ^Buffer(vec2), path: ^Sl
 
         for distance_at < f64(pref_distance) {
             last_distance_at = distance_at
-            if len(curr_curve) > 0 && curr_point > -1 && curr_point < len(curr_curve) {
+            if curr_curve_len > 0 && curr_point > -1 && curr_point < curr_curve_len {
                 last_curve = curr_curve[curr_point]
             }
             curr_point += 1
 
-            if curr_point >= len(curr_curve) {
-                curr_curve_index += 1
-
-                if curr_curve_points.len > 0 {
-                    queue.push_back_elems(&m_curve_point_segments, curr_curve_points)
-                    queue.clear(&curr_curve_points)
-
-                    if output.len > 0 {
-                        queue.push_back(&curr_curve_points, last_curve_point_for_next_segment_start)
-                    }
-                }
-
-                if curr_curve_index < len(path.curves) {
-                    curr_curve = path.curves[curr_curve_index]
-                    curr_point = 0
-                } else {
-                    curr_point = len(curr_curve) - 1
-                    if last_distance_at == distance_at {
-                        break
-                    }
+            if curr_point >= curr_curve_len {
+                curr_point = curr_curve_len - 1
+                //note(yokes): this means output.data is out of points
+                if last_distance_at == distance_at {
+                    break
                 }
             }
 
-            // todo(yokes): for some reason the whole bezier slider is not used?
-            if len(curr_curve) > 0 && curr_point > -1 && curr_point < len(curr_curve) {
-                distance_at += calculate_approx_distance_from_curve(curr_curve, curr_curve[curr_point - 1], curr_curve[curr_point])
+            if curr_curve_len > 0 && curr_point > 0 && curr_point < curr_curve_len {
+                distance_at += calculate_approx_distance_from_curve(curr_curve[curr_point - 1], curr_curve[curr_point])
                 break
             }
         }
         
         // todo(yokes): rename parameter, it's not a curve, it's a point
-        this_curve : vec2 = len(curr_curve) > 0 && curr_point > -1 && curr_point < len(curr_curve) ? curr_curve[curr_point] : vec2({0, 0})
+        this_curve : vec2 = curr_curve_len > 0 && curr_point > -1 && curr_point < curr_curve_len ? curr_curve[curr_point] : vec2({0, 0})
 
         queue.push_back(&m_curve_points, vec2({0, 0}))
         queue.push_back(&curr_curve_points, vec2({0, 0}))
@@ -418,7 +390,7 @@ calculate_equal_points_from_curve :: proc(instance_buf: ^Buffer(vec2), path: ^Sl
         }
     }
 
-    //todo(yokes): according to mcosu source code this is incorrect
+    //todo?(yokes): according to mcosu source code this is incorrect
     if segmented_length > path.distance_osupx && m_curve_point_segments.len > 1 && m_curve_point_segments.data[0].len > 1 {
         excess : f64 = segmented_length - path.distance_osupx
         for excess > 0 {
@@ -442,7 +414,17 @@ calculate_equal_points_from_curve :: proc(instance_buf: ^Buffer(vec2), path: ^Sl
             }
         }
     }
-    return calculate_approx_distance_from_piecewise(path, output)
+
+    output_curr_len := output.len
+    for i in 0..<output_curr_len {
+        queue.pop_back(output)
+    }
+
+    for i in 0..<m_curve_point_segments.data[m_curve_point_segments.len-1].len {
+        queue.push_back(output, m_curve_point_segments.data[m_curve_point_segments.len-1].data[i])
+    }
+
+    return calculate_approx_distance_from_piecewise(path, &m_curve_point_segments.data[m_curve_point_segments.len-1])
 }
 
 calculate_points_between_instances :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, output: ^queue.Queue(vec2), curve_distance: f64) -> (total_distance: f64) {
@@ -794,6 +776,7 @@ write_instances_from_path :: proc(
     instance_offset = instance_buf.count
 
     path.curves = split_path_into_curves(path, alloc)
+    approx_distance_covered_by_curve : f64 = 0
     output : queue.Queue(vec2)
 
     buffer_push(instance_buf, path.nodes[0])
@@ -801,22 +784,30 @@ write_instances_from_path :: proc(
     for curve, i in path.curves {
         
         if distance_to_cover > 0 {
-            approx_distance_covered_by_curve := 
+            approx_distance_covered_by_curve = 
                 write_points_from_curve(instance_buf,
                                            path,
                                            &output,
                                            curve,
                                            path.type,
                                            distance_to_cover)
-            distance_to_cover -= approx_distance_covered_by_curve
+            if approx_distance_covered_by_curve > distance_to_cover {
+                break
+            }
         }
     }
 
-    calculate_equal_points_from_curve(instance_buf, path, &output, path.distance_osupx)
+    //todo(yokes): (optimization) can buffer_push in calculate_equal_points_from_curves, then in write_instances_over_distance instead of adding them to output and pushing them later
+    calculate_equal_points_from_curves(instance_buf, path, &output, path.distance_osupx)
 
-    if distance_to_cover > 0 {
-        write_instances_over_distance(instance_buf, path, distance_to_cover)
+    if distance_to_cover > approx_distance_covered_by_curve {
+        write_instances_over_distance(instance_buf, path, distance_to_cover - approx_distance_covered_by_curve)
     }
+
+    for i in 0..<output.len {
+        buffer_push(instance_buf, output.data[i])
+    }
+    
     
     path.pos, path.end_pos = instance_buf.data[instance_offset], instance_buf.data[max(instance_buf.count-1, 0)]
     

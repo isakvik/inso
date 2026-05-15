@@ -297,6 +297,8 @@ calculate_distance_of_straight_bezier :: proc(
 }
 
 write_instances_over_distance :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Path, curve_distance: f64) {
+    if instance_buf.count < 2 do return
+    
     last := instance_buf.count - 1
     l0 := instance_buf.data[last - 1]
     l1 := instance_buf.data[last]

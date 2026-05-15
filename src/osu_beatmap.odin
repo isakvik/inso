@@ -670,9 +670,7 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
 }
 
 slider_expire :: proc(hobj: ^Hitobject) {
-    
     slider := &hobj.slider_state
-    log.info("slider expired", slider.slide_sound.generation, slider.slide_sound.index)
 
     if .END_TRACKED in slider.flags {
         // todo(isak): hitsound volume!! end hitsounds need to be parsed!!!

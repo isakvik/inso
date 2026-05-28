@@ -110,7 +110,7 @@ mouse_init :: proc() {
         raw_input_enable()
         raw_input_register_sdl_hook()
 
-        app.input_device_hwids, app.input_device_handles = input_enumerate_mouse_devices()
+        app.input_device_hwids, app.input_device_handles = input_enumerate_mouse_devices(memory.allocators[.GLOBAL])
     }
 }
 
@@ -122,6 +122,7 @@ mouse_rebind :: proc(id: Mouse_ID, handle: Mouse_Handle) {
     for device_handle, i in app.input_device_handles {
         if handle == device_handle {
             handle_hwid = app.input_device_hwids[i]
+            break
         }
     }
     assert(handle_hwid != {}, "device handle could not resolve to a hwid!")
@@ -164,14 +165,18 @@ keyboard_rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
     }
 }
 
-input_validate_mouse_hwid :: proc(mouse_hwid: string) {
-    if len(mouse_hwid) == 0 {
-        notify_warn("missing special mouse configuration!")
-        return
-    }
+input_validate_mouse_hwid :: proc(id: Mouse_ID, hwid: string) {
+    if len(hwid) == 0 do return
 
     when ODIN_OS == .Windows {
-        
+        for name, i in app.input_device_hwids {
+            if name == hwid {
+                mice[id].device_handle = app.input_device_handles[i]
+                log.infof("mouse %v resolved to device: %s", id, hwid)
+                return
+            }
+        }
+        log.warnf("mouse %v hwid not found among connected devices: %s", id, hwid)
     }
 }
 

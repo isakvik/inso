@@ -148,8 +148,8 @@ main :: proc() {
     audio_set_category_volume(.MUSIC, game.user_config.music_volume)
     audio_set_category_volume(.HITSOUND, game.user_config.hitsound_volume)
     
-    input_validate_mouse_hwid(game.user_config.primary_mouse_hwid)
-    input_validate_mouse_hwid(game.user_config.secondary_mouse_hwid)
+    input_validate_mouse_hwid(.PRIMARY,   game.user_config.primary_mouse_hwid)
+    input_validate_mouse_hwid(.SECONDARY, game.user_config.secondary_mouse_hwid)
 
     shaders_watch := directory_watch_init("shaders/")
     skins_watch := directory_watch_init("skins/")
@@ -205,17 +205,23 @@ main :: proc() {
                 case sdl.EventType.MOUSE_BUTTON_DOWN:
                     io := imgui.GetIO()
                     switch event.button.button {
-                        case sdl.BUTTON_LEFT:                            
-                            mouse.buttons[.LEFT].is_down = true
-                            mouse.last_click_position[.LEFT] = {event.button.x, event.button.y}
+                        case sdl.BUTTON_LEFT:
+                            if app.mouse_input_mode == .SDL_INPUT {
+                                mouse.buttons[.LEFT].is_down = true
+                                mouse.last_click_position[.LEFT] = {event.button.x, event.button.y}
+                            }
                             imgui.IO_AddMouseButtonEvent(io, 0, true)
                         case sdl.BUTTON_MIDDLE:
-                            mouse.buttons[.MIDDLE].is_down = true
-                            mouse.last_click_position[.MIDDLE] = {event.button.x, event.button.y}
+                            if app.mouse_input_mode == .SDL_INPUT {
+                                mouse.buttons[.MIDDLE].is_down = true
+                                mouse.last_click_position[.MIDDLE] = {event.button.x, event.button.y}
+                            }
                             imgui.IO_AddMouseButtonEvent(io, 2, true)
                         case sdl.BUTTON_RIGHT:
-                            mouse.buttons[.RIGHT].is_down = true
-                            mouse.last_click_position[.RIGHT] = {event.button.x, event.button.y}
+                            if app.mouse_input_mode == .SDL_INPUT {
+                                mouse.buttons[.RIGHT].is_down = true
+                                mouse.last_click_position[.RIGHT] = {event.button.x, event.button.y}
+                            }
                             imgui.IO_AddMouseButtonEvent(io, 1, true)
                     }
 
@@ -223,13 +229,13 @@ main :: proc() {
                     io := imgui.GetIO()
                     switch event.button.button {
                         case sdl.BUTTON_LEFT:
-                            mouse.buttons[.LEFT].is_down = false
+                            if app.mouse_input_mode == .SDL_INPUT do mouse.buttons[.LEFT].is_down = false
                             imgui.IO_AddMouseButtonEvent(io, 0, false)
                         case sdl.BUTTON_MIDDLE:
-                            mouse.buttons[.MIDDLE].is_down = false
+                            if app.mouse_input_mode == .SDL_INPUT do mouse.buttons[.MIDDLE].is_down = false
                             imgui.IO_AddMouseButtonEvent(io, 2, false)
                         case sdl.BUTTON_RIGHT:
-                            mouse.buttons[.RIGHT].is_down = false
+                            if app.mouse_input_mode == .SDL_INPUT do mouse.buttons[.RIGHT].is_down = false
                             imgui.IO_AddMouseButtonEvent(io, 1, false)
                     }
 

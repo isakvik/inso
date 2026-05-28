@@ -8,7 +8,6 @@ import "core:fmt"
 import "core:hash"
 import "core:log"
 import "core:strings"
-import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:path/filepath"
@@ -136,15 +135,21 @@ main :: proc() {
 
     imgui_init()
     defer imgui_cleanup()
+    
     text_init()
     keyboard_init()
+    mouse_init()
     
     game.user_config = config_load("user.ini")
     defer config_save("user.ini")
+    
     window_apply_vsync(game.user_config.vsync_enabled)
     audio_set_volume(game.user_config.master_volume)
     audio_set_category_volume(.MUSIC, game.user_config.music_volume)
     audio_set_category_volume(.HITSOUND, game.user_config.hitsound_volume)
+    
+    input_validate_mouse_hwid(game.user_config.primary_mouse_hwid)
+    input_validate_mouse_hwid(game.user_config.secondary_mouse_hwid)
 
     shaders_watch := directory_watch_init("shaders/")
     skins_watch := directory_watch_init("skins/")
@@ -187,8 +192,10 @@ main :: proc() {
             profiler_block_begin(.MESSAGE_HANDLING); defer profiler_block_end()
 
             // message handling, time handling
-            for &button in mouse.buttons {
-                button.was_down = button.is_down
+            for &mouse in mice {
+                for &button in mouse.buttons {
+                    button.was_down = button.is_down
+                }
             }
             
             // todo(isak): game input should happen in a separate thread for input resolution purposes
@@ -198,7 +205,7 @@ main :: proc() {
                 case sdl.EventType.MOUSE_BUTTON_DOWN:
                     io := imgui.GetIO()
                     switch event.button.button {
-                        case sdl.BUTTON_LEFT:
+                        case sdl.BUTTON_LEFT:                            
                             mouse.buttons[.LEFT].is_down = true
                             mouse.last_click_position[.LEFT] = {event.button.x, event.button.y}
                             imgui.IO_AddMouseButtonEvent(io, 0, true)
@@ -261,33 +268,22 @@ main :: proc() {
                 case sdl.EventType.QUIT:
                     running = false
                 }
-
-                /*if is_down(game.input.m1) {
-                    rebind_input(event, &game.input.k1_key)
-                }
-
-                if is_down(game.input.m2) {
-                    rebind_input(event, &game.input.k2_key)
-                }*/
             }
 
             keyboard_next_frame()
-            
-            xi, yi: i32
-            mouse_flags := sdl.GetGlobalMouseState(&mouse.pos.x, &mouse.pos.y)
-            sdl.GetWindowPosition(window.handle, &xi, &yi)
 
-            mouse.pos.x = mouse.pos.x - f32(xi)
-            mouse.pos.y = mouse.pos.y - f32(yi)
-
-            imgui.IO_AddMousePosEvent(imgui.GetIO(), mouse.pos.x, mouse.pos.y)
-        }
-
-        // note(isak): when minimized, skip all rendering and game update work.
-        // music and game logic still advance via beatmap_on_update's time interpolation on restore.
-        if window.minimized {
-            sdl.Delay(16)
-            continue
+            if app.mouse_input_mode == .SDL_INPUT {
+                xi, yi: i32
+                mouse_flags := sdl.GetGlobalMouseState(&mouse.pos.x, &mouse.pos.y)
+                sdl.GetWindowPosition(window.handle, &xi, &yi)
+    
+                mouse.pos.x = mouse.pos.x - f32(xi)
+                mouse.pos.y = mouse.pos.y - f32(yi)
+                
+                imgui.IO_AddMousePosEvent(imgui.GetIO(), mouse.pos.x, mouse.pos.y)
+            } else {
+                imgui.IO_AddMousePosEvent(imgui.GetIO(), mice[.PRIMARY].pos.x, mice[.PRIMARY].pos.y)
+            }
         }
 
         {
@@ -339,6 +335,35 @@ main :: proc() {
                 pf_cur_rect: Rect = { game.input.mouse_pos.x, game.input.mouse_pos.y, 20, 20 }
                 r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, builtin_texture(.WHITE),
                     f32(time_s_since_beginning_of_program()))
+            }
+
+            if app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY {                
+                r_push_transform(fullscreen_transform)
+                r_draw_quad(&renderer.quad_geometry,
+                    vec2{0,0}, vec2{1,1},
+                    vec2{0,0}, vec2{1,1},
+                    with_alpha(color_black, 0.5))
+                    
+                push_text(renderer, "waiting for primary mouse input",
+                    pos     = {window.rect.w / 2, window.rect.h / 2},
+                    size    = 16,
+                    color   = {255, 255, 255, 150},
+                    align_h = .Center,
+                    align_v = .Middle)
+                
+            } else if app.mouse_input_mode == .REBINDING_MOUSE_SECONDARY {
+                r_push_transform(fullscreen_transform)
+                r_draw_quad(&renderer.quad_geometry,
+                    vec2{0,0}, vec2{1,1},
+                    vec2{0,0}, vec2{1,1},
+                    with_alpha(color_black, 0.5))
+
+                push_text(renderer, "waiting for secondary mouse input",
+                    pos     = {window.rect.w / 2, window.rect.h / 2},
+                    size    = 16,
+                    color   = {255, 255, 255, 150},
+                    align_h = .Center,
+                    align_v = .Middle)
             }
         }
         
@@ -393,9 +418,9 @@ main :: proc() {
         
         {
             profiler_block_begin(.SLEEP); defer profiler_block_end()
-            if !window.focused {
+            /*if !window.focused {
                 sdl.Delay(30) // note(isak): ~30fps cap
-            }
+            }*/
         }
         
         {
@@ -406,10 +431,6 @@ main :: proc() {
 
             if app.debug_display_frame_profiler {
                 profiler_write_texture_column(frame_count, window.profiler_texture)
-
-                if frame_count % 100 == 0 {
-                    fmt.println("fps:", profiler_get_fps())
-                }
             }
             
             crash_stats_write(frame_count, (time_current_frame - time_last_frame) * 1000)
@@ -490,7 +511,7 @@ imgui_update :: proc() {
     imgui.Begin("Info")
     defer imgui.End()
     
-    imgui_dropdown_update(&app.map_dropdown)
+    imgui_dropdown_draw(&app.map_dropdown)
     if imgui.SmallButton("open external") {
         external_map_path, ok := platform_file_dialog_open_osu(memory.allocators[.GLOBAL])
         if ok {
@@ -499,10 +520,12 @@ imgui_update :: proc() {
     }
     imgui.Separator()
     
-    imgui_dropdown_update(&app.skin_dropdown)
+    imgui_dropdown_draw(&app.skin_dropdown)
     imgui.Separator()
 
     timer_str := strings.clone_to_cstring(time_ms_to_string(beatmap_music_time_ms(&game.beatmap)), context.temp_allocator)
+    
+    imgui.Text("FPS: %f", imgui.GetIO().Framerate)
     imgui.Text("Time: %s", timer_str)
     imgui.Text("Time rate: %.3f%s",
         game.time_rate * (game.paused ? f32(0) : f32(1)),
@@ -533,6 +556,22 @@ imgui_update :: proc() {
         }
         if imgui.SliderFloat("Hitsounds##vol", &game.user_config.hitsound_volume, 0, 1) {
             audio_set_category_volume(.HITSOUND, game.user_config.hitsound_volume)
+        }
+    }
+    if imgui.CollapsingHeader("Input") {
+        if imgui.Button("x##cursor_reset") do game.user_config.cursor_size_multiplier = 1.0
+        imgui.SameLine()
+        imgui.SliderFloat("Cursor size##mouse", &game.user_config.cursor_size_multiplier, 0.1, 2.0)
+
+        imgui.Text("Rebind mice")
+        if imgui.Button("primary") {
+            app.mouse_input_mode = .REBINDING_MOUSE_PRIMARY
+            mice[.PRIMARY].is_rebinding = true
+        }
+        imgui.SameLine()
+        if imgui.Button("secondary") { 
+            app.mouse_input_mode = .REBINDING_MOUSE_SECONDARY
+            mice[.SECONDARY].is_rebinding = true
         }
     }
 

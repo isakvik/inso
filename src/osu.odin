@@ -441,7 +441,10 @@ osu_on_update :: proc(dt: f64) {
     
     // todo(isak): this really handles a bunch of debug stuff too. fix up the modes and such
     #partial switch game.mode {
-        case .PLAY: handle_play_input_events()
+        case .PLAY: 
+            handle_play_input_events()
+            handle_menu_input_events() // @temp todo(isak): mode switching isn't handled yet
+            
         case .MAIN_MENU: handle_menu_input_events()
     }
     
@@ -573,8 +576,11 @@ osu_on_update :: proc(dt: f64) {
     
     r_push_transform(window.screenspace_transform)
     render_input_display()
+
+    if mice[.PRIMARY].is_rebinding || mice[.SECONDARY].is_rebinding {
+    }
     
-    cursor_size := 80 * playfield_base_scale
+    cursor_size := 160 * (window.rect.h / 1440) * game.user_config.cursor_size_multiplier
     cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), cursor_size, cursor_size }
     r_draw_layout_rect(&window.renderer.quad_geometry, cursor_rect, .CENTER, color_white, 
         skin_texture(.CURSOR), f32(time_s_since_beginning_of_program()))

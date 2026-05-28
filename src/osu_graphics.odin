@@ -300,28 +300,7 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
 
     elements.data[builtin_element_slot(.HIT_CIRCLE)] = {
         tex = skin_texture(.HITCIRCLE),
-        flags = {.USE_COMBO_COLOR},
-
-        animations = animation_new(anims,
-            Animation_Scale{
-                start_time = 0,
-                end_time = 0.5,
-                start_scale = {1, 1}, 
-                end_scale = {4, 1}
-            }, 
-            Animation_Scale{
-                start_time = 0.5, 
-                end_time = 1,
-                start_scale = {4, 1}, 
-                end_scale = {0, 0}
-            }, 
-            Animation_Rotate{
-                start_time = 0,
-                end_time = 1,
-                start_angle = 0, 
-                end_angle = math.PI/2
-            }, 
-        )
+        flags = {.USE_COMBO_COLOR}
     }
     
     elements.data[builtin_element_slot(.APPROACH_CIRCLE)] = {

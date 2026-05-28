@@ -38,6 +38,10 @@ app: struct {
     map_dropdown: Imgui_Dropdown,
     skin_dropdown: Imgui_Dropdown,
     offset_window_open: bool,
+
+    mouse_input_mode: Mouse_Input_Mode,
+    input_device_hwids: []string,
+    input_device_handles: []Mouse_Handle,
 }
 
 app_init :: proc() {
@@ -62,6 +66,13 @@ app_cleanup :: proc() {
 //////////////////////////////////////////////////////
 // note(isak): input api
 
+Mouse_Input_Mode :: enum {
+    SDL_INPUT,
+    DOUBLE_MOUSE_INPUT,
+    REBINDING_MOUSE_PRIMARY,
+    REBINDING_MOUSE_SECONDARY,
+}
+
 Mouse_Button :: enum {
     LEFT,
     RIGHT,
@@ -72,10 +83,53 @@ Button_State :: struct {
     is_down, was_down: bool
 }
 
-mouse: struct {
+Mouse_ID :: enum {
+    PRIMARY,
+    SECONDARY,
+}
+
+Mouse :: struct {
+    device_handle: Mouse_Handle,
     pos: vec2,
     buttons: [Mouse_Button]Button_State,
     last_click_position: [Mouse_Button]vec2,
+    
+    is_rebinding: bool,
+}
+
+mouse: Mouse
+mouse_secondary: Mouse
+
+mice: [Mouse_ID]^Mouse
+
+mouse_init :: proc() {
+    mice[.PRIMARY] = &mouse
+    mice[.SECONDARY] = &mouse_secondary
+ 
+    when ODIN_OS == .Windows {
+        raw_input_enable()
+        raw_input_register_sdl_hook()
+
+        app.input_device_hwids, app.input_device_handles = input_enumerate_mouse_devices()
+    }
+}
+
+mouse_rebind :: proc(id: Mouse_ID, handle: Mouse_Handle) {
+    mice[id].device_handle = handle
+    mice[id].is_rebinding = false
+
+    handle_hwid: string
+    for device_handle, i in app.input_device_handles {
+        if handle == device_handle {
+            handle_hwid = app.input_device_hwids[i]
+        }
+    }
+    assert(handle_hwid != {}, "device handle could not resolve to a hwid!")
+
+    switch(id) {
+    case .PRIMARY:   game.user_config.primary_mouse_hwid = handle_hwid
+    case .SECONDARY: game.user_config.secondary_mouse_hwid = handle_hwid
+    }
 }
 
 
@@ -86,7 +140,7 @@ keyboard: struct {
     buttons_prev_frame: ^Keyboard_State,
 
     state: [2]Keyboard_State,
-    // note(isak): if there's a reason to add text input (that's not microui related), we might wanna add some locale
+    // note(isak): if there's a reason to add text input (that's not ui related), we might wanna add some locale
     // info or state related to character translation messages
 }
 
@@ -103,12 +157,24 @@ keyboard_next_frame :: proc() {
     mem.copy(keyboard.buttons, sdl_state, len(Keyboard_State))
 }
 
-rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
+keyboard_rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
     if (event.type == sdl.EventType.KEY_DOWN) {
         rebind^ = event.key.scancode //TODO(yokes): this doesn't work, game.input.k1_key = event.key.scancode works
         fmt.printfln("key set to {}", event.key.scancode)
     }
 }
+
+input_validate_mouse_hwid :: proc(mouse_hwid: string) {
+    if len(mouse_hwid) == 0 {
+        notify_warn("missing special mouse configuration!")
+        return
+    }
+
+    when ODIN_OS == .Windows {
+        
+    }
+}
+
 
 //////////////////////////////////////////////////////
 // note(isak): io api

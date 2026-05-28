@@ -10,6 +10,8 @@ imgui_init :: proc() {
     imgui.CreateContext()
     io := imgui.GetIO()
     io.ConfigFlags += {.NavEnableKeyboard}
+    io.ConfigWindowsMoveFromTitleBarOnly = true
+
     imgui.FontAtlas_AddFontFromFileTTF(io.Fonts, "data/Roboto-Regular.ttf", 14)
     imgui_gl3.Init("#version 460")
     ok := sdl.StartTextInput(window.handle)
@@ -40,7 +42,7 @@ Imgui_Dropdown :: struct {
     changed:  bool, // note(isak): set to true for one frame when selection changes
 }
 
-imgui_dropdown_update :: proc(dropdown: ^Imgui_Dropdown) {
+imgui_dropdown_draw :: proc(dropdown: ^Imgui_Dropdown) {
     dropdown.changed = false
     if len(dropdown.items^) == 0 do return
     preview := dropdown.items^[dropdown.selected]

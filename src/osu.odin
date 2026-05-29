@@ -642,7 +642,9 @@ hitobject_on_click :: proc(hobj: ^Hitobject) -> (result: Judgement_Type) {
             result = .GOOD
         } else if abs(time_error_ms) < game.beatmap.timing_windows.ok {
             result = .OK
-        } else if abs(time_error_ms) < game.beatmap.timing_windows.miss {
+        } else if -game.beatmap.timing_windows.miss < time_error_ms && time_error_ms < 0 {
+            // note(isak): if we're outside the timing window on the late side, the hitobject's timing window 
+            // has already expired, even if the on_click goes through (because of a potentially long postempt)
             result = .MISS
         }
     }

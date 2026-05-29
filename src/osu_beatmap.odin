@@ -510,7 +510,7 @@ slider_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
 
     // note(isak): one-time head miss check once the miss window has passed without a click
     if .HEAD_HIT in slider.flags ||
-        .HEAD_CHECKED not_in slider.flags && map_time > hobj.start_time_ms + game.beatmap.timing_windows.miss {
+        map_time > hobj.start_time_ms + game.beatmap.timing_windows.miss {
         slider.flags |= {.HEAD_CHECKED}
     }
 
@@ -526,7 +526,7 @@ slider_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
     return expired
 }
 
-// note(isak): slider head click is recorded, final judgement is deferred to slider_on_expire
+// note(isak): slider head click is recorded, final judgement is deferred to slider_expire
 slider_on_click :: proc(hobj: ^Hitobject) {
     slider := &hobj.slider_state
     slider.flags |= {.HEAD_HIT, .HEAD_CHECKED}
@@ -637,7 +637,7 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
                 sample_play(&game.active_skin.hitsounds[sample_set][.SLIDERTICK])
             } else if .HEAD_CHECKED not_in slider.flags {
                 if slider.contingency_window_scorepoint_count >= 64 {
-                    // note(isak): what kind of insane map would even trigger this?
+                    // note(isak): what kind of insane tick rate would even trigger this?
                     log.warn("contingency window included more than 64 scorepoints!", slider.contingency_window_scorepoint_count)
                 }
                 slider.contingency_window_scorepoint_count += 1
@@ -694,7 +694,9 @@ slider_expire :: proc(hobj: ^Hitobject) {
     slider.slide_sound = {}
 
     all_hit := slider.hit_judgement_count + (.HEAD_HIT in slider.flags ? 1 : 0)
-    total   := max(slider.tick_count + slider.path_travel_count + 1, 1) // include tail
+
+    total_tick_count := slider.tick_count * slider.path_travel_count
+    total   := max(total_tick_count + slider.path_travel_count + 1, 1) // include tail
 
     result: Judgement_Type
     ratio := f64(all_hit) / f64(total)

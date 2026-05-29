@@ -299,7 +299,8 @@ main :: proc() {
 
             keyboard_next_frame()
 
-            if app.mouse_input_mode == .SDL_INPUT || !window.mouse_inside {
+            if app.mouse_input_mode == .SDL_INPUT || !window.mouse_inside || !window.focused {
+                // note(isak): this ensures cursor movement updates despite not receiving raw input messages 
                 mouse.pos = mouse_get_position_relative_to_window()
             }
             if window.focused && window.mouse_inside && app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {

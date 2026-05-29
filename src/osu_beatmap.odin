@@ -73,7 +73,10 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     beatmap_load(beatmap)
 
     if game.active_notosu_map.double_mouse {
-        mouse_enable_double_mouse_mode()
+        ok := mouse_enable_double_mouse_mode()
+        if !ok {
+            game.active_notosu_map.double_mouse = false
+        }
     } else {
         mouse_disable_double_mouse_mode()
     }
@@ -475,7 +478,7 @@ process_expiring_hitobjects :: proc(expiring_hitobjects: ^sb.Swap_Buffer(int)) {
 }
 
 hitcircle_process_expiry :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
-    end_time := hitobject_visible_end_time(hobj)
+    end_time := hobj.end_time_ms + game.beatmap.timing_windows.ok
     if end_time < map_time {
         judgement_new(hobj, .MISS, end_time - hobj.end_time_ms)
         judgement_new_drawable(hobj)

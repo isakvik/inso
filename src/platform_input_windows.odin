@@ -113,7 +113,7 @@ input_enumerate_mouse_devices :: proc(
     for i in 0..<device_count {
         if device_list[i].dwType != windows.RIM_TYPEMOUSE do continue
 
-        str := get_hwid_for_mouse_handle(device_list[i].hDevice, temp_alloc)
+        str := get_hwid_for_mouse_handle(device_list[i].hDevice, alloc)
         if len(str) > 0 {
             append(&result_names, str)
             append(&result_handles, device_list[i].hDevice)

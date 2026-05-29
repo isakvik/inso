@@ -142,7 +142,7 @@ mouse_rebind :: proc(id: Mouse_ID, handle: Mouse_Handle) {
     }
 
     if handle_hwid == {} {
-        log.errorf("mouse_rebind: device handle %p could not be resolved to a hwid, rebind failed", handle)
+        log.errorf("device handle %p could not be resolved to a hwid, rebind failed", handle)
         return
     }
 
@@ -152,18 +152,21 @@ mouse_rebind :: proc(id: Mouse_ID, handle: Mouse_Handle) {
     }
 }
 
-mouse_enable_double_mouse_mode :: proc() {
+mouse_enable_double_mouse_mode :: proc() -> bool {
+    if mice[.PRIMARY].device_handle == nil {
+        notify_error("device handle for primary mouse does not exist - cannot enable special mouse mode!")
+        return false
+    }
+    
     app.mouse_input_mode = .DOUBLE_MOUSE_INPUT
-    //sdl.SetWindowMouseGrab(window.handle, true)
-
     for &mouse in mice {
         mouse.pos = mouse_get_position_relative_to_window()
     }
+    return true
 }
 
 mouse_disable_double_mouse_mode :: proc() {
     app.mouse_input_mode = .SDL_INPUT
-    //sdl.SetWindowMouseGrab(window.handle, false)
 }
 
 
@@ -198,19 +201,20 @@ keyboard_rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
     }
 }
 
-input_validate_mouse_hwid :: proc(id: Mouse_ID, hwid: string) {
-    if len(hwid) == 0 do return
-
+input_validate_mouse_hwid :: proc(id: Mouse_ID, hwid: string) -> bool {
+    if hwid == {} do return false
+    
     when ODIN_OS == .Windows {
         for name, i in app.input_device_hwids {
             if name == hwid {
                 mice[id].device_handle = app.input_device_handles[i]
                 log.infof("mouse %v resolved to device: %s", id, hwid)
-                return
+                return true
             }
         }
         log.warnf("mouse %v hwid not found among connected devices: %s", id, hwid)
     }
+    return false
 }
 
 

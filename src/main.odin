@@ -148,8 +148,12 @@ main :: proc() {
     audio_set_category_volume(.MUSIC, game.user_config.music_volume)
     audio_set_category_volume(.HITSOUND, game.user_config.hitsound_volume)
     
-    input_validate_mouse_hwid(.PRIMARY,   game.user_config.primary_mouse_hwid)
-    input_validate_mouse_hwid(.SECONDARY, game.user_config.secondary_mouse_hwid)
+    if !input_validate_mouse_hwid(.PRIMARY, game.user_config.primary_mouse_hwid) {
+        game.user_config.primary_mouse_hwid = {}
+    }
+    if !input_validate_mouse_hwid(.SECONDARY, game.user_config.secondary_mouse_hwid) {
+        game.user_config.secondary_mouse_hwid = {}
+    }
 
     shaders_watch := directory_watch_init("shaders/")
     skins_watch := directory_watch_init("skins/")
@@ -185,8 +189,8 @@ main :: proc() {
     event: sdl.Event
     
     for running {
-        profiler_begin()
-        defer profiler_end()
+        profiler_begin_frame()
+        defer profiler_end_frame()
 
         {
             profiler_block_begin(.MESSAGE_HANDLING); defer profiler_block_end()
@@ -314,7 +318,7 @@ main :: proc() {
 
             io := imgui.GetIO()
             io.DisplaySize = {window.rect.w, window.rect.h}
-            io.DeltaTime   = f32(time_current_frame - time_last_frame)
+            io.DeltaTime = f32(time_current_frame - time_last_frame)
 
             // prepare drawing
             begin_frame(renderer)
@@ -365,9 +369,9 @@ main :: proc() {
                     with_alpha(color_black, 0.5))
                     
                 push_text(renderer, "waiting for primary mouse input",
-                    pos     = {window.rect.w / 2, window.rect.h / 2},
-                    size    = 16,
-                    color   = {255, 255, 255, 150},
+                    pos = {window.rect.w / 2, window.rect.h / 2},
+                    size = 16,
+                    color = {255, 255, 255, 150},
                     align_h = .Center,
                     align_v = .Middle)
                 
@@ -379,9 +383,9 @@ main :: proc() {
                     with_alpha(color_black, 0.5))
 
                 push_text(renderer, "waiting for secondary mouse input",
-                    pos     = {window.rect.w / 2, window.rect.h / 2},
-                    size    = 16,
-                    color   = {255, 255, 255, 150},
+                    pos = {window.rect.w / 2, window.rect.h / 2},
+                    size = 16,
+                    color = {255, 255, 255, 150},
                     align_h = .Center,
                     align_v = .Middle)
             }
@@ -689,7 +693,6 @@ process_builtin_shader_changes :: proc(watch: ^Directory_Watch) {
         pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.QUAD)], quad_pipeline_desc())
         pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.SLIDER)], slider_pipeline_desc())
         pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.TEXT)], text_pipeline_desc())
-
     }
 }
 

@@ -568,7 +568,7 @@ osu_on_update :: proc(dt: f64) {
         pipeline = {builtin_pipeline_slot(.QUAD)})
     
     {
-        // playfield border
+        // @temp - playfield border
         cs := game.beatmap.circle_radius_osupx
         pf_outline := Rect{
             -cs, -cs, PLAYFIELD_SIZE_OSUPX+2*cs, (PLAYFIELD_SIZE_OSUPX*3/4)+2*cs
@@ -582,14 +582,13 @@ osu_on_update :: proc(dt: f64) {
     r_push_transform(window.screenspace_transform)
     render_input_display()
 
-    render_mouse(mouse.pos, skin_texture(.CURSOR))
-
+    render_cursor(mouse.pos, skin_texture(.CURSOR))
     if app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {   
-        render_mouse(mouse_secondary.pos, skin_texture(.SLIDER_BALL))
+        render_cursor(mouse_secondary.pos, skin_texture(.CURSOR))
     }
 }
 
-render_mouse :: proc(pos: vec2, tex_index: u32) {
+render_cursor :: proc(pos: vec2, tex_index: u32) {
     cursor_size := 160 * (window.rect.h / 1440) * game.user_config.cursor_size_multiplier
     cursor_rect: Rect = { f32(pos.x), f32(pos.y), cursor_size, cursor_size }
     r_draw_layout_rect(&window.renderer.quad_geometry, cursor_rect, .CENTER, color_white, 

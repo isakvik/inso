@@ -35,6 +35,7 @@ app: struct {
     skin_reference_names: [dynamic]cstring, // note(isak): parallel for imgui
     
     ui_enabled: bool,
+    ui_wants_mouse: bool,
     map_dropdown: Imgui_Dropdown,
     skin_dropdown: Imgui_Dropdown,
     offset_window_open: bool,

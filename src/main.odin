@@ -208,20 +208,20 @@ main :: proc() {
                         case sdl.BUTTON_LEFT:
                             if app.mouse_input_mode == .SDL_INPUT {
                                 mouse.buttons[.LEFT].is_down = true
-                                mouse.last_click_position[.LEFT] = {event.button.x, event.button.y}
                             }
+                            mouse.last_click_position[.LEFT] = {event.button.x, event.button.y}
                             imgui.IO_AddMouseButtonEvent(io, 0, true)
                         case sdl.BUTTON_MIDDLE:
                             if app.mouse_input_mode == .SDL_INPUT {
                                 mouse.buttons[.MIDDLE].is_down = true
-                                mouse.last_click_position[.MIDDLE] = {event.button.x, event.button.y}
                             }
+                            mouse.last_click_position[.MIDDLE] = {event.button.x, event.button.y}
                             imgui.IO_AddMouseButtonEvent(io, 2, true)
                         case sdl.BUTTON_RIGHT:
                             if app.mouse_input_mode == .SDL_INPUT {
                                 mouse.buttons[.RIGHT].is_down = true
-                                mouse.last_click_position[.RIGHT] = {event.button.x, event.button.y}
                             }
+                            mouse.last_click_position[.RIGHT] = {event.button.x, event.button.y}
                             imgui.IO_AddMouseButtonEvent(io, 1, true)
                     }
 
@@ -229,13 +229,19 @@ main :: proc() {
                     io := imgui.GetIO()
                     switch event.button.button {
                         case sdl.BUTTON_LEFT:
-                            if app.mouse_input_mode == .SDL_INPUT do mouse.buttons[.LEFT].is_down = false
+                            if app.mouse_input_mode == .SDL_INPUT {
+                                mouse.buttons[.LEFT].is_down = false
+                            }
                             imgui.IO_AddMouseButtonEvent(io, 0, false)
                         case sdl.BUTTON_MIDDLE:
-                            if app.mouse_input_mode == .SDL_INPUT do mouse.buttons[.MIDDLE].is_down = false
+                            if app.mouse_input_mode == .SDL_INPUT { 
+                                mouse.buttons[.MIDDLE].is_down = false 
+                            }
                             imgui.IO_AddMouseButtonEvent(io, 2, false)
                         case sdl.BUTTON_RIGHT:
-                            if app.mouse_input_mode == .SDL_INPUT do mouse.buttons[.RIGHT].is_down = false
+                            if app.mouse_input_mode == .SDL_INPUT {
+                                mouse.buttons[.RIGHT].is_down = false
+                            }
                             imgui.IO_AddMouseButtonEvent(io, 1, false)
                     }
 
@@ -291,13 +297,13 @@ main :: proc() {
 
             if app.mouse_input_mode == .SDL_INPUT || !window.mouse_inside {
                 mouse.pos = mouse_get_position_relative_to_window()
-                imgui.IO_AddMousePosEvent(imgui.GetIO(), mouse.pos.x, mouse.pos.y)
-            } else {
-                imgui.IO_AddMousePosEvent(imgui.GetIO(), mice[.PRIMARY].pos.x, mice[.PRIMARY].pos.y)
-                if window.focused && app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {
-                    sdl.WarpMouseInWindow(window.handle, mice[.PRIMARY].pos.x, mice[.PRIMARY].pos.y)
-                }
             }
+            if window.focused && window.mouse_inside && app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {
+                sdl.WarpMouseInWindow(window.handle, mouse.pos.x, mouse.pos.y)
+            }
+
+            imgui.IO_AddMousePosEvent(imgui.GetIO(), mouse.pos.x, mouse.pos.y)
+            app.ui_wants_mouse = imgui.GetIO().WantCaptureMouse
         }
 
         {

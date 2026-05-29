@@ -315,14 +315,8 @@ beatmap_pause :: proc(beatmap: ^Beatmap, pause: bool) {
     if game.paused != pause {
         if pause {
             sound_pause(&beatmap.music)
-            if game.active_notosu_map.double_mouse {
-                mouse_disable_double_mouse_mode()
-            }
         } else {
             sound_resume(&beatmap.music)
-            if game.active_notosu_map.double_mouse {
-                mouse_enable_double_mouse_mode()
-            }
         }
         game.paused = pause
         

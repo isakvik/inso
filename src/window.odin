@@ -18,6 +18,7 @@ window: struct {
 
     cursor_hidden: bool,
     focused: bool,
+    mouse_inside: bool,
     minimized: bool,
     fullscreen: bool,
     bindless_supported: bool,
@@ -95,6 +96,7 @@ window_init :: proc(rect: Rect) {
 
     window.cursor_hidden = sdl.HideCursor()
     window.focused = true
+    window.mouse_inside = true
 }
 
 window_on_resize :: proc(new_w, new_h: i32) {

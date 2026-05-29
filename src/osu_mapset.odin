@@ -372,6 +372,9 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
                         result.lua_entry_point = strings.concatenate({mapset.folder_path, value}, context.allocator)
                     case "BackgroundPipeline":
                         result.bg_pipeline_name = strings.clone(value, context.allocator)
+                    case "DoubleMouse":
+                        val, ok := strconv.parse_u64(value); assert(ok)
+                        result.double_mouse = val > 0
                 }
             }
         case .SHADERS:

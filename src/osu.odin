@@ -33,6 +33,20 @@ game: struct {
     mode: Game_Mode,
     
     user_config: User_Configuration,
+    
+    input: struct {
+        k1, k2, m1, m2: Button_State,
+        k1_key, k2_key: sdl.Scancode, //TODO(yokes): add keybinding menu
+
+        mouse_keys_enabled: bool,
+        mouse_pos: vec2,
+
+        mouse_secondary_pos: vec2,
+        ms1, ms2: Button_State,
+
+        available_presses: int,
+        last_hit_at, last_valid_press_at: f64,
+    },
 
     // note(isak): map game logic fields
     
@@ -47,17 +61,6 @@ game: struct {
     // note(isak): map game view fields
     
     ui_timeline: UI_Timeline,
-    
-    input: struct {
-        k1, k2, m1, m2: Button_State,
-        k1_key, k2_key: sdl.Scancode, //TODO(yokes): add keybinding menu
-
-        mouse_keys_enabled: bool,
-        mouse_pos: vec2,
-
-        available_presses: int,
-        last_hit_at, last_valid_press_at: f64,
-    },
 
     // note(isak): managed sounds to be used with the game_sound_* api. we create BASS streams 
     // from samples, and then BASS handles the rest - not quite sure if we can further reuse sound data 
@@ -349,8 +352,10 @@ Judgement :: struct {
 
 Notosu_Map :: struct {
     lua_entry_point: string,
-    shaders: []Shader,
     bg_pipeline_name: string,
+    double_mouse: bool,
+    
+    shaders: []Shader,
 }
 
 Osu_Map :: struct {
@@ -577,13 +582,18 @@ osu_on_update :: proc(dt: f64) {
     r_push_transform(window.screenspace_transform)
     render_input_display()
 
-    if mice[.PRIMARY].is_rebinding || mice[.SECONDARY].is_rebinding {
+    render_mouse(mouse.pos, skin_texture(.CURSOR))
+
+    if app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {   
+        render_mouse(mouse_secondary.pos, skin_texture(.SLIDER_BALL))
     }
-    
+}
+
+render_mouse :: proc(pos: vec2, tex_index: u32) {
     cursor_size := 160 * (window.rect.h / 1440) * game.user_config.cursor_size_multiplier
-    cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), cursor_size, cursor_size }
+    cursor_rect: Rect = { f32(pos.x), f32(pos.y), cursor_size, cursor_size }
     r_draw_layout_rect(&window.renderer.quad_geometry, cursor_rect, .CENTER, color_white, 
-        skin_texture(.CURSOR), f32(time_s_since_beginning_of_program()))
+        tex_index, f32(time_s_since_beginning_of_program()))
 }
 
 // note(isak): this function assumes the start times of objects are sorted, but doesn't require end times to be.
@@ -666,6 +676,13 @@ hitobject_on_click :: proc(hobj: ^Hitobject) -> (result: Judgement_Type) {
 }
 
 
+transform_mouse_pos :: proc(pos: vec2) -> vec2 {
+    return transform_point_space(pos,
+        transform_to_mat3(window.screenspace_transform),
+        transform_to_mat3(game.playfield_transform)
+    )
+}
+
 handle_play_input_events :: proc() {
     if key_is_pressed(.ESCAPE) || key_is_pressed(.SPACE) {
         beatmap_pause(&game.beatmap, !game.paused)
@@ -705,16 +722,17 @@ handle_play_input_events :: proc() {
     game.input.m1 = mouse.buttons[.LEFT]
     game.input.m2 = mouse.buttons[.RIGHT]
     
-    screen_mouse := vec2{mouse.pos.x, mouse.pos.y}
-
     old_mouse_pos := game.input.mouse_pos
-    game.input.mouse_pos = transform_point_space(screen_mouse,
-        transform_to_mat3(window.screenspace_transform),
-        transform_to_mat3(game.playfield_transform)
-    )
+    game.input.mouse_pos = transform_mouse_pos(vec2{mouse.pos.x, mouse.pos.y})
     
     if lua_cares_about_event(.ON_CURSOR_MOVED) && game.input.mouse_pos != old_mouse_pos {
         lua_beatmap_on_cursor_moved(game.input.mouse_pos)
+    }
+
+    if app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {
+        game.input.mouse_secondary_pos = transform_mouse_pos(vec2{mouse_secondary.pos.x, mouse_secondary.pos.y})
+        game.input.ms1 = mouse_secondary.buttons[.LEFT]
+        game.input.ms2 = mouse_secondary.buttons[.RIGHT]
     }
     
     if lua_cares_about_event(.ON_KEY_DOWN) {

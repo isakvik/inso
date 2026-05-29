@@ -1,6 +1,7 @@
 #+build windows
 package notosu
 
+import "core:slice"
 import "base:runtime"
 import "core:log"
 import "core:strings"
@@ -58,9 +59,9 @@ _win32_message_hook :: proc(userdata: rawptr, msg: ^windows.MSG) -> bool {
             return true
         }
         
-        if m.usFlags & windows.MOUSE_MOVE_ABSOLUTE == 0 {
-            target.pos.x = clamp(target.pos.x + f32(m.lLastX), 0, window.rect.w)
-            target.pos.y = clamp(target.pos.y + f32(m.lLastY), 0, window.rect.h)
+        if window.mouse_inside && m.usFlags & windows.MOUSE_MOVE_ABSOLUTE == 0 {
+            target.pos.x += f32(m.lLastX)
+            target.pos.y += f32(m.lLastY)
         }
     
         flags := m.usButtonFlags
@@ -112,28 +113,40 @@ input_enumerate_mouse_devices :: proc(
     for i in 0..<device_count {
         if device_list[i].dwType != windows.RIM_TYPEMOUSE do continue
 
-        buf_size: windows.UINT
-        if windows.GetRawInputDeviceInfoW(device_list[i].hDevice, windows.RIDI_DEVICENAME, nil, &buf_size) != 0 {
-            // note(isak): this can fail for more or less unimportant reasons, so we ignore it
-            continue
+        str := get_hwid_for_mouse_handle(device_list[i].hDevice, temp_alloc)
+        if len(str) > 0 {
+            append(&result_names, str)
+            append(&result_handles, device_list[i].hDevice)
         }
-        buf := make([]windows.WCHAR, buf_size, temp_alloc)
-        if windows.GetRawInputDeviceInfoW(device_list[i].hDevice, windows.RIDI_DEVICENAME, raw_data(buf), &buf_size) == ~windows.UINT(0) {
-            continue
-        }
-
-        // buf_size for RIDI_DEVICENAME includes the null terminator
-        raw_str, _ := windows.utf16_to_utf8(buf[:buf_size-1], temp_alloc)
-
-        // strip \\?\ prefix and trailing #{class-guid}
-        trimmed := strings.trim_prefix(raw_str, `\\?\`)
-        if cut := strings.last_index(trimmed, "#{"); cut >= 0 {
-            trimmed = trimmed[:cut]
-        }
-        str := strings.clone(trimmed, alloc)
-        append(&result_names,   str)
-        append(&result_handles, device_list[i].hDevice)
     }
 
     return result_names[:], result_handles[:]
+}
+
+get_hwid_for_mouse_handle :: proc(handle: windows.HANDLE, alloc: runtime.Allocator) -> string {
+    buf_size: windows.UINT
+    if windows.GetRawInputDeviceInfoW(handle, windows.RIDI_DEVICENAME, nil, &buf_size) != 0 {
+        log.errorf("getting raw input device info failed! handle %p, win32 error: %d", handle, windows.GetLastError())
+        return {}
+    }
+    
+    // note(isak): buffers must be aligned to windows.UINT boundaries, so we call make() with those
+    buf_size_in_uints := (buf_size * size_of(windows.WCHAR)) / size_of(windows.UINT)
+    buf_internal := make([]windows.UINT, buf_size_in_uints, alloc)
+    buf := slice.from_ptr(raw_data(transmute([]windows.WCHAR)buf_internal), int(buf_size))
+    
+    if windows.GetRawInputDeviceInfoW(handle, windows.RIDI_DEVICENAME, raw_data(buf), &buf_size) == ~windows.UINT(0) {
+        log.errorf("getting raw input device info failed! handle %p, win32 error: %d", handle, windows.GetLastError())
+        return {}
+    }
+
+    // buf_size for RIDI_DEVICENAME includes the null terminator
+    raw_str, _ := windows.utf16_to_utf8(buf[:buf_size-1], alloc)
+
+    // strip \\?\ prefix and trailing #{class-guid}
+    trimmed := strings.trim_prefix(raw_str, `\\?\`)
+    if cut := strings.last_index(trimmed, "#{"); cut >= 0 {
+        trimmed = trimmed[:cut]
+    }
+    return strings.clone(trimmed, alloc)
 }

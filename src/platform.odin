@@ -114,6 +114,14 @@ mouse_init :: proc() {
     }
 }
 
+mouse_get_position_relative_to_window :: proc() -> (result: vec2) {
+    xi, yi: i32
+    mouse_flags := sdl.GetGlobalMouseState(&result.x, &result.y)
+    sdl.GetWindowPosition(window.handle, &xi, &yi)
+
+    return {result.x - f32(xi), result.y - f32(yi)}
+}
+
 mouse_rebind :: proc(id: Mouse_ID, handle: Mouse_Handle) {
     mice[id].device_handle = handle
     mice[id].is_rebinding = false
@@ -125,12 +133,36 @@ mouse_rebind :: proc(id: Mouse_ID, handle: Mouse_Handle) {
             break
         }
     }
-    assert(handle_hwid != {}, "device handle could not resolve to a hwid!")
+
+    when ODIN_OS == .Windows {
+        if handle_hwid == {} {
+            handle_hwid = get_hwid_for_mouse_handle(handle, memory.allocators[.GLOBAL])
+        }
+    }
+
+    if handle_hwid == {} {
+        log.errorf("mouse_rebind: device handle %p could not be resolved to a hwid, rebind failed", handle)
+        return
+    }
 
     switch(id) {
     case .PRIMARY:   game.user_config.primary_mouse_hwid = handle_hwid
     case .SECONDARY: game.user_config.secondary_mouse_hwid = handle_hwid
     }
+}
+
+mouse_enable_double_mouse_mode :: proc() {
+    app.mouse_input_mode = .DOUBLE_MOUSE_INPUT
+    //sdl.SetWindowMouseGrab(window.handle, true)
+
+    for &mouse in mice {
+        mouse.pos = mouse_get_position_relative_to_window()
+    }
+}
+
+mouse_disable_double_mouse_mode :: proc() {
+    app.mouse_input_mode = .SDL_INPUT
+    //sdl.SetWindowMouseGrab(window.handle, false)
 }
 
 

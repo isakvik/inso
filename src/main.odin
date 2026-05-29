@@ -261,10 +261,21 @@ main :: proc() {
 
                 case sdl.EventType.WINDOW_FOCUS_GAINED:
                     window.focused = true
+                    for &mouse in mice {
+                        mouse.pos = mouse_get_position_relative_to_window()
+                    }
                     imgui.IO_AddFocusEvent(imgui.GetIO(), true)
                 case sdl.EventType.WINDOW_FOCUS_LOST:
                     window.focused = false
                     imgui.IO_AddFocusEvent(imgui.GetIO(), false)
+
+                case sdl.EventType.WINDOW_MOUSE_ENTER:
+                    window.mouse_inside = true
+                    if app.mouse_input_mode != .SDL_INPUT {
+                        mice[.PRIMARY].pos = mouse_get_position_relative_to_window()
+                    }
+                case sdl.EventType.WINDOW_MOUSE_LEAVE:
+                    window.mouse_inside = false
 
                 case sdl.EventType.WINDOW_MINIMIZED:
                     window.minimized = true
@@ -278,17 +289,14 @@ main :: proc() {
 
             keyboard_next_frame()
 
-            if app.mouse_input_mode == .SDL_INPUT {
-                xi, yi: i32
-                mouse_flags := sdl.GetGlobalMouseState(&mouse.pos.x, &mouse.pos.y)
-                sdl.GetWindowPosition(window.handle, &xi, &yi)
-    
-                mouse.pos.x = mouse.pos.x - f32(xi)
-                mouse.pos.y = mouse.pos.y - f32(yi)
-                
+            if app.mouse_input_mode == .SDL_INPUT || !window.mouse_inside {
+                mouse.pos = mouse_get_position_relative_to_window()
                 imgui.IO_AddMousePosEvent(imgui.GetIO(), mouse.pos.x, mouse.pos.y)
             } else {
                 imgui.IO_AddMousePosEvent(imgui.GetIO(), mice[.PRIMARY].pos.x, mice[.PRIMARY].pos.y)
+                if window.focused && app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {
+                    sdl.WarpMouseInWindow(window.handle, mice[.PRIMARY].pos.x, mice[.PRIMARY].pos.y)
+                }
             }
         }
 

@@ -544,7 +544,7 @@ slider_on_click :: proc(hobj: ^Hitobject) {
 slider_path_pos_at :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
     path := &game.beatmap.slider_paths[hobj.slider_path_index]
 
-    return calculate_curve_from_time(hobj, map_time, path)
+    return path_calculate_position_at(hobj, map_time, path)
 }
 
 slider_update :: proc(hobj: ^Hitobject, map_time: f64) {

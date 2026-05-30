@@ -187,7 +187,7 @@ hitobject_pos :: proc(hobj: ^Hitobject) -> vec2 {
 hitobject_tail_pos :: proc(hobj: ^Hitobject) -> vec2 {
     path := &game.beatmap.slider_paths[hobj.slider_path_index]
     tail_pos := (path.pos if hobj.slider_state.path_travel_count % 2 == 0 else path.end_pos) + hobj.script_pos_translation
-    return tail_pos + hobj.script_pos_translation
+    return tail_pos
 }
 
 hitobject_duration :: proc(hobj: ^Hitobject) -> (result: f64) {

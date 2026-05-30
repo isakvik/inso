@@ -66,7 +66,7 @@ function on_init()
     custom_stillright = custom_right:clone()
         :set_animation(anim_stillright)
     
-    for i, hobj in ipairs(Hitobject.get_in_range_ms(0, 30000)) do
+    for i, hobj in ipairs(Hitobject.get_in_range_ms(30000, 60000)) do
         hobj:clear_drawables()
         hobj:add_element_for_phase(Phase.PREEMPT, custom_left)
         hobj:add_element_for_phase(Phase.PREEMPT, custom_right)
@@ -75,6 +75,17 @@ function on_init()
         
         hobj:add_element_for_phase(Phase.HIT, el)
         hobj:set_hit_animation_length(400)
+        hobj:hide_combo_numbers()
+    end
+    for i, hobj in ipairs(Hitobject.get_in_range_ms(60000, 90000)) do
+        hobj:clear_drawables()
+        hobj:add_element_for_phase(Phase.PREEMPT, custom_left)
+        hobj:add_element_for_phase(Phase.PREEMPT, custom_right)
+        hobj:add_element_for_phase(Phase.POSTEMPT, custom_stillleft)
+        hobj:add_element_for_phase(Phase.POSTEMPT, custom_stillright)
+        
+        hobj:add_element_for_phase(Phase.HIT, el)
+        hobj:set_hit_animation_length(900)
         hobj:hide_combo_numbers()
     end
     

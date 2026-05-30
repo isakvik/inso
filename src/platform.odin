@@ -153,7 +153,7 @@ mouse_rebind :: proc(id: Mouse_ID, handle: Mouse_Handle) {
 }
 
 mouse_enable_double_mouse_mode :: proc() -> bool {
-    if mice[.PRIMARY].device_handle == nil {
+    if mice[.PRIMARY].device_handle == {} {
         notify_error("device handle for primary mouse does not exist - cannot enable special mouse mode!")
         return false
     }

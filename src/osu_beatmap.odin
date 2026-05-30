@@ -510,7 +510,7 @@ slider_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
 
     // note(isak): one-time head miss check once the miss window has passed without a click
     if .HEAD_HIT in slider.flags ||
-        map_time > hobj.start_time_ms + game.beatmap.timing_windows.miss {
+        map_time > hobj.start_time_ms + game.beatmap.timing_windows.ok {
         slider.flags |= {.HEAD_CHECKED}
     }
 

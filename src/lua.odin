@@ -732,7 +732,6 @@ lua_call_beatmap_func :: proc {
 //////////////////////////////////////////////////////
 // note(isak): hitobject object API
 
-@(private="file")
 luaapi_hitobject_static_funcs := []lua.L_Reg {
   { "get_at_ms", luaapi_hitobject_get_at_ms },
   { "get_in_range_ms", luaapi_hitobject_get_in_range_ms },
@@ -740,7 +739,6 @@ luaapi_hitobject_static_funcs := []lua.L_Reg {
   { nil, nil },
 }
 
-@(private="file")
 luaapi_hitobject_instance_funcs := []lua.L_Reg {
   { "__gc", luaapi_hitobject_gc },
   { "register_event", luaapi_hitobject_register_event },
@@ -1031,13 +1029,11 @@ luaapi_hitobject_set_cs :: proc "c" (L: ^lua.State) -> (result: i32) {
 //////////////////////////////////////////////////////
 // note(isak): drawable object API
 
-@(private="file")
 luaapi_drawable_static_funcs := []lua.L_Reg {
   { "new", luaapi_drawable_new },
   { nil, nil },
 }
 
-@(private="file")
 luaapi_drawable_instance_funcs := []lua.L_Reg {
   { "__gc", luaapi_drawable_gc },
   { "register_event", luaapi_drawable_register_event },
@@ -1288,13 +1284,11 @@ luaapi_drawable_show :: proc "c" (L: ^lua.State) -> (result: i32) {
 //////////////////////////////////////////////////////
 // note(isak): element object API
 
-@(private="file")
 luaapi_element_static_funcs := []lua.L_Reg {
   { "new",           luaapi_element_new },
   { nil,             nil               },
 }
 
-@(private="file")
 luaapi_element_instance_funcs := []lua.L_Reg {
   { "__gc", luaapi_element_gc },
   { "clone", luaapi_element_clone },
@@ -1466,13 +1460,11 @@ luaapi_element_use_combo_color :: proc "c" (L: ^lua.State) -> (result: i32) {
 //////////////////////////////////////////////////////
 // note(isak): animation list API
 
-@(private="file")
 luaapi_animation_static_funcs := []lua.L_Reg {
   { "new", luaapi_animation_new },
   { nil, nil },
 }
 
-@(private="file")
 luaapi_animation_instance_funcs := []lua.L_Reg {
   { "move", luaapi_animation_move },
   { "scale", luaapi_animation_scale },
@@ -1675,13 +1667,11 @@ luaapi_animation_frames :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(isak): Buffer object API
 
-@(private="file")
 luaapi_buffer_static_funcs := []lua.L_Reg {
   { "get", luaapi_buffer_get },
   { nil,   nil               },
 }
 
-@(private="file")
 luaapi_buffer_instance_funcs := []lua.L_Reg {
   { "bind",       luaapi_buffer_bind       },
   { "write_f32s", luaapi_buffer_write_f32s },
@@ -1791,14 +1781,12 @@ luaapi_buffer_size :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(isak): sound object API
 
-@(private="file")
 luaapi_sound_static_funcs := []lua.L_Reg {
     { "play",      luaapi_sound_play },
     { "play_loop", luaapi_sound_play_loop },
     { nil, nil },
 }
 
-@(private="file")
 luaapi_sound_instance_funcs := []lua.L_Reg {
     { "__gc", luaapi_sound_gc },
     { "stop", luaapi_sound_stop },
@@ -1857,7 +1845,6 @@ luaapi_sound_gc :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(isak): beatmap info API
 
-@(private="file")
 luaapi_beatmap_static_funcs := []lua.L_Reg {
   { "get_music_time_ms",  luaapi_beatmap_get_music_time_ms },
   { "get_length_ms",      luaapi_beatmap_get_length_ms },
@@ -1917,7 +1904,6 @@ luaapi_beatmap_is_paused :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(isak): color object API
 
-@(private="file")
 luaapi_color_static_funcs := []lua.L_Reg {
   { "rgb", luaapi_color_rgb },
   { "rgba", luaapi_color_rgba },
@@ -1942,7 +1928,6 @@ luaapi_color_rgba :: proc "c" (L: ^lua.State) -> (result: i32) {
 //////////////////////////////////////////////////////
 // note(isak): Playfield API
 
-@(private="file")
 luaapi_playfield_static_funcs := []lua.L_Reg {
   { "set_translation", luaapi_playfield_set_translation },
   { "set_scale",       luaapi_playfield_set_scale },
@@ -2000,7 +1985,6 @@ luaapi_playfield_rotate :: proc "c" (L: ^lua.State) -> i32 {
 // todo(isak): this is untested code. it's handled in a slightly strange way, so it should be rewritten.
 // currently not hooked up anywhere.
 
-@(private="file")
 luaapi_shader_funcs := []lua.L_Reg {
   { "set_param", luaapi_shader_set_param },
   { "set_vec4",  luaapi_shader_set_vec4  },

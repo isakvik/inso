@@ -58,9 +58,8 @@ write_instances_from_path :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Pat
     return instance_count, instance_offset
 }
 
-// ---------------------------------------------------------------------------------------------------
+//////////////////////////////////////////////////////
 // pass 1: flattening every segment into one polyline
-// ---------------------------------------------------------------------------------------------------
 
 flatten_path_into :: proc(out: ^[dynamic]vec2, path: ^Slider_Path) {
     nodes := path.nodes
@@ -146,9 +145,8 @@ flatten_arc_into :: proc(out: ^[dynamic]vec2, control: []vec2) {
     }
 }
 
-// ---------------------------------------------------------------------------------------------------
+//////////////////////////////////////////////////////
 // pass 2: equidistant resampling
-// ---------------------------------------------------------------------------------------------------
 
 // marches the piecewise-linear polyline by arc length, emitting a point every base_dist into
 // instance_buf up to target_distance. when target_distance overruns the polyline, the remainder is
@@ -213,9 +211,9 @@ polyline_end_tangent :: proc(raw: []vec2) -> vec2 {
     return {0, 0}
 }
 
-// ---------------------------------------------------------------------------------------------------
+
+//////////////////////////////////////////////////////
 // bezier subdivision primitives (ported from osu!framework PathApproximator)
-// ---------------------------------------------------------------------------------------------------
 
 bezier_is_flat_enough :: proc(curve: []vec2) -> bool {
     for i in 1 ..< len(curve) - 1 {
@@ -258,9 +256,9 @@ bezier_subdivide :: proc(curve: []vec2, l: []vec2, r: []vec2, scratch: []vec2, c
     }
 }
 
-// ---------------------------------------------------------------------------------------------------
+
+//////////////////////////////////////////////////////
 // circular arc geometry
-// ---------------------------------------------------------------------------------------------------
 
 Circular_Arc_Properties :: struct {
     is_valid: bool,
@@ -316,9 +314,9 @@ circular_arc_properties_from_triangle :: proc(curve: []vec2) -> (result: Circula
     return
 }
 
-// ---------------------------------------------------------------------------------------------------
+
+//////////////////////////////////////////////////////
 // sliderball position lookup. takes slider repeats into account
-// ---------------------------------------------------------------------------------------------------
 
 path_calculate_position_at :: proc(hobj: ^Hitobject, time_at: f64, path: ^Slider_Path) -> (pos_at: vec2) {
     if hobj.type != .SLIDER {

@@ -48,7 +48,7 @@ SliderTickRate:1
 //Storyboard Sound Samples
 
 [TimingPoints]
-0,500,4,1,0,100,1,0
+0,250,4,1,0,100,1,0
 
 
 [HitObjects]

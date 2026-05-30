@@ -61,6 +61,7 @@ game: struct {
     // note(isak): map game view fields
     
     ui_timeline: UI_Timeline,
+    hit_error_bar: Hit_Error_Bar,
 
     // note(isak): managed sounds to be used with the game_sound_* api. we create BASS streams 
     // from samples, and then BASS handles the rest - not quite sure if we can further reuse sound data 
@@ -158,6 +159,7 @@ Slider_Flag :: enum {
     TRACKING,
     HEAD_CHECKED,
     HEAD_HIT,
+    HEAD_CONTINGENCY_WINDOW_PASSED,
     END_TRACKED,
 }
 
@@ -580,15 +582,17 @@ osu_on_update :: proc(dt: f64) {
     handle_and_render_timeline()
     
     r_push_transform(window.screenspace_transform)
-    render_input_display()
+    
+    hit_error_bar_draw(&game.hit_error_bar)
+    input_display_draw()
 
-    render_cursor(mouse.pos, skin_texture(.CURSOR))
+    cursor_draw(mouse.pos, skin_texture(.CURSOR))
     if app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {   
-        render_cursor(mouse_secondary.pos, skin_texture(.CURSOR))
+        cursor_draw(mouse_secondary.pos, skin_texture(.CURSOR))
     }
 }
 
-render_cursor :: proc(pos: vec2, tex_index: u32) {
+cursor_draw :: proc(pos: vec2, tex_index: u32) {
     cursor_size := 160 * (window.rect.h / 1440) * game.user_config.cursor_size_multiplier
     cursor_rect: Rect = { f32(pos.x), f32(pos.y), cursor_size, cursor_size }
     r_draw_layout_rect(&window.renderer.quad_geometry, cursor_rect, .CENTER, color_white, 
@@ -624,54 +628,6 @@ get_visible_hitobjects :: proc(state: ^Visibility_State, time: f64) -> []Hitobje
         state.latest_i = updated_from_index + count_until_next_unstarted_hobj + includes_final_index
         state.earliest_i = updated_from_index
         result = hitobjects[state.earliest_i:min(state.latest_i, len(hitobjects))]
-    }
-    return result
-}
-
-hitobject_on_click :: proc(hobj: ^Hitobject) -> (result: Judgement_Type) {
-    // todo(isak): input timings should be threaded, should be more granular that way during heavy load
-    click_time := beatmap_music_time_ms(&game.beatmap)
-    time_error_ms: f64
-    
-    #partial switch hobj.type {
-    case .CIRCLE, .SLIDER:
-        time_error_ms = click_time - hobj.start_time_ms
-        if abs(time_error_ms) < game.beatmap.timing_windows.marvelous {
-            result = .MARVELOUS
-        } else if abs(time_error_ms) < game.beatmap.timing_windows.good {
-            result = .GOOD
-        } else if abs(time_error_ms) < game.beatmap.timing_windows.ok {
-            result = .OK
-        } else if -game.beatmap.timing_windows.miss < time_error_ms && time_error_ms < 0 {
-            // note(isak): if we're outside the timing window on the late side, the hitobject's timing window 
-            // has already expired, even if the on_click goes through (because of a potentially long postempt)
-            result = .MISS
-        }
-    }
-    
-    if result != .NONE {
-        if hobj.type == .SLIDER {
-            slider_on_click(hobj)
-        } else {
-            judgement_new(hobj, result, time_error_ms)
-            hobj.flags |= {.HIT, .EXPIRED}
-        }
-
-        timing_point := &game.active_map.timing_points[game.beatmap.current_timing_point_index_inherited]
-        sample_set := Skin_Sample_Set(timing_point.sample_set)
-        
-        // todo(isak): we don't handle custom sampleset timing sections, need to reserve some space and add indirection
-        sample_play(&game.active_skin.hitsounds[sample_set][.HITNORMAL])
-        
-        if .WHISTLE in hobj.flags {
-            sample_play(&game.active_skin.hitsounds[sample_set][.HITWHISTLE])
-        }
-        if .CLAP in hobj.flags {
-            sample_play(&game.active_skin.hitsounds[sample_set][.HITCLAP])
-        }
-        if .FINISH in hobj.flags {
-            sample_play(&game.active_skin.hitsounds[sample_set][.HITFINISH])
-        }
     }
     return result
 }

@@ -1040,10 +1040,10 @@ convert_radius_osupx_to_circle_size :: proc(r: f32) -> f64 {
 
 convert_overall_difficulty_to_timing_window :: proc(od: f64) -> Timing_Window {
     return {
-        marvelous = 80 - 6 * od,
-        good = 140 - 8 * od,
-        ok = 200 - 10 * od,
-        miss = 400,
+        marvelous = max(80 - 6 * od, 0),
+        good      = max(140 - 8 * od, 0),
+        ok        = max(200 - 10 * od, 0),
+        miss      = 400,
     }
 }
 

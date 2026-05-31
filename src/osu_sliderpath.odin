@@ -6,7 +6,6 @@ import "core:slice"
 
 // spacing between emitted slider instances
 slider_point_dist_osupx : f64 = 2.5
-slider_max_points : f64 = 999999
 
 // how far a flattened bezier may deviate from the true curve before it's subdivided further,
 // and how finely circular arcs are tessellated. both in osu!px.
@@ -156,7 +155,7 @@ write_equidistant_resampling :: proc(instance_buf: ^Buffer(vec2), raw: []vec2, t
     if len(raw) == 0 do return
 
     step    := f64(clamp(slider_point_dist_osupx, 1.0, 100.0))
-    samples := max(min(i32(target_distance / step), i32(slider_max_points)), 1)
+    samples := max(i32(target_distance / step), 1)
 
     seg       := 0   // index of the polyline vertex we've consumed up to
     dist_at   := 0.0 // arc length at raw[seg]
@@ -340,7 +339,7 @@ curve_calculate_position_at :: proc(hobj: ^Hitobject, time_at: f64, path: ^Slide
         return vec2({0, 0})
     }
 
-    curve_m_i := min(i64(slider_max_points), i64(len(path_instances) - 1))
+    curve_m_i := i64(len(path_instances) - 1)
 
     duration := hobj.end_time_ms - hobj.start_time_ms
     elapsed  := clamp(time_at - hobj.start_time_ms, 0, duration)

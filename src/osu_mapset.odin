@@ -842,7 +842,8 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
         // note(isak): slider timing state
         if hobj.type == .SLIDER {
             slider := &hobj.slider_state
-            
+
+            disable_ticks: bool
             slider.distance = osu_map.slider_paths[hobj.slider_path_index].distance_osupx
             slider.velocity = 1.0
             
@@ -854,14 +855,18 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
 
                 if !math.is_nan(inherited_beat_length) {
                     slider.velocity = -1 / (inherited_beat_length / 100)
+                } else {
+                    disable_ticks = true
                 }
             }
             
             slider.duration_ms = slider.distance / (slider.velocity * 100 * osu_map.diff_slider_velocity) * uninherited_tp.beat_length
             hobj.end_time_ms = hobj.start_time_ms + (slider.duration_ms * f64(slider.path_travel_count))
             
-            slider.tick_interval_ms = uninherited_tp.beat_length / osu_map.diff_slider_tickrate
-            slider.tick_count = int((slider.duration_ms - SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS) / slider.tick_interval_ms)
+            slider.tick_interval_ms = 0 if disable_ticks else 
+                uninherited_tp.beat_length / osu_map.diff_slider_tickrate
+            slider.tick_count = 0 if disable_ticks else 
+                int((slider.duration_ms - SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS) / slider.tick_interval_ms)
         }
         
         // note(isak): combo colors and number.

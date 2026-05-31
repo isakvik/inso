@@ -847,16 +847,17 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
             slider.velocity = 1.0
             
             uninherited_tp := osu_map.timing_points[current_timing_point_index_uninherited]
-            uninherited_beat_length := uninherited_tp.beat_length
             
             if current_timing_point_index_uninherited != current_timing_point_index_inherited {
                 inherited_tp := osu_map.timing_points[current_timing_point_index_inherited]
                 inherited_beat_length := inherited_tp.beat_length
-                
-                slider.velocity = -1 / (inherited_beat_length / 100)
+
+                if !math.is_nan(inherited_beat_length) {
+                    slider.velocity = -1 / (inherited_beat_length / 100)
+                }
             }
             
-            slider.duration_ms = slider.distance / (slider.velocity * 100 * osu_map.diff_slider_velocity) * uninherited_beat_length
+            slider.duration_ms = slider.distance / (slider.velocity * 100 * osu_map.diff_slider_velocity) * uninherited_tp.beat_length
             hobj.end_time_ms = hobj.start_time_ms + (slider.duration_ms * f64(slider.path_travel_count))
             
             slider.tick_interval_ms = uninherited_tp.beat_length / osu_map.diff_slider_tickrate

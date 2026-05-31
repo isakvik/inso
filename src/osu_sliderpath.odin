@@ -6,7 +6,7 @@ import "core:slice"
 
 // spacing between emitted slider instances
 slider_point_dist_osupx : f64 = 2.5
-slider_max_points : f64 = 9999
+slider_max_points : f64 = 999999
 
 // how far a flattened bezier may deviate from the true curve before it's subdivided further,
 // and how finely circular arcs are tessellated. both in osu!px.

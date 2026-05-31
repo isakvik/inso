@@ -456,7 +456,7 @@ osu_on_update :: proc(dt: f64) {
     }
     
     map_time := beatmap_music_time_ms(&game.beatmap)
-    visible_hobjs := get_visible_hitobjects(&game.beatmap.visible_hitobject_state, map_time)
+    visible_hobjs := beatmap_get_visible_hitobjects(&game.beatmap, map_time)
     
     // note(isak): handle hitobject phase changes
     for &hobj in visible_hobjs {
@@ -599,39 +599,6 @@ cursor_draw :: proc(pos: vec2, tex_index: u32) {
         tex_index, f32(time_s_since_beginning_of_program()))
 }
 
-// note(isak): this function assumes the start times of objects are sorted, but doesn't require end times to be.
-// a pathological case might be a 2B element that stretches from the beginning of the map to the end
-get_visible_hitobjects :: proc(state: ^Visibility_State, time: f64) -> []Hitobject {
-    result: []Hitobject
-    updated_from_index := state.earliest_i
-
-    hitobjects := game.beatmap.hitobjects
-    if len(hitobjects) > 0 {
-        looking_for_finished_objects := true
-        count_until_next_unstarted_hobj: int
-        includes_final_index := 1
-
-        for &hobj, i in hitobjects[state.earliest_i:] {
-            count_until_next_unstarted_hobj = i
-            if time < hitobject_visible_start_time(&hobj) {
-                includes_final_index = 0
-                break
-            }
-            if looking_for_finished_objects {
-                if hitobject_visible_end_time(&hobj) < time {
-                    updated_from_index += 1
-                } else {
-                    looking_for_finished_objects = false
-                }
-            }
-        }
-        state.latest_i = updated_from_index + count_until_next_unstarted_hobj + includes_final_index
-        state.earliest_i = updated_from_index
-        result = hitobjects[state.earliest_i:min(state.latest_i, len(hitobjects))]
-    }
-    return result
-}
-
 
 transform_mouse_pos :: proc(pos: vec2) -> vec2 {
     return transform_point_space(pos,
@@ -718,7 +685,7 @@ handle_play_input_events :: proc() {
 
 handle_menu_input_events :: proc() {
     if key_is_pressed(.S) {
-        if key_is_down(.LCTRL) || key_is_down(.LSHIFT) || key_is_down(.LALT) {
+        if key_is_down(.LCTRL) && key_is_down(.LSHIFT) && key_is_down(.LALT) {
             skin_reload(game.active_skin)
         }
     }

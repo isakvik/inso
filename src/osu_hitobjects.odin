@@ -233,8 +233,7 @@ slider_path_pos_at :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
 }
 
 // note(isak): direction the sliderball is travelling at map_time, in the renderer's angle convention
-// (0 points right, matching osu!). taken as a central difference of the folded path position, growing
-// the sample window until the ball has actually moved so slow sliders still resolve a heading.
+// (0 points right, same as osu)
 slider_ball_angle_at :: proc(hobj: ^Hitobject, map_time: f64) -> f32 {
     for dt := 2.0; dt <= 64; dt *= 2 {
         ahead  := slider_path_pos_at(hobj, map_time + dt)
@@ -271,8 +270,8 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
 
     // note(isak): we want the slider tracking to activate late even in the case the cursor isn't over the sliderball
     // in the circumstance that the head is clicked in time and the sliderball hasn't moved the length of the follow
-    // circle radius. this mirrors the hard-fought sliderhead leniency that's now present in lazer, but is the cause
-    // of a good few frustrating slidertick misses in stable
+    // circle radius. this mirrors the hard-fought sliderhead leniency that's now present in lazer, and missing it
+    // is the cause of a good few frustrating slidertick misses in stable
     if .HEAD_CONTINGENCY_WINDOW_PASSED not_in slider.flags {
         if .HEAD_HIT in slider.flags && is_over_sliderfollowcircle && key_held {
             is_tracking = true

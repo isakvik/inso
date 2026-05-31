@@ -1,15 +1,10 @@
 package notosu
 
-import "core:thread"
-import "core:math/linalg"
 import sb "swap_buffer"
 import "slotmap"
 
 import "core:container/queue"
-import "core:fmt"
-import "core:math"
 import "core:log"
-import "core:strings"
 
 
 Beatmap :: struct {
@@ -312,6 +307,39 @@ beatmap_music_position_interpolated_ms :: proc(beatmap: ^Beatmap) -> (result: f6
     beatmap.music_time_uninterpolated_ms = song_time
     beatmap.last_music_position_interpolation_check_time = real_time
     
+    return result
+}
+
+// note(isak): this function assumes the start times of objects are sorted, but doesn't require end times to be.
+// a pathological case might be a 2B element that stretches from the beginning of the map to the end
+beatmap_get_visible_hitobjects :: proc(beatmap: ^Beatmap, time: f64) -> (result: []Hitobject) {
+    state := &beatmap.visible_hitobject_state
+    updated_from_index := state.earliest_i
+
+    hitobjects := game.beatmap.hitobjects
+    if len(hitobjects) > 0 {
+        looking_for_finished_objects := true
+        count_until_next_unstarted_hobj: int
+        includes_final_index := 1
+
+        for &hobj, i in hitobjects[state.earliest_i:] {
+            count_until_next_unstarted_hobj = i
+            if time < hitobject_visible_start_time(&hobj) {
+                includes_final_index = 0
+                break
+            }
+            if looking_for_finished_objects {
+                if hitobject_visible_end_time(&hobj) < time {
+                    updated_from_index += 1
+                } else {
+                    looking_for_finished_objects = false
+                }
+            }
+        }
+        state.latest_i = updated_from_index + count_until_next_unstarted_hobj + includes_final_index
+        state.earliest_i = updated_from_index
+        result = hitobjects[state.earliest_i:min(state.latest_i, len(hitobjects))]
+    }
     return result
 }
 

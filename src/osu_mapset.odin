@@ -530,7 +530,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                                 case "Soft":   result.sample_set = .SOFT
                                 case "Drum":   result.sample_set = .DRUM
                                 case "None":   result.sample_set = .NORMAL
-                                case: assert(false, "unknown/unhandled sampleset")
+                                case: log.warn("unknown/unhandled sampleset:", result.sample_set)
                             }
                     }
                 }

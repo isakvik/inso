@@ -81,7 +81,7 @@ _win32_message_hook :: proc(userdata: rawptr, msg: ^windows.MSG) -> bool {
     m := &raw.data.mouse
 
     switch app.mouse_input_mode {
-    case .DOUBLE_MOUSE_INPUT: 
+    case .DOUBLE_MOUSE_INPUT:
         target: ^Mouse
         if raw.header.hDevice == mouse.device_handle {
             target = &mouse
@@ -90,19 +90,11 @@ _win32_message_hook :: proc(userdata: rawptr, msg: ^windows.MSG) -> bool {
         } else {
             return true
         }
-        
-        if window.mouse_inside && m.usFlags & windows.MOUSE_MOVE_ABSOLUTE == 0 {
-            target.pos.x += f32(m.lLastX)
-            target.pos.y += f32(m.lLastY)
-        }
-    
-        flags := m.usButtonFlags
-        if flags & windows.RI_MOUSE_LEFT_BUTTON_DOWN   != 0 do target.buttons[.LEFT].is_down   = true
-        if flags & windows.RI_MOUSE_LEFT_BUTTON_UP     != 0 do target.buttons[.LEFT].is_down   = false
-        if flags & windows.RI_MOUSE_RIGHT_BUTTON_DOWN  != 0 do target.buttons[.RIGHT].is_down  = true
-        if flags & windows.RI_MOUSE_RIGHT_BUTTON_UP    != 0 do target.buttons[.RIGHT].is_down  = false
-        if flags & windows.RI_MOUSE_MIDDLE_BUTTON_DOWN != 0 do target.buttons[.MIDDLE].is_down = true
-        if flags & windows.RI_MOUSE_MIDDLE_BUTTON_UP   != 0 do target.buttons[.MIDDLE].is_down = false
+        apply_raw_mouse_update(target, m)
+
+    case .SINGLE_MOUSE_INPUT:
+        // note(isak): any physical mouse drives the primary cursor, so no handle filtering here
+        apply_raw_mouse_update(&mouse, m)
 
     case .REBINDING_MOUSE_PRIMARY:
         if m.usButtonFlags & windows.RI_MOUSE_LEFT_BUTTON_DOWN != 0 {
@@ -118,8 +110,23 @@ _win32_message_hook :: proc(userdata: rawptr, msg: ^windows.MSG) -> bool {
     
     case .SDL_INPUT: break
     }
-    
+
     return true
+}
+
+apply_raw_mouse_update :: proc(target: ^Mouse, m: ^windows.RAWMOUSE) {
+    if window.mouse_inside && m.usFlags & windows.MOUSE_MOVE_ABSOLUTE == 0 {
+        target.pos.x += f32(m.lLastX) * game.user_config.cursor_sensitivity
+        target.pos.y += f32(m.lLastY) * game.user_config.cursor_sensitivity
+    }
+
+    flags := m.usButtonFlags
+    if flags & windows.RI_MOUSE_LEFT_BUTTON_DOWN   != 0 do target.buttons[.LEFT].is_down   = true
+    if flags & windows.RI_MOUSE_LEFT_BUTTON_UP     != 0 do target.buttons[.LEFT].is_down   = false
+    if flags & windows.RI_MOUSE_RIGHT_BUTTON_DOWN  != 0 do target.buttons[.RIGHT].is_down  = true
+    if flags & windows.RI_MOUSE_RIGHT_BUTTON_UP    != 0 do target.buttons[.RIGHT].is_down  = false
+    if flags & windows.RI_MOUSE_MIDDLE_BUTTON_DOWN != 0 do target.buttons[.MIDDLE].is_down = true
+    if flags & windows.RI_MOUSE_MIDDLE_BUTTON_UP   != 0 do target.buttons[.MIDDLE].is_down = false
 }
 
 

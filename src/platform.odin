@@ -70,6 +70,7 @@ app_cleanup :: proc() {
 Mouse_Input_Mode :: enum {
     SDL_INPUT,
     DOUBLE_MOUSE_INPUT,
+    SINGLE_MOUSE_INPUT,
     REBINDING_MOUSE_PRIMARY,
     REBINDING_MOUSE_SECONDARY,
 }
@@ -165,7 +166,14 @@ mouse_enable_double_mouse_mode :: proc() -> bool {
     return true
 }
 
-mouse_disable_double_mouse_mode :: proc() {
+// note(isak): single mouse mode drives the primary cursor from raw input regardless of which physical
+// mouse sends it, so no device handle needs to be bound
+mouse_enable_single_mouse_mode :: proc() {
+    app.mouse_input_mode = .SINGLE_MOUSE_INPUT
+    mouse.pos = mouse_get_position_relative_to_window()
+}
+
+mouse_disable_raw_input_mode :: proc() {
     app.mouse_input_mode = .SDL_INPUT
 }
 

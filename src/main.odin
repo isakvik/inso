@@ -297,7 +297,8 @@ main :: proc() {
                 // note(isak): this ensures cursor movement updates despite not receiving raw input messages 
                 mouse.pos = mouse_get_position_relative_to_window()
             }
-            if window.focused && window.mouse_inside && app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {
+            raw_mouse_active := app.mouse_input_mode == .DOUBLE_MOUSE_INPUT || app.mouse_input_mode == .SINGLE_MOUSE_INPUT
+            if window.focused && window.mouse_inside && raw_mouse_active {
                 sdl.WarpMouseInWindow(window.handle, mouse.pos.x, mouse.pos.y)
             }
 
@@ -536,6 +537,11 @@ imgui_update :: proc() {
     imgui.Separator()
     
     imgui_dropdown_draw(&app.skin_dropdown)
+    
+    if imgui.Button("x##cursor_reset") do game.user_config.cursor_size_multiplier = 1.0
+    imgui.SameLine()
+    imgui.SliderFloat("Cursor size##mouse", &game.user_config.cursor_size_multiplier, 0.1, 2.0)
+
     imgui.Separator()
 
     timer_str := strings.clone_to_cstring(time_ms_to_string(beatmap_music_time_ms(&game.beatmap)), context.temp_allocator)
@@ -574,9 +580,18 @@ imgui_update :: proc() {
         }
     }
     if imgui.CollapsingHeader("Input") {
-        if imgui.Button("x##cursor_reset") do game.user_config.cursor_size_multiplier = 1.0
+        if imgui.Button("x##sensitivity_reset") do game.user_config.cursor_sensitivity = 1.0
         imgui.SameLine()
-        imgui.SliderFloat("Cursor size##mouse", &game.user_config.cursor_size_multiplier, 0.1, 2.0)
+        imgui.SliderFloat("Cursor sensitivity##mouse", &game.user_config.cursor_sensitivity, 0.1, 5.0)
+            
+        single_mouse := app.mouse_input_mode == .SINGLE_MOUSE_INPUT
+        if imgui.Checkbox("Raw single mouse input", &single_mouse) {
+            if single_mouse {
+                mouse_enable_single_mouse_mode()
+            } else {
+                mouse_disable_raw_input_mode()
+            }
+        }
 
         imgui.Text("Rebind mice")
         if imgui.Button("primary") {

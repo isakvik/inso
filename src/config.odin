@@ -18,6 +18,7 @@ User_Configuration :: struct {
     primary_mouse_hwid: string,
     secondary_mouse_hwid: string,
     cursor_size_multiplier: f32,
+    cursor_sensitivity: f32,
 }
 
 config_load :: proc(path: string) -> (result: User_Configuration) {
@@ -60,6 +61,9 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         if v, ok := get(gen, "cursor_size_multiplier"); ok {
             if f, ok2 := strconv.parse_f32(v); ok2 do result.cursor_size_multiplier = f
         }
+        if v, ok := get(gen, "cursor_sensitivity"); ok {
+            if f, ok2 := strconv.parse_f32(v); ok2 do result.cursor_sensitivity = f
+        }
     }
     return
 }
@@ -77,6 +81,7 @@ config_save :: proc(path: string) {
     ini.write_pair(w, "primary_mouse_hwid",     game.user_config.primary_mouse_hwid)
     ini.write_pair(w, "secondary_mouse_hwid",   game.user_config.secondary_mouse_hwid)
     ini.write_pair(w, "cursor_size_multiplier", game.user_config.cursor_size_multiplier)
+    ini.write_pair(w, "cursor_sensitivity",     game.user_config.cursor_sensitivity)
 
     err := os.write_entire_file(path, transmute([]byte)strings.to_string(sb))
     if err != os.General_Error.None {
@@ -100,5 +105,6 @@ config_supply_default :: proc() -> (result: User_Configuration) {
         hitsound_volume     = 0.8,
         skin_path              = "skins/gn/",
         cursor_size_multiplier = 1.0,
+        cursor_sensitivity     = 1.0,
     }
 }

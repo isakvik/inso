@@ -897,7 +897,7 @@ render_slider_quads :: proc(hobj: ^Hitobject, path: ^Slider_Path, map_time: f64)
         }
         
         r_draw_layout_rect(&window.renderer.quad_geometry, ball_rect, .CENTER, combo_color, skin_texture(.SLIDER_BALL),
-            angle = 0) // todo(isak): slider ball angle needs to be mathed out...
+            angle = slider_ball_angle_at(hobj, map_time))
     }
 }
 

@@ -2,6 +2,7 @@ package notosu
 
 import "core:log"
 import "core:container/queue"
+import "core:math"
 
 import sb "swap_buffer"
 
@@ -229,6 +230,21 @@ slider_path_pos_at :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
     path := &game.beatmap.slider_paths[hobj.slider_path_index]
 
     return path_calculate_position_at(hobj, map_time, path)
+}
+
+// note(isak): direction the sliderball is travelling at map_time, in the renderer's angle convention
+// (0 points right, matching osu!). taken as a central difference of the folded path position, growing
+// the sample window until the ball has actually moved so slow sliders still resolve a heading.
+slider_ball_angle_at :: proc(hobj: ^Hitobject, map_time: f64) -> f32 {
+    for dt := 2.0; dt <= 64; dt *= 2 {
+        ahead  := slider_path_pos_at(hobj, map_time + dt)
+        behind := slider_path_pos_at(hobj, map_time - dt)
+        delta  := ahead - behind
+        if delta.x != 0 || delta.y != 0 {
+            return math.atan2(delta.y, delta.x)
+        }
+    }
+    return 0
 }
 
 slider_update :: proc(hobj: ^Hitobject, map_time: f64) {

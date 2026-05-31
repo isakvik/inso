@@ -244,13 +244,20 @@ render_timeline :: proc(ui: ^UI_Timeline, beatmap_leadin_fract, beatmap_finish_f
 // note(isak): input display
 
 input_display_draw :: proc() {
-    render_input_key :: proc(key: Button_State, rect: Rect) {
-        display_color := key.is_down ? color_light_gray : color_dark_gray
+    render_input_key :: proc(key: Button_State, rect: Rect, lit_color: Color) {
+        display_color := key.is_down ? lit_color : color_dark_gray
         r_draw_layout_rect(&window.renderer.quad_geometry, rect, .BOTTOM_RIGHT, display_color, builtin_texture(.WHITE))
     }
 
-    render_input_key(game.input.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 })
-    render_input_key(game.input.k2, { window.rect.w, window.rect.h / 2,      30, 30 })
-    render_input_key(game.input.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 })
-    render_input_key(game.input.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 })
+    render_input_key(game.input.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 }, color_dim_yellow)
+    render_input_key(game.input.k2, { window.rect.w, window.rect.h / 2,      30, 30 }, color_dim_yellow)
+
+    lit_color := app.mouse_input_mode == .DOUBLE_MOUSE_INPUT ? color_sky_blue :  color_magenta
+    render_input_key(game.input.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 }, lit_color)
+    render_input_key(game.input.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 }, lit_color)
+
+    if app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {
+        render_input_key(game.input.ms1, { window.rect.w, window.rect.h / 2 + 30, 30, 15 }, color_dim_orange)
+        render_input_key(game.input.ms2, { window.rect.w, window.rect.h / 2 + 60, 30, 15 }, color_dim_orange)
+    }
 }

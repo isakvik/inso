@@ -533,7 +533,7 @@ osu_on_update :: proc(dt: f64) {
 
     // beatmap render
 
-    r_bind_layer_and_push_current_state(.HITOBJECTS)
+    r_bind_layer_and_push_current_state(.HITOBJECTS, transform = game.playfield_transform)
 
     #reverse for &hobj in visible_hobjs {
         if hobj.start_time_ms - hitobject_preempt_ms(&hobj) <= map_time && map_time <= hobj.end_time_ms {
@@ -569,14 +569,16 @@ osu_on_update :: proc(dt: f64) {
         transform = game.playfield_transform,
         pipeline = {builtin_pipeline_slot(.QUAD)})
     
-    {
-        // @temp - playfield border
+    // -- @temp playfield border
+    playfield_border_draw :: proc() {
         cs := game.beatmap.circle_radius_osupx
         pf_outline := Rect{
             -cs, -cs, PLAYFIELD_SIZE_OSUPX+2*cs, (PLAYFIELD_SIZE_OSUPX*3/4)+2*cs
         }
         r_draw_rect_outline(&window.renderer.quad_geometry, pf_outline, with_alpha(color_white, 0.1), 2)
     }
+    playfield_border_draw()
+    // --
     
     // todo(isak): "screens" implementation for determining relevant UI components?
     handle_and_render_timeline()
@@ -637,6 +639,7 @@ handle_play_input_events :: proc() {
     
     if key_is_pressed(.F10) {
         game.input.mouse_keys_enabled = !game.input.mouse_keys_enabled
+        notify_warn("mouse keys enabled" if game.input.mouse_keys_enabled else "mouse keys disabled")
     }
     
     game.input.k1.is_down = keyboard.buttons[game.input.k1_key]

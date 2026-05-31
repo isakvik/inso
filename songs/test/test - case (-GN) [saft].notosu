@@ -3,7 +3,7 @@ notosu file format v1
 [General]
 LuaEntryPoint: test.lua
 BackgroundPipeline: wave
-DoubleMouse: 1
+DoubleMouse: 0
 
 [Shaders]
 [[wave]]

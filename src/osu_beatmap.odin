@@ -71,6 +71,9 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
         ok := mouse_enable_double_mouse_mode()
         if !ok {
             game.active_notosu_map.double_mouse = false
+        } else {
+            game.input.mouse_keys_enabled = true
+            notify_warn("mouse keys enabled" if game.input.mouse_keys_enabled else "mouse keys disabled")
         }
     } else {
         mouse_disable_double_mouse_mode()

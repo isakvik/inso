@@ -16,11 +16,14 @@ Mouse_Handle :: windows.HANDLE
 // note(isak): you CANNOT disable this once it has been enabled
 raw_input_enable :: proc() {
     rid: [1]windows.RAWINPUTDEVICE
-    
+
+    props := sdl.GetWindowProperties(window.handle)
+    hwnd := sdl.GetPointerProperty(props, sdl.PROP_WINDOW_WIN32_HWND_POINTER, nil)
+
     rid[0].usUsagePage = windows.HID_USAGE_PAGE_GENERIC
     rid[0].usUsage = windows.HID_USAGE_GENERIC_MOUSE
-    rid[0].dwFlags = 0
-    rid[0].hwndTarget = nil
+    rid[0].dwFlags = windows.RIDEV_INPUTSINK | windows.RIDEV_DEVNOTIFY
+    rid[0].hwndTarget = windows.HWND(hwnd)
 
     if windows.RegisterRawInputDevices(&rid[0], 1, size_of(rid)) == windows.FALSE {
         log.errorf("registering for Raw Input failed! win32 error: %d", windows.GetLastError())
@@ -32,10 +35,39 @@ raw_input_register_sdl_hook :: proc() {
     sdl.SetWindowsMessageHook(_win32_message_hook, nil)
 }
 
+// note(isak): raw input device handles are NOT stable across unplug/replug or sleep/resume - windows
+// hands the same physical device a fresh handle. re-enumerate the hwid->handle map and re-resolve each
+// bound mouse from its persisted hwid so the hot path keeps matching the right device.
+input_refresh_mouse_devices :: proc() {
+    app.input_device_hwids, app.input_device_handles = input_enumerate_mouse_devices(memory.allocators[.GLOBAL])
+
+    bound_hwids := [Mouse_ID]string {
+        .PRIMARY   = game.user_config.primary_mouse_hwid,
+        .SECONDARY = game.user_config.secondary_mouse_hwid,
+    }
+    for id in Mouse_ID {
+        if !input_validate_mouse_hwid(id, bound_hwids[id]) {
+            mice[id].device_handle = {}
+        }
+    }
+}
+
+hook_call_count: int
+wm_input_count: int
+
 _win32_message_hook :: proc(userdata: rawptr, msg: ^windows.MSG) -> bool {
-    context = win32_hook_odin_context
+    hook_call_count += 1
+    if msg.message == windows.WM_INPUT do wm_input_count += 1
+
+    if msg.message == windows.WM_INPUT_DEVICE_CHANGE {
+        context = win32_hook_odin_context
+        input_refresh_mouse_devices()
+        return true
+    }
 
     if msg.message != windows.WM_INPUT do return true
+
+    context = win32_hook_odin_context
 
     size: windows.UINT
     windows.GetRawInputData(windows.HRAWINPUT(msg.lParam), windows.RID_INPUT, nil, &size, size_of(windows.RAWINPUTHEADER))

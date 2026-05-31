@@ -271,9 +271,6 @@ main :: proc() {
 
                 case sdl.EventType.WINDOW_FOCUS_GAINED:
                     window.focused = true
-                    for &mouse in mice {
-                        mouse.pos = mouse_get_position_relative_to_window()
-                    }
                     imgui.IO_AddFocusEvent(imgui.GetIO(), true)
                 case sdl.EventType.WINDOW_FOCUS_LOST:
                     window.focused = false
@@ -281,9 +278,6 @@ main :: proc() {
 
                 case sdl.EventType.WINDOW_MOUSE_ENTER:
                     window.mouse_inside = true
-                    if app.mouse_input_mode != .SDL_INPUT {
-                        mice[.PRIMARY].pos = mouse_get_position_relative_to_window()
-                    }
                 case sdl.EventType.WINDOW_MOUSE_LEAVE:
                     window.mouse_inside = false
 
@@ -296,7 +290,7 @@ main :: proc() {
                     running = false
                 }
             }
-
+            
             keyboard_next_frame()
 
             if app.mouse_input_mode == .SDL_INPUT || !window.mouse_inside || !window.focused {

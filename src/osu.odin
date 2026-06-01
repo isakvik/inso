@@ -5,6 +5,7 @@ import sb "swap_buffer"
 import "slotmap"
 
 import "core:log"
+import "core:math"
 import "core:math/linalg"
 import vmem "core:mem/virtual"
 import "core:strings"
@@ -15,6 +16,10 @@ import sdl "vendor:sdl3"
 PLAYFIELD_SIZE_OSUPX :: f32(512)
 OSU_SLIDER_CURVE_POINTS_SEPARATION :: f32(2.5)
 OSU_HIT_ANIMATION_LENGTH :: 250
+
+NOTELOCK_SHAKE_DURATION_MS :: f64(120)
+NOTELOCK_SHAKE_AMPLITUDE_OSUPX :: f32(8)
+NOTELOCK_SHAKE_OSCILLATIONS :: f64(3)
 
 // note(isak): osu!'s actual play area is 512x384 within the 512x512 osu!px coordinate space,
 // with a small vertical offset for the HUD. these constants define that base placement and
@@ -143,6 +148,7 @@ Hitobject :: struct {
     slider_state: Slider_State,
 
     phase: Hitobject_Phase,
+    notelock_shake_at_ms: f64,
     custom_preempt_ms: f64,          // note(isak): per-object approach time override. 0 = use global
     custom_radius_osupx: f32,        // note(isak): per-object circle size override. 0 = use global
     deferred_activation_index: int,  // note(isak): index+1 into beatmap.deferred_activations. 0 = not in list
@@ -165,7 +171,7 @@ Slider_Flag :: enum {
 
 Slider_State :: struct {
     flags: Slider_Flags,
-    down_key: int, // 0 = missed head or free (any key), 1 = k1 hit head, 2 = k2 hit head
+    down_key: int, // note(isak): 0 = missed head or free (any key), 1 = k1 hit head, 2 = k2 hit head
 
     velocity: f64,
     distance, duration_ms: f64,
@@ -194,6 +200,28 @@ hitobject_tail_pos :: proc(hobj: ^Hitobject) -> vec2 {
 
 hitobject_duration :: proc(hobj: ^Hitobject) -> (result: f64) {
     return hobj.end_time_ms - hobj.start_time_ms
+}
+
+// note(isak): whether the object's head can still receive a press, which is what notelock keys off. we look
+// at the start time window only, never the end time - so an in-progress slider (head hit, or its head window
+// elapsed) stops blocking the next object, matching osu!. a hit head sits in HOLD so the phase check excludes
+// it; an unhit head stops counting once its late window passes.
+hitobject_head_hittable :: proc(hobj: ^Hitobject, map_time: f64) -> bool {
+    if hobj.phase != .PREEMPT && hobj.phase != .POSTEMPT do return false
+    if hobj.type != .CIRCLE && hobj.type != .SLIDER do return false
+    return map_time <= hobj.start_time_ms + game.beatmap.timing_windows.ok
+}
+
+// note(isak): render-only horizontal offset for the notelock shake. does not affect hit detection
+hitobject_notelock_shake_offset :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
+    if hobj.notelock_shake_at_ms == 0 do return {}
+    t := map_time - hobj.notelock_shake_at_ms
+    if t < 0 || t >= NOTELOCK_SHAKE_DURATION_MS do return {}
+
+    progress := t / NOTELOCK_SHAKE_DURATION_MS
+    envelope := f32(1 - progress)
+    phase := f32(2 * math.PI * NOTELOCK_SHAKE_OSCILLATIONS * progress)
+    return {NOTELOCK_SHAKE_AMPLITUDE_OSUPX * envelope * math.sin(phase), 0}
 }
 
 hitobject_preempt_ms :: proc(hobj: ^Hitobject) -> f64 {
@@ -495,32 +523,40 @@ osu_on_update :: proc(dt: f64) {
         if button_is_pressed(game.input.k2) do game.input.available_presses += 1
     }
 
-    if valid_controller_press() {
+    // todo(isak): move input resolution to its own thread. only one resolved note per press for now
+    for valid_controller_press() {
         game.input.last_valid_press_at = map_time
+        consume_controller_press()
 
-        for &hobj, i in visible_hobjs {
-            if hobj.phase != .PREEMPT && hobj.phase != .POSTEMPT {
-                continue
+        front, clicked: ^Hitobject
+        for &hobj in visible_hobjs {
+            if !hitobject_head_hittable(&hobj, map_time) do continue
+            if front == nil do front = &hobj
+            if point_in_circle(game.input.mouse_pos, hitobject_pos(&hobj), hitobject_radius_osupx(&hobj)) {
+                clicked = &hobj
+                break
             }
-            hobj_pos := hitobject_pos(&hobj)
-            if !point_in_circle(game.input.mouse_pos, hobj_pos, hitobject_radius_osupx(&hobj)) {
-                continue
-            }
-            judgement := hitobject_on_click(&hobj)
-            if judgement == .NONE {
-                continue
-            }
+        }
 
-            #partial switch hobj.type {
-            case .CIRCLE:
-                hitobject_emit_phase_transition(&hobj, .HIT)
-                judgement_new_drawable(&hobj)
-            case .SLIDER:
-                hitobject_emit_phase_transition(&hobj, .HOLD)
-            }
+        if clicked == nil do continue
 
-            consume_controller_press()
-            break
+        if clicked != front {
+            clicked.notelock_shake_at_ms = map_time
+            continue
+        }
+
+        judgement := hitobject_on_click(clicked)
+        if judgement == .NONE {
+            clicked.notelock_shake_at_ms = map_time
+            continue
+        }
+
+        #partial switch clicked.type {
+        case .CIRCLE:
+            hitobject_emit_phase_transition(clicked, .HIT)
+            judgement_new_drawable(clicked)
+        case .SLIDER:
+            hitobject_emit_phase_transition(clicked, .HOLD)
         }
     }
 
@@ -550,10 +586,11 @@ osu_on_update :: proc(dt: f64) {
         r_push_transform(game.playfield_transform)
         r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
         
+        shake_offset := hitobject_notelock_shake_offset(&hobj, map_time)
         #reverse for handle in hobj.gfx_handles {
             e := slotmap.get(&game.beatmap.drawables, handle) or_continue
             if .ACTIVE in e.flags {
-                render_drawable(e, map_time, hitobject_pos(&hobj))
+                render_drawable(e, map_time, hitobject_pos(&hobj) + shake_offset)
             }
         }
     }

@@ -1,8 +1,8 @@
 package notosu
 
 import "base:runtime"
-import "base:intrinsics"
 import c "core:c"
+import "core:fmt"
 import "core:log"
 import os "core:os"
 import "core:slice"
@@ -182,10 +182,12 @@ lua_create_beatmap_script_context :: proc(script_path: string) {
     script_file_len, err := file_size(script_path)
     if err != os.General_Error.None {
         log.errorf("loading lua script '{}' failed, error: {}", script_path, err)
+        notify_error("loading lua script '%s' failed, error: %v", script_path, err)
         return
     }
     if script_file_len == 0 {
         log.errorf("loading lua script '{}' failed, empty file", script_path)
+        notify_error("loading lua script '%s' failed, empty file", script_path)
         return
     }
     
@@ -345,10 +347,12 @@ lua_return_self :: proc "c" () -> i32 {
 lua_log_error :: proc "c" (log_str: string = "Lua error:", location := #caller_location) {
     L:= lua_beatmap.state
     context = lua_beatmap.odin_context
-    
-    log.error(log_str, "\n", lua.tostring(L, -1), sep = "", location = location)
+
+    from_lua := lua.tostring(L, -1)
     lua.pop(L, 1)
     
+    log.error(log_str, "\n", from_lua, sep = "", location = location)
+    notify_error("%s\n%s", log_str, from_lua)
     //intrinsics.debug_trap()
 }
 
@@ -789,6 +793,7 @@ luaapi_hitobject_get_at_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
         result = 1
     } else {
         log.error("User error - no hitobject at ms:", at_ms)
+        notify_error("lua: no hitobject at ms %v", at_ms)
     }
     return result
 }
@@ -1082,6 +1087,7 @@ luaapi_drawable_new :: proc "c" (L: ^lua.State) -> (result: i32) {
         tex_id, found := mapset_texture_slot(tex_name)
         if !found {
             log.error("User error - texture not found:", tex_name)
+            notify_error("lua: Drawable.new texture not found '%s'", tex_name)
             return 0
         }
         element_id = element_new({ shader = builtin_pipeline_slot(.QUAD), tex = tex_id })
@@ -1364,6 +1370,7 @@ luaapi_element_set_tex :: proc "c" (L: ^lua.State) -> (result: i32) {
         }
     } else {
         log.error("User error - texture not found:", tex_name)
+        notify_error("lua: Element:set_tex texture not found '%s'", tex_name)
     }
     return lua_return_self()
 }
@@ -1398,6 +1405,7 @@ luaapi_element_set_shader :: proc "c" (L: ^lua.State) -> (result: i32) {
         }
     } else {
         log.error("User error - pipeline not found:", shader_name)
+        notify_error("lua: Element:set_shader pipeline not found '%s'", shader_name)
     }
     return lua_return_self()
 }
@@ -1428,6 +1436,7 @@ luaapi_element_set_mesh :: proc "c" (L: ^lua.State) -> (result: i32) {
     buf, found := mapset_buffer(buffer_name)
     if !found {
         log.error("User error - buffer not found:", buffer_name)
+        notify_error("lua: Element:set_mesh buffer not found '%s'", buffer_name)
         return lua_return_self()
     }
     if el_id < game.beatmap.elements.len {
@@ -1612,6 +1621,7 @@ luaapi_animation_texture :: proc "c" (L: ^lua.State) -> i32 {
     tex_id, found := mapset_texture_slot(tex_name)
     if !found {
         log.error("User error - texture not found:", tex_name)
+        notify_error("lua: Animation:texture texture not found '%s'", tex_name)
         tex_id = builtin_texture(.WHITE)
     }
 
@@ -1641,6 +1651,7 @@ luaapi_animation_frames :: proc "c" (L: ^lua.State) -> i32 {
     tex_slot, found := game.active_mapset.texture_slot_by_name[tex_name]
     if !found {
         log.error("User error - texture not found:", tex_name)
+        notify_error("lua: Animation:frames texture not found '%s'", tex_name)
         return lua_return_self()
     }
 
@@ -1687,6 +1698,7 @@ luaapi_buffer_get :: proc "c" (L: ^lua.State) -> i32 {
     _, found := mapset_buffer(name)
     if !found {
         log.error("User error - buffer not found:", name)
+        notify_error("lua: Buffer.get buffer not found '%s'", name)
         lua.pushnil(L)
         return 1
     }
@@ -1803,6 +1815,7 @@ luaapi_sound_play :: proc "c" (L: ^lua.State) -> i32 {
     sample, found := mapset_sample(name)
     if !found {
         log.error("User error - sound not found:", name)
+        notify_error("lua: Sound.play sound not found '%s'", name)
         return 0
     }
     sample_play(sample, volume, pan)
@@ -1818,6 +1831,7 @@ luaapi_sound_play_loop :: proc "c" (L: ^lua.State) -> i32 {
     sample, found := mapset_sample(name)
     if !found {
         log.error("User error - sound not found:", name)
+        notify_error("lua: Sound.play_loop sound not found '%s'", name)
         return 0
     }
     handle := game_sound_play(sample, loop = true, volume = volume)

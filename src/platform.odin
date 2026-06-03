@@ -46,22 +46,23 @@ app: struct {
 }
 
 app_init :: proc() {
-    app.logger = log.create_console_logger()
-    
     err: os.Error
     app.base_dir, err = os.get_working_directory(context.allocator)
     if err != os.General_Error.None {
         log.panic("couldn't fetch working directory:", err)
     }
-    
+
     if "build" == filepath.base(app.base_dir) {
         app.base_dir = filepath.dir(app.base_dir)
         os.set_working_directory(app.base_dir)
     }
+
+    // note(isak): logger is created after the working-dir fixup so a file logger lands in the app root
+    app.logger = logging_create_logger()
 }
 
 app_cleanup :: proc() {
-    log.destroy_console_logger(app.logger)
+    logging_destroy_logger(app.logger)
 }
 
 //////////////////////////////////////////////////////

@@ -2,7 +2,11 @@ priority list for beta
 
 -- POST MAPPER ALPHA RELEASE -- 
 
-osu editor integration (custom map_reference)
+bugs
+    sliderticks disappear even when missing
+
+features
+    custom sliderfollowcircle radius
 
 scripting
     Animated_Drawable - pass a spritesheet

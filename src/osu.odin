@@ -146,6 +146,7 @@ Hitobject :: struct {
 
     slider_path_index: int,
     slider_state: Slider_State,
+    slider_edge_hitsounds: []Slider_Edge_Hitsound,
 
     phase: Hitobject_Phase,
     notelock_shake_at_ms: f64,
@@ -186,6 +187,16 @@ Slider_State :: struct {
     contingency_window_scorepoints: bit_set[0..<64; u64], // note(isak): ticks are 0, repeats are 1
 
     slide_sound: slotmap.Handle,
+    whistle_sound: slotmap.Handle, // note(isak): loops alongside slide_sound when the slider has a whistle
+}
+
+// note(isak): per-edge hitsound for a slider, parsed from edgeSounds/edgeSets. one per edge: index 0 is the
+// head, 1..path_travel_count-1 are the repeats, path_travel_count is the tail. sample sets use osu's raw
+// values (0 = auto/inherit timing point, 1 = normal, 2 = soft, 3 = drum), resolved at playback.
+Slider_Edge_Hitsound :: struct {
+    hitsound:     u8, // osu bitmask: whistle (2), finish (4), clap (8); normal is always implied
+    normal_set:   u8,
+    addition_set: u8,
 }
 
 hitobject_pos :: proc(hobj: ^Hitobject) -> vec2 {

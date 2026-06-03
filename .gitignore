@@ -3,3 +3,5 @@ notosu.raddbg_project
 *.mp3
 imgui.ini
 /User.ini
+build-release
+notosu.log

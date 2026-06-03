@@ -242,6 +242,7 @@ discover_maps :: proc(
     dir_handle, err := os.open(songs_dir)
     if err != nil {
         log.errorf("discover_maps: couldn't open '{}': {}", songs_dir, err)
+        notify_error("discover_maps: couldn't open '%s': %v", songs_dir, err)
         return
     }
     
@@ -304,16 +305,30 @@ mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
     switch extension {
         case ".notosu": {
             filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
+            if file_err != nil {
+                log.errorf("mapset: failed to read '{}': {}", file.name, file_err)
+                notify_error("mapset: failed to read '%s': %v", file.name, file_err)
+                break
+            }
             mapset.notosu_map = mapset_parse_notosu(mapset, filedata)
         }
         case ".osu": {
             if mapset.osu_filename != "" && file.name != mapset.osu_filename do break
             filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
+            if file_err != nil {
+                log.errorf("mapset: failed to read '{}': {}", file.name, file_err)
+                notify_error("mapset: failed to read '%s': %v", file.name, file_err)
+                break
+            }
             mapset.osu_map = mapset_parse_osu(mapset, filedata)
         }
         case ".png", ".jpg": {
             tex_key := strings.clone(file.name, memory.allocators[.MAPSET])
             tex, file_err := texture_from_file(file.name)
+            if file_err != nil {
+                log.errorf("mapset: failed to load texture '{}': {}", file.name, file_err)
+                notify_error("mapset: failed to load texture '%s': %v", file.name, file_err)
+            }
             mapset.texture_slot_by_name[tex_key] = u32(mapset.textures.len)
             queue.push_back(&mapset.textures, tex)
         }
@@ -324,6 +339,9 @@ mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
                 mapset.sample_slot_by_name[sample_key] = u32(mapset.samples.len)
                 sample.filepath = sample_key
                 queue.push_back(&mapset.samples, sample)
+            } else {
+                log.errorf("mapset: failed to load sample '{}'", file.name)
+                notify_error("mapset: failed to load sample '%s'", file.name)
             }
         }
     }
@@ -416,9 +434,13 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
                         case "Alpha":    shader_params.blend_mode = .ALPHA
                         case "Additive": shader_params.blend_mode = .ADDITIVE
                         case "None":     shader_params.blend_mode = .NONE
-                        case: log.errorf("mapset shader '{}': unknown BlendMode '{}', defaulting to alpha", shader_params.name, value)
+                        case:
+                            log.errorf("mapset shader '{}': unknown BlendMode '{}', defaulting to alpha", shader_params.name, value)
+                            notify_warn("mapset shader '%s': unknown BlendMode '%s', defaulting to alpha", shader_params.name, value)
                         }
-                    case: log.errorf("unknown/unhandled option: {}", key)
+                    case:
+                        log.errorf("unknown/unhandled option: {}", key)
+                        notify_warn("mapset shader '%s': unknown option '%s'", shader_params.name, key)
                     }
                 }
             }
@@ -445,8 +467,13 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
                     case "Size":
                         parsed, ok := strconv.parse_int(value)
                         if ok do buf_params.size = parsed
-                        else do log.errorf("mapset buffer '{}': invalid Size value '{}'", buf_params.name, value)
-                    case: log.errorf("mapset buffer '{}': unknown option '{}'", buf_params.name, key)
+                        else {
+                            log.errorf("mapset buffer '{}': invalid Size value '{}'", buf_params.name, value)
+                            notify_error("mapset buffer '%s': invalid Size value '%s'", buf_params.name, value)
+                        }
+                    case:
+                        log.errorf("mapset buffer '{}': unknown option '{}'", buf_params.name, key)
+                        notify_warn("mapset buffer '%s': unknown option '%s'", buf_params.name, key)
                     }
                 }
             }
@@ -530,7 +557,9 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                                 case "Soft":   result.sample_set = .SOFT
                                 case "Drum":   result.sample_set = .DRUM
                                 case "None":   result.sample_set = .NORMAL
-                                case: log.warn("unknown/unhandled sampleset:", result.sample_set)
+                                case:
+                                    log.warn("unknown/unhandled sampleset:", value)
+                                    notify_warn("mapset: unknown SampleSet '%s'", value)
                             }
                     }
                 }
@@ -547,6 +576,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                     }
                 }
             case .DIFFICULTY: 
+                has_approach_rate: bool
                 for i in 1..<len(lines) {
                     key, value := get_key_value(lines[i])
                     ok: bool
@@ -554,17 +584,26 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                         case "HPDrainRate": result.diff_hp_drain, ok = strconv.parse_f64(value); assert(ok)
                         case "CircleSize": result.diff_circle_size, ok = strconv.parse_f64(value); assert(ok)
                         case "OverallDifficulty": result.diff_overall_difficulty, ok = strconv.parse_f64(value); assert(ok)
-                        case "ApproachRate": result.diff_approach_rate, ok = strconv.parse_f64(value); assert(ok)
+                        case "ApproachRate": 
+                            result.diff_approach_rate, ok = strconv.parse_f64(value); assert(ok)
+                            has_approach_rate = true
                         case "SliderMultiplier": result.diff_slider_velocity, ok = strconv.parse_f64(value); assert(ok)
                         case "SliderTickRate": result.diff_slider_tickrate, ok = strconv.parse_f64(value); assert(ok)
                     }
                 }
+
+                if !has_approach_rate {
+                    // note(isak): handles the old format where AR = OD
+                    result.diff_approach_rate = result.diff_overall_difficulty
+                }
+                
             case .TIMINGPOINTS:
                 result.timing_points = make_slice([]Timing_Point, len(lines) - 1)
                 
                 for i in 1..<len(lines) {
-                    timing_point := &result.timing_points[i - 1]     
-                    
+                    timing_point := &result.timing_points[i - 1]
+                    timing_point.volume = 100 // note(isak): osu default if the volume column is absent (older formats)
+
                     from_i, s_len: int
                     arg_i: int
                     for from_i < len(lines[i]) && 0 <= s_len {
@@ -730,14 +769,16 @@ mapset_load_shader_entry :: proc(mapset: ^Mapset, name, vs, fs: string, blend_mo
     if name == "" do return
     if vs == "" || fs == "" {
         log.errorf("mapset shader '{}': missing VertexShader or FragmentShader, skipping", name)
+        notify_error("mapset shader '%s': missing VertexShader or FragmentShader, skipping", name)
         return
     }
-    
+
     vs := strings.clone(vs)
     fs := strings.clone(fs)
     shader, err := shader_init(vs, fs, context.temp_allocator)
     if err != .NONE {
         log.errorf("mapset shader '{}': compile error, skipping", name)
+        notify_error("mapset shader '%s': compile error (%v), skipping", name, err)
         return
     }
     queue.push(&window.shaders, shader)
@@ -766,6 +807,7 @@ mapset_load_buffer_entry :: proc(mapset: ^Mapset, name, source: string, size: in
         model := load_model(source)
         if model == nil {
             log.errorf("mapset buffer '{}': failed to load source '{}'", name, source)
+            notify_error("mapset buffer '%s': failed to load source '%s'", name, source)
             return
         }
         buf.id   = model.id
@@ -775,6 +817,7 @@ mapset_load_buffer_entry :: proc(mapset: ^Mapset, name, source: string, size: in
         buf = Mapset_Buffer(sbo_init(u8, size))
     } else {
         log.errorf("mapset buffer '{}': must specify either Source or Size, skipping", name)
+        notify_error("mapset buffer '%s': must specify either Source or Size, skipping", name)
         return
     }
 
@@ -919,12 +962,43 @@ mapset_parse_osu_slider_params :: proc(hobj: ^Hitobject, slider: ^Slider_Path, p
                 }
             case 1:
                 hobj.slider_state.path_travel_count, ok = strconv.parse_int(value); assert(ok)
+
+                // note(isak): edges = path_travel_count + 1 (head, repeats, tail). default every edge to the
+                // object-level hitsound and auto sample sets; edgeSounds/edgeSets below override when present
+                num_edges := hobj.slider_state.path_travel_count + 1
+                hobj.slider_edge_hitsounds = make([]Slider_Edge_Hitsound, num_edges, alloc)
+                for &edge in hobj.slider_edge_hitsounds {
+                    edge.hitsound = hobj.hitsound_flags
+                }
             case 2:
                 slider.distance_osupx, ok = strconv.parse_f64(value); assert(ok)
             case 3:
-                // edgesounds
+                // note(isak): edgeSounds, e.g. "2|0|2" - one hitsound bitmask per edge
+                edge_from, edge_n, edge_i: int
+                for edge_from < len(value) && edge_i < len(hobj.slider_edge_hitsounds) {
+                    edge_n = strings.index_byte(value[edge_from:], '|')
+                    token := edge_n >= 0 ? value[edge_from:edge_from + edge_n] : value[edge_from:]
+                    hs, _ := strconv.parse_int(strings.trim_space(token))
+                    hobj.slider_edge_hitsounds[edge_i].hitsound = u8(hs)
+                    edge_i += 1
+                    if edge_n < 0 do break
+                    edge_from += edge_n + 1
+                }
             case 4:
-                // edgesets
+                // note(isak): edgeSets, e.g. "0:0|0:2" - normalSet:additionSet per edge
+                edge_from, edge_n, edge_i: int
+                for edge_from < len(value) && edge_i < len(hobj.slider_edge_hitsounds) {
+                    edge_n = strings.index_byte(value[edge_from:], '|')
+                    token := edge_n >= 0 ? value[edge_from:edge_from + edge_n] : value[edge_from:]
+                    normal_str, addition_str := get_key_value(token, ':')
+                    normal, _   := strconv.parse_int(strings.trim_space(normal_str))
+                    addition, _ := strconv.parse_int(strings.trim_space(addition_str))
+                    hobj.slider_edge_hitsounds[edge_i].normal_set   = u8(normal)
+                    hobj.slider_edge_hitsounds[edge_i].addition_set = u8(addition)
+                    edge_i += 1
+                    if edge_n < 0 do break
+                    edge_from += edge_n + 1
+                }
         }
     }
     assert(slider.type != .NONE, "slider parse error :: unknown slidertype")
@@ -974,15 +1048,18 @@ load_model :: proc(path: string) -> ^GL_Buffer(Mesh_Vertex) {
     data, result := cgltf.parse_file(options, path_cstr)
     if result != .success {
         log.errorf("load_model '{}': parse failed ({})", path, result)
+        notify_error("load_model '%s': parse failed (%v)", path, result)
         return nil
     }
     result = cgltf.load_buffers(options, data, path_cstr)
     if result != .success {
         log.errorf("load_model '{}': load_buffers failed ({})", path, result)
+        notify_error("load_model '%s': load_buffers failed (%v)", path, result)
         return nil
     }
     if len(data.meshes) == 0 || len(data.meshes[0].primitives) == 0 {
         log.errorf("load_model '{}': no meshes found", path)
+        notify_error("load_model '%s': no meshes found", path)
         return nil
     }
 
@@ -995,6 +1072,7 @@ load_model :: proc(path: string) -> ^GL_Buffer(Mesh_Vertex) {
     }
     if vertex_count == 0 {
         log.errorf("load_model '{}': no position attribute found", path)
+        notify_error("load_model '%s': no position attribute found", path)
         return nil
     }
 

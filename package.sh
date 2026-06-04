@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-VERSION=0.1.1
+VERSION=0.1.2
 release_dir=build-release
 exec_name=notosu
 zip_name=notosu-${VERSION}-linux.zip
@@ -24,6 +24,14 @@ cp -f lib/linux/* "$release_dir/"
 for d in data shaders skins songs; do
     cp -rf "$d" "$release_dir/"
 done
+
+# regenerate the lua api reference from the freshly built binary (needs its libs, hence after the copy above).
+# non-fatal: never block packaging on a doc hiccup
+echo "[package] generating lua docs..."
+"$release_dir/$exec_name" --gen-lua-docs || echo "[package] warning: lua doc generation failed"
+if [ -f docs/lua_api.html ]; then
+    cp -rf docs "$release_dir/"
+fi
 
 echo "[package] zipping..."
 

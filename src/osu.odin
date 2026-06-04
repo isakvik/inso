@@ -646,20 +646,23 @@ osu_on_update :: proc(dt: f64) {
     // --
     
     // todo(isak): "screens" implementation for determining relevant UI components?
-    handle_and_render_timeline()
-    
-    r_push_transform(window.screenspace_transform)
+    timeline_update(&game.ui_timeline)
+    render_timeline_clipspace(&game.ui_timeline)
     
     if !game.transparent {
-        hit_error_bar_draw(&game.hit_error_bar)
-        input_display_draw()
+        hit_error_bar_draw_screenspace(&game.hit_error_bar)
+        input_display_draw_screenspace()
     }
-    
 
+    r_push_transform(window.screenspace_transform)
     cursor_draw(mouse.pos, skin_texture(.CURSOR))
     if app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {   
         cursor_draw(mouse_secondary.pos, skin_texture(.CURSOR))
     }
+
+    r_color_mask(false, false, false, true)
+    r_draw_layout_rect(&window.renderer.quad_geometry, {0, 0, window.rect.w, window.rect.h }, .TOP_LEFT, color_black)
+    r_color_mask(true, true, true, true)
 }
 
 cursor_draw :: proc(pos: vec2, tex_index: u32) {

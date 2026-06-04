@@ -42,10 +42,13 @@ hit_error_bar_record :: proc(hit_error_bar: ^Hit_Error_Bar, error_ms: f64, judge
     hit_error_bar.count = min(hit_error_bar.count + 1, HIT_ERROR_BAR_CAPACITY)
 }
 
-hit_error_bar_draw :: proc(hit_error_bar: ^Hit_Error_Bar) {
+hit_error_bar_draw_screenspace :: proc(hit_error_bar: ^Hit_Error_Bar) {
     if game.mode != .PLAY do return
+    
     tw := game.beatmap.timing_windows
     if tw.ok <= 0 do return
+    
+    r_push_transform(window.screenspace_transform)
 
     bar_h := f32(26)
     cx := window.rect.w / 2
@@ -193,7 +196,7 @@ ui_update_timeline :: proc(ui: ^UI_Timeline, time_value: ^f64) -> (result: bool)
     return result
 }
 
-handle_and_render_timeline :: proc() {
+timeline_update :: proc(ui: ^UI_Timeline) {
     seek_to_fract: f64
     if ui_update_timeline(&game.ui_timeline, &seek_to_fract) {
         map_len_with_preempt := game.beatmap.length_ms + (-game.beatmap.start_time_ms)
@@ -217,17 +220,15 @@ handle_and_render_timeline :: proc() {
             sound_resume(&game.beatmap.music)
         }
     }
-    
+}
+
+render_timeline_clipspace :: proc(ui: ^UI_Timeline) {
     map_len_with_preempt := game.beatmap.length_ms + (-game.beatmap.start_time_ms)
     map_time_with_preempt := game.beatmap.music_time_ms + (-game.beatmap.start_time_ms)
     
     beatmap_leadin_fract := f32((-game.beatmap.preempt_ms - game.beatmap.music_time_ms) / -game.beatmap.start_time_ms)
     beatmap_finish_fract := f32(map_time_with_preempt / map_len_with_preempt)
     
-    render_timeline(&game.ui_timeline, beatmap_leadin_fract, beatmap_finish_fract)
-}
-
-render_timeline :: proc(ui: ^UI_Timeline, beatmap_leadin_fract, beatmap_finish_fract: f32) {
     r_push_transform(clipspace_transform)
     
     r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, 1, ui.display_h_px / window.rect.h}, 
@@ -243,7 +244,9 @@ render_timeline :: proc(ui: ^UI_Timeline, beatmap_leadin_fract, beatmap_finish_f
 //////////////////////////////////////////////////////
 // note(isak): input display
 
-input_display_draw :: proc() {
+input_display_draw_screenspace :: proc() {
+    r_push_transform(window.screenspace_transform)
+    
     render_input_key :: proc(key: Button_State, rect: Rect, lit_color: Color) {
         display_color := key.is_down ? lit_color : color_dark_gray
         r_draw_layout_rect(&window.renderer.quad_geometry, rect, .BOTTOM_RIGHT, display_color, builtin_texture(.WHITE))

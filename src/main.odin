@@ -7,6 +7,7 @@ import "core:container/queue"
 import "core:fmt"
 import "core:hash"
 import "core:log"
+import "core:os"
 import "core:strings"
 import "core:math/linalg"
 import "core:mem"
@@ -94,14 +95,25 @@ memory_init :: proc() -> runtime.Allocator_Error {
 
 
 main :: proc() {
+    _program_start_tsc = sdl.GetPerformanceCounter()
+
+    for arg in os.args {
+        if arg == "--disable-raw-input" {
+            app.disable_raw_input = true
+        }
+        if arg == "--gen-lua-docs" {
+            lua_generate_docs()
+            return
+        }
+    }
+
+    // note(isak): crash handler reruns the process, but doesn't forward the arguments we first launched with
     when #config(WITH_CRASH_HANDLER, false) {
         if !crash_handler_is_game_process() {
             crash_handler_run()
             return
         }
     }
-
-    _program_start_tsc = sdl.GetPerformanceCounter()
 
     if memory_init() != .None {
         panic("memory_init :: error")

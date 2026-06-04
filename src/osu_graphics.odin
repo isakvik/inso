@@ -233,6 +233,8 @@ Drawable_Flag :: enum u32 {
     FADE_IN,             // note(isak): fades alpha from 0 to 1 over the first 40% of the drawable's lifetime (capped at 400ms). set on preempt-phase drawables so they fade in using baked timing, not live hitobject preempt.
 }
 
+Drawable_Handle :: slotmap.Handle
+
 // note(isak): graphical entity that is pushed to the renderer
 Drawable :: struct {
     id: int,
@@ -373,8 +375,6 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
 
 //////////////////////////////////////////////////////
 // note(isak): drawable api
-
-Drawable_Handle :: slotmap.Handle
 
 drawable_new :: proc(d: Drawable) -> Drawable_Handle {
     d := d

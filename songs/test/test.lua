@@ -1,5 +1,6 @@
 
 local rand = load_file("rand.lua")
+local width, height = 0, 0
 
 -- missing thoughts (drawable):
 -- drawable layer: should be required argument, probably
@@ -26,8 +27,19 @@ local rand = load_file("rand.lua")
 
 
 function on_init()
+
+    width, height = Window.get_size()
+    print("width: " .. width .. "| height: " .. height)
+    
+    Window.set_size(1280, 720)
+    width, height = 1280, 720
+    Window.set_transparency(1.0f)
+    posx, posy = Window.get_pos()
+    print("posx: " .. posx .. "| posy: " .. posy)
+    print("temp: ")
+
     a = Animation.new()
-        :color(0, 1, Color.rgb(255,0,0), Color.rgb(0,0,255))
+        :color(0, 1, Color.rgb(255, 0, 0), Color.rgb(0,0,255))
         :scale(0, 1, 1,1, 8,8, Tween.CUBIC_OUT)
         :rotate(0, 1, 0, 999999)
         :texture(2000, 3000, "nonexisting.jpg") -- throws error, but defaults to white pixel
@@ -87,17 +99,17 @@ function on_init()
     custom_hitright = custom_right:clone()
         :set_animation(anim_hitright)
     
-    for i, hobj in ipairs(Hitobject.get_in_range_ms(0, 30000)) do
-        hobj:clear_drawables()
-        hobj:add_element_for_phase(Phase.PREEMPT, custom_left)
-        hobj:add_element_for_phase(Phase.PREEMPT, custom_right)
-        hobj:add_element_for_phase(Phase.POSTEMPT, custom_hitleft)
-        hobj:add_element_for_phase(Phase.POSTEMPT, custom_hitright)
+    -- for i, hobj in ipairs(Hitobject.get_in_range_ms(0, 30000)) do
+    --     hobj:clear_drawables()
+    --     hobj:add_element_for_phase(Phase.PREEMPT, custom_left)
+    --     hobj:add_element_for_phase(Phase.PREEMPT, custom_right)
+    --     hobj:add_element_for_phase(Phase.POSTEMPT, custom_hitleft)
+    --     hobj:add_element_for_phase(Phase.POSTEMPT, custom_hitright)
         
-        hobj:add_element_for_phase(Phase.HIT, el)
-        hobj:set_hit_animation_length(400)
-        hobj:hide_combo_numbers()
-    end 
+    --     hobj:add_element_for_phase(Phase.HIT, el)
+    --     hobj:set_hit_animation_length(400)
+    --     hobj:hide_combo_numbers()
+    -- end 
     
     
     register_global_event("hehe", function()
@@ -107,21 +119,45 @@ function on_init()
     end)
 end
 
-function on_update(time_ms)
-    for ii, hobj in ipairs(Hitobject.get_visible()) do
-        i = hobj:get_index()
-        
-        x, y = hobj:get_pos()
-        x = x + math.cos((time_ms*i*0.001) / 1000 + i*0.1)* i/10
-        y = y + math.sin((time_ms*i*0.001) / 1000 + i*0.1)* i/10
-        
-        hobj:set_pos(x,y)
-        --table[i]:set_pos(x,y)
+    new_w = 500
+    new_h = 300
 
-        -- hobj:set_cs(math.cos(time_ms*(0.003+i*0.000005))*2 + 3)
-    end
+function on_update(time_ms)
+    -- for ii, hobj in ipairs(Hitobject.get_visible()) do
+    --     i = hobj:get_index()
+        
+    --     x, y = hobj:get_pos()
+    --     x = x + math.cos((time_ms*i*0.001) / 1000 + i*0.1)* i/10
+    --     y = y + math.sin((time_ms*i*0.001) / 1000 + i*0.1)* i/10
+        
+    --     hobj:set_pos(x,y)
+    --     --table[i]:set_pos(x,y)
+
+    --     -- hobj:set_cs(math.cos(time_ms*(0.003+i*0.000005))*2 + 3)
+    -- end
     
-    Playfield.set_rotation(math.sin(time_ms / 3000) * 0.1)
+    -- Playfield.set_rotation(math.sin(time_ms / 3000) * 0.1)
+    tempa, tempb = Window.get_size()
+    print(tempa .."|" .. tempb .. " | " .. new_h .. " | " .. height)
+
+    -- if new_w < width and not(new_w - 1 >= width) then  
+    --     Window.set_size(width - 1, height)    
+    --     width = width - 1
+    -- elseif new_w > width and not(new_w + 1 <= width) then
+    --     Window.set_size(width + 1, height)    
+    --     width = width + 1
+    -- else
+    --     new_w = math.random(1, 160) * 10
+    -- end
+    -- if new_h < height and not(new_h - 1 >= height) then
+    --     Window.set_size(width, height - 1)  
+    --     height = height - 1
+    -- elseif new_h > height and not(new_h + 1 <= height) then
+    --     Window.set_size(width, height + 1)  
+    --     height = height + 1
+    -- else
+    --     new_h = math.random(1, 100) * 10
+    -- end
 end
 
 --function on_beat(beat)

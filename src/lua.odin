@@ -85,6 +85,7 @@ Lua_Class_Type :: enum {
     COLOR,
     BEATMAP,
     PLAYFIELD,
+    WINDOW,
 }
 
 Lua_Class :: struct {
@@ -135,6 +136,10 @@ lua_classes: [Lua_Class_Type]Lua_Class = {
     .PLAYFIELD = {
         name            = "Playfield",
         static_funcs    = luaapi_playfield_static_funcs,
+    },
+    .WINDOW = {
+        name            = "Window",
+        static_funcs    = luaapi_window_static_funcs,
     },
 }
 
@@ -2041,5 +2046,54 @@ luaapi_shader_set_vec4 :: proc "c" (L: ^lua.State) -> i32 {
     vals := [4]f32{x, y, z, w}
     gl.NamedBufferSubData(window.user_param_buffer.id,
         index * size_of([4]f32), size_of([4]f32), &vals)
+    return 0
+}
+
+//////////////////////////////////////////////////////
+// note(Jacky): Windows API
+
+@(private="file")
+luaapi_window_static_funcs := []lua.L_Reg {
+  { "get_size", luaapi_window_get_size },
+  { "get_pos", luaapi_window_get_pos },
+  { "set_size", luaapi_window_set_size },
+  { "set_pos", luaapi_window_set_size },
+  { "set_transparency", luaapi_window_set_transparency },
+  { nil, nil },
+}
+
+luaapi_window_get_size :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    lua.pushnumber(L, lua.Number(window.rect.w))
+    lua.pushnumber(L, lua.Number(window.rect.h))
+    return 2
+}
+
+luaapi_window_get_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    lua.pushnumber(L, lua.Number(window.rect.x))
+    lua.pushnumber(L, lua.Number(window.rect.y))
+    return 2
+}
+
+luaapi_window_set_size :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    width, heigth     := lua_number(1), lua_number(2)
+    sdl.SetWindowSize(window.handle, i32(width), i32(heigth))
+    return 0
+}
+
+luaapi_window_set_transparency :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    transparency     := lua_number(1)
+    sdl.SetWindowOpacity(window.handle, f32(transparency))
+    return 0
+}
+
+luaapi_window_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    x, y     := lua_number(1), lua_number(2)
+    window.rect.x = f32(x)
+    window.rect.y = f32(y)
     return 0
 }

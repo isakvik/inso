@@ -478,7 +478,8 @@ Command_Header :: struct {
 }
 
 Command_Clear :: struct {
-    color: Color
+    color: Color,
+    depth_only: bool
 }
 
 Command_Push_Transform :: struct {
@@ -572,9 +573,9 @@ _command_consume :: proc(cmd_queue: ^queue.Queue(u8), $T: typeid) -> ^T {
 //////////////////////////////////////////////////////
 // note(isak): core renderer api
 
-r_clear :: proc(color: Color = color_black) {
+r_clear :: proc(color: Color = color_black, depth_only: bool = false) {
     window.renderer.new_draw_on_next_push = true
-    command_push_clear({ color })
+    command_push_clear({ color, depth_only })
 }
 
 r_push_draw :: proc(index_offset: u32, index_count: i32, instance_count: i32 = 1, base_instance: u32 = 0) {
@@ -826,11 +827,19 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 case .CLEAR: {
                     cmd := _command_consume(&command_queue, Command_Clear)
                     color := color_to_vec(cmd.color)
-                    gl.ClearColor(color.r, color.g, color.b, color.a)
-                    gl.ClearDepth(1.0)
-                    gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-                    if (trace) { fmt.println("  clear") }
+                    if cmd.depth_only {
+                        gl.ClearDepth(f64(color.a))
+                        gl.Clear(gl.DEPTH_BUFFER_BIT)
+                    } else {
+                        gl.ClearColor(color.r, color.g, color.b, color.a)
+                        gl.ClearDepth(1.0)
+                        gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+                    }
+
+                    if (trace) { 
+                        fmt.println("  clear depth" if cmd.depth_only else "  clear") 
+                    }
                 }
                 case .PUSH_TRANSFORM: {
                     cmd := _command_consume(&command_queue, Command_Push_Transform)

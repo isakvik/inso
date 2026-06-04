@@ -119,6 +119,7 @@ Notosu_Section_Header_Types :: enum {
     GENERAL,
     SHADERS,
     BUFFERS,
+    HIT_OBJECT_EXTRA_BITS,
 }
 
 notosu_section_headers := []string{
@@ -126,6 +127,7 @@ notosu_section_headers := []string{
     "[General]",
     "[Shaders]",
     "[Buffers]",
+    "[HitObjectExtraBits]",
 }
 
 Osu_Section_Header_Types :: enum {
@@ -226,6 +228,7 @@ mapset_open_for_editing :: proc(path: string, osu_filename: string = "") -> (^Ma
     mapset.shader_blend_modes    = make([dynamic]Blend_Mode, 0, 8)
     
     mapset_walk_directory(mapset, path)
+    mapset_apply_hitobject_extra_bits(mapset)
 
     mapset.watch = directory_watch_init(path)
     
@@ -479,12 +482,57 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
             }
             mapset_load_buffer_entry(mapset, buf_params.name, buf_params.source, buf_params.size)
 
+        case .HIT_OBJECT_EXTRA_BITS:
+            // note(isak): each row is "<hitobject time>,<bits>". bits may be decimal, hex (0x) or binary (0b);
+            // strconv.parse_u64 infers the base from the prefix. applied to hitobjects post-walk.
+            result.hitobject_extra_bits = make([dynamic]Hitobject_Extra_Bits, 0, len(lines) - 1, context.allocator)
+            for i in 1..<len(lines) {
+                line := lines[i]
+                time_str, bits_str := get_key_value(line, ',')
+                if len(bits_str) == 0 {
+                    log.errorf("notosu HitObjectExtraBits: malformed line '{}', expected '<time>,<bits>'", line)
+                    notify_warn("notosu HitObjectExtraBits: malformed line '%s'", line)
+                    continue
+                }
+
+                time_ms, time_ok := strconv.parse_int(strings.trim_space(time_str))
+                bits, bits_ok := strconv.parse_u64(strings.trim_space(bits_str))
+                if !time_ok || !bits_ok {
+                    log.errorf("notosu HitObjectExtraBits: couldn't parse line '{}'", line)
+                    notify_warn("notosu HitObjectExtraBits: couldn't parse line '%s'", line)
+                    continue
+                }
+
+                append(&result.hitobject_extra_bits, Hitobject_Extra_Bits{time_ms, bits})
+            }
+
         case:
             unreachable()
         }
     }
 
     return result
+}
+
+// note(isak): because of the lua side API, we only support up to 53 bits, although storing them is no problem
+EXTRA_BITS_HIGHEST_SAFE_VALUE : u64 : 0x001FFFFFFFFFFFFF
+
+// note(isak): apply parsed [HitObjectExtraBits] rows onto hitobjects by their start time. run after the full
+// mapset walk so both the .osu and .notosu are guaranteed parsed.
+mapset_apply_hitobject_extra_bits :: proc(mapset: ^Mapset) {
+    for entry in mapset.notosu_map.hitobject_extra_bits {
+        index, found := mapset.hitobject_index_by_ms[entry.time_ms]
+        if !found {
+            log.warnf("notosu HitObjectExtraBits: no hitobject at time {}", entry.time_ms)
+            notify_warn("notosu HitObjectExtraBits: no hitobject at time %d", entry.time_ms)
+            continue
+        }
+        if entry.bits > EXTRA_BITS_HIGHEST_SAFE_VALUE {
+            log.warnf("notosu HitObjectExtraBits: more than 53 extra bits not supported")
+            notify_warn("notosu HitObjectExtraBits: more than 53 extra bits not supported")
+        }
+        mapset.osu_map.hitobjects[index].extra_bits = entry.bits
+    }
 }
 
 mapset_reinit_custom_shaders :: proc(mapset: ^Mapset) {
@@ -908,8 +956,9 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
             
             slider.tick_interval_ms = 0 if disable_ticks else 
                 uninherited_tp.beat_length / osu_map.diff_slider_tickrate
-            slider.tick_count = 0 if disable_ticks else 
+            slider.tick_count = 0 if disable_ticks else
                 int((slider.duration_ms - SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS) / slider.tick_interval_ms)
+            slider.tick_hits = make([]bool, slider.tick_count, context.allocator)
         }
         
         // note(isak): combo colors and number.

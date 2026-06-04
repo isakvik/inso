@@ -140,6 +140,7 @@ Hitobject :: struct {
     timing_point_index_uninherited: int,
     timing_point_index_inherited: int,
     hitsound_flags: byte,
+    extra_bits: u64, // note(isak): notosu HitObjectExtraBits - script-defined flags for filtering hitobjects
     combo_index: int, // note(isak): 1-indexed combo within the current map
     combo_number: u16,
     combo_color_skip_offset: u8, // note(isak): how many combo colors to skip on new combo
@@ -183,11 +184,15 @@ Slider_State :: struct {
     path_travel_count, checked_repeats_count, checked_path_ticks_count: int,
     hit_judgement_count: int,
 
+    // note(isak): per geometric tick (1..tick_count), whether it's been hit this traversal. hit ticks stop
+    // drawing (collected); missed ticks stay on the path like osu!. cleared when a traversal flips on a repeat
+    tick_hits: []bool,
+
     contingency_window_scorepoint_count: int,
     contingency_window_scorepoints: bit_set[0..<64; u64], // note(isak): ticks are 0, repeats are 1
 
     slide_sound: slotmap.Handle,
-    whistle_sound: slotmap.Handle, // note(isak): loops alongside slide_sound when the slider has a whistle
+    whistle_sound: slotmap.Handle,
 }
 
 // note(isak): per-edge hitsound for a slider, parsed from edgeSounds/edgeSets. one per edge: index 0 is the
@@ -395,8 +400,17 @@ Notosu_Map :: struct {
     lua_entry_point: string,
     bg_pipeline_name: string,
     double_mouse: bool,
-    
+
     shaders: []Shader,
+
+    // note(isak): parsed [HitObjectExtraBits] rows, applied to hitobjects after the whole mapset is walked
+    // (the .osu and .notosu files can be parsed in either order)
+    hitobject_extra_bits: [dynamic]Hitobject_Extra_Bits,
+}
+
+Hitobject_Extra_Bits :: struct {
+    time_ms: int,
+    bits:    u64,
 }
 
 Osu_Map :: struct {

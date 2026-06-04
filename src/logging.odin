@@ -4,12 +4,7 @@ import "core:log"
 import os "core:os"
 
 // note(isak): release builds are packaged with -subsystem:windows (see package.bat), so there's
-// no attached console and anything printed to stdout/stderr is lost. when we can't rely on a
-// console we write logs to a file instead, so mappers and crash reports have something to read.
-// debug builds keep the colored console logger.
-//
-// the default follows the build mode (release -> file, debug -> console), but it can be forced
-// either way at build time with -define:LOG_TO_FILE=true / -define:LOG_TO_FILE=false
+// no attached console and anything printed to stdout/stderr is lost
 LOG_TO_FILE   :: #config(LOG_TO_FILE, !ODIN_DEBUG)
 LOG_FILE_PATH :: "notosu.log"
 

@@ -7,6 +7,8 @@ bugs
 
 features
     custom sliderfollowcircle radius
+    slider snaking out
+    mine elements
 
 scripting
     Animated_Drawable - pass a spritesheet
@@ -72,7 +74,6 @@ beta hardening
 YEAST mode
     screen capture must work
     parse and apply settings from osu install (specify with path?), to allow warmup
-    open specific map with command
-        click circle to start? network sync?
-    
-    local networking for fun and video games
+
+    thepoon request:
+    open specific map with keyboard input (enter, anything that works with stable)

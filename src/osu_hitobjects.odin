@@ -295,7 +295,7 @@ slider_on_click :: proc(hobj: ^Hitobject) {
 slider_path_pos_at :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
     path := &game.beatmap.slider_paths[hobj.slider_path_index]
 
-    return path_calculate_position_at(hobj, map_time, path)
+    return path_calculate_position_at(hobj, map_time, path) + hobj.script_pos_translation
 }
 
 // note(isak): direction the sliderball is travelling at map_time, in the renderer's angle convention
@@ -367,9 +367,10 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
     // end of the timing window. we store them and process them in order once the timing window has passed.
     if .HEAD_CONTINGENCY_WINDOW_PASSED in slider.flags && slider.contingency_window_scorepoint_count > 0 {
         if .HEAD_HIT in slider.flags {
-            // note(isak): contingency scorepoints are the slider's earliest, so the repeats among them are
-            // edges 1, 2, ... in order. play each one's own sound: ticks slidertick, repeats their edge sound
+            // note(isak): contingency scorepoints are the slider's earliest (traversal 0, forward), so repeats
+            // are edges 1, 2, ... and ticks are geometric ticks 1, 2, ... in order. mark hit ticks so they pop.
             contingency_repeat_edge := 1
+            contingency_tick_index := 1
             for i in 0..<slider.contingency_window_scorepoint_count {
                 is_repeat := slider.contingency_window_scorepoints & {i} > {}
                 if is_repeat {
@@ -380,6 +381,8 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
                 } else {
                     judgement_new(hobj, .SLIDER_SMALL_SCOREPOINT, 0)
                     slider.hit_judgement_count += 1
+                    slider.tick_hits[contingency_tick_index - 1] = true
+                    contingency_tick_index += 1
                     sample_play(&game.active_skin.hitsounds[sample_set][.SLIDERTICK], volume)
                 }
             }
@@ -428,6 +431,8 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
             if is_tracking && .HEAD_CHECKED in slider.flags {
                 judgement_new(hobj, .SLIDER_SMALL_SCOREPOINT, 0)
                 slider.hit_judgement_count += 1
+                tick_geometric := heading_back ? slider.tick_count + 1 - slider.checked_path_ticks_count : slider.checked_path_ticks_count
+                slider.tick_hits[tick_geometric - 1] = true
                 sample_play(&game.active_skin.hitsounds[sample_set][.SLIDERTICK], volume)
             } else if .HEAD_CONTINGENCY_WINDOW_PASSED not_in slider.flags {
                 if slider.contingency_window_scorepoint_count >= 64 {
@@ -443,7 +448,9 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
         if slider_path_time_at >= slider.duration_ms && slider.checked_repeats_count < (slider.path_travel_count - 1) {
             slider.checked_repeats_count += 1
             slider.checked_path_ticks_count = 0
-            
+            // note(isak): ticks reappear each traversal, so clear hit state for the new pass
+            for &hit in slider.tick_hits do hit = false
+
             if is_tracking && .HEAD_CHECKED in slider.flags  {
                 judgement_new(hobj, .SLIDER_LARGE_SCOREPOINT, 0)
                 slider.hit_judgement_count += 1

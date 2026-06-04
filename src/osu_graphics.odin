@@ -825,24 +825,17 @@ render_slider_quads :: proc(hobj: ^Hitobject, path: ^Slider_Path, map_time: f64)
     
     hobj_pos := hitobject_pos(hobj)
     end_pos  := path.end_pos + hobj.script_pos_translation
-    slider_path_time_at := (map_time - hobj.start_time_ms) - f64(slider.checked_repeats_count) * slider.duration_ms
 
-    // note(isak): slider ticks
-    heading_back := slider.checked_repeats_count % 2 == 1
-    first_tick_time := heading_back \
-        ? slider.duration_ms - slider.tick_interval_ms * f64(slider.tick_count) \
-        : slider.tick_interval_ms
-
-    ticks_to_draw := slider.tick_count
-    for ticks_to_draw > 0 && slider_path_time_at <= first_tick_time + f64(ticks_to_draw - 1) * slider.tick_interval_ms {
-        tick_size := element_scale * game.active_skin.elements[.SLIDER_TICK].metrics
-        forward_tick_index := heading_back ? (slider.tick_count + 1 - ticks_to_draw) : ticks_to_draw
-        tick_pos := slider_path_pos_at(hobj, hobj.start_time_ms + f64(forward_tick_index) * slider.tick_interval_ms)
+    // note(isak): slider ticks are drawn until hit. we draw every geometric tick whose hit bit is clear, rather
+    // than culling by ball position, so missed ticks stay on the path like osu! (tick_hits resets per traversal,
+    // so they reappear on repeats). geometric positions are the same every traversal, taken from the first pass.
+    tick_size := element_scale * game.active_skin.elements[.SLIDER_TICK].metrics
+    for tick_index in 1..=slider.tick_count {
+        if slider.tick_hits[tick_index - 1] do continue
+        tick_pos := slider_path_pos_at(hobj, hobj.start_time_ms + f64(tick_index) * slider.tick_interval_ms)
         tick_rect := rect_at_pos(tick_pos, tick_size)
         r_draw_layout_rect(&window.renderer.quad_geometry, tick_rect, .CENTER, color_white,
             skin_texture(.SLIDER_TICK))
-
-        ticks_to_draw -= 1
     }
     
     

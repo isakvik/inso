@@ -740,6 +740,8 @@ luaapi_hitobject_static_funcs := []lua.L_Reg {
   { "get_at_ms", luaapi_hitobject_get_at_ms },
   { "get_in_range_ms", luaapi_hitobject_get_in_range_ms },
   { "get_visible", luaapi_hitobject_get_visible },
+  { "get_with_all_bits", luaapi_hitobject_get_with_all_bits },
+  { "get_with_any_bits", luaapi_hitobject_get_with_any_bits },
   { nil, nil },
 }
 
@@ -751,6 +753,9 @@ luaapi_hitobject_instance_funcs := []lua.L_Reg {
   { "hide_combo_numbers", luaapi_hitobject_hide_combo_numbers },
   { "unhide_combo_numbers", luaapi_hitobject_unhide_combo_numbers },
   { "get_index", luaapi_hitobject_get_index },
+  { "get_extra_bits", luaapi_hitobject_get_extra_bits },
+  { "has_all_bits", luaapi_hitobject_has_all_bits },
+  { "has_any_bits", luaapi_hitobject_has_any_bits },
   { "get_pos", luaapi_hitobject_get_pos },
   { "set_pos", luaapi_hitobject_set_pos },
   { "get_start_time", luaapi_hitobject_get_start_time },
@@ -768,6 +773,14 @@ luaapi_hitobject_instance_funcs := []lua.L_Reg {
   { "set_ar", luaapi_hitobject_set_ar },
   { "get_cs", luaapi_hitobject_get_cs },
   { "set_cs", luaapi_hitobject_set_cs },
+
+  { "get_slider_distance", luaapi_hitobject_get_slider_distance },
+  { "get_slider_velocity", luaapi_hitobject_get_slider_velocity },
+  { "get_slider_duration_ms", luaapi_hitobject_get_slider_duration_ms },
+  { "get_slider_ball_pos", luaapi_hitobject_get_slider_ball_pos },
+  { "get_slider_ball_pos_at", luaapi_hitobject_get_slider_ball_pos_at },
+  { "get_slider_ball_angle", luaapi_hitobject_get_slider_ball_angle },
+  { "get_slider_ball_angle_at", luaapi_hitobject_get_slider_ball_angle_at },
   { nil, nil },
 }
 
@@ -834,8 +847,40 @@ luaapi_hitobject_get_visible :: proc "c" (L: ^lua.State) -> (result: i32) {
     return 1
 }
 
+// note(isak): collect handles for every hitobject matching the extra-bits mask. require_all means every bit
+// in the mask must be set (bits & mask == mask); otherwise any shared bit is enough (bits & mask != 0). a zero
+// mask returns an empty list - no criterion was given - rather than matching everything.
+_luaapi_hitobject_collect_by_bits :: proc "c" (L: ^lua.State, require_all: bool) -> i32 {
+    context = lua_beatmap.odin_context
+    mask := u64(lua_int(1))
+
+    lua.createtable(L, 0, 0)
+
+    table_i: i32 = 1
+    if mask != 0 {
+        for hobj, i in game.beatmap.hitobjects {
+            matched := (hobj.extra_bits & mask) == mask if require_all else (hobj.extra_bits & mask) != 0
+            if !matched do continue
+            lua_create_userdata(L, i, lua_classes[.HITOBJECT].name)
+            lua.rawseti(L, -2, table_i)
+            table_i += 1
+        }
+    }
+    return 1
+}
+
+// note(isak): get_with_all_bits(mask) - hitobjects with every bit in mask set
+luaapi_hitobject_get_with_all_bits :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_hitobject_collect_by_bits(L, require_all = true)
+}
+
+// note(isak): get_with_any_bits(mask) - hitobjects with at least one bit in mask set
+luaapi_hitobject_get_with_any_bits :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_hitobject_collect_by_bits(L, require_all = false)
+}
+
 _luaapi_hitobject_op :: proc "c" (
-    L: ^lua.State, 
+    L: ^lua.State,
     op: proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32
 ) -> (result: i32) {
     handle := cast(^int)lua.L_checkudata(L, 1, lua_classes[.HITOBJECT].name)
@@ -889,6 +934,33 @@ luaapi_hitobject_get_index :: proc "c" (L: ^lua.State) -> (result: i32) {
     })
 }
 
+luaapi_hitobject_get_extra_bits :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        lua.pushinteger(L, lua.Integer(hobj.extra_bits))
+        return 1
+    })
+}
+
+// note(isak): has_all_bits(mask) - true if every bit in mask is set on this object
+luaapi_hitobject_has_all_bits :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        context = lua_beatmap.odin_context
+        mask := u64(lua_int(2))
+        lua.pushboolean(L, b32((hobj.extra_bits & mask) == mask))
+        return 1
+    })
+}
+
+// note(isak): has_any_bits(mask) - true if at least one bit in mask is set on this object
+luaapi_hitobject_has_any_bits :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        context = lua_beatmap.odin_context
+        mask := u64(lua_int(2))
+        lua.pushboolean(L, b32((hobj.extra_bits & mask) != 0))
+        return 1
+    })
+}
+
 luaapi_hitobject_get_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         lua.pushnumber(L, lua.Number(hobj.pos.x))
@@ -931,6 +1003,82 @@ luaapi_hitobject_set_end_time :: proc "c" (L: ^lua.State) -> (result: i32) {
     })
 }
 
+luaapi_hitobject_get_slider_distance :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        distance := hobj.slider_state.distance if hobj.type == .SLIDER else 0
+        lua.pushnumber(L, lua.Number(distance))
+        return 1
+    })
+}
+
+luaapi_hitobject_get_slider_velocity :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        velocity := hobj.slider_state.velocity if hobj.type == .SLIDER else 0
+        lua.pushnumber(L, lua.Number(velocity))
+        return 1
+    })
+}
+
+luaapi_hitobject_get_slider_duration_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        duration := hobj.slider_state.duration_ms if hobj.type == .SLIDER else 0
+        lua.pushnumber(L, lua.Number(duration))
+        return 1
+    })
+}
+
+luaapi_hitobject_get_slider_ball_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        pos := hobj.pos
+        if hobj.type == .SLIDER {
+            context = lua_beatmap.odin_context
+            path := game.beatmap.slider_paths[hobj.slider_path_index]
+            pos = path_calculate_position_at(hobj, beatmap_music_time_ms(&game.beatmap), &path)
+        }
+        lua.pushnumber(L, lua.Number(pos.x))
+        lua.pushnumber(L, lua.Number(pos.y))
+        return 2
+    })
+}
+
+luaapi_hitobject_get_slider_ball_pos_at :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        pos := hobj.pos
+        if hobj.type == .SLIDER {
+            context = lua_beatmap.odin_context
+            path := game.beatmap.slider_paths[hobj.slider_path_index]
+            pos = path_calculate_position_at(hobj, f64(lua_number(2)), &path)
+        }
+        lua.pushnumber(L, lua.Number(pos.x))
+        lua.pushnumber(L, lua.Number(pos.y))
+        return 2
+    })
+}
+
+luaapi_hitobject_get_slider_ball_angle :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        angle: f32
+        if hobj.type == .SLIDER {
+            context = lua_beatmap.odin_context
+            path := game.beatmap.slider_paths[hobj.slider_path_index]
+            angle = slider_ball_angle_at(hobj, beatmap_music_time_ms(&game.beatmap))
+        }
+        lua.pushnumber(L, lua.Number(angle))
+        return 1
+    })
+}
+luaapi_hitobject_get_slider_ball_angle_at :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        angle: f32
+        if hobj.type == .SLIDER {
+            context = lua_beatmap.odin_context
+            path := game.beatmap.slider_paths[hobj.slider_path_index]
+            angle = slider_ball_angle_at(hobj, f64(lua_number(2)))
+        }
+        lua.pushnumber(L, lua.Number(angle))
+        return 1
+    })
+}
 
 luaapi_hitobject_get_phase :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {

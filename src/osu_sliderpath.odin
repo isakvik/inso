@@ -329,7 +329,7 @@ path_calculate_position_at :: proc(hobj: ^Hitobject, time_at: f64, path: ^Slider
     } else if path.type == .LINEAR {
         pos_at = straight_calculate_position_at(hobj, time_at, path)
     }
-    return pos_at + hobj.script_pos_translation
+    return pos_at
 }
 
 curve_calculate_position_at :: proc(hobj: ^Hitobject, time_at: f64, path: ^Slider_Path) -> (point: vec2) {

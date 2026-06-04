@@ -17,3 +17,5 @@ Source: Crate1.gltf
 
 [[wave_data]]
 Size: 4096
+
+[HitObjectExtraBits]

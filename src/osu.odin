@@ -5,6 +5,7 @@ import sb "swap_buffer"
 import "slotmap"
 
 import "core:log"
+import "core:math"
 import "core:math/linalg"
 import vmem "core:mem/virtual"
 import "core:strings"
@@ -15,6 +16,10 @@ import sdl "vendor:sdl3"
 PLAYFIELD_SIZE_OSUPX :: f32(512)
 OSU_SLIDER_CURVE_POINTS_SEPARATION :: f32(2.5)
 OSU_HIT_ANIMATION_LENGTH :: 250
+
+NOTELOCK_SHAKE_DURATION_MS :: f64(120)
+NOTELOCK_SHAKE_AMPLITUDE_OSUPX :: f32(8)
+NOTELOCK_SHAKE_OSCILLATIONS :: f64(3)
 
 // note(isak): osu!'s actual play area is 512x384 within the 512x512 osu!px coordinate space,
 // with a small vertical offset for the HUD. these constants define that base placement and
@@ -28,13 +33,26 @@ game: struct {
     active_mapset: ^Mapset,
     active_notosu_map: ^Notosu_Map,
     active_map: ^Osu_Map,
-    active_map_ref: Map_Reference,
     active_skin: ^Skin,
     
     mode: Game_Mode,
     
     user_config: User_Configuration,
     
+    input: struct {
+        k1, k2, m1, m2: Button_State,
+        k1_key, k2_key: sdl.Scancode, //TODO(yokes): add keybinding menu
+
+        mouse_keys_enabled: bool,
+        mouse_pos: vec2,
+
+        mouse_secondary_pos: vec2,
+        ms1, ms2: Button_State,
+
+        available_presses: int,
+        last_hit_at, last_valid_press_at: f64,
+    },
+
     // note(isak): map game logic fields
     
     beatmap: Beatmap,
@@ -48,17 +66,7 @@ game: struct {
     // note(isak): map game view fields
     
     ui_timeline: UI_Timeline,
-    
-    input: struct {
-        k1, k2, m1, m2: Button_State,
-        k1_key, k2_key: sdl.Scancode, //TODO(yokes): add keybinding menu
-
-        mouse_keys_enabled: bool,
-        mouse_pos: vec2,
-
-        available_presses: int,
-        last_hit_at, last_valid_press_at: f64,
-    },
+    hit_error_bar: Hit_Error_Bar,
 
     // note(isak): managed sounds to be used with the game_sound_* api. we create BASS streams 
     // from samples, and then BASS handles the rest - not quite sure if we can further reuse sound data 
@@ -132,14 +140,17 @@ Hitobject :: struct {
     timing_point_index_uninherited: int,
     timing_point_index_inherited: int,
     hitsound_flags: byte,
+    extra_bits: u64, // note(isak): notosu HitObjectExtraBits - script-defined flags for filtering hitobjects
     combo_index: int, // note(isak): 1-indexed combo within the current map
     combo_number: u16,
     combo_color_skip_offset: u8, // note(isak): how many combo colors to skip on new combo
 
     slider_path_index: int,
     slider_state: Slider_State,
+    slider_edge_hitsounds: []Slider_Edge_Hitsound,
 
     phase: Hitobject_Phase,
+    notelock_shake_at_ms: f64,
     custom_preempt_ms: f64,          // note(isak): per-object approach time override. 0 = use global
     custom_radius_osupx: f32,        // note(isak): per-object circle size override. 0 = use global
     deferred_activation_index: int,  // note(isak): index+1 into beatmap.deferred_activations. 0 = not in list
@@ -156,12 +167,13 @@ Slider_Flag :: enum {
     TRACKING,
     HEAD_CHECKED,
     HEAD_HIT,
+    HEAD_CONTINGENCY_WINDOW_PASSED,
     END_TRACKED,
 }
 
 Slider_State :: struct {
     flags: Slider_Flags,
-    down_key: int, // 0 = missed head or free (any key), 1 = k1 hit head, 2 = k2 hit head
+    down_key: int, // note(isak): 0 = missed head or free (any key), 1 = k1 hit head, 2 = k2 hit head
 
     velocity: f64,
     distance, duration_ms: f64,
@@ -172,10 +184,24 @@ Slider_State :: struct {
     path_travel_count, checked_repeats_count, checked_path_ticks_count: int,
     hit_judgement_count: int,
 
+    // note(isak): per geometric tick (1..tick_count), whether it's been hit this traversal. hit ticks stop
+    // drawing (collected); missed ticks stay on the path like osu!. cleared when a traversal flips on a repeat
+    tick_hits: []bool,
+
     contingency_window_scorepoint_count: int,
     contingency_window_scorepoints: bit_set[0..<64; u64], // note(isak): ticks are 0, repeats are 1
 
     slide_sound: slotmap.Handle,
+    whistle_sound: slotmap.Handle,
+}
+
+// note(isak): per-edge hitsound for a slider, parsed from edgeSounds/edgeSets. one per edge: index 0 is the
+// head, 1..path_travel_count-1 are the repeats, path_travel_count is the tail. sample sets use osu's raw
+// values (0 = auto/inherit timing point, 1 = normal, 2 = soft, 3 = drum), resolved at playback.
+Slider_Edge_Hitsound :: struct {
+    hitsound:     u8, // osu bitmask: whistle (2), finish (4), clap (8); normal is always implied
+    normal_set:   u8,
+    addition_set: u8,
 }
 
 hitobject_pos :: proc(hobj: ^Hitobject) -> vec2 {
@@ -185,11 +211,33 @@ hitobject_pos :: proc(hobj: ^Hitobject) -> vec2 {
 hitobject_tail_pos :: proc(hobj: ^Hitobject) -> vec2 {
     path := &game.beatmap.slider_paths[hobj.slider_path_index]
     tail_pos := (path.pos if hobj.slider_state.path_travel_count % 2 == 0 else path.end_pos) + hobj.script_pos_translation
-    return tail_pos + hobj.script_pos_translation
+    return tail_pos
 }
 
 hitobject_duration :: proc(hobj: ^Hitobject) -> (result: f64) {
     return hobj.end_time_ms - hobj.start_time_ms
+}
+
+// note(isak): whether the object's head can still receive a press, which is what notelock keys off. we look
+// at the start time window only, never the end time - so an in-progress slider (head hit, or its head window
+// elapsed) stops blocking the next object, matching osu!. a hit head sits in HOLD so the phase check excludes
+// it; an unhit head stops counting once its late window passes.
+hitobject_head_hittable :: proc(hobj: ^Hitobject, map_time: f64) -> bool {
+    if hobj.phase != .PREEMPT && hobj.phase != .POSTEMPT do return false
+    if hobj.type != .CIRCLE && hobj.type != .SLIDER do return false
+    return map_time <= hobj.start_time_ms + game.beatmap.timing_windows.ok
+}
+
+// note(isak): render-only horizontal offset for the notelock shake. does not affect hit detection
+hitobject_notelock_shake_offset :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
+    if hobj.notelock_shake_at_ms == 0 do return {}
+    t := map_time - hobj.notelock_shake_at_ms
+    if t < 0 || t >= NOTELOCK_SHAKE_DURATION_MS do return {}
+
+    progress := t / NOTELOCK_SHAKE_DURATION_MS
+    envelope := f32(1 - progress)
+    phase := f32(2 * math.PI * NOTELOCK_SHAKE_OSCILLATIONS * progress)
+    return {NOTELOCK_SHAKE_AMPLITUDE_OSUPX * envelope * math.sin(phase), 0}
 }
 
 hitobject_preempt_ms :: proc(hobj: ^Hitobject) -> f64 {
@@ -350,8 +398,19 @@ Judgement :: struct {
 
 Notosu_Map :: struct {
     lua_entry_point: string,
-    shaders: []Shader,
     bg_pipeline_name: string,
+    double_mouse: bool,
+
+    shaders: []Shader,
+
+    // note(isak): parsed [HitObjectExtraBits] rows, applied to hitobjects after the whole mapset is walked
+    // (the .osu and .notosu files can be parsed in either order)
+    hitobject_extra_bits: [dynamic]Hitobject_Extra_Bits,
+}
+
+Hitobject_Extra_Bits :: struct {
+    time_ms: int,
+    bits:    u64,
 }
 
 Osu_Map :: struct {
@@ -442,12 +501,15 @@ osu_on_update :: proc(dt: f64) {
     
     // todo(isak): this really handles a bunch of debug stuff too. fix up the modes and such
     #partial switch game.mode {
-        case .PLAY: handle_play_input_events()
+        case .PLAY: 
+            handle_play_input_events()
+            handle_menu_input_events() // @temp todo(isak): mode switching isn't handled yet
+            
         case .MAIN_MENU: handle_menu_input_events()
     }
     
     map_time := beatmap_music_time_ms(&game.beatmap)
-    visible_hobjs := get_visible_hitobjects(&game.beatmap.visible_hitobject_state, map_time)
+    visible_hobjs := beatmap_get_visible_hitobjects(&game.beatmap, map_time)
     
     // note(isak): handle hitobject phase changes
     for &hobj in visible_hobjs {
@@ -486,32 +548,40 @@ osu_on_update :: proc(dt: f64) {
         if button_is_pressed(game.input.k2) do game.input.available_presses += 1
     }
 
-    if valid_controller_press() {
+    // todo(isak): move input resolution to its own thread. only one resolved note per press for now
+    for valid_controller_press() {
         game.input.last_valid_press_at = map_time
+        consume_controller_press()
 
-        for &hobj, i in visible_hobjs {
-            if hobj.phase != .PREEMPT && hobj.phase != .POSTEMPT {
-                continue
+        front, clicked: ^Hitobject
+        for &hobj in visible_hobjs {
+            if !hitobject_head_hittable(&hobj, map_time) do continue
+            if front == nil do front = &hobj
+            if point_in_circle(game.input.mouse_pos, hitobject_pos(&hobj), hitobject_radius_osupx(&hobj)) {
+                clicked = &hobj
+                break
             }
-            hobj_pos := hitobject_pos(&hobj)
-            if !point_in_circle(game.input.mouse_pos, hobj_pos, hitobject_radius_osupx(&hobj)) {
-                continue
-            }
-            judgement := hitobject_on_click(&hobj)
-            if judgement == .NONE {
-                continue
-            }
+        }
 
-            #partial switch hobj.type {
-            case .CIRCLE:
-                hitobject_emit_phase_transition(&hobj, .HIT)
-                judgement_new_drawable(&hobj)
-            case .SLIDER:
-                hitobject_emit_phase_transition(&hobj, .HOLD)
-            }
+        if clicked == nil do continue
 
-            consume_controller_press()
-            break
+        if clicked != front {
+            clicked.notelock_shake_at_ms = map_time
+            continue
+        }
+
+        judgement := hitobject_on_click(clicked)
+        if judgement == .NONE {
+            clicked.notelock_shake_at_ms = map_time
+            continue
+        }
+
+        #partial switch clicked.type {
+        case .CIRCLE:
+            hitobject_emit_phase_transition(clicked, .HIT)
+            judgement_new_drawable(clicked)
+        case .SLIDER:
+            hitobject_emit_phase_transition(clicked, .HOLD)
         }
     }
 
@@ -524,7 +594,7 @@ osu_on_update :: proc(dt: f64) {
 
     // beatmap render
 
-    r_bind_layer_and_push_current_state(.HITOBJECTS)
+    r_bind_layer_and_push_current_state(.HITOBJECTS, transform = game.playfield_transform)
 
     #reverse for &hobj in visible_hobjs {
         if hobj.start_time_ms - hitobject_preempt_ms(&hobj) <= map_time && map_time <= hobj.end_time_ms {
@@ -541,10 +611,11 @@ osu_on_update :: proc(dt: f64) {
         r_push_transform(game.playfield_transform)
         r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
         
+        shake_offset := hitobject_notelock_shake_offset(&hobj, map_time)
         #reverse for handle in hobj.gfx_handles {
             e := slotmap.get(&game.beatmap.drawables, handle) or_continue
             if .ACTIVE in e.flags {
-                render_drawable(e, map_time, hitobject_pos(&hobj))
+                render_drawable(e, map_time, hitobject_pos(&hobj) + shake_offset)
             }
         }
     }
@@ -560,106 +631,45 @@ osu_on_update :: proc(dt: f64) {
         transform = game.playfield_transform,
         pipeline = {builtin_pipeline_slot(.QUAD)})
     
-    {
-        // playfield border
+    // -- @temp playfield border
+    playfield_border_draw :: proc() {
         cs := game.beatmap.circle_radius_osupx
         pf_outline := Rect{
             -cs, -cs, PLAYFIELD_SIZE_OSUPX+2*cs, (PLAYFIELD_SIZE_OSUPX*3/4)+2*cs
         }
         r_draw_rect_outline(&window.renderer.quad_geometry, pf_outline, with_alpha(color_white, 0.1), 2)
     }
+    playfield_border_draw()
+    // --
     
     // todo(isak): "screens" implementation for determining relevant UI components?
     handle_and_render_timeline()
     
     r_push_transform(window.screenspace_transform)
-    render_input_display()
     
-    cursor_size := 80 * playfield_base_scale
-    cursor_rect: Rect = { f32(mouse.pos.x), f32(mouse.pos.y), cursor_size, cursor_size }
+    hit_error_bar_draw(&game.hit_error_bar)
+    input_display_draw()
+
+    cursor_draw(mouse.pos, skin_texture(.CURSOR))
+    if app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {   
+        cursor_draw(mouse_secondary.pos, skin_texture(.CURSOR))
+    }
+}
+
+cursor_draw :: proc(pos: vec2, tex_index: u32) {
+    cursor_size := 160 * (window.rect.h / 1440) * game.user_config.cursor_size_multiplier
+    cursor_rect: Rect = { f32(pos.x), f32(pos.y), cursor_size, cursor_size }
     r_draw_layout_rect(&window.renderer.quad_geometry, cursor_rect, .CENTER, color_white, 
-        skin_texture(.CURSOR), f32(time_s_since_beginning_of_program()))
+        tex_index, f32(time_s_since_beginning_of_program()))
 }
 
-// note(isak): this function assumes the start times of objects are sorted, but doesn't require end times to be.
-// a pathological case might be a 2B element that stretches from the beginning of the map to the end
-get_visible_hitobjects :: proc(state: ^Visibility_State, time: f64) -> []Hitobject {
-    result: []Hitobject
-    updated_from_index := state.earliest_i
 
-    hitobjects := game.beatmap.hitobjects
-    if len(hitobjects) > 0 {
-        looking_for_finished_objects := true
-        count_until_next_unstarted_hobj: int
-        includes_final_index := 1
-
-        for &hobj, i in hitobjects[state.earliest_i:] {
-            count_until_next_unstarted_hobj = i
-            if time < hitobject_visible_start_time(&hobj) {
-                includes_final_index = 0
-                break
-            }
-            if looking_for_finished_objects {
-                if hitobject_visible_end_time(&hobj) < time {
-                    updated_from_index += 1
-                } else {
-                    looking_for_finished_objects = false
-                }
-            }
-        }
-        state.latest_i = updated_from_index + count_until_next_unstarted_hobj + includes_final_index
-        state.earliest_i = updated_from_index
-        result = hitobjects[state.earliest_i:min(state.latest_i, len(hitobjects))]
-    }
-    return result
+transform_mouse_pos :: proc(pos: vec2) -> vec2 {
+    return transform_point_space(pos,
+        transform_to_mat3(window.screenspace_transform),
+        transform_to_mat3(game.playfield_transform)
+    )
 }
-
-hitobject_on_click :: proc(hobj: ^Hitobject) -> (result: Judgement_Type) {
-    // todo(isak): input timings should be threaded, should be more granular that way during heavy load
-    click_time := beatmap_music_time_ms(&game.beatmap)
-    time_error_ms: f64
-    
-    #partial switch hobj.type {
-    case .CIRCLE, .SLIDER:
-        time_error_ms = click_time - hobj.start_time_ms
-        if abs(time_error_ms) < game.beatmap.timing_windows.marvelous {
-            result = .MARVELOUS
-        } else if abs(time_error_ms) < game.beatmap.timing_windows.good {
-            result = .GOOD
-        } else if abs(time_error_ms) < game.beatmap.timing_windows.ok {
-            result = .OK
-        } else if abs(time_error_ms) < game.beatmap.timing_windows.miss {
-            result = .MISS
-        }
-    }
-    
-    if result != .NONE {
-        if hobj.type == .SLIDER {
-            slider_on_click(hobj)
-        } else {
-            judgement_new(hobj, result, time_error_ms)
-            hobj.flags |= {.HIT, .EXPIRED}
-        }
-
-        timing_point := &game.active_map.timing_points[game.beatmap.current_timing_point_index_inherited]
-        sample_set := Skin_Sample_Set(timing_point.sample_set)
-        
-        // todo(isak): we don't handle custom sampleset timing sections, need to reserve some space and add indirection
-        sample_play(&game.active_skin.hitsounds[sample_set][.HITNORMAL])
-        
-        if .WHISTLE in hobj.flags {
-            sample_play(&game.active_skin.hitsounds[sample_set][.HITWHISTLE])
-        }
-        if .CLAP in hobj.flags {
-            sample_play(&game.active_skin.hitsounds[sample_set][.HITCLAP])
-        }
-        if .FINISH in hobj.flags {
-            sample_play(&game.active_skin.hitsounds[sample_set][.HITFINISH])
-        }
-    }
-    return result
-}
-
 
 handle_play_input_events :: proc() {
     if key_is_pressed(.ESCAPE) || key_is_pressed(.SPACE) {
@@ -691,6 +701,7 @@ handle_play_input_events :: proc() {
     
     if key_is_pressed(.F10) {
         game.input.mouse_keys_enabled = !game.input.mouse_keys_enabled
+        notify_warn("mouse keys enabled" if game.input.mouse_keys_enabled else "mouse keys disabled")
     }
     
     game.input.k1.is_down = keyboard.buttons[game.input.k1_key]
@@ -700,16 +711,17 @@ handle_play_input_events :: proc() {
     game.input.m1 = mouse.buttons[.LEFT]
     game.input.m2 = mouse.buttons[.RIGHT]
     
-    screen_mouse := vec2{mouse.pos.x, mouse.pos.y}
-
     old_mouse_pos := game.input.mouse_pos
-    game.input.mouse_pos = transform_point_space(screen_mouse,
-        transform_to_mat3(window.screenspace_transform),
-        transform_to_mat3(game.playfield_transform)
-    )
+    game.input.mouse_pos = transform_mouse_pos(vec2{mouse.pos.x, mouse.pos.y})
     
     if lua_cares_about_event(.ON_CURSOR_MOVED) && game.input.mouse_pos != old_mouse_pos {
         lua_beatmap_on_cursor_moved(game.input.mouse_pos)
+    }
+
+    if app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {
+        game.input.mouse_secondary_pos = transform_mouse_pos(vec2{mouse_secondary.pos.x, mouse_secondary.pos.y})
+        game.input.ms1 = mouse_secondary.buttons[.LEFT]
+        game.input.ms2 = mouse_secondary.buttons[.RIGHT]
     }
     
     if lua_cares_about_event(.ON_KEY_DOWN) {
@@ -738,7 +750,7 @@ handle_play_input_events :: proc() {
 
 handle_menu_input_events :: proc() {
     if key_is_pressed(.S) {
-        if key_is_down(.LCTRL) || key_is_down(.LSHIFT) || key_is_down(.LALT) {
+        if key_is_down(.LCTRL) && key_is_down(.LSHIFT) && key_is_down(.LALT) {
             skin_reload(game.active_skin)
         }
     }
@@ -787,6 +799,7 @@ game_sounds_clear :: proc() {
         sound_destroy(&s)
     }
     slotmap.destroy(&game.sounds)
+    vmem.arena_free_all(&memory.arenas[.SOUND])
     slotmap.init(&game.sounds, allocator = memory.allocators[.SOUND], capacity = 128)
     null_sound_handle := slotmap.insert(&game.sounds, null_sound)
 }

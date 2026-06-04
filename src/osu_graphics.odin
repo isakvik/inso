@@ -300,28 +300,7 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
 
     elements.data[builtin_element_slot(.HIT_CIRCLE)] = {
         tex = skin_texture(.HITCIRCLE),
-        flags = {.USE_COMBO_COLOR},
-
-        animations = animation_new(anims,
-            Animation_Scale{
-                start_time = 0,
-                end_time = 0.5,
-                start_scale = {1, 1}, 
-                end_scale = {4, 1}
-            }, 
-            Animation_Scale{
-                start_time = 0.5, 
-                end_time = 1,
-                start_scale = {4, 1}, 
-                end_scale = {0, 0}
-            }, 
-            Animation_Rotate{
-                start_time = 0,
-                end_time = 1,
-                start_angle = 0, 
-                end_angle = math.PI/2
-            }, 
-        )
+        flags = {.USE_COMBO_COLOR}
     }
     
     elements.data[builtin_element_slot(.APPROACH_CIRCLE)] = {
@@ -474,7 +453,8 @@ create_hitobject_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
             el := q.get(&game.beatmap.elements, el_id)
 
             drawable_color := hitobject_combo_color(hobj) if .USE_COMBO_COLOR in el.flags else color_white
-            drawable_flags := Drawable_Flags{.ACTIVE} | (Drawable_Flags{.FADE_IN} if phase == .PREEMPT else {})
+            drawable_flags := Drawable_Flags{.ACTIVE}
+            if in_visible_phase do drawable_flags |= {.FADE_IN}
             
             hobj.gfx_handles[num_digits + i] = drawable_new(Drawable{
                 flags         = drawable_flags,
@@ -600,7 +580,7 @@ process_hitobject_phase_transitions :: proc() {
             
             // note(isak): custom hit animations override the default circle expanding animation
             if hobj.custom_element_nums[.HIT] == 0 {
-                if transition.from == .PREEMPT {
+                if transition.from == .PREEMPT || transition.from == .POSTEMPT {
                     create_default_hitcircle_hit_drawables(hobj, hitobject_pos(hobj), map_time)
                 } else if transition.from == .HOLD {
                     create_default_hitcircle_hit_drawables(hobj, hitobject_tail_pos(hobj), map_time)
@@ -845,24 +825,17 @@ render_slider_quads :: proc(hobj: ^Hitobject, path: ^Slider_Path, map_time: f64)
     
     hobj_pos := hitobject_pos(hobj)
     end_pos  := path.end_pos + hobj.script_pos_translation
-    slider_path_time_at := (map_time - hobj.start_time_ms) - f64(slider.checked_repeats_count) * slider.duration_ms
 
-    // note(isak): slider ticks
-    heading_back := slider.checked_repeats_count % 2 == 1
-    first_tick_time := heading_back \
-        ? slider.duration_ms - slider.tick_interval_ms * f64(slider.tick_count) \
-        : slider.tick_interval_ms
-
-    ticks_to_draw := slider.tick_count
-    for ticks_to_draw > 0 && slider_path_time_at <= first_tick_time + f64(ticks_to_draw - 1) * slider.tick_interval_ms {
-        tick_size := element_scale * game.active_skin.elements[.SLIDER_TICK].metrics
-        forward_tick_index := heading_back ? (slider.tick_count + 1 - ticks_to_draw) : ticks_to_draw
-        tick_pos := slider_path_pos_at(hobj, hobj.start_time_ms + f64(forward_tick_index) * slider.tick_interval_ms)
+    // note(isak): slider ticks are drawn until hit. we draw every geometric tick whose hit bit is clear, rather
+    // than culling by ball position, so missed ticks stay on the path like osu! (tick_hits resets per traversal,
+    // so they reappear on repeats). geometric positions are the same every traversal, taken from the first pass.
+    tick_size := element_scale * game.active_skin.elements[.SLIDER_TICK].metrics
+    for tick_index in 1..=slider.tick_count {
+        if slider.tick_hits[tick_index - 1] do continue
+        tick_pos := slider_path_pos_at(hobj, hobj.start_time_ms + f64(tick_index) * slider.tick_interval_ms)
         tick_rect := rect_at_pos(tick_pos, tick_size)
         r_draw_layout_rect(&window.renderer.quad_geometry, tick_rect, .CENTER, color_white,
             skin_texture(.SLIDER_TICK))
-
-        ticks_to_draw -= 1
     }
     
     
@@ -917,7 +890,7 @@ render_slider_quads :: proc(hobj: ^Hitobject, path: ^Slider_Path, map_time: f64)
         }
         
         r_draw_layout_rect(&window.renderer.quad_geometry, ball_rect, .CENTER, combo_color, skin_texture(.SLIDER_BALL),
-            angle = 0) // todo(isak): slider ball angle needs to be mathed out...
+            angle = slider_ball_angle_at(hobj, map_time))
     }
 }
 

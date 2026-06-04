@@ -1,8 +1,8 @@
 package notosu
 
 import "base:runtime"
-import "base:intrinsics"
 import c "core:c"
+import "core:fmt"
 import "core:log"
 import os "core:os"
 import "core:slice"
@@ -187,10 +187,12 @@ lua_create_beatmap_script_context :: proc(script_path: string) {
     script_file_len, err := file_size(script_path)
     if err != os.General_Error.None {
         log.errorf("loading lua script '{}' failed, error: {}", script_path, err)
+        notify_error("loading lua script '%s' failed, error: %v", script_path, err)
         return
     }
     if script_file_len == 0 {
         log.errorf("loading lua script '{}' failed, empty file", script_path)
+        notify_error("loading lua script '%s' failed, empty file", script_path)
         return
     }
     
@@ -350,10 +352,12 @@ lua_return_self :: proc "c" () -> i32 {
 lua_log_error :: proc "c" (log_str: string = "Lua error:", location := #caller_location) {
     L:= lua_beatmap.state
     context = lua_beatmap.odin_context
-    
-    log.error(log_str, "\n", lua.tostring(L, -1), sep = "", location = location)
+
+    from_lua := lua.tostring(L, -1)
     lua.pop(L, 1)
     
+    log.error(log_str, "\n", from_lua, sep = "", location = location)
+    notify_error("%s\n%s", log_str, from_lua)
     //intrinsics.debug_trap()
 }
 
@@ -737,15 +741,15 @@ lua_call_beatmap_func :: proc {
 //////////////////////////////////////////////////////
 // note(isak): hitobject object API
 
-@(private="file")
 luaapi_hitobject_static_funcs := []lua.L_Reg {
   { "get_at_ms", luaapi_hitobject_get_at_ms },
   { "get_in_range_ms", luaapi_hitobject_get_in_range_ms },
   { "get_visible", luaapi_hitobject_get_visible },
+  { "get_with_all_bits", luaapi_hitobject_get_with_all_bits },
+  { "get_with_any_bits", luaapi_hitobject_get_with_any_bits },
   { nil, nil },
 }
 
-@(private="file")
 luaapi_hitobject_instance_funcs := []lua.L_Reg {
   { "__gc", luaapi_hitobject_gc },
   { "register_event", luaapi_hitobject_register_event },
@@ -754,6 +758,9 @@ luaapi_hitobject_instance_funcs := []lua.L_Reg {
   { "hide_combo_numbers", luaapi_hitobject_hide_combo_numbers },
   { "unhide_combo_numbers", luaapi_hitobject_unhide_combo_numbers },
   { "get_index", luaapi_hitobject_get_index },
+  { "get_extra_bits", luaapi_hitobject_get_extra_bits },
+  { "has_all_bits", luaapi_hitobject_has_all_bits },
+  { "has_any_bits", luaapi_hitobject_has_any_bits },
   { "get_pos", luaapi_hitobject_get_pos },
   { "set_pos", luaapi_hitobject_set_pos },
   { "get_start_time", luaapi_hitobject_get_start_time },
@@ -771,6 +778,14 @@ luaapi_hitobject_instance_funcs := []lua.L_Reg {
   { "set_ar", luaapi_hitobject_set_ar },
   { "get_cs", luaapi_hitobject_get_cs },
   { "set_cs", luaapi_hitobject_set_cs },
+
+  { "get_slider_distance", luaapi_hitobject_get_slider_distance },
+  { "get_slider_velocity", luaapi_hitobject_get_slider_velocity },
+  { "get_slider_duration_ms", luaapi_hitobject_get_slider_duration_ms },
+  { "get_slider_ball_pos", luaapi_hitobject_get_slider_ball_pos },
+  { "get_slider_ball_pos_at", luaapi_hitobject_get_slider_ball_pos_at },
+  { "get_slider_ball_angle", luaapi_hitobject_get_slider_ball_angle },
+  { "get_slider_ball_angle_at", luaapi_hitobject_get_slider_ball_angle_at },
   { nil, nil },
 }
 
@@ -796,6 +811,7 @@ luaapi_hitobject_get_at_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
         result = 1
     } else {
         log.error("User error - no hitobject at ms:", at_ms)
+        notify_error("lua: no hitobject at ms %v", at_ms)
     }
     return result
 }
@@ -836,8 +852,40 @@ luaapi_hitobject_get_visible :: proc "c" (L: ^lua.State) -> (result: i32) {
     return 1
 }
 
+// note(isak): collect handles for every hitobject matching the extra-bits mask. require_all means every bit
+// in the mask must be set (bits & mask == mask); otherwise any shared bit is enough (bits & mask != 0). a zero
+// mask returns an empty list - no criterion was given - rather than matching everything.
+_luaapi_hitobject_collect_by_bits :: proc "c" (L: ^lua.State, require_all: bool) -> i32 {
+    context = lua_beatmap.odin_context
+    mask := u64(lua_int(1))
+
+    lua.createtable(L, 0, 0)
+
+    table_i: i32 = 1
+    if mask != 0 {
+        for hobj, i in game.beatmap.hitobjects {
+            matched := (hobj.extra_bits & mask) == mask if require_all else (hobj.extra_bits & mask) != 0
+            if !matched do continue
+            lua_create_userdata(L, i, lua_classes[.HITOBJECT].name)
+            lua.rawseti(L, -2, table_i)
+            table_i += 1
+        }
+    }
+    return 1
+}
+
+// note(isak): get_with_all_bits(mask) - hitobjects with every bit in mask set
+luaapi_hitobject_get_with_all_bits :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_hitobject_collect_by_bits(L, require_all = true)
+}
+
+// note(isak): get_with_any_bits(mask) - hitobjects with at least one bit in mask set
+luaapi_hitobject_get_with_any_bits :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_hitobject_collect_by_bits(L, require_all = false)
+}
+
 _luaapi_hitobject_op :: proc "c" (
-    L: ^lua.State, 
+    L: ^lua.State,
     op: proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32
 ) -> (result: i32) {
     handle := cast(^int)lua.L_checkudata(L, 1, lua_classes[.HITOBJECT].name)
@@ -891,6 +939,33 @@ luaapi_hitobject_get_index :: proc "c" (L: ^lua.State) -> (result: i32) {
     })
 }
 
+luaapi_hitobject_get_extra_bits :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        lua.pushinteger(L, lua.Integer(hobj.extra_bits))
+        return 1
+    })
+}
+
+// note(isak): has_all_bits(mask) - true if every bit in mask is set on this object
+luaapi_hitobject_has_all_bits :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        context = lua_beatmap.odin_context
+        mask := u64(lua_int(2))
+        lua.pushboolean(L, b32((hobj.extra_bits & mask) == mask))
+        return 1
+    })
+}
+
+// note(isak): has_any_bits(mask) - true if at least one bit in mask is set on this object
+luaapi_hitobject_has_any_bits :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        context = lua_beatmap.odin_context
+        mask := u64(lua_int(2))
+        lua.pushboolean(L, b32((hobj.extra_bits & mask) != 0))
+        return 1
+    })
+}
+
 luaapi_hitobject_get_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         lua.pushnumber(L, lua.Number(hobj.pos.x))
@@ -933,6 +1008,82 @@ luaapi_hitobject_set_end_time :: proc "c" (L: ^lua.State) -> (result: i32) {
     })
 }
 
+luaapi_hitobject_get_slider_distance :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        distance := hobj.slider_state.distance if hobj.type == .SLIDER else 0
+        lua.pushnumber(L, lua.Number(distance))
+        return 1
+    })
+}
+
+luaapi_hitobject_get_slider_velocity :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        velocity := hobj.slider_state.velocity if hobj.type == .SLIDER else 0
+        lua.pushnumber(L, lua.Number(velocity))
+        return 1
+    })
+}
+
+luaapi_hitobject_get_slider_duration_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        duration := hobj.slider_state.duration_ms if hobj.type == .SLIDER else 0
+        lua.pushnumber(L, lua.Number(duration))
+        return 1
+    })
+}
+
+luaapi_hitobject_get_slider_ball_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        pos := hobj.pos
+        if hobj.type == .SLIDER {
+            context = lua_beatmap.odin_context
+            path := game.beatmap.slider_paths[hobj.slider_path_index]
+            pos = path_calculate_position_at(hobj, beatmap_music_time_ms(&game.beatmap), &path)
+        }
+        lua.pushnumber(L, lua.Number(pos.x))
+        lua.pushnumber(L, lua.Number(pos.y))
+        return 2
+    })
+}
+
+luaapi_hitobject_get_slider_ball_pos_at :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        pos := hobj.pos
+        if hobj.type == .SLIDER {
+            context = lua_beatmap.odin_context
+            path := game.beatmap.slider_paths[hobj.slider_path_index]
+            pos = path_calculate_position_at(hobj, f64(lua_number(2)), &path)
+        }
+        lua.pushnumber(L, lua.Number(pos.x))
+        lua.pushnumber(L, lua.Number(pos.y))
+        return 2
+    })
+}
+
+luaapi_hitobject_get_slider_ball_angle :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        angle: f32
+        if hobj.type == .SLIDER {
+            context = lua_beatmap.odin_context
+            path := game.beatmap.slider_paths[hobj.slider_path_index]
+            angle = slider_ball_angle_at(hobj, beatmap_music_time_ms(&game.beatmap))
+        }
+        lua.pushnumber(L, lua.Number(angle))
+        return 1
+    })
+}
+luaapi_hitobject_get_slider_ball_angle_at :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        angle: f32
+        if hobj.type == .SLIDER {
+            context = lua_beatmap.odin_context
+            path := game.beatmap.slider_paths[hobj.slider_path_index]
+            angle = slider_ball_angle_at(hobj, f64(lua_number(2)))
+        }
+        lua.pushnumber(L, lua.Number(angle))
+        return 1
+    })
+}
 
 luaapi_hitobject_get_phase :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
@@ -1036,13 +1187,11 @@ luaapi_hitobject_set_cs :: proc "c" (L: ^lua.State) -> (result: i32) {
 //////////////////////////////////////////////////////
 // note(isak): drawable object API
 
-@(private="file")
 luaapi_drawable_static_funcs := []lua.L_Reg {
   { "new", luaapi_drawable_new },
   { nil, nil },
 }
 
-@(private="file")
 luaapi_drawable_instance_funcs := []lua.L_Reg {
   { "__gc", luaapi_drawable_gc },
   { "register_event", luaapi_drawable_register_event },
@@ -1091,6 +1240,7 @@ luaapi_drawable_new :: proc "c" (L: ^lua.State) -> (result: i32) {
         tex_id, found := mapset_texture_slot(tex_name)
         if !found {
             log.error("User error - texture not found:", tex_name)
+            notify_error("lua: Drawable.new texture not found '%s'", tex_name)
             return 0
         }
         element_id = element_new({ shader = builtin_pipeline_slot(.QUAD), tex = tex_id })
@@ -1293,13 +1443,11 @@ luaapi_drawable_show :: proc "c" (L: ^lua.State) -> (result: i32) {
 //////////////////////////////////////////////////////
 // note(isak): element object API
 
-@(private="file")
 luaapi_element_static_funcs := []lua.L_Reg {
   { "new",           luaapi_element_new },
   { nil,             nil               },
 }
 
-@(private="file")
 luaapi_element_instance_funcs := []lua.L_Reg {
   { "__gc", luaapi_element_gc },
   { "clone", luaapi_element_clone },
@@ -1375,6 +1523,7 @@ luaapi_element_set_tex :: proc "c" (L: ^lua.State) -> (result: i32) {
         }
     } else {
         log.error("User error - texture not found:", tex_name)
+        notify_error("lua: Element:set_tex texture not found '%s'", tex_name)
     }
     return lua_return_self()
 }
@@ -1409,6 +1558,7 @@ luaapi_element_set_shader :: proc "c" (L: ^lua.State) -> (result: i32) {
         }
     } else {
         log.error("User error - pipeline not found:", shader_name)
+        notify_error("lua: Element:set_shader pipeline not found '%s'", shader_name)
     }
     return lua_return_self()
 }
@@ -1439,6 +1589,7 @@ luaapi_element_set_mesh :: proc "c" (L: ^lua.State) -> (result: i32) {
     buf, found := mapset_buffer(buffer_name)
     if !found {
         log.error("User error - buffer not found:", buffer_name)
+        notify_error("lua: Element:set_mesh buffer not found '%s'", buffer_name)
         return lua_return_self()
     }
     if el_id < game.beatmap.elements.len {
@@ -1471,13 +1622,11 @@ luaapi_element_use_combo_color :: proc "c" (L: ^lua.State) -> (result: i32) {
 //////////////////////////////////////////////////////
 // note(isak): animation list API
 
-@(private="file")
 luaapi_animation_static_funcs := []lua.L_Reg {
   { "new", luaapi_animation_new },
   { nil, nil },
 }
 
-@(private="file")
 luaapi_animation_instance_funcs := []lua.L_Reg {
   { "move", luaapi_animation_move },
   { "scale", luaapi_animation_scale },
@@ -1625,6 +1774,7 @@ luaapi_animation_texture :: proc "c" (L: ^lua.State) -> i32 {
     tex_id, found := mapset_texture_slot(tex_name)
     if !found {
         log.error("User error - texture not found:", tex_name)
+        notify_error("lua: Animation:texture texture not found '%s'", tex_name)
         tex_id = builtin_texture(.WHITE)
     }
 
@@ -1654,6 +1804,7 @@ luaapi_animation_frames :: proc "c" (L: ^lua.State) -> i32 {
     tex_slot, found := game.active_mapset.texture_slot_by_name[tex_name]
     if !found {
         log.error("User error - texture not found:", tex_name)
+        notify_error("lua: Animation:frames texture not found '%s'", tex_name)
         return lua_return_self()
     }
 
@@ -1680,13 +1831,11 @@ luaapi_animation_frames :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(isak): Buffer object API
 
-@(private="file")
 luaapi_buffer_static_funcs := []lua.L_Reg {
   { "get", luaapi_buffer_get },
   { nil,   nil               },
 }
 
-@(private="file")
 luaapi_buffer_instance_funcs := []lua.L_Reg {
   { "bind",       luaapi_buffer_bind       },
   { "write_f32s", luaapi_buffer_write_f32s },
@@ -1702,6 +1851,7 @@ luaapi_buffer_get :: proc "c" (L: ^lua.State) -> i32 {
     _, found := mapset_buffer(name)
     if !found {
         log.error("User error - buffer not found:", name)
+        notify_error("lua: Buffer.get buffer not found '%s'", name)
         lua.pushnil(L)
         return 1
     }
@@ -1796,14 +1946,12 @@ luaapi_buffer_size :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(isak): sound object API
 
-@(private="file")
 luaapi_sound_static_funcs := []lua.L_Reg {
     { "play",      luaapi_sound_play },
     { "play_loop", luaapi_sound_play_loop },
     { nil, nil },
 }
 
-@(private="file")
 luaapi_sound_instance_funcs := []lua.L_Reg {
     { "__gc", luaapi_sound_gc },
     { "stop", luaapi_sound_stop },
@@ -1820,6 +1968,7 @@ luaapi_sound_play :: proc "c" (L: ^lua.State) -> i32 {
     sample, found := mapset_sample(name)
     if !found {
         log.error("User error - sound not found:", name)
+        notify_error("lua: Sound.play sound not found '%s'", name)
         return 0
     }
     sample_play(sample, volume, pan)
@@ -1835,6 +1984,7 @@ luaapi_sound_play_loop :: proc "c" (L: ^lua.State) -> i32 {
     sample, found := mapset_sample(name)
     if !found {
         log.error("User error - sound not found:", name)
+        notify_error("lua: Sound.play_loop sound not found '%s'", name)
         return 0
     }
     handle := game_sound_play(sample, loop = true, volume = volume)
@@ -1862,7 +2012,6 @@ luaapi_sound_gc :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(isak): beatmap info API
 
-@(private="file")
 luaapi_beatmap_static_funcs := []lua.L_Reg {
   { "get_music_time_ms",  luaapi_beatmap_get_music_time_ms },
   { "get_length_ms",      luaapi_beatmap_get_length_ms },
@@ -1922,7 +2071,6 @@ luaapi_beatmap_is_paused :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(isak): color object API
 
-@(private="file")
 luaapi_color_static_funcs := []lua.L_Reg {
   { "rgb", luaapi_color_rgb },
   { "rgba", luaapi_color_rgba },
@@ -1947,7 +2095,6 @@ luaapi_color_rgba :: proc "c" (L: ^lua.State) -> (result: i32) {
 //////////////////////////////////////////////////////
 // note(isak): Playfield API
 
-@(private="file")
 luaapi_playfield_static_funcs := []lua.L_Reg {
   { "set_translation", luaapi_playfield_set_translation },
   { "set_scale",       luaapi_playfield_set_scale },
@@ -2005,7 +2152,6 @@ luaapi_playfield_rotate :: proc "c" (L: ^lua.State) -> i32 {
 // todo(isak): this is untested code. it's handled in a slightly strange way, so it should be rewritten.
 // currently not hooked up anywhere.
 
-@(private="file")
 luaapi_shader_funcs := []lua.L_Reg {
   { "set_param", luaapi_shader_set_param },
   { "set_vec4",  luaapi_shader_set_vec4  },

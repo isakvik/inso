@@ -3,6 +3,7 @@ notosu file format v1
 [General]
 LuaEntryPoint: test.lua
 BackgroundPipeline: wave
+DoubleMouse: 0
 
 [Shaders]
 [[wave]]
@@ -16,3 +17,5 @@ Source: Crate1.gltf
 
 [[wave_data]]
 Size: 4096
+
+[HitObjectExtraBits]

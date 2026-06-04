@@ -17,12 +17,9 @@ consume_spaces :: proc(c: ^Consumer) -> int {
     return c.at - begin
 }
 
-consume_newline :: proc(c: ^Consumer) -> int {
+consume_to_newline :: proc(c: ^Consumer) -> int {
     begin := c.at
-    if c.str[c.at] != '\r' {
-        c.at += 1
-    }
-    if c.str[c.at] != '\n' {
+    if c.at < len(c.str) && c.str[c.at] != '\n' {
         c.at += 1
     }
     return c.at - begin
@@ -35,7 +32,8 @@ consume_line :: proc(c: ^Consumer) -> string {
     }
     result := c.str[begin:c.at]
     if c.at < len(c.str) {
-        c.at += consume_newline(c)
+        consume_to_newline(c)
+        c.at += 1
     }
     return result
 }
@@ -44,7 +42,8 @@ consume_until_next_section :: proc(c: ^Consumer) -> string {
     begin := c.at
     result := c.str[begin:c.at]
 
-    c.at += consume_newline(c)
+    consume_to_newline(c)
+    c.at += 1
     return result
 }
 

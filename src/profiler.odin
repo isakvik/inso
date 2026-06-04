@@ -66,12 +66,12 @@ Trace_Block_Timer :: struct {
 //////////////////////////////////////////////////////
 // note(isak): api
 
-profiler_begin :: proc() {
+profiler_begin_frame :: proc() {
     profiler.trace_points = {}
     profiler.start_tsc = sdl.GetPerformanceCounter()
 }
 
-profiler_end :: proc() {
+profiler_end_frame :: proc() {
     total_elapsed_tsc := sdl.GetPerformanceCounter() - profiler.start_tsc
 
     profiler.frame_times[profiler.next_frame_time_at] = total_elapsed_tsc

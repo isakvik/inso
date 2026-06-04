@@ -12,7 +12,10 @@
       "Bash(/tmp/check_debug_apis.txt:*)",
       "Read(//tmp/**)",
       "Bash(cmd.exe /c 'odin check ./supervisor -target:windows_amd64' 2>&1)",
-      "Bash(odin check:*)"
+      "Bash(odin check:*)",
+      "Bash(command -v odin)",
+      "Bash(/home/isak/odin/odin check *)",
+      "Bash(git stash *)"
     ]
   }
 }

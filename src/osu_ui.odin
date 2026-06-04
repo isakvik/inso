@@ -1,12 +1,115 @@
 package notosu
 
-import "core:log"
+import "core:fmt"
 import "core:math/ease"
 import "core:math/linalg"
 
-import imgui "./imgui"
+//////////////////////////////////////////////////////
+// note(isak): hit error bar
 
+HIT_ERROR_BAR_CAPACITY :: 96
+HIT_ERROR_TICK_FADE_MS : f64 : 4000
 
+HIT_COLOR_MISS :: color_red
+HIT_COLOR_OK :: color_orange
+HIT_COLOR_GOOD :: color_lime_green
+HIT_COLOR_MARVELOUS :: color_light_blue
+
+Hit_Error_Entry :: struct {
+    error_ms:    f64, // click_time - object_time; negative = early, positive = late
+    time_at:     f64, // music time when recorded, for fade-out
+    judgement:   Judgement_Type,
+}
+
+// note(isak): simple ring buffer
+Hit_Error_Bar :: struct {
+    entries: [HIT_ERROR_BAR_CAPACITY]Hit_Error_Entry,
+    next:    int,
+    count:   int,
+}
+
+hit_error_bar_reset :: proc(hit_error_bar: ^Hit_Error_Bar) {
+    hit_error_bar^ = {}
+}
+
+hit_error_bar_record :: proc(hit_error_bar: ^Hit_Error_Bar, error_ms: f64, judgement: Judgement_Type) {
+    hit_error_bar.entries[hit_error_bar.next] = {
+        error_ms    = error_ms,
+        time_at = game.beatmap.music_time_ms,
+        judgement   = judgement,
+    }
+    hit_error_bar.next  = (hit_error_bar.next + 1) % HIT_ERROR_BAR_CAPACITY
+    hit_error_bar.count = min(hit_error_bar.count + 1, HIT_ERROR_BAR_CAPACITY)
+}
+
+hit_error_bar_draw :: proc(hit_error_bar: ^Hit_Error_Bar) {
+    if game.mode != .PLAY do return
+    tw := game.beatmap.timing_windows
+    if tw.ok <= 0 do return
+
+    bar_h := f32(26)
+    cx := window.rect.w / 2
+    cy := window.rect.h - bar_h / 2
+    tick_h: f32 = 26
+    
+    px_per_ms := f32(1) * (window.rect.h / f32(720))
+    bar_w := px_per_ms * f32(tw.ok) * 2
+    
+    now := game.beatmap.music_time_ms
+
+    r_draw_rect(&window.renderer.quad_geometry, 
+                {cx - bar_w / 2, cy - bar_h / 2, bar_w, bar_h}, with_alpha(color_black, 0.2))
+    
+    hit_error_zone(cx, cy, f32(tw.ok)        * px_per_ms, 6, with_alpha(HIT_COLOR_OK, 0.85))
+    hit_error_zone(cx, cy, f32(tw.good)      * px_per_ms, 6, with_alpha(HIT_COLOR_GOOD, 0.85))
+    hit_error_zone(cx, cy, f32(tw.marvelous) * px_per_ms, 6, with_alpha(HIT_COLOR_MARVELOUS, 0.85))
+
+    // perfect-timing center line
+    r_draw_rect(&window.renderer.quad_geometry, {cx - 1, cy - tick_h / 2, 2, tick_h}, color_white)
+
+    sum, shown := 0.0, 0
+    for i in 0 ..< hit_error_bar.count {
+        e := hit_error_bar.entries[i]
+        age := now - e.time_at
+        if age < 0 || age > HIT_ERROR_TICK_FADE_MS do continue
+
+        alpha := f32(1 - age / HIT_ERROR_TICK_FADE_MS)
+        x := clamp(cx + f32(e.error_ms) * px_per_ms, cx - bar_w / 2, cx + bar_w)
+        
+        r_draw_rect(&window.renderer.quad_geometry, {x - 1, cy - tick_h / 2, 2, tick_h},
+            with_alpha(hit_error_color(e.judgement), alpha))
+
+        sum   += e.error_ms
+        shown += 1
+    }
+
+    if shown > 0 {
+        mean := sum / f64(shown)
+        sign := mean >= 0 ? "+" : ""
+        push_text(&window.renderer, fmt.tprintf("%s%.0f ms", sign, mean),
+            pos     = {cx, cy - 20},
+            size    = 14,
+            color   = color_white,
+            align_h = .Center,
+            align_v = .Baseline)
+    }
+}
+
+hit_error_zone :: proc(cx, cy, half_px, h: f32, color: Color) {
+    r_draw_rect(&window.renderer.quad_geometry, {cx - half_px, cy - h / 2, half_px * 2, h}, color)
+}
+
+hit_error_color :: proc(j: Judgement_Type) -> Color {
+    #partial switch j {
+    case .MARVELOUS: return HIT_COLOR_MARVELOUS
+    case .GOOD:      return HIT_COLOR_GOOD
+    case .OK:        return HIT_COLOR_OK
+    case:            return HIT_COLOR_MISS
+    }
+}
+
+//////////////////////////////////////////////////////
+// note(isak): timeline
 
 UI_Timeline :: struct {
     h_px: f32,
@@ -46,7 +149,7 @@ ui_update_timeline :: proc(ui: ^UI_Timeline, time_value: ^f64) -> (result: bool)
     ui.clicked = false
     ui.released = false
     
-    if !imgui.GetIO().WantCaptureMouse && button_is_pressed(mouse.buttons[.LEFT]) && point_in_rect(mouse.last_click_position[.LEFT], timeline_hitbox) {
+    if !app.ui_wants_mouse && button_is_pressed(mouse.buttons[.LEFT]) && point_in_rect(mouse.last_click_position[.LEFT], timeline_hitbox) {
         ui.clicked = true
         ui.dragging = true
         ui.pause_on_release = game.paused
@@ -137,14 +240,24 @@ render_timeline :: proc(ui: ^UI_Timeline, beatmap_leadin_fract, beatmap_finish_f
     }
 }
 
-render_input_display :: proc() {
-    render_input_key :: proc(key: Button_State, rect: Rect) {
-        display_color := key.is_down ? color_light_gray : color_dark_gray
+//////////////////////////////////////////////////////
+// note(isak): input display
+
+input_display_draw :: proc() {
+    render_input_key :: proc(key: Button_State, rect: Rect, lit_color: Color) {
+        display_color := key.is_down ? lit_color : color_dark_gray
         r_draw_layout_rect(&window.renderer.quad_geometry, rect, .BOTTOM_RIGHT, display_color, builtin_texture(.WHITE))
     }
 
-    render_input_key(game.input.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 })
-    render_input_key(game.input.k2, { window.rect.w, window.rect.h / 2,      30, 30 })
-    render_input_key(game.input.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 })
-    render_input_key(game.input.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 })
+    render_input_key(game.input.k1, { window.rect.w, window.rect.h / 2 - 30, 30, 30 }, color_dim_yellow)
+    render_input_key(game.input.k2, { window.rect.w, window.rect.h / 2,      30, 30 }, color_dim_yellow)
+
+    lit_color := app.mouse_input_mode == .DOUBLE_MOUSE_INPUT ? color_sky_blue :  color_magenta
+    render_input_key(game.input.m1, { window.rect.w, window.rect.h / 2 + 30, 30, 30 }, lit_color)
+    render_input_key(game.input.m2, { window.rect.w, window.rect.h / 2 + 60, 30, 30 }, lit_color)
+
+    if app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {
+        render_input_key(game.input.ms1, { window.rect.w, window.rect.h / 2 + 30, 30, 15 }, color_dim_orange)
+        render_input_key(game.input.ms2, { window.rect.w, window.rect.h / 2 + 60, 30, 15 }, color_dim_orange)
+    }
 }

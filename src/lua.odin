@@ -2204,7 +2204,8 @@ luaapi_window_static_funcs := []lua.L_Reg {
   { "get_pos", luaapi_window_get_pos },
   { "set_size", luaapi_window_set_size },
   { "set_pos", luaapi_window_set_size },
-  { "set_transparency", luaapi_window_set_transparency },
+  { "set_opacity", luaapi_window_set_opacity },
+  { "debug", luaapi_window_debug },
   { nil, nil },
 }
 
@@ -2229,11 +2230,27 @@ luaapi_window_set_size :: proc "c" (L: ^lua.State) -> (result: i32) {
     return 0
 }
 
-luaapi_window_set_transparency :: proc "c" (L: ^lua.State) -> (result: i32) {
+luaapi_window_set_opacity :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_beatmap.odin_context
-    transparency     := lua_number(1)
-    sdl.SetWindowOpacity(window.handle, f32(transparency))
+    opacity     := lua_number(1)
+    // sdl.SetWindowOpacity(window.handle, f32(opacity))
+    bg, ok := slotmap.get(&game.beatmap.drawables, game.beatmap.bg_handle)
+    if ok {
+        bg.color.a = u8(opacity * 255)
+    }
+    if opacity >= 1 {
+        game.transparent = false
+    } else{
+        game.transparent = true
+    }
     return 0
+}
+
+luaapi_window_debug :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    bg, ok := slotmap.get(&game.beatmap.drawables, game.beatmap.bg_handle)
+    lua.pushboolean(L, b32(ok))
+    return 1
 }
 
 luaapi_window_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {

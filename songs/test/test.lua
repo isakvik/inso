@@ -1,5 +1,3 @@
-
-local rand = load_file("rand.lua")
 local width, height = 0, 0
 
 -- missing thoughts (drawable):
@@ -31,105 +29,13 @@ function on_init()
     width, height = Window.get_size()
     print("width: " .. width .. "| height: " .. height)
     
-    Window.set_size(1280, 720)
-    width, height = 1280, 720
-    Window.set_transparency(1.0f)
+    Window.set_opacity(0)
+    print("debug text: " .. tostring(Window.debug()))
     posx, posy = Window.get_pos()
     print("posx: " .. posx .. "| posy: " .. posy)
     print("temp: ")
 
-    a = Animation.new()
-        :scale(0, 1, 1,1, 8,8, Tween.CUBIC_OUT)
-        :color(0, 1, Color.rgba(255,0,0,255), Color.rgba(0,0,0,0))
-        :rotate(0, 1, 0, 999999)
-    
-    el = Element.new()
-        :set_tex("reversearrow.png")
-        :set_animation(a)
-        :set_shader("wave")
-    
-    anim_left = Animation.new()
-        :move(0, 1, -3, 0, 0, 0)
-        :scale(0,1, 2,2, 2,2)
-    anim_right = Animation.new()
-        :move(0, 1, 3, 0, 0, 0)
-        :scale(0,1, 2,2, 2,2)
-        :rotate(0, 0, 3.1415, 3.1415)
-        
-    custom_left = Element.new()
-        :set_tex("reversearrow.png")
-        :set_animation(anim_left)
-        :use_combo_color(true)
-    custom_right = Element.new()
-        :set_tex("reversearrow.png")
-        :set_animation(anim_right)
-        :use_combo_color(true)
-        
-    anim_stillleft = Animation.new()
-        :alpha(0, 1, 1, 0)
-        :scale(0, 0, 2,2, 2,2)
-    anim_stillright = Animation.new()
-        :alpha(0, 1, 1, 0)
-        :scale(0, 0, 2,2, 2,2)
-        :rotate(0, 0, 3.1415, 3.1415)
-        
-    custom_stillleft = custom_left:clone()
-        :set_animation(anim_stillleft)
-    custom_stillright = custom_right:clone()
-        :set_animation(anim_stillright)
-    
-    --for i, hobj in ipairs(Hitobject.get_in_range_ms(30000, 60000)) do
-    --    hobj:clear_drawables()
-    --    hobj:add_element_for_phase(Phase.PREEMPT, custom_left)
-    --    hobj:add_element_for_phase(Phase.PREEMPT, custom_right)
-    --    hobj:add_element_for_phase(Phase.POSTEMPT, custom_stillleft)
-    --    hobj:add_element_for_phase(Phase.POSTEMPT, custom_stillright)
-    --    
-    --    hobj:add_element_for_phase(Phase.HIT, el)
-    --    hobj:set_hit_animation_length(400)
-    --    hobj:hide_combo_numbers()
-    --end
-    --for i, hobj in ipairs(Hitobject.get_in_range_ms(60000, 90000)) do
-    --    hobj:clear_drawables()
-    --    hobj:add_element_for_phase(Phase.PREEMPT, custom_left)
-    --    hobj:add_element_for_phase(Phase.PREEMPT, custom_right)
-    --    hobj:add_element_for_phase(Phase.POSTEMPT, custom_stillleft)
-    --    hobj:add_element_for_phase(Phase.POSTEMPT, custom_stillright)
-    --    
-    --    hobj:add_element_for_phase(Phase.HIT, el)
-    --    hobj:set_hit_animation_length(900)
-    --    hobj:hide_combo_numbers()
-    --end
-    
-
-    -- unused
-    dd = Drawable.new(el, 0, 0)
-        :set_size(100,100)
-        :set_anchor(Anchor.CENTER)
-        :set_layer(Layer.BACKGROUND)
-        :register_event("saft", function (d, beat_n) 
-            print("custom event @ beat: " .. beat_n) 
-        end)
-    
-    list = Hitobject.get_in_range_ms(0, 425000)
-    
-    table = {}
-    for i, hobj in ipairs(list) do
-        --hobj:hide() -- todo(isak): stopped working because of the deferred spawn system
-        t = hobj:get_start_time()
-    
-        hobj:set_ar(9-i/100)
-    end
-    
-    register_global_event("hehe", function()
-        -- note that this drifts over time, it's not a clean repeat every 250ms
-        schedule_event("hehe", 250)
-        print("hehe loop " .. Beatmap.get_music_time_ms())
-    end)
 end
-
-    new_w = 500
-    new_h = 300
 
 function on_update(time_ms)
     -- for ii, hobj in ipairs(Hitobject.get_visible()) do
@@ -146,8 +52,12 @@ function on_update(time_ms)
     -- end
     
     -- Playfield.set_rotation(math.sin(time_ms / 3000) * 0.1)
+    if time_ms > 10000 and time_ms <= 20000 then
+        Window.set_opacity(0)
+    elseif time_ms > 20000 then
+        Window.set_opacity(1)
+    end
     tempa, tempb = Window.get_size()
-    print(tempa .."|" .. tempb .. " | " .. new_h .. " | " .. height)
 
     -- if new_w < width and not(new_w - 1 >= width) then  
     --     Window.set_size(width - 1, height)    

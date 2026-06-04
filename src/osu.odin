@@ -34,6 +34,7 @@ game: struct {
     active_notosu_map: ^Notosu_Map,
     active_map: ^Osu_Map,
     active_skin: ^Skin,
+    transparent: bool,
     
     mode: Game_Mode,
     
@@ -639,7 +640,9 @@ osu_on_update :: proc(dt: f64) {
         }
         r_draw_rect_outline(&window.renderer.quad_geometry, pf_outline, with_alpha(color_white, 0.1), 2)
     }
-    playfield_border_draw()
+    if !game.transparent {
+        playfield_border_draw()
+    }
     // --
     
     // todo(isak): "screens" implementation for determining relevant UI components?
@@ -647,8 +650,11 @@ osu_on_update :: proc(dt: f64) {
     
     r_push_transform(window.screenspace_transform)
     
-    hit_error_bar_draw(&game.hit_error_bar)
-    input_display_draw()
+    if !game.transparent {
+        hit_error_bar_draw(&game.hit_error_bar)
+        input_display_draw()
+    }
+    
 
     cursor_draw(mouse.pos, skin_texture(.CURSOR))
     if app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {   

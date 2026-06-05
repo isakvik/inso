@@ -2015,6 +2015,8 @@ luaapi_beatmap_static_funcs := []lua.L_Reg {
   { "get_ar_ms",          luaapi_beatmap_get_ar_ms },
   { "get_cs_osupx",       luaapi_beatmap_get_cs_osupx },
   { "is_paused",          luaapi_beatmap_is_paused },
+  { "set_timing_windows", luaapi_beatmap_set_timing_windows },
+  { "get_timing_windows", luaapi_beatmap_get_timing_windows },
   { nil, nil },
 }
 
@@ -2060,6 +2062,36 @@ luaapi_beatmap_is_paused :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     lua.pushboolean(L, b32(game.paused))
     return 1
+}
+
+// note(isak): set_timing_windows(marvelous, good, ok, miss) - hit window half-widths in ms
+luaapi_beatmap_set_timing_windows :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    windows := Timing_Window{
+        marvelous = f64(lua_number(1)),
+        good      = f64(lua_number(2)),
+        ok        = f64(lua_number(3)),
+        miss      = f64(lua_number(4)),
+    }
+
+    if !(windows.marvelous <= windows.good && windows.good <= windows.ok && windows.ok <= windows.miss) {
+        notify_warn("set_timing_windows: expected marvelous <= good <= ok <= miss, got %v, %v, %v, %v",
+            windows.marvelous, windows.good, windows.ok, windows.miss)
+    }
+
+    game.beatmap.timing_windows = windows
+    return 0
+}
+
+// note(isak): get_timing_windows() -> marvelous, good, ok, miss (hit window half-widths in ms)
+luaapi_beatmap_get_timing_windows :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    windows := game.beatmap.timing_windows
+    lua.pushnumber(L, lua.Number(windows.marvelous))
+    lua.pushnumber(L, lua.Number(windows.good))
+    lua.pushnumber(L, lua.Number(windows.ok))
+    lua.pushnumber(L, lua.Number(windows.miss))
+    return 4
 }
 
 

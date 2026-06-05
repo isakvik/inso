@@ -854,7 +854,7 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 }
                 case .COLOR_MASK: {
                     cmd := _command_consume(&command_queue, Command_Color_Mask)
-                    gl.ColorMask()
+                    gl.ColorMask(cmd.r, cmd.g, cmd.b, cmd.a)
                 }
                 case .PUSH_TRANSFORM: {
                     cmd := _command_consume(&command_queue, Command_Push_Transform)

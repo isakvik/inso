@@ -1,6 +1,6 @@
 @echo off
 
-set VERSION=0.1.1
+set VERSION=0.1.2
 set release_dir=build-release
 set exec_name=notosu.exe
 set zip_name=notosu-%VERSION%.zip
@@ -18,6 +18,12 @@ xcopy ".\lib\windows" ".\%release_dir%" /Y /I /Q
 for %%d in (data shaders skins songs) do (
     xcopy /E /I /Y /Q ".\%%d" ".\%release_dir%\%%d"
 )
+
+echo [package] generating lua docs...
+rem regenerate from the freshly built binary (needs its DLLs, hence after the copy above). it's a
+rem -subsystem:windows app so it detaches from the console - start /wait blocks until docs are written
+start /wait "" ".\%release_dir%\%exec_name%" --gen-lua-docs
+if exist ".\docs\lua_api.html" xcopy /E /I /Y /Q ".\docs" ".\%release_dir%\docs"
 
 echo [package] zipping...
 

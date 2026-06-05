@@ -95,25 +95,25 @@ memory_init :: proc() -> runtime.Allocator_Error {
 
 
 main :: proc() {
+    _program_start_tsc = sdl.GetPerformanceCounter()
+
     for arg in os.args {
         if arg == "--disable-raw-input" {
             app.disable_raw_input = true
         }
+        if arg == "--gen-lua-docs" {
+            lua_generate_docs()
+            return
+        }
     }
 
-    // note(isak): docs generation runs cold (before any init) off the package-level registration tables, then
-    // exits. it must precede the crash-handler wrapper - that spawns its game subprocess with a fixed command
-    // line that doesn't forward argv, so the flag would never reach the process that checks for it otherwise.
-    if lua_generate_docs_if_requested() do return
-
+    // note(isak): crash handler reruns the process, but doesn't forward the arguments we first launched with
     when #config(WITH_CRASH_HANDLER, false) {
         if !crash_handler_is_game_process() {
             crash_handler_run()
             return
         }
     }
-
-    _program_start_tsc = sdl.GetPerformanceCounter()
 
     if memory_init() != .None {
         panic("memory_init :: error")

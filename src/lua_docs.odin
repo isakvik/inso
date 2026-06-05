@@ -20,20 +20,6 @@ LUA_DOCS_OUTPUT_PATH :: "docs/lua_api.html"
 LUA_DOCS_STORE_PATH :: "docs/lua_api_docs.ini"
 LUA_DOCS_GEN_ARG :: "--gen-lua-docs"
 
-// note(isak): called first thing in main. returns true if docs were requested, so main can exit early.
-lua_generate_docs_if_requested :: proc() -> (requested: bool) {
-    for arg in os.args {
-        if arg == LUA_DOCS_GEN_ARG {
-            requested = true
-            break
-        }
-    }
-    if !requested do return
-
-    lua_generate_docs()
-    return
-}
-
 lua_generate_docs :: proc() {
     store, _, _ := ini.load_map_from_path(LUA_DOCS_STORE_PATH, context.allocator) // empty map if the file is absent
 

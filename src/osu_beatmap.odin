@@ -49,6 +49,8 @@ Beatmap :: struct {
 
     // -- gfx data fields
 
+    bg_handle: Drawable_Handle,
+
     gameplay_expiring_gfx: sb.Swap_Buffer(Drawable_Handle),
     map_expiring_gfx: sb.Swap_Buffer(Drawable_Handle),
     
@@ -118,7 +120,7 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     slotmap.init(&beatmap.drawables, 8192, memory.allocators[.DRAWABLES])
     _ = slotmap.insert(&beatmap.drawables, null_drawable)
 
-    bg_handle := TEST_bg_drawable(game.active_map.bg_filename, game.active_notosu_map.bg_pipeline_name)
+    beatmap.bg_handle = TEST_bg_drawable(game.active_map.bg_filename, game.active_notosu_map.bg_pipeline_name)
     
     if lua_cares_about_event(.ON_INIT) {
         lua_call_beatmap_func("on_init")

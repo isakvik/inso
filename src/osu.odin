@@ -660,9 +660,11 @@ osu_on_update :: proc(dt: f64) {
         cursor_draw(mouse_secondary.pos, skin_texture(.CURSOR))
     }
 
-    r_color_mask(false, false, false, true)
-    r_draw_layout_rect(&window.renderer.quad_geometry, {0, 0, window.rect.w, window.rect.h }, .TOP_LEFT, color_black)
-    r_color_mask(true, true, true, true)
+    if !game.transparent {
+        r_color_mask(false, false, false, true)
+        r_draw_layout_rect(&window.renderer.quad_geometry, {0, 0, window.rect.w, window.rect.h }, .TOP_LEFT, color_black)
+        r_color_mask(true, true, true, true)
+    }
 }
 
 cursor_draw :: proc(pos: vec2, tex_index: u32) {

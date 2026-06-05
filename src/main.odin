@@ -7,6 +7,7 @@ import "core:container/queue"
 import "core:fmt"
 import "core:hash"
 import "core:log"
+import "core:os"
 import "core:strings"
 import "core:math/linalg"
 import "core:mem"
@@ -94,6 +95,17 @@ memory_init :: proc() -> runtime.Allocator_Error {
 
 
 main :: proc() {
+    for arg in os.args {
+        if arg == "--disable-raw-input" {
+            app.disable_raw_input = true
+        }
+    }
+
+    // note(isak): docs generation runs cold (before any init) off the package-level registration tables, then
+    // exits. it must precede the crash-handler wrapper - that spawns its game subprocess with a fixed command
+    // line that doesn't forward argv, so the flag would never reach the process that checks for it otherwise.
+    if lua_generate_docs_if_requested() do return
+
     when #config(WITH_CRASH_HANDLER, false) {
         if !crash_handler_is_game_process() {
             crash_handler_run()

@@ -461,9 +461,10 @@ pipeline_reinit :: proc(pipeline: ^sg.Pipeline, pipeline_desc: sg.Pipeline_Desc)
 // note(isak): command queue api
 
 Command_Type :: enum(u8) {
+    CLEAR,
+    COLOR_MASK,
     PUSH_TRANSFORM,
     POP_TRANSFORM,
-    CLEAR,
     DRAW,
     DRAW_SLIDER,
     DRAW_MESH,
@@ -480,6 +481,10 @@ Command_Header :: struct {
 Command_Clear :: struct {
     color: Color,
     depth_only: bool
+}
+
+Command_Color_Mask :: struct {
+    r, g, b, a: bool
 }
 
 Command_Push_Transform :: struct {
@@ -532,6 +537,7 @@ Draw_Texture_Units :: struct {
 }
 
 command_push_clear             :: proc(cmd: Command_Clear) -> bool { return _command_push(cmd, .CLEAR) }
+command_push_color_mask        :: proc(cmd: Command_Color_Mask) -> bool { return _command_push(cmd, .COLOR_MASK) }
 command_push_push_transform    :: proc(cmd: Command_Push_Transform) -> bool { return _command_push(cmd, .PUSH_TRANSFORM) }
 command_push_pop_transform     :: proc() -> bool { return _command_push_header(.POP_TRANSFORM) }
 command_push_draw              :: proc(cmd: Command_Draw) -> bool { return _command_push(cmd, .DRAW) }
@@ -576,6 +582,11 @@ _command_consume :: proc(cmd_queue: ^queue.Queue(u8), $T: typeid) -> ^T {
 r_clear :: proc(color: Color = color_black, depth_only: bool = false) {
     window.renderer.new_draw_on_next_push = true
     command_push_clear({ color, depth_only })
+}
+
+r_color_mask :: proc(r, g, b, a: bool) {
+    window.renderer.new_draw_on_next_push = true
+    command_push_color_mask({ r, g, b, a })
 }
 
 r_push_draw :: proc(index_offset: u32, index_count: i32, instance_count: i32 = 1, base_instance: u32 = 0) {
@@ -840,6 +851,10 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                     if (trace) { 
                         fmt.println("  clear depth" if cmd.depth_only else "  clear") 
                     }
+                }
+                case .COLOR_MASK: {
+                    cmd := _command_consume(&command_queue, Command_Color_Mask)
+                    gl.ColorMask()
                 }
                 case .PUSH_TRANSFORM: {
                     cmd := _command_consume(&command_queue, Command_Push_Transform)

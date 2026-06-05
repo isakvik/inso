@@ -49,6 +49,8 @@ Beatmap :: struct {
 
     // -- gfx data fields
 
+    bg_handle: Drawable_Handle,
+
     gameplay_expiring_gfx: sb.Swap_Buffer(Drawable_Handle),
     map_expiring_gfx: sb.Swap_Buffer(Drawable_Handle),
     
@@ -59,7 +61,6 @@ Beatmap :: struct {
     // the final quad. the given element of an drawable can be overridden mid-map by scripts for effects
     elements: queue.Queue(Element),
     animations: queue.Queue(Animation),
-    bg_handle: Drawable_Handle,
 }
 
 beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {

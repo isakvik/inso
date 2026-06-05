@@ -1,9 +1,8 @@
 priority list for beta
 
--- POST MAPPER ALPHA RELEASE -- 
-
 bugs
-    sliderticks disappear even when missing
+    judgements appear at where the slidertail is pre-move/pre-transform
+    
 
 features
     custom sliderfollowcircle radius

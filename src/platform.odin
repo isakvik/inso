@@ -19,6 +19,8 @@ app: struct {
     base_dir: string,
     logger: log.Logger,
 
+    disable_raw_input: bool,
+
     debug_display_frame_profiler:  bool,
     debug_display_memory_profiler: bool,
     debug_display_fontatlas:       bool, // todo(isak): never written to
@@ -108,12 +110,14 @@ mice: [Mouse_ID]^Mouse
 mouse_init :: proc() {
     mice[.PRIMARY] = &mouse
     mice[.SECONDARY] = &mouse_secondary
- 
-    when ODIN_OS == .Windows {
-        raw_input_enable()
-        raw_input_register_sdl_hook()
 
-        app.input_device_hwids, app.input_device_handles = input_enumerate_mouse_devices(memory.allocators[.GLOBAL])
+    when ODIN_OS == .Windows {
+        if !app.disable_raw_input {
+            raw_input_enable()
+            raw_input_register_sdl_hook()
+    
+            app.input_device_hwids, app.input_device_handles = input_enumerate_mouse_devices(memory.allocators[.GLOBAL])
+        }
     }
 }
 

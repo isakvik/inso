@@ -823,6 +823,9 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
   { "set_pos", luaapi_hitobject_set_pos,
     "self hitobject:set_pos( float x, float y )",
     "moves the object to an absolute osu!px position." },
+  { "set_pos_screenspace", luaapi_hitobject_set_pos_screenspace,
+    "self hitobject:set_pos_screenspace( float x, float y )",
+    "moves the object to a screen-space pixel position, converted into playfield osu!px." },
   { "get_start_time", luaapi_hitobject_get_start_time,
     "float hitobject:get_start_time( void )",
     "the object's start time in ms." },
@@ -1077,6 +1080,15 @@ luaapi_hitobject_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
     })
 }
 
+luaapi_hitobject_set_pos_screenspace :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        context = lua_beatmap.odin_context
+        osupx := screenspace_to_playfield_osupx({f32(lua_number(2)), f32(lua_number(3))})
+        hobj.script_pos_translation = osupx - hobj.pos
+        return 0
+    })
+}
+
 luaapi_hitobject_get_start_time :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         lua.pushnumber(L, lua.Number(hobj.start_time_ms))
@@ -1305,6 +1317,9 @@ luaapi_drawable_instance_funcs := []Lua_Function {
   { "set_pos", luaapi_drawable_set_pos,
     "self drawable:set_pos( float x, float y )",
     "sets the drawable's position." },
+  { "set_pos_screenspace", luaapi_drawable_set_pos_screenspace,
+    "self drawable:set_pos_screenspace( float x, float y )",
+    "sets the drawable's position from a screen-space pixel position, converted into playfield osu!px." },
   { "get_size", luaapi_drawable_get_size,
     "(float w, float h) drawable:get_size( void )",
     "the drawable's size." },
@@ -1449,6 +1464,13 @@ luaapi_drawable_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         x, y := lua_number(2), lua_number(3)
         d.pos = vec2{f32(x), f32(y)}
+        return 0
+    })
+}
+luaapi_drawable_set_pos_screenspace :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        context = lua_beatmap.odin_context
+        d.pos = screenspace_to_playfield_osupx({f32(lua_number(2)), f32(lua_number(3))})
         return 0
     })
 }

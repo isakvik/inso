@@ -621,11 +621,18 @@ cursor_draw :: proc(pos: vec2, tex_index: u32) {
 }
 
 
-transform_mouse_pos :: proc(pos: vec2) -> vec2 {
+// note(isak): converts a screen-space pixel position (origin top-left, in window pixels) into playfield
+// osu!px space, the coordinate space hitobjects and playfield drawables live in. the inverse of the
+// playfield transform, so it tracks any lua playfield translate/scale/rotate automatically.
+screenspace_to_playfield_osupx :: proc(pos: vec2) -> vec2 {
     return transform_point_space(pos,
         transform_to_mat3(window.screenspace_transform),
         transform_to_mat3(game.playfield_transform)
     )
+}
+
+transform_mouse_pos :: proc(pos: vec2) -> vec2 {
+    return screenspace_to_playfield_osupx(pos)
 }
 
 handle_play_input_events :: proc() {

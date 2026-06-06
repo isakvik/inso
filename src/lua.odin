@@ -247,8 +247,8 @@ lua_register_instruction_count_hook :: proc() {
     lua.sethook(L, lua_watchdog_instruction_count_hook, i32(lua.MASKCOUNT), LUA_WATCHDOG_INSTRUCTION_COUNT)
 }
 
-// note(isak): reset count hook before each protected call so the watchdog budget
-// is per callback dispatch, not cumulative across frames.
+// note(isak): reset count hook before each protected call so the watchdog counter is per callback dispatch, 
+// not cumulative across frames
 lua_pcall_with_watchdog :: proc(L: ^lua.State, nargs, nresults: i32, error_prefix: string = "Lua error:") -> bool {
     lua_register_instruction_count_hook()
     if lua.pcall(L, nargs, nresults, 0) != lua.OK {
@@ -1243,8 +1243,8 @@ luaapi_drawable_new :: proc "c" (L: ^lua.State) -> (result: i32) {
         element_id = (cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name))^
     }
 
-    start_time := f64(lua.L_optnumber(L, 2, lua.Number(game.beatmap.start_time_ms)))
-    end_time   := f64(lua.L_optnumber(L, 3, lua.Number(game.beatmap.length_ms)))
+    start_time := f64(lua.L_optnumber(L, 2, 0))
+    end_time   := f64(lua.L_optnumber(L, 3, 0))
     
     handle := cast(^Drawable_Handle)lua.newuserdata(L, size_of(Drawable_Handle))
     handle^ = drawable_new_expiring(&game.beatmap.map_expiring_gfx, {

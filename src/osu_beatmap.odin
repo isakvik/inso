@@ -88,7 +88,7 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     beatmap.timing_windows = convert_overall_difficulty_to_timing_window(game.active_map.diff_overall_difficulty)
     
     beatmap.length_ms = sound_get_length_ms(&beatmap.music)
-    beatmap.start_time_ms = beatmap_game_time_to_music_time(beatmap, -beatmap.preempt_ms)
+    beatmap.start_time_ms = min(beatmap_game_time_to_music_time(beatmap, -beatmap.preempt_ms), -500)
     beatmap.music_time_ms = beatmap.start_time_ms
     
     beatmap.hitobjects = game.active_map.hitobjects
@@ -315,9 +315,11 @@ beatmap_music_position_interpolated_ms :: proc(beatmap: ^Beatmap) -> (result: f6
     return result
 }
 
-// note(isak): this function assumes the start times of objects are sorted, but doesn't require end times to be.
-// a pathological case might be a 2B element that stretches from the beginning of the map to the end
-beatmap_get_visible_hitobjects :: proc(beatmap: ^Beatmap, time: f64) -> (result: []Hitobject) {
+// note(isak): scans from the cached earliest visible object to the earliest unstarted object.
+// assumes the start times of objects are sorted, but doesn't require end times to be.
+// a pathological case might be a 2B element that stretches from the beginning of the map to the end,
+// which would result in a slice that contains up to every object in the map
+beatmap_get_visible_hitobjects :: proc(beatmap: ^Beatmap, map_time: f64) -> (result: []Hitobject) {
     state := &beatmap.visible_hitobject_state
     updated_from_index := state.earliest_i
 
@@ -329,12 +331,12 @@ beatmap_get_visible_hitobjects :: proc(beatmap: ^Beatmap, time: f64) -> (result:
 
         for &hobj, i in hitobjects[state.earliest_i:] {
             count_until_next_unstarted_hobj = i
-            if time < hitobject_visible_start_time(&hobj) {
+            if map_time < hitobject_visible_start_time(&hobj) {
                 includes_final_index = 0
                 break
             }
             if looking_for_finished_objects {
-                if hitobject_visible_end_time(&hobj) < time {
+                if hitobject_visible_end_time(&hobj) < map_time {
                     updated_from_index += 1
                 } else {
                     looking_for_finished_objects = false

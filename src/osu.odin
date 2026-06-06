@@ -253,7 +253,7 @@ hitobject_radius_osupx :: proc(hobj: ^Hitobject) -> f32 {
 hitobject_visible_start_time :: proc(hobj: ^Hitobject) -> (result: f64) {
     start_time := hobj.start_time_ms
     #partial switch hobj.type {
-    case .CIRCLE, .SLIDER: start_time -= game.beatmap.max_preempt_ms
+    case .CIRCLE, .SLIDER: start_time -= max(game.beatmap.max_preempt_ms, game.beatmap.timing_windows.miss)
     }
     return start_time
 }
@@ -502,8 +502,8 @@ osu_on_update :: proc(dt: f64) {
     // todo(isak): this really handles a bunch of debug stuff too. fix up the modes and such
     #partial switch game.mode {
         case .PLAY: 
-            handle_play_input_events()
             handle_menu_input_events() // @temp todo(isak): mode switching isn't handled yet
+            handle_play_input_events()
             
         case .MAIN_MENU: handle_menu_input_events()
     }
@@ -534,65 +534,17 @@ osu_on_update :: proc(dt: f64) {
             sb.append(&game.beatmap.expiring_hitobjects, hobj.index)
         }
     }
-
-    process_expiring_hitobjects(&game.beatmap.expiring_hitobjects)
-
-    game.input.available_presses = 0
-    if game.input.mouse_keys_enabled {
-        if button_is_pressed(game.input.k1) && !button_is_down(game.input.m1) do game.input.available_presses += 1
-        if button_is_pressed(game.input.k2) && !button_is_down(game.input.m2) do game.input.available_presses += 1
-        if button_is_pressed(game.input.m1) && !button_is_down(game.input.k1) do game.input.available_presses += 1
-        if button_is_pressed(game.input.m2) && !button_is_down(game.input.k2) do game.input.available_presses += 1
-    } else {
-        if button_is_pressed(game.input.k1) do game.input.available_presses += 1
-        if button_is_pressed(game.input.k2) do game.input.available_presses += 1
-    }
-
-    // todo(isak): move input resolution to its own thread. only one resolved note per press for now
-    for valid_controller_press() {
-        game.input.last_valid_press_at = map_time
-        consume_controller_press()
-
-        front, clicked: ^Hitobject
-        for &hobj in visible_hobjs {
-            if !hitobject_head_hittable(&hobj, map_time) do continue
-            if front == nil do front = &hobj
-            if point_in_circle(game.input.mouse_pos, hitobject_pos(&hobj), hitobject_radius_osupx(&hobj)) {
-                clicked = &hobj
-                break
-            }
-        }
-
-        if clicked == nil do continue
-
-        if clicked != front {
-            clicked.notelock_shake_at_ms = map_time
-            continue
-        }
-
-        judgement := hitobject_on_click(clicked)
-        if judgement == .NONE {
-            clicked.notelock_shake_at_ms = map_time
-            continue
-        }
-
-        #partial switch clicked.type {
-        case .CIRCLE:
-            hitobject_emit_phase_transition(clicked, .HIT)
-            judgement_new_drawable(clicked)
-        case .SLIDER:
-            hitobject_emit_phase_transition(clicked, .HOLD)
-        }
-    }
-
+    
     if game.playfield_dirty_transform {
         game.playfield_transform = playfield_build_transform()
         game.playfield_dirty_transform = false
     }
 
+    process_expiring_hitobjects(&game.beatmap.expiring_hitobjects)
+    process_hitobject_hittesting(visible_hobjs, map_time)
     process_hitobject_phase_transitions()
 
-    // beatmap render
+    // game render
 
     r_bind_layer_and_push_current_state(.HITOBJECTS, transform = game.playfield_transform)
 
@@ -624,7 +576,6 @@ osu_on_update :: proc(dt: f64) {
     process_and_draw_expiring_gfx_refs(&game.beatmap.gameplay_expiring_gfx)
     
     r_bind_layer_and_push_current_state(.BACKGROUND, transform = game.playfield_transform)
-    
     process_and_draw_expiring_gfx_refs(&game.beatmap.map_expiring_gfx)
     
     // ui render
@@ -726,6 +677,17 @@ handle_play_input_events :: proc() {
         game.input.mouse_secondary_pos = transform_mouse_pos(vec2{mouse_secondary.pos.x, mouse_secondary.pos.y})
         game.input.ms1 = mouse_secondary.buttons[.LEFT]
         game.input.ms2 = mouse_secondary.buttons[.RIGHT]
+    }
+    
+    game.input.available_presses = 0
+    if game.input.mouse_keys_enabled {
+        if button_is_pressed(game.input.k1) && !button_is_down(game.input.m1) do game.input.available_presses += 1
+        if button_is_pressed(game.input.k2) && !button_is_down(game.input.m2) do game.input.available_presses += 1
+        if button_is_pressed(game.input.m1) && !button_is_down(game.input.k1) do game.input.available_presses += 1
+        if button_is_pressed(game.input.m2) && !button_is_down(game.input.k2) do game.input.available_presses += 1
+    } else {
+        if button_is_pressed(game.input.k1) do game.input.available_presses += 1
+        if button_is_pressed(game.input.k2) do game.input.available_presses += 1
     }
     
     if lua_cares_about_event(.ON_KEY_DOWN) {

@@ -75,4 +75,4 @@ YEAST mode
     parse and apply settings from osu install (specify with path?), to allow warmup
 
     thepoon request:
-    open specific map with keyboard input (enter, anything that works with stable)
+    open map across all clients with keyboard input (enter, anything that works with stable)

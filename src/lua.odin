@@ -87,10 +87,20 @@ Lua_Class_Type :: enum {
     PLAYFIELD,
 }
 
+// note(isak): our own registration entry, a superset of lua.L_Reg that also carries the doc signature and
+// description inline so lua_docs.odin can generate the API reference straight from these tables - the docs
+// can never drift from what's actually registered. registration synthesizes the lua calls from name/func.
+Lua_Reg :: struct {
+    name:        cstring,
+    func:        lua.CFunction,
+    signature:   string,  // typed call form shown in the docs, e.g. "(float x, float y) hitobject:get_pos( void )"
+    description: string,
+}
+
 Lua_Class :: struct {
     name: cstring,
-    static_funcs: []lua.L_Reg,
-    instance_funcs: []lua.L_Reg,
+    static_funcs: []Lua_Reg,
+    instance_funcs: []Lua_Reg,
 }
 
 lua_classes: [Lua_Class_Type]Lua_Class = {
@@ -138,16 +148,34 @@ lua_classes: [Lua_Class_Type]Lua_Class = {
     },
 }
 
-luaapi_global_funcs := []lua.L_Reg {
-  { "load_file", luaapi_load_file },
-  { "get_cursor_pos", luaapi_get_cursor_pos },
-  { "controller_is_down", luaapi_controller_is_down },
-  { "controller_is_up", luaapi_controller_is_up },
-  { "key_is_down", luaapi_key_is_down },
-  { "key_is_up", luaapi_key_is_up },
-  { "trigger_event", luaapi_trigger_event },
-  { "schedule_event", luaapi_schedule_event },
-  { "register_global_event", luaapi_register_global_event },
+luaapi_global_funcs := []Lua_Reg {
+  { "load_file", luaapi_load_file,
+    "any load_file( string filename )",
+    "loads and runs a lua file from the mapset folder, returning whatever it returns." },
+  { "get_cursor_pos", luaapi_get_cursor_pos,
+    "(float x, float y) get_cursor_pos( void )",
+    "the cursor position in playfield (osu!px) space." },
+  { "controller_is_down", luaapi_controller_is_down,
+    "bool controller_is_down( string key )",
+    "true if the named gameplay key is held. key is one of \"k1\", \"k2\", \"m1\", \"m2\"." },
+  { "controller_is_up", luaapi_controller_is_up,
+    "bool controller_is_up( string key )",
+    "true if the named gameplay key is not held. key is one of \"k1\", \"k2\", \"m1\", \"m2\"." },
+  { "key_is_down", luaapi_key_is_down,
+    "bool key_is_down( string|int key )",
+    "true if the given keyboard key is held. accepts an sdl scancode name or a numeric scancode." },
+  { "key_is_up", luaapi_key_is_up,
+    "bool key_is_up( string|int key )",
+    "true if the given keyboard key is not held. accepts an sdl scancode name or a numeric scancode." },
+  { "trigger_event", luaapi_trigger_event,
+    "void trigger_event( string name, ... )",
+    "fires every callback registered under name. object callbacks get (self, ...), globals get (...)." },
+  { "schedule_event", luaapi_schedule_event,
+    "void schedule_event( string name, float delay_ms )",
+    "fires trigger_event(name) after delay_ms of music time. safe to call again from within a callback." },
+  { "register_global_event", luaapi_register_global_event,
+    "void register_global_event( string name, fn callback )",
+    "registers a callback not tied to any object; it receives only the extra args from trigger_event." },
 }
 
 // note(isak): we use reflection to pull the names and associated enums directly to lua tables
@@ -272,17 +300,23 @@ lua_register_classes :: proc(L: ^lua.State) {
             lua.L_newmetatable(L, class.name)
             lua.pushvalue(L, -1)
             lua.setfield(L, -2, "__index")
-            lua.L_setfuncs(L, raw_data(class.instance_funcs), 0)
+            for reg in class.instance_funcs {
+                lua.pushcfunction(L, reg.func)
+                lua.setfield(L, -2, reg.name)
+            }
             lua.pop(L, 1)
         }
-        
+
         // note(isak): sets up type methods like Class.new(...)
         if len(class.static_funcs) > 0 {
             lua.newtable(L)
-            lua.L_setfuncs(L, raw_data(class.static_funcs), 0)
+            for reg in class.static_funcs {
+                lua.pushcfunction(L, reg.func)
+                lua.setfield(L, -2, reg.name)
+            }
             lua.setglobal(L, class.name)
         }
-    }   
+    }
 }
 
 lua_register_enum :: proc(L: ^lua.State, e: typeid, tablename: cstring) {
@@ -736,52 +770,126 @@ lua_call_beatmap_func :: proc {
 //////////////////////////////////////////////////////
 // note(isak): hitobject object API
 
-luaapi_hitobject_static_funcs := []lua.L_Reg {
-  { "get_at_ms", luaapi_hitobject_get_at_ms },
-  { "get_in_range_ms", luaapi_hitobject_get_in_range_ms },
-  { "get_visible", luaapi_hitobject_get_visible },
-  { "get_with_all_bits", luaapi_hitobject_get_with_all_bits },
-  { "get_with_any_bits", luaapi_hitobject_get_with_any_bits },
-  { nil, nil },
+luaapi_hitobject_static_funcs := []Lua_Reg {
+  { "get_at_ms", luaapi_hitobject_get_at_ms,
+    "Hitobject Hitobject.get_at_ms( int ms )",
+    "the hitobject whose start time is exactly ms. errors if there's no object at that time." },
+  { "get_in_range_ms", luaapi_hitobject_get_in_range_ms,
+    "Hitobject[] Hitobject.get_in_range_ms( int from_ms, int to_ms )",
+    "all hitobjects with start times in [from_ms, to_ms]." },
+  { "get_visible", luaapi_hitobject_get_visible,
+    "Hitobject[] Hitobject.get_visible( void )",
+    "all hitobjects currently within their visible time window." },
+  { "get_with_all_bits", luaapi_hitobject_get_with_all_bits,
+    "Hitobject[] Hitobject.get_with_all_bits( int mask )",
+    "all hitobjects with every extra-bit in mask set. a zero mask returns nothing." },
+  { "get_with_any_bits", luaapi_hitobject_get_with_any_bits,
+    "Hitobject[] Hitobject.get_with_any_bits( int mask )",
+    "all hitobjects with at least one extra-bit in mask set. a zero mask returns nothing." },
 }
 
-luaapi_hitobject_instance_funcs := []lua.L_Reg {
-  { "__gc", luaapi_hitobject_gc },
-  { "register_event", luaapi_hitobject_register_event },
-  { "hide", luaapi_hitobject_hide },
-  { "unhide", luaapi_hitobject_unhide },
-  { "hide_combo_numbers", luaapi_hitobject_hide_combo_numbers },
-  { "unhide_combo_numbers", luaapi_hitobject_unhide_combo_numbers },
-  { "get_index", luaapi_hitobject_get_index },
-  { "get_extra_bits", luaapi_hitobject_get_extra_bits },
-  { "has_all_bits", luaapi_hitobject_has_all_bits },
-  { "has_any_bits", luaapi_hitobject_has_any_bits },
-  { "get_pos", luaapi_hitobject_get_pos },
-  { "set_pos", luaapi_hitobject_set_pos },
-  { "get_start_time", luaapi_hitobject_get_start_time },
-  { "set_start_time", luaapi_hitobject_set_start_time },
-  { "get_end_time", luaapi_hitobject_get_end_time },
-  { "set_end_time", luaapi_hitobject_set_end_time },
-  { "get_phase", luaapi_hitobject_get_phase },
-  { "add_element_for_phase", luaapi_hitobject_add_element_for_phase },
-  { "clear_drawables", luaapi_hitobject_clear_drawables },
-  { "get_hit_animation_length", luaapi_hitobject_get_hit_animation_length },
-  { "set_hit_animation_length", luaapi_hitobject_set_hit_animation_length },
-  { "get_preempt", luaapi_hitobject_get_preempt },
-  { "set_preempt", luaapi_hitobject_set_preempt },
-  { "get_ar", luaapi_hitobject_get_ar },
-  { "set_ar", luaapi_hitobject_set_ar },
-  { "get_cs", luaapi_hitobject_get_cs },
-  { "set_cs", luaapi_hitobject_set_cs },
+luaapi_hitobject_instance_funcs := []Lua_Reg {
+  { "__gc", luaapi_hitobject_gc, "", "" },
+  { "register_event", luaapi_hitobject_register_event,
+    "self hitobject:register_event( string name, fn callback )",
+    "registers callback to run when name is triggered for this object; it receives (self, ...)." },
+  { "hide", luaapi_hitobject_hide,
+    "self hitobject:hide( void )",
+    "stops the object (and its slider body) from rendering until unhide(). persists across phase transitions; still hittable." },
+  { "unhide", luaapi_hitobject_unhide,
+    "self hitobject:unhide( void )",
+    "undoes hide()." },
+  { "hide_combo_numbers", luaapi_hitobject_hide_combo_numbers,
+    "self hitobject:hide_combo_numbers( void )",
+    "stops drawing the combo number on this object's circle." },
+  { "unhide_combo_numbers", luaapi_hitobject_unhide_combo_numbers,
+    "self hitobject:unhide_combo_numbers( void )",
+    "undoes hide_combo_numbers()." },
+  { "get_index", luaapi_hitobject_get_index,
+    "int hitobject:get_index( void )",
+    "the object's index into the beatmap's hitobject list." },
+  { "get_extra_bits", luaapi_hitobject_get_extra_bits,
+    "int hitobject:get_extra_bits( void )",
+    "the object's script-defined extra-bits mask used for filtering." },
+  { "has_all_bits", luaapi_hitobject_has_all_bits,
+    "bool hitobject:has_all_bits( int mask )",
+    "true if every bit in mask is set on this object." },
+  { "has_any_bits", luaapi_hitobject_has_any_bits,
+    "bool hitobject:has_any_bits( int mask )",
+    "true if at least one bit in mask is set on this object." },
+  { "get_pos", luaapi_hitobject_get_pos,
+    "(float x, float y) hitobject:get_pos( void )",
+    "the object's position in osu!px (before any script translation)." },
+  { "set_pos", luaapi_hitobject_set_pos,
+    "self hitobject:set_pos( float x, float y )",
+    "moves the object to an absolute osu!px position." },
+  { "get_start_time", luaapi_hitobject_get_start_time,
+    "float hitobject:get_start_time( void )",
+    "the object's start time in ms." },
+  { "set_start_time", luaapi_hitobject_set_start_time,
+    "self hitobject:set_start_time( float ms )",
+    "sets the object's start time in ms." },
+  { "get_end_time", luaapi_hitobject_get_end_time,
+    "float hitobject:get_end_time( void )",
+    "the object's end time in ms (equals start time for circles)." },
+  { "set_end_time", luaapi_hitobject_set_end_time,
+    "self hitobject:set_end_time( float ms )",
+    "sets the object's end time in ms." },
+  { "get_phase", luaapi_hitobject_get_phase,
+    "Phase hitobject:get_phase( void )",
+    "the object's current lifecycle phase." },
+  { "add_element_for_phase", luaapi_hitobject_add_element_for_phase,
+    "self hitobject:add_element_for_phase( Phase phase, Element element )",
+    "adds a custom element to draw while the object is in the given phase, replacing the default graphics." },
+  { "clear_drawables", luaapi_hitobject_clear_drawables,
+    "self hitobject:clear_drawables( void )",
+    "removes all of the object's current drawables." },
+  { "get_hit_animation_length", luaapi_hitobject_get_hit_animation_length,
+    "float hitobject:get_hit_animation_length( void )",
+    "the object's hit animation length in ms." },
+  { "set_hit_animation_length", luaapi_hitobject_set_hit_animation_length,
+    "self hitobject:set_hit_animation_length( float ms )",
+    "overrides the object's hit animation length in ms." },
+  { "get_preempt", luaapi_hitobject_get_preempt,
+    "float hitobject:get_preempt( void )",
+    "the object's approach (preempt) time in ms." },
+  { "set_preempt", luaapi_hitobject_set_preempt,
+    "self hitobject:set_preempt( float ms )",
+    "overrides the object's approach (preempt) time in ms." },
+  { "get_ar", luaapi_hitobject_get_ar,
+    "float hitobject:get_ar( void )",
+    "the object's approach rate, derived from its preempt time." },
+  { "set_ar", luaapi_hitobject_set_ar,
+    "self hitobject:set_ar( float ar )",
+    "overrides the object's approach rate (converted to a preempt time)." },
+  { "get_cs", luaapi_hitobject_get_cs,
+    "float hitobject:get_cs( void )",
+    "the object's circle size, derived from its radius." },
+  { "set_cs", luaapi_hitobject_set_cs,
+    "self hitobject:set_cs( float cs )",
+    "overrides the object's circle size (converted to a radius)." },
 
-  { "get_slider_distance", luaapi_hitobject_get_slider_distance },
-  { "get_slider_velocity", luaapi_hitobject_get_slider_velocity },
-  { "get_slider_duration_ms", luaapi_hitobject_get_slider_duration_ms },
-  { "get_slider_ball_pos", luaapi_hitobject_get_slider_ball_pos },
-  { "get_slider_ball_pos_at", luaapi_hitobject_get_slider_ball_pos_at },
-  { "get_slider_ball_angle", luaapi_hitobject_get_slider_ball_angle },
-  { "get_slider_ball_angle_at", luaapi_hitobject_get_slider_ball_angle_at },
-  { nil, nil },
+  { "get_slider_distance", luaapi_hitobject_get_slider_distance,
+    "float hitobject:get_slider_distance( void )",
+    "the slider's path length in osu!px (0 for non-sliders)." },
+  { "get_slider_velocity", luaapi_hitobject_get_slider_velocity,
+    "float hitobject:get_slider_velocity( void )",
+    "the slider's velocity (0 for non-sliders)." },
+  { "get_slider_duration_ms", luaapi_hitobject_get_slider_duration_ms,
+    "float hitobject:get_slider_duration_ms( void )",
+    "the duration of one slider traversal in ms (0 for non-sliders)." },
+  { "get_slider_ball_pos", luaapi_hitobject_get_slider_ball_pos,
+    "(float x, float y) hitobject:get_slider_ball_pos( void )",
+    "the slider ball's current position in osu!px (the head position for non-sliders)." },
+  { "get_slider_ball_pos_at", luaapi_hitobject_get_slider_ball_pos_at,
+    "(float x, float y) hitobject:get_slider_ball_pos_at( float ms )",
+    "the slider ball's position at the given music time in osu!px." },
+  { "get_slider_ball_angle", luaapi_hitobject_get_slider_ball_angle,
+    "float hitobject:get_slider_ball_angle( void )",
+    "the slider ball's current travel angle in radians (0 for non-sliders)." },
+  { "get_slider_ball_angle_at", luaapi_hitobject_get_slider_ball_angle_at,
+    "float hitobject:get_slider_ball_angle_at( float ms )",
+    "the slider ball's travel angle at the given music time in radians." },
 }
 
 luaapi_hitobject_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
@@ -1174,34 +1282,74 @@ luaapi_hitobject_set_cs :: proc "c" (L: ^lua.State) -> (result: i32) {
 //////////////////////////////////////////////////////
 // note(isak): drawable object API
 
-luaapi_drawable_static_funcs := []lua.L_Reg {
-  { "new", luaapi_drawable_new },
-  { nil, nil },
+luaapi_drawable_static_funcs := []Lua_Reg {
+  { "new", luaapi_drawable_new,
+    "Drawable Drawable.new( string|Element source, float start_ms = 0, float end_ms = 0 )",
+    "creates a drawable from a texture name or an Element, on the current render layer." },
 }
 
-luaapi_drawable_instance_funcs := []lua.L_Reg {
-  { "__gc", luaapi_drawable_gc },
-  { "register_event", luaapi_drawable_register_event },
-  { "clone", luaapi_drawable_clone },
-  { "set_layer", luaapi_drawable_set_layer },
-  { "get_pos", luaapi_drawable_get_pos },
-  { "set_pos", luaapi_drawable_set_pos },
-  { "get_size", luaapi_drawable_get_size },
-  { "set_size", luaapi_drawable_set_size },
-  { "set_anchor", luaapi_drawable_set_anchor },
-  { "get_color", luaapi_drawable_get_color },
-  { "set_color", luaapi_drawable_set_color },
-  { "set_vel", luaapi_drawable_set_vel },
-  { "set_accel", luaapi_drawable_set_accel },
-  { "set_angle_vel", luaapi_drawable_set_angle_vel },
-  { "get_start_time", luaapi_drawable_get_start_time },
-  { "set_start_time", luaapi_drawable_set_start_time },
-  { "get_end_time", luaapi_drawable_get_end_time },
-  { "set_end_time", luaapi_drawable_set_end_time },
-  { "set_time", luaapi_drawable_set_time },
-  { "hide", luaapi_drawable_hide },
-  { "show", luaapi_drawable_show },
-  { nil, nil },
+luaapi_drawable_instance_funcs := []Lua_Reg {
+  { "__gc", luaapi_drawable_gc, "", "" },
+  { "register_event", luaapi_drawable_register_event,
+    "self drawable:register_event( string name, fn callback )",
+    "registers callback to run when name is triggered for this drawable; it receives (self, ...)." },
+  { "clone", luaapi_drawable_clone,
+    "Drawable drawable:clone( void )",
+    "creates an independent copy of this drawable." },
+  { "set_layer", luaapi_drawable_set_layer,
+    "self drawable:set_layer( Layer layer )",
+    "moves the drawable to the given render layer." },
+  { "get_pos", luaapi_drawable_get_pos,
+    "(float x, float y) drawable:get_pos( void )",
+    "the drawable's position." },
+  { "set_pos", luaapi_drawable_set_pos,
+    "self drawable:set_pos( float x, float y )",
+    "sets the drawable's position." },
+  { "get_size", luaapi_drawable_get_size,
+    "(float w, float h) drawable:get_size( void )",
+    "the drawable's size." },
+  { "set_size", luaapi_drawable_set_size,
+    "self drawable:set_size( float w, float h )",
+    "sets the drawable's size." },
+  { "set_anchor", luaapi_drawable_set_anchor,
+    "self drawable:set_anchor( Anchor anchor )",
+    "sets the drawable's anchor point." },
+  { "get_color", luaapi_drawable_get_color,
+    "int drawable:get_color( void )",
+    "the drawable's color as a packed rgba integer." },
+  { "set_color", luaapi_drawable_set_color,
+    "self drawable:set_color( int color )",
+    "sets the drawable's color from a packed rgba integer (see Color.rgb / Color.rgba)." },
+  { "set_vel", luaapi_drawable_set_vel,
+    "self drawable:set_vel( float x, float y )",
+    "sets the drawable's linear velocity." },
+  { "set_accel", luaapi_drawable_set_accel,
+    "self drawable:set_accel( float x, float y )",
+    "sets the drawable's linear acceleration." },
+  { "set_angle_vel", luaapi_drawable_set_angle_vel,
+    "self drawable:set_angle_vel( float angle_vel )",
+    "sets the drawable's angular velocity." },
+  { "get_start_time", luaapi_drawable_get_start_time,
+    "float drawable:get_start_time( void )",
+    "the drawable's start time in ms." },
+  { "set_start_time", luaapi_drawable_set_start_time,
+    "self drawable:set_start_time( float ms )",
+    "sets the drawable's start time in ms." },
+  { "get_end_time", luaapi_drawable_get_end_time,
+    "float drawable:get_end_time( void )",
+    "the drawable's end time in ms." },
+  { "set_end_time", luaapi_drawable_set_end_time,
+    "self drawable:set_end_time( float ms )",
+    "sets the drawable's end time in ms." },
+  { "set_time", luaapi_drawable_set_time,
+    "self drawable:set_time( float start_ms, float end_ms )",
+    "sets the drawable's start and end time in ms." },
+  { "hide", luaapi_drawable_hide,
+    "self drawable:hide( void )",
+    "stops the drawable from rendering (clears its active flag)." },
+  { "show", luaapi_drawable_show,
+    "self drawable:show( void )",
+    "resumes rendering the drawable (sets its active flag)." },
 }
 
 luaapi_drawable_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
@@ -1430,22 +1578,38 @@ luaapi_drawable_show :: proc "c" (L: ^lua.State) -> (result: i32) {
 //////////////////////////////////////////////////////
 // note(isak): element object API
 
-luaapi_element_static_funcs := []lua.L_Reg {
-  { "new",           luaapi_element_new },
-  { nil,             nil               },
+luaapi_element_static_funcs := []Lua_Reg {
+  { "new", luaapi_element_new,
+    "Element Element.new( void )",
+    "creates a blank white quad element using the default shader." },
 }
 
-luaapi_element_instance_funcs := []lua.L_Reg {
-  { "__gc", luaapi_element_gc },
-  { "clone", luaapi_element_clone },
-  { "register_event", luaapi_element_register_event },
-  { "set_tex", luaapi_element_set_tex },
-  { "set_uv", luaapi_element_set_uv },
-  { "set_shader", luaapi_element_set_shader },
-  { "set_animation", luaapi_element_set_animation },
-  { "set_mesh", luaapi_element_set_mesh },
-  { "use_combo_color", luaapi_element_use_combo_color },
-  { nil, nil },
+luaapi_element_instance_funcs := []Lua_Reg {
+  { "__gc", luaapi_element_gc, "", "" },
+  { "clone", luaapi_element_clone,
+    "Element element:clone( void )",
+    "creates an independent copy of this element." },
+  { "register_event", luaapi_element_register_event,
+    "self element:register_event( string name, fn callback )",
+    "registers callback to run when name is triggered for this element; it receives (self, ...)." },
+  { "set_tex", luaapi_element_set_tex,
+    "self element:set_tex( string texture_name )",
+    "sets the element's texture by mapset texture name." },
+  { "set_uv", luaapi_element_set_uv,
+    "self element:set_uv( float x, float y, float w, float h )",
+    "sets the uv sub-rect in [0,1] space, picking a region of the texture." },
+  { "set_shader", luaapi_element_set_shader,
+    "self element:set_shader( string shader_name )",
+    "sets the element's shader by mapset pipeline name." },
+  { "set_animation", luaapi_element_set_animation,
+    "self element:set_animation( Animation animation )",
+    "attaches an animation list to the element." },
+  { "set_mesh", luaapi_element_set_mesh,
+    "self element:set_mesh( string buffer_name, int vertex_count )",
+    "marks the element as mesh-drawn, sourcing geometry from the named SSBO instead of the quad batch." },
+  { "use_combo_color", luaapi_element_use_combo_color,
+    "self element:use_combo_color( bool enabled )",
+    "when enabled, the element tints with the hitobject's combo color." },
 }
 
 luaapi_element_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
@@ -1609,20 +1773,34 @@ luaapi_element_use_combo_color :: proc "c" (L: ^lua.State) -> (result: i32) {
 //////////////////////////////////////////////////////
 // note(isak): animation list API
 
-luaapi_animation_static_funcs := []lua.L_Reg {
-  { "new", luaapi_animation_new },
-  { nil, nil },
+luaapi_animation_static_funcs := []Lua_Reg {
+  { "new", luaapi_animation_new,
+    "Animation Animation.new( void )",
+    "creates an empty animation list to attach to an element." },
 }
 
-luaapi_animation_instance_funcs := []lua.L_Reg {
-  { "move", luaapi_animation_move },
-  { "scale", luaapi_animation_scale },
-  { "rotate", luaapi_animation_rotate },
-  { "color", luaapi_animation_color },
-  { "alpha", luaapi_animation_alpha },
-  { "texture", luaapi_animation_texture },
-  { "frames",  luaapi_animation_frames  },
-  { nil, nil },
+luaapi_animation_instance_funcs := []Lua_Reg {
+  { "move", luaapi_animation_move,
+    "self animation:move( float start, float end, float from_x, float from_y, float to_x, float to_y, Tween tween = 0 )",
+    "appends a positional tween from (from_x, from_y) to (to_x, to_y) over [start, end]." },
+  { "scale", luaapi_animation_scale,
+    "self animation:scale( float start, float end, float from_x, float from_y, float to_x, float to_y, Tween tween = 0 )",
+    "appends a scale tween from (from_x, from_y) to (to_x, to_y) over [start, end]." },
+  { "rotate", luaapi_animation_rotate,
+    "self animation:rotate( float start, float end, float from, float to, Tween tween = 0 )",
+    "appends a rotation tween in radians from from to to over [start, end]." },
+  { "color", luaapi_animation_color,
+    "self animation:color( float start, float end, int from_color, int to_color, Tween tween = 0 )",
+    "appends a color tween between two packed rgba colors over [start, end]." },
+  { "alpha", luaapi_animation_alpha,
+    "self animation:alpha( float start, float end, float from, float to, Tween tween = 0 )",
+    "appends an alpha tween from from to to over [start, end]." },
+  { "texture", luaapi_animation_texture,
+    "self animation:texture( float start, float end, string texture_name, float layer = 0 )",
+    "appends a keyframe that swaps to the named texture (and array layer) over [start, end]." },
+  { "frames", luaapi_animation_frames,
+    "self animation:frames( float start, float end, string texture_name )",
+    "spreads every layer of a texture array as evenly-spaced frames over [start, end]." },
 }
 
 _lua_check_animation_list_and_potentially_relocate :: proc(anim_list: ^Script_Animation_List) {
@@ -1818,17 +1996,25 @@ luaapi_animation_frames :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(isak): Buffer object API
 
-luaapi_buffer_static_funcs := []lua.L_Reg {
-  { "get", luaapi_buffer_get },
-  { nil,   nil               },
+luaapi_buffer_static_funcs := []Lua_Reg {
+  { "get", luaapi_buffer_get,
+    "Buffer Buffer.get( string name )",
+    "looks up a mapset buffer (SSBO) by name; returns nil if not found." },
 }
 
-luaapi_buffer_instance_funcs := []lua.L_Reg {
-  { "bind",       luaapi_buffer_bind       },
-  { "write_f32s", luaapi_buffer_write_f32s },
-  { "write_vec4", luaapi_buffer_write_vec4 },
-  { "size",       luaapi_buffer_size       },
-  { nil,          nil                      },
+luaapi_buffer_instance_funcs := []Lua_Reg {
+  { "bind", luaapi_buffer_bind,
+    "void buffer:bind( int user_slot )",
+    "binds the buffer to a user SSBO slot (0-7, mapping to USER_0..USER_7)." },
+  { "write_f32s", luaapi_buffer_write_f32s,
+    "void buffer:write_f32s( int byte_offset, float value, ... )",
+    "writes one or more f32s at byte_offset (must be 4-byte aligned)." },
+  { "write_vec4", luaapi_buffer_write_vec4,
+    "void buffer:write_vec4( int vec4_index, float x, float y, float z, float w )",
+    "writes four f32s at vec4_index * 16 bytes." },
+  { "size", luaapi_buffer_size,
+    "int buffer:size( void )",
+    "the buffer's size in bytes." },
 }
 
 // Buffer.get(name) -> Buffer
@@ -1933,16 +2119,20 @@ luaapi_buffer_size :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(isak): sound object API
 
-luaapi_sound_static_funcs := []lua.L_Reg {
-    { "play",      luaapi_sound_play },
-    { "play_loop", luaapi_sound_play_loop },
-    { nil, nil },
+luaapi_sound_static_funcs := []Lua_Reg {
+    { "play", luaapi_sound_play,
+      "void Sound.play( string name, float volume = 1.0, float pan = 0.0 )",
+      "plays a mapset sample once at the given volume and stereo pan." },
+    { "play_loop", luaapi_sound_play_loop,
+      "Sound Sound.play_loop( string name, float volume = 1.0 )",
+      "starts looping a mapset sample and returns a handle you can stop()." },
 }
 
-luaapi_sound_instance_funcs := []lua.L_Reg {
-    { "__gc", luaapi_sound_gc },
-    { "stop", luaapi_sound_stop },
-    { nil, nil },
+luaapi_sound_instance_funcs := []Lua_Reg {
+    { "__gc", luaapi_sound_gc, "", "" },
+    { "stop", luaapi_sound_stop,
+      "void sound:stop( void )",
+      "stops a looping sound started by Sound.play_loop." },
 }
 
 // Sound.play(name, volume=1.0, pan=0.0)
@@ -1999,17 +2189,34 @@ luaapi_sound_gc :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(isak): beatmap info API
 
-luaapi_beatmap_static_funcs := []lua.L_Reg {
-  { "get_music_time_ms",  luaapi_beatmap_get_music_time_ms },
-  { "get_length_ms",      luaapi_beatmap_get_length_ms },
-  { "get_bpm",            luaapi_beatmap_get_bpm },
-  { "get_beat_length_ms", luaapi_beatmap_get_beat_length_ms },
-  { "get_ar_ms",          luaapi_beatmap_get_ar_ms },
-  { "get_cs_osupx",       luaapi_beatmap_get_cs_osupx },
-  { "is_paused",          luaapi_beatmap_is_paused },
-  { "set_timing_windows", luaapi_beatmap_set_timing_windows },
-  { "get_timing_windows", luaapi_beatmap_get_timing_windows },
-  { nil, nil },
+luaapi_beatmap_static_funcs := []Lua_Reg {
+  { "get_music_time_ms", luaapi_beatmap_get_music_time_ms,
+    "float Beatmap.get_music_time_ms( void )",
+    "the current music playback time in ms." },
+  { "get_length_ms", luaapi_beatmap_get_length_ms,
+    "float Beatmap.get_length_ms( void )",
+    "the total length of the map's audio in ms." },
+  { "get_bpm", luaapi_beatmap_get_bpm,
+    "float Beatmap.get_bpm( void )",
+    "the bpm at the current timing point." },
+  { "get_beat_length_ms", luaapi_beatmap_get_beat_length_ms,
+    "float Beatmap.get_beat_length_ms( void )",
+    "the beat length in ms at the current timing point." },
+  { "get_ar_ms", luaapi_beatmap_get_ar_ms,
+    "float Beatmap.get_ar_ms( void )",
+    "the map's approach (preempt) time in ms." },
+  { "get_cs_osupx", luaapi_beatmap_get_cs_osupx,
+    "float Beatmap.get_cs_osupx( void )",
+    "the map's circle radius in osu!px." },
+  { "is_paused", luaapi_beatmap_is_paused,
+    "bool Beatmap.is_paused( void )",
+    "true if playback is currently paused." },
+  { "set_timing_windows", luaapi_beatmap_set_timing_windows,
+    "void Beatmap.set_timing_windows( float marvelous, float good, float ok, float miss )",
+    "sets the hit window half-widths in ms; expects marvelous <= good <= ok <= miss." },
+  { "get_timing_windows", luaapi_beatmap_get_timing_windows,
+    "(float marvelous, float good, float ok, float miss) Beatmap.get_timing_windows( void )",
+    "the current hit window half-widths in ms." },
 }
 
 luaapi_beatmap_get_music_time_ms :: proc "c" (L: ^lua.State) -> i32 {
@@ -2090,10 +2297,13 @@ luaapi_beatmap_get_timing_windows :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(isak): color object API
 
-luaapi_color_static_funcs := []lua.L_Reg {
-  { "rgb", luaapi_color_rgb },
-  { "rgba", luaapi_color_rgba },
-  { nil, nil },
+luaapi_color_static_funcs := []Lua_Reg {
+  { "rgb", luaapi_color_rgb,
+    "int Color.rgb( int r, int g, int b )",
+    "packs r, g, b (each 0-255) into an opaque rgba integer." },
+  { "rgba", luaapi_color_rgba,
+    "int Color.rgba( int r, int g, int b, int a )",
+    "packs r, g, b, a (each 0-255) into an rgba integer." },
 }
 
 luaapi_color_rgb :: proc "c" (L: ^lua.State) -> (result: i32) {
@@ -2114,13 +2324,22 @@ luaapi_color_rgba :: proc "c" (L: ^lua.State) -> (result: i32) {
 //////////////////////////////////////////////////////
 // note(isak): Playfield API
 
-luaapi_playfield_static_funcs := []lua.L_Reg {
-  { "set_translation", luaapi_playfield_set_translation },
-  { "set_scale",       luaapi_playfield_set_scale },
-  { "set_rotation",    luaapi_playfield_set_rotation },
-  { "translate",       luaapi_playfield_translate },
-  { "rotate",          luaapi_playfield_rotate },
-  { nil, nil },
+luaapi_playfield_static_funcs := []Lua_Reg {
+  { "set_translation", luaapi_playfield_set_translation,
+    "void Playfield.set_translation( float x, float y )",
+    "sets the playfield offset in osu!px, on top of the base centering translation." },
+  { "set_scale", luaapi_playfield_set_scale,
+    "void Playfield.set_scale( float scale )",
+    "sets the playfield scale multiplier (1.0 = default size)." },
+  { "set_rotation", luaapi_playfield_set_rotation,
+    "void Playfield.set_rotation( float radians )",
+    "sets the playfield rotation in radians around its center." },
+  { "translate", luaapi_playfield_translate,
+    "void Playfield.translate( float x, float y )",
+    "adds to the current playfield translation in osu!px." },
+  { "rotate", luaapi_playfield_rotate,
+    "void Playfield.rotate( float radians )",
+    "adds to the current playfield rotation in radians." },
 }
 
 // set_translation(x, y) - offset in osu!px, applied on top of the base centering translation

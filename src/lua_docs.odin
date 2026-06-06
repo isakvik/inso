@@ -1,48 +1,46 @@
 package notosu
 
 // note(isak): generates a static HTML reference for the Lua API straight from the registration tables
-// (lua_classes, luaapi_global_funcs, luaapi_enum_constants) so the function/class/enum list can never drift
-// from what the engine actually registers.
-//
-// signatures and descriptions live in an external, hand-edited store (docs/lua_api_docs.ini) keyed by the
-// call form, so regenerating the HTML never overwrites them. new functions get blank stubs appended to that
-// file (existing entries are left untouched); entries with no matching function are reported as stale.
-//
-// run with:  notosu --gen-lua-docs   (generates docs/lua_api.html and exits before any window/audio init)
+// (lua_classes, luaapi_global_funcs, luaapi_enum_constants). signatures and descriptions live inline on each
+// Lua_Reg entry.
 
-import "core:encoding/ini"
 import "core:fmt"
 import "core:os"
 import "core:reflect"
 import "core:strings"
 
 LUA_DOCS_OUTPUT_PATH :: "docs/lua_api.html"
-LUA_DOCS_STORE_PATH :: "docs/lua_api_docs.ini"
 LUA_DOCS_GEN_ARG :: "--gen-lua-docs"
 
 lua_generate_docs :: proc() {
-    store, _, _ := ini.load_map_from_path(LUA_DOCS_STORE_PATH, context.allocator) // empty map if the file is absent
-
-    registered: map[string]bool   // every key we render, for stale-entry detection
-    missing: [dynamic]string      // registered keys with no entry in the store yet
-
     sb := strings.builder_make()
     defer strings.builder_destroy(&sb)
 
-    w :: strings.write_string
+    w :: fmt.sbprintln
+    wf :: fmt.sbprintfln
 
     w(&sb, LUA_DOCS_HTML_HEAD)
-    fmt.sbprintf(&sb, "<h1>notosu Lua API</h1>\n")
-    fmt.sbprintf(&sb, "<p class=\"note\">version %s &mdash; functions and enums are generated from the engine; ", VERSION)
-    fmt.sbprintf(&sb, "signatures and descriptions come from <code>%s</code>.</p>\n", LUA_DOCS_STORE_PATH)
+    wf(&sb, "<h1>Lua API for inso v%s</h1>", VERSION)
+    wf(&sb, "<p class=\"note\">Documentation automatically generated from the engine's registration tables</p>")
+    wf(&sb, "<p class=\"note\">A method with return type <span class=\"sig s\">self</span> returns its own object, so calls can be chained.</p>")
+
+    // table of contents - one link per section
+    w(&sb, "<nav class=\"toc\">")
+    w(&sb, "<a href=\"#globals\">Globals</a>")
+    for class_type in Lua_Class_Type {
+        class := lua_classes[class_type]
+        if class.name == nil do continue
+        wf(&sb, "<a href=\"#%s\">%s</a>", class.name, class.name)
+    }
+    w(&sb, "<a href=\"#enums\">Enums</a>")
+    w(&sb, "</nav>")
 
     // globals
-    w(&sb, "<h2 id=\"globals\">Globals</h2>\n")
-    w(&sb, "<p class=\"note\">free functions, called directly.</p>\n")
+    lua_docs_write_heading(&sb, "globals", "Globals")
+    w(&sb, "<p class=\"note\">Free functions, called directly.</p>")
     lua_docs_write_table_open(&sb)
     for reg in luaapi_global_funcs {
-        if reg.name == nil do continue
-        lua_docs_write_row(&sb, store, fmt.tprint(reg.name), &registered, &missing)
+        lua_docs_write_row(&sb, reg, fmt.tprint(reg.name))
     }
     lua_docs_write_table_close(&sb)
 
@@ -51,30 +49,30 @@ lua_generate_docs :: proc() {
         class := lua_classes[class_type]
         if class.name == nil do continue
 
-        fmt.sbprintf(&sb, "<h2 id=\"%s\">%s</h2>\n", class.name, class.name)
+        lua_docs_write_heading(&sb, string(class.name), string(class.name))
         lua_docs_write_table_open(&sb)
 
         for reg in class.static_funcs {
-            if reg.name == nil || lua_docs_is_internal(reg.name) do continue
-            lua_docs_write_row(&sb, store, fmt.tprintf("%s.%s", class.name, reg.name), &registered, &missing)
+            if lua_docs_is_internal(reg.name) do continue
+            lua_docs_write_row(&sb, reg, fmt.tprintf("%s.%s", class.name, reg.name))
         }
         for reg in class.instance_funcs {
-            if reg.name == nil || lua_docs_is_internal(reg.name) do continue
-            lua_docs_write_row(&sb, store, fmt.tprintf("%s:%s", class.name, reg.name), &registered, &missing)
+            if lua_docs_is_internal(reg.name) do continue
+            lua_docs_write_row(&sb, reg, fmt.tprintf("%s:%s", class.name, reg.name))
         }
 
         lua_docs_write_table_close(&sb)
     }
 
-    // enums (members + values are authoritative from reflection, no external docs needed)
-    w(&sb, "<h2 id=\"enums\">Enums</h2>\n")
+    // enums (members + values are authoritative from reflection)
+    lua_docs_write_heading(&sb, "enums", "Enums")
     for e in luaapi_enum_constants {
-        fmt.sbprintf(&sb, "<h3>%s</h3>\n", e.name)
+        wf(&sb, "<h3>%s</h3>", e.name)
         names  := reflect.enum_field_names(e.t)
         values := reflect.enum_field_values(e.t)
         w(&sb, "<table class=\"enum\">\n<thead><tr><th>Constant</th><th>Value</th></tr></thead>\n<tbody>\n")
         for name, i in names {
-            fmt.sbprintf(&sb, "<tr><td><code>%s.%s</code></td><td>%d</td></tr>\n", e.name, name, i64(values[i]))
+            wf(&sb, "<tr><td><code>%s.%s</code></td><td>%d</td></tr>", e.name, name, i64(values[i]))
         }
         w(&sb, "</tbody>\n</table>\n")
     }
@@ -89,75 +87,120 @@ lua_generate_docs :: proc() {
     }
     fmt.printfln("[lua-docs] wrote %s", LUA_DOCS_OUTPUT_PATH)
 
-    // append blank stubs for any newly-registered functions so they're easy to find and fill in
-    if len(missing) > 0 {
-        lua_docs_append_stubs(missing[:])
+    lua_docs_report_missing(luaapi_global_funcs, "")
+    for class_type in Lua_Class_Type {
+        class := lua_classes[class_type]
+        if class.name == nil do continue
+        lua_docs_report_missing(class.static_funcs, fmt.tprintf("%s.", class.name))
+        lua_docs_report_missing(class.instance_funcs, fmt.tprintf("%s:", class.name))
     }
+}
 
-    // report doc entries that no longer match a registered function
-    for section in store {
-        if section == "" do continue
-        if section not_in registered {
-            fmt.printfln("[lua-docs] stale doc entry (no such function): %s", section)
+lua_docs_write_heading :: proc(sb: ^strings.Builder, id: string, title: string) {
+    fmt.sbprintfln(sb, "<h2 id=\"%s\"><a class=\"hlink\" href=\"#%s\">%s <span class=\"htarget\">#</span></a></h2>", id, id, title)
+}
+
+lua_docs_report_missing :: proc(regs: []Lua_Reg, key_prefix: string) {
+    for reg in regs {
+        if lua_docs_is_internal(reg.name) do continue
+        if reg.signature == "" || reg.description == "" {
+            fmt.printfln("[lua-docs] TODO: %s%s is missing a signature or description", key_prefix, reg.name)
         }
     }
 }
 
-lua_docs_write_row :: proc(
-    sb: ^strings.Builder, store: ini.Map, key: string,
-    registered: ^map[string]bool, missing: ^[dynamic]string,
-) {
-    registered[key] = true
-
-    signature, description: string
-    if section, ok := store[key]; ok {
-        signature = section["signature"]
-        description = section["description"]
-    } else {
-        append(missing, key)
-    }
+lua_docs_write_row :: proc(sb: ^strings.Builder, reg: Lua_Reg, key: string) {
+    signature := reg.signature if reg.signature != "" else key
 
     w :: strings.write_string
-    w(sb, "<tr><td><code>")
-    lua_docs_escape(sb, key)
-    w(sb, "</code></td>")
-    lua_docs_write_cell(sb, signature)
-    lua_docs_write_cell(sb, description)
-    w(sb, "</tr>\n")
+    w(sb, "<tr><td><code class=\"sig\">")
+    lua_docs_write_signature(sb, signature)
+    w(sb, "</code>")
+    if reg.description != "" {
+        w(sb, "<div class=\"desc\">")
+        lua_docs_escape(sb, reg.description)
+        w(sb, "</div>")
+    }
+    w(sb, "</td></tr>\n")
 }
 
-lua_docs_write_cell :: proc(sb: ^strings.Builder, text: string) {
-    if text == "" {
-        strings.write_string(sb, "<td class=\"todo\">TODO</td>")
-        return
+// note(isak): tokenizes a signature and wraps each token in a span classed by role, so the css can color
+// types / method names / receivers / args distinctly. the format is regular - "<ret> recv:method( params )" -
+// so a single-token lookaround is enough: an identifier before a ':' or '.' is the receiver, one after is the
+// method name, otherwise it's a known/Capitalized type or an argument name.
+lua_docs_write_signature :: proc(sb: ^strings.Builder, sig: string) {
+    Tok_Kind :: enum { SPACE, IDENT, NUM, SYM }
+    Tok :: struct { text: string, kind: Tok_Kind }
+
+    is_space  :: proc(c: byte) -> bool { return c == ' ' || c == '\t' }
+    is_digit  :: proc(c: byte) -> bool { return c >= '0' && c <= '9' }
+    is_ident0 :: proc(c: byte) -> bool { return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
+    is_identc :: proc(c: byte) -> bool { return is_ident0(c) || is_digit(c) }
+
+    toks := make([dynamic]Tok, context.temp_allocator)
+    i := 0
+    for i < len(sig) {
+        c, start := sig[i], i
+        switch {
+        case is_space(c):
+            for i < len(sig) && is_space(sig[i]) do i += 1
+            append(&toks, Tok{ sig[start:i], .SPACE })
+        case is_digit(c):
+            for i < len(sig) && (is_digit(sig[i]) || sig[i] == '.') do i += 1
+            append(&toks, Tok{ sig[start:i], .NUM })
+        case is_ident0(c):
+            for i < len(sig) && is_identc(sig[i]) do i += 1
+            append(&toks, Tok{ sig[start:i], .IDENT })
+        case:
+            i += 1
+            append(&toks, Tok{ sig[start:i], .SYM })
+        }
     }
-    strings.write_string(sb, "<td>")
-    lua_docs_escape(sb, text)
-    strings.write_string(sb, "</td>")
+
+    adjacent_symbol :: proc(toks: []Tok, idx, step: int) -> (text: string, is_sym: bool) {
+        for j := idx + step; j >= 0 && j < len(toks); j += step {
+            if toks[j].kind == .SPACE do continue
+            return toks[j].text, toks[j].kind == .SYM
+        }
+        return "", false
+    }
+
+    for tok, idx in toks {
+        if tok.kind == .SPACE {
+            strings.write_string(sb, tok.text)
+            continue
+        }
+
+        class: string
+        switch tok.kind {
+        case .NUM:   class = "number"
+        case .SYM:   class = "punctuation"
+        case .SPACE:
+        case .IDENT:
+            prev_text, prev_is_sym := adjacent_symbol(toks[:], idx, -1)
+            next_text, next_is_sym := adjacent_symbol(toks[:], idx, +1)
+            switch {
+            case next_is_sym && (next_text == ":" || next_text == "."): class = "receiver"
+            case prev_is_sym && (prev_text == ":" || prev_text == "."): class = "function"
+            case next_is_sym && next_text == "(":                       class = "function"
+            case tok.text == "self":                                    class = "self"
+            case tok.text == "fn":                                      class = "callback"
+            case lua_docs_is_type_token(tok.text):                      class = "type"
+            case:                                                       class = "argument"
+            }
+        }
+
+        fmt.sbprintf(sb, "<span class=\"%s\">", class)
+        lua_docs_escape(sb, tok.text)
+        strings.write_string(sb, "</span>")
+    }
 }
 
-// note(isak): append-only - writes blank stub sections for new keys without touching existing entries, so
-// hand-written signatures/descriptions are never lost on regeneration
-lua_docs_append_stubs :: proc(keys: []string) {
-    existing, _ := os.read_entire_file(LUA_DOCS_STORE_PATH, context.allocator)
-
-    sb := strings.builder_make()
-    defer strings.builder_destroy(&sb)
-
-    strings.write_bytes(&sb, existing)
-    if len(existing) > 0 && existing[len(existing) - 1] != '\n' {
-        strings.write_byte(&sb, '\n')
+lua_docs_is_type_token :: proc(s: string) -> bool {
+    switch s {
+    case "void", "int", "float", "bool", "string", "any": return true
     }
-    for key in keys {
-        fmt.sbprintf(&sb, "\n[%s]\nsignature = \ndescription = \n", key)
-    }
-
-    if err := os.write_entire_file(LUA_DOCS_STORE_PATH, transmute([]byte)strings.to_string(sb)); err != os.General_Error.None {
-        fmt.eprintfln("[lua-docs] failed to write stubs to %s: %v", LUA_DOCS_STORE_PATH, err)
-        return
-    }
-    fmt.printfln("[lua-docs] added %d stub entr%s to %s (fill them in)",
-        len(keys), len(keys) == 1 ? "y" : "ies", LUA_DOCS_STORE_PATH)
+    return len(s) > 0 && s[0] >= 'A' && s[0] <= 'Z'
 }
 
 // note(isak): metamethods like __gc / __index aren't part of the scripting surface
@@ -179,7 +222,7 @@ lua_docs_escape :: proc(sb: ^strings.Builder, s: string) {
 
 lua_docs_write_table_open :: proc(sb: ^strings.Builder) {
     strings.write_string(sb,
-        "<table>\n<thead><tr><th>Function</th><th>Signature</th><th>Description</th></tr></thead>\n<tbody>\n")
+        "<table>\n<thead><tr><th>Method</th></tr></thead>\n<tbody>\n")
 }
 
 lua_docs_write_table_close :: proc(sb: ^strings.Builder) {
@@ -193,20 +236,36 @@ LUA_DOCS_HTML_HEAD :: `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>notosu Lua API</title>
 <style>
-  :root { --bg:#1b1d23; --panel:#23262e; --line:#363a45; --text:#dfe3ea; --muted:#8b91a0; --accent:#7fb3ff; --code:#c8e1ff; }
+  :root { --bg:#181518; --panel:#1e1b23; --line:#9d8edc40; --text:#ccdcff; --muted:#8b91a0; --accent:#79a6f4; }
   * { box-sizing: border-box; }
   body { margin: 0 auto; max-width: 980px; padding: 2rem 1.25rem 4rem;
          font: 15px/1.55 system-ui, sans-serif; background: var(--bg); color: var(--text); }
   h1 { font-size: 1.8rem; margin: 0 0 .25rem; }
-  h2 { margin: 2.4rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid var(--line); color: var(--accent); }
+  h2 { margin: 2.4rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid var(--line); color: var(--accent); scroll-margin-top: 1rem; }
   h3 { margin: 1.4rem 0 .4rem; color: var(--text); }
+  h2 a.hlink { color: inherit; text-decoration: none; display: inline-block; }
+  h2 a.hlink .htarget { color: var(--muted); font-weight: 400; opacity: 0; }
+  h2 a.hlink:hover .htarget { opacity: 1; }
   p.note { color: var(--muted); margin: .2rem 0 1rem; }
-  code { font-family: ui-monospace, "Cascadia Code", Menlo, Consolas, monospace; color: var(--code); }
+  nav.toc { display: flex; flex-wrap: wrap; gap: .4rem; margin: 1.2rem 0 2rem; }
+  nav.toc a { color: var(--accent); text-decoration: none; background: var(--panel);
+              border-radius: .4rem; padding: .2rem .6rem; font-size: .85rem; }
+  nav.toc a:hover { text-decoration: underline; }
+  code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--code); }
   table { width: 100%; border-collapse: collapse; margin: .5rem 0 1rem; background: var(--panel); }
   th, td { text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
   th { color: var(--muted); font-weight: 600; font-size: .82rem; text-transform: uppercase; letter-spacing: .04em; }
   tr:last-child td { border-bottom: none; }
-  td.todo { color: var(--muted); font-style: italic; }
+  code.sig { display: block; line-height: 1.7; }
+  code.sig .type { color: rgb(86, 156, 214); }
+  code.sig .self { color: rgb(190, 150, 225); }
+  code.sig .function { color: rgb(220, 220, 170); font-weight: 600; }
+  code.sig .receiver { color: rgb(156, 220, 254); }
+  code.sig .argument { color: #dfe3ea; }
+  code.sig .callback { color: rgb(200, 150, 225); }
+  code.sig .number { color: #e0a071; }
+  code.sig .punctuation { color: rgb(150, 140, 160); }
+  .desc { color: var(--muted); margin-top: .35rem; }
   table.enum td:nth-child(2) { font-family: ui-monospace, monospace; color: var(--muted); width: 6rem; }
 </style>
 </head>

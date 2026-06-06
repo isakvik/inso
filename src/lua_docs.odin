@@ -24,7 +24,7 @@ lua_generate_docs :: proc() {
     wf(&sb, "<p class=\"note\">Documentation automatically generated from the engine's registration tables</p>")
     wf(&sb, "<p class=\"note\">A method with return type <span class=\"sig s\">self</span> returns its own object, so calls can be chained.</p>")
 
-    // table of contents - one link per section
+    // table of contents
     w(&sb, "<nav class=\"toc\">")
     w(&sb, "<a href=\"#globals\">Globals</a>")
     for class_type in Lua_Class_Type {
@@ -64,7 +64,7 @@ lua_generate_docs :: proc() {
         lua_docs_write_table_close(&sb)
     }
 
-    // enums (members + values are authoritative from reflection)
+    // enums
     lua_docs_write_heading(&sb, "enums", "Enums")
     for e in luaapi_enum_constants {
         wf(&sb, "<h3>%s</h3>", e.name)
@@ -100,7 +100,7 @@ lua_docs_write_heading :: proc(sb: ^strings.Builder, id: string, title: string) 
     fmt.sbprintfln(sb, "<h2 id=\"%s\"><a class=\"hlink\" href=\"#%s\">%s <span class=\"htarget\">#</span></a></h2>", id, id, title)
 }
 
-lua_docs_report_missing :: proc(regs: []Lua_Reg, key_prefix: string) {
+lua_docs_report_missing :: proc(regs: []Lua_Function, key_prefix: string) {
     for reg in regs {
         if lua_docs_is_internal(reg.name) do continue
         if reg.signature == "" || reg.description == "" {
@@ -109,7 +109,7 @@ lua_docs_report_missing :: proc(regs: []Lua_Reg, key_prefix: string) {
     }
 }
 
-lua_docs_write_row :: proc(sb: ^strings.Builder, reg: Lua_Reg, key: string) {
+lua_docs_write_row :: proc(sb: ^strings.Builder, reg: Lua_Function, key: string) {
     signature := reg.signature if reg.signature != "" else key
 
     w :: strings.write_string
@@ -234,7 +234,7 @@ LUA_DOCS_HTML_HEAD :: `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>notosu Lua API</title>
+<title>inso Lua API</title>
 <style>
   :root { --bg:#181518; --panel:#1e1b23; --line:#9d8edc40; --text:#ccdcff; --muted:#8b91a0; --accent:#79a6f4; }
   * { box-sizing: border-box; }

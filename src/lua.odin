@@ -90,7 +90,7 @@ Lua_Class_Type :: enum {
 // note(isak): our own registration entry, a superset of lua.L_Reg that also carries the doc signature and
 // description inline so lua_docs.odin can generate the API reference straight from these tables - the docs
 // can never drift from what's actually registered. registration synthesizes the lua calls from name/func.
-Lua_Reg :: struct {
+Lua_Function :: struct {
     name:        cstring,
     func:        lua.CFunction,
     signature:   string,  // typed call form shown in the docs, e.g. "(float x, float y) hitobject:get_pos( void )"
@@ -99,8 +99,8 @@ Lua_Reg :: struct {
 
 Lua_Class :: struct {
     name: cstring,
-    static_funcs: []Lua_Reg,
-    instance_funcs: []Lua_Reg,
+    static_funcs: []Lua_Function,
+    instance_funcs: []Lua_Function,
 }
 
 lua_classes: [Lua_Class_Type]Lua_Class = {
@@ -148,7 +148,7 @@ lua_classes: [Lua_Class_Type]Lua_Class = {
     },
 }
 
-luaapi_global_funcs := []Lua_Reg {
+luaapi_global_funcs := []Lua_Function {
   { "load_file", luaapi_load_file,
     "any load_file( string filename )",
     "loads and runs a lua file from the mapset folder, returning whatever it returns." },
@@ -770,7 +770,7 @@ lua_call_beatmap_func :: proc {
 //////////////////////////////////////////////////////
 // note(isak): hitobject object API
 
-luaapi_hitobject_static_funcs := []Lua_Reg {
+luaapi_hitobject_static_funcs := []Lua_Function {
   { "get_at_ms", luaapi_hitobject_get_at_ms,
     "Hitobject Hitobject.get_at_ms( int ms )",
     "the hitobject whose start time is exactly ms. errors if there's no object at that time." },
@@ -788,7 +788,7 @@ luaapi_hitobject_static_funcs := []Lua_Reg {
     "all hitobjects with at least one extra-bit in mask set. a zero mask returns nothing." },
 }
 
-luaapi_hitobject_instance_funcs := []Lua_Reg {
+luaapi_hitobject_instance_funcs := []Lua_Function {
   { "__gc", luaapi_hitobject_gc, "", "" },
   { "register_event", luaapi_hitobject_register_event,
     "self hitobject:register_event( string name, fn callback )",
@@ -1282,13 +1282,13 @@ luaapi_hitobject_set_cs :: proc "c" (L: ^lua.State) -> (result: i32) {
 //////////////////////////////////////////////////////
 // note(isak): drawable object API
 
-luaapi_drawable_static_funcs := []Lua_Reg {
+luaapi_drawable_static_funcs := []Lua_Function {
   { "new", luaapi_drawable_new,
     "Drawable Drawable.new( string|Element source, float start_ms = 0, float end_ms = 0 )",
     "creates a drawable from a texture name or an Element, on the current render layer." },
 }
 
-luaapi_drawable_instance_funcs := []Lua_Reg {
+luaapi_drawable_instance_funcs := []Lua_Function {
   { "__gc", luaapi_drawable_gc, "", "" },
   { "register_event", luaapi_drawable_register_event,
     "self drawable:register_event( string name, fn callback )",
@@ -1578,13 +1578,13 @@ luaapi_drawable_show :: proc "c" (L: ^lua.State) -> (result: i32) {
 //////////////////////////////////////////////////////
 // note(isak): element object API
 
-luaapi_element_static_funcs := []Lua_Reg {
+luaapi_element_static_funcs := []Lua_Function {
   { "new", luaapi_element_new,
     "Element Element.new( void )",
     "creates a blank white quad element using the default shader." },
 }
 
-luaapi_element_instance_funcs := []Lua_Reg {
+luaapi_element_instance_funcs := []Lua_Function {
   { "__gc", luaapi_element_gc, "", "" },
   { "clone", luaapi_element_clone,
     "Element element:clone( void )",
@@ -1773,13 +1773,13 @@ luaapi_element_use_combo_color :: proc "c" (L: ^lua.State) -> (result: i32) {
 //////////////////////////////////////////////////////
 // note(isak): animation list API
 
-luaapi_animation_static_funcs := []Lua_Reg {
+luaapi_animation_static_funcs := []Lua_Function {
   { "new", luaapi_animation_new,
     "Animation Animation.new( void )",
     "creates an empty animation list to attach to an element." },
 }
 
-luaapi_animation_instance_funcs := []Lua_Reg {
+luaapi_animation_instance_funcs := []Lua_Function {
   { "move", luaapi_animation_move,
     "self animation:move( float start, float end, float from_x, float from_y, float to_x, float to_y, Tween tween = 0 )",
     "appends a positional tween from (from_x, from_y) to (to_x, to_y) over [start, end]." },
@@ -1996,13 +1996,13 @@ luaapi_animation_frames :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(isak): Buffer object API
 
-luaapi_buffer_static_funcs := []Lua_Reg {
+luaapi_buffer_static_funcs := []Lua_Function {
   { "get", luaapi_buffer_get,
     "Buffer Buffer.get( string name )",
     "looks up a mapset buffer (SSBO) by name; returns nil if not found." },
 }
 
-luaapi_buffer_instance_funcs := []Lua_Reg {
+luaapi_buffer_instance_funcs := []Lua_Function {
   { "bind", luaapi_buffer_bind,
     "void buffer:bind( int user_slot )",
     "binds the buffer to a user SSBO slot (0-7, mapping to USER_0..USER_7)." },
@@ -2119,7 +2119,7 @@ luaapi_buffer_size :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(isak): sound object API
 
-luaapi_sound_static_funcs := []Lua_Reg {
+luaapi_sound_static_funcs := []Lua_Function {
     { "play", luaapi_sound_play,
       "void Sound.play( string name, float volume = 1.0, float pan = 0.0 )",
       "plays a mapset sample once at the given volume and stereo pan." },
@@ -2128,7 +2128,7 @@ luaapi_sound_static_funcs := []Lua_Reg {
       "starts looping a mapset sample and returns a handle you can stop()." },
 }
 
-luaapi_sound_instance_funcs := []Lua_Reg {
+luaapi_sound_instance_funcs := []Lua_Function {
     { "__gc", luaapi_sound_gc, "", "" },
     { "stop", luaapi_sound_stop,
       "void sound:stop( void )",
@@ -2189,7 +2189,7 @@ luaapi_sound_gc :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(isak): beatmap info API
 
-luaapi_beatmap_static_funcs := []Lua_Reg {
+luaapi_beatmap_static_funcs := []Lua_Function {
   { "get_music_time_ms", luaapi_beatmap_get_music_time_ms,
     "float Beatmap.get_music_time_ms( void )",
     "the current music playback time in ms." },
@@ -2297,7 +2297,7 @@ luaapi_beatmap_get_timing_windows :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(isak): color object API
 
-luaapi_color_static_funcs := []Lua_Reg {
+luaapi_color_static_funcs := []Lua_Function {
   { "rgb", luaapi_color_rgb,
     "int Color.rgb( int r, int g, int b )",
     "packs r, g, b (each 0-255) into an opaque rgba integer." },
@@ -2324,7 +2324,7 @@ luaapi_color_rgba :: proc "c" (L: ^lua.State) -> (result: i32) {
 //////////////////////////////////////////////////////
 // note(isak): Playfield API
 
-luaapi_playfield_static_funcs := []Lua_Reg {
+luaapi_playfield_static_funcs := []Lua_Function {
   { "set_translation", luaapi_playfield_set_translation,
     "void Playfield.set_translation( float x, float y )",
     "sets the playfield offset in osu!px, on top of the base centering translation." },

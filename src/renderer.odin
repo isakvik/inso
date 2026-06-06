@@ -724,11 +724,13 @@ r_reset_scissor_mode :: proc() {
 */
 r_bind_layer :: proc(layer: Layer) {
     window.renderer.current_layer = layer
+    window.renderer.new_draw_on_next_push = true
 }
 
 r_check_and_bind_layer :: proc(layer: Layer) {
     if layer != window.renderer.current_layer {
         r_bind_layer(layer)
+        window.renderer.new_draw_on_next_push = true
     }
 }
 

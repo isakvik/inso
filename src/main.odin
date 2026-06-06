@@ -446,9 +446,9 @@ main :: proc() {
         
         {
             profiler_block_begin(.SLEEP); defer profiler_block_end()
-            /*if !window.focused {
+            if !window.focused && game.paused {
                 sdl.Delay(30) // note(isak): ~30fps cap
-            }*/
+            }
         }
         
         {

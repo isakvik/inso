@@ -893,22 +893,14 @@ _luaapi_hitobject_op :: proc "c" (
 
 luaapi_hitobject_hide :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
-        context = lua_beatmap.odin_context
-        for handle in hobj.gfx_handles {
-            d, found := slotmap.get(&game.beatmap.drawables, handle)
-            if found do d.flags &= ~{.ACTIVE}
-        }
+        hobj.flags |= {.HIDDEN_BY_SCRIPT}
         return 0
     })
 }
 
 luaapi_hitobject_unhide :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
-        context = lua_beatmap.odin_context
-        for handle in hobj.gfx_handles {
-            d, found := slotmap.get(&game.beatmap.drawables, handle)
-            if found do d.flags |= {.ACTIVE}
-        }
+        hobj.flags &~= {.HIDDEN_BY_SCRIPT}
         return 0
     })
 }

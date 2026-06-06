@@ -108,6 +108,7 @@ Hitobject_Flag :: enum {
     CLAP,
 
     HIDE_COMBO_NUMBERS,
+    HIDDEN_BY_SCRIPT,
 }
 
 Hitobject_Phase :: enum u8 {
@@ -549,6 +550,7 @@ osu_on_update :: proc(dt: f64) {
     r_bind_layer_and_push_current_state(.HITOBJECTS, transform = game.playfield_transform)
 
     #reverse for &hobj in visible_hobjs {
+        if .HIDDEN_BY_SCRIPT in hobj.flags do continue
         r_check_and_bind_layer(.HITOBJECTS)
         if hobj.start_time_ms - hitobject_preempt_ms(&hobj) <= map_time && map_time <= hobj.end_time_ms {
             

@@ -266,11 +266,11 @@ slider_tick_popin_time :: proc(hobj: ^Hitobject, tick_i, span: int) -> f64 {
     travel_time := heading_back ? slider.duration_ms - path_time : path_time
     travel_fraction := travel_time / slider.duration_ms
 
-    snake_duration := hitobject_preempt_ms(hobj) * (1.0/3.0)
+    snake_finished_at := hitobject_preempt_ms(hobj) * (2.0/3.0)
     if span == 0 {
-        return span_start - snake_duration + travel_fraction * slider.duration_ms / 2
+        return span_start - snake_finished_at + travel_fraction * slider.duration_ms / 2
     }
-    return span_start - min(snake_duration, 100) + travel_fraction * slider.duration_ms / 2
+    return span_start - min(snake_finished_at, 100) + travel_fraction * slider.duration_ms / 2
 }
 
 slider_path_pos_at :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {

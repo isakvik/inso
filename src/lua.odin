@@ -845,9 +845,6 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
   { "add_element_for_phase", luaapi_hitobject_add_element_for_phase,
     "self hitobject:add_element_for_phase( Phase phase, Element element )",
     "adds a custom element to draw while the object is in the given phase, replacing the default graphics." },
-  { "set_slider_element", luaapi_hitobject_set_slider_element,
-    "self hitobject:set_slider_element( SliderPart part, Element element )",
-    "overrides the element used for a slider part (ball, follow circle, ticks, repeats, ends). applies live and on respawn." },
   { "clear_drawables", luaapi_hitobject_clear_drawables,
     "self hitobject:clear_drawables( void )",
     "removes all of the object's current drawables." },
@@ -897,6 +894,16 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
   { "get_slider_ball_angle_at", luaapi_hitobject_get_slider_ball_angle_at,
     "float hitobject:get_slider_ball_angle_at( float ms )",
     "the slider ball's travel angle at the given music time in radians." },
+  { "get_slider_follow_circle_radius", luaapi_hitobject_get_slider_follow_circle_radius,
+    "float hitobject:get_slider_follow_circle_radius( void )",
+    "the radius multiplier of the slider follow circle (0 for non-sliders)." },
+  { "set_slider_follow_circle_radius", luaapi_hitobject_set_slider_follow_circle_radius,
+    "self hitobject:set_slider_follow_circle_radius( float mult )",
+    "sets the radius multiplier of the slider follow circle." },
+  { "set_slider_element", luaapi_hitobject_set_slider_element,
+    "self hitobject:set_slider_element( SliderPart part, Element element )",
+    "overrides the element used for a slider part (ball, follow circle, ticks, repeats, ends). applies live and on respawn." },
+
 }
 
 luaapi_hitobject_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
@@ -1119,83 +1126,6 @@ luaapi_hitobject_set_end_time :: proc "c" (L: ^lua.State) -> (result: i32) {
     })
 }
 
-luaapi_hitobject_get_slider_distance :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
-        distance := hobj.slider_state.distance if hobj.type == .SLIDER else 0
-        lua.pushnumber(L, lua.Number(distance))
-        return 1
-    })
-}
-
-luaapi_hitobject_get_slider_velocity :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
-        velocity := hobj.slider_state.velocity if hobj.type == .SLIDER else 0
-        lua.pushnumber(L, lua.Number(velocity))
-        return 1
-    })
-}
-
-luaapi_hitobject_get_slider_duration_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
-        duration := hobj.slider_state.duration_ms if hobj.type == .SLIDER else 0
-        lua.pushnumber(L, lua.Number(duration))
-        return 1
-    })
-}
-
-luaapi_hitobject_get_slider_ball_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
-        pos := hobj.pos
-        if hobj.type == .SLIDER {
-            context = lua_beatmap.odin_context
-            path := game.beatmap.slider_paths[hobj.slider_path_index]
-            pos = path_calculate_position_at(hobj, beatmap_music_time_ms(&game.beatmap), &path)
-        }
-        lua.pushnumber(L, lua.Number(pos.x))
-        lua.pushnumber(L, lua.Number(pos.y))
-        return 2
-    })
-}
-
-luaapi_hitobject_get_slider_ball_pos_at :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
-        pos := hobj.pos
-        if hobj.type == .SLIDER {
-            context = lua_beatmap.odin_context
-            path := game.beatmap.slider_paths[hobj.slider_path_index]
-            pos = path_calculate_position_at(hobj, f64(lua_number(2)), &path)
-        }
-        lua.pushnumber(L, lua.Number(pos.x))
-        lua.pushnumber(L, lua.Number(pos.y))
-        return 2
-    })
-}
-
-luaapi_hitobject_get_slider_ball_angle :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
-        angle: f32
-        if hobj.type == .SLIDER {
-            context = lua_beatmap.odin_context
-            path := game.beatmap.slider_paths[hobj.slider_path_index]
-            angle = slider_ball_angle_at(hobj, beatmap_music_time_ms(&game.beatmap))
-        }
-        lua.pushnumber(L, lua.Number(angle))
-        return 1
-    })
-}
-luaapi_hitobject_get_slider_ball_angle_at :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
-        angle: f32
-        if hobj.type == .SLIDER {
-            context = lua_beatmap.odin_context
-            path := game.beatmap.slider_paths[hobj.slider_path_index]
-            angle = slider_ball_angle_at(hobj, f64(lua_number(2)))
-        }
-        lua.pushnumber(L, lua.Number(angle))
-        return 1
-    })
-}
-
 luaapi_hitobject_get_phase :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         lua.pushinteger(L, lua.Integer(hobj.phase))
@@ -1305,6 +1235,103 @@ luaapi_hitobject_set_cs :: proc "c" (L: ^lua.State) -> (result: i32) {
         cs := f64(lua_number(2))
         hobj.custom_radius_osupx = f32((54.4 - 4.48 * cs) * 1.00041)
         return 0
+    })
+}
+
+
+luaapi_hitobject_get_slider_distance :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        distance := hobj.slider_state.distance if hobj.type == .SLIDER else 0
+        lua.pushnumber(L, lua.Number(distance))
+        return 1
+    })
+}
+
+luaapi_hitobject_get_slider_velocity :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        velocity := hobj.slider_state.velocity if hobj.type == .SLIDER else 0
+        lua.pushnumber(L, lua.Number(velocity))
+        return 1
+    })
+}
+
+luaapi_hitobject_get_slider_duration_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        duration := hobj.slider_state.duration_ms if hobj.type == .SLIDER else 0
+        lua.pushnumber(L, lua.Number(duration))
+        return 1
+    })
+}
+
+luaapi_hitobject_get_slider_ball_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        pos := hobj.pos
+        if hobj.type == .SLIDER {
+            context = lua_beatmap.odin_context
+            path := game.beatmap.slider_paths[hobj.slider_path_index]
+            pos = path_calculate_position_at(hobj, beatmap_music_time_ms(&game.beatmap), &path)
+        }
+        lua.pushnumber(L, lua.Number(pos.x))
+        lua.pushnumber(L, lua.Number(pos.y))
+        return 2
+    })
+}
+
+luaapi_hitobject_get_slider_ball_pos_at :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        pos := hobj.pos
+        if hobj.type == .SLIDER {
+            context = lua_beatmap.odin_context
+            path := game.beatmap.slider_paths[hobj.slider_path_index]
+            pos = path_calculate_position_at(hobj, f64(lua_number(2)), &path)
+        }
+        lua.pushnumber(L, lua.Number(pos.x))
+        lua.pushnumber(L, lua.Number(pos.y))
+        return 2
+    })
+}
+
+luaapi_hitobject_get_slider_ball_angle :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        angle: f32
+        if hobj.type == .SLIDER {
+            context = lua_beatmap.odin_context
+            path := game.beatmap.slider_paths[hobj.slider_path_index]
+            angle = slider_ball_angle_at(hobj, beatmap_music_time_ms(&game.beatmap))
+        }
+        lua.pushnumber(L, lua.Number(angle))
+        return 1
+    })
+}
+luaapi_hitobject_get_slider_ball_angle_at :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        angle: f32
+        if hobj.type == .SLIDER {
+            context = lua_beatmap.odin_context
+            path := game.beatmap.slider_paths[hobj.slider_path_index]
+            angle = slider_ball_angle_at(hobj, f64(lua_number(2)))
+        }
+        lua.pushnumber(L, lua.Number(angle))
+        return 1
+    })
+}
+
+luaapi_hitobject_get_slider_follow_circle_radius :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        mult: f32
+        if hobj.type == .SLIDER {
+            mult = hobj.slider_state.follow_circle_radius_mult
+        }
+        lua.pushnumber(L, lua.Number(mult))
+        return 1
+    })
+}
+luaapi_hitobject_set_slider_follow_circle_radius :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        if hobj.type == .SLIDER {
+            hobj.slider_state.follow_circle_radius_mult = f32(lua_number(2))
+        }
+        return lua_return_self()
     })
 }
 

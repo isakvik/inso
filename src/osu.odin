@@ -141,7 +141,7 @@ Hitobject :: struct {
     timing_point_index_uninherited: int,
     timing_point_index_inherited: int,
     hitsound_flags: byte,
-    extra_bits: u64, // note(isak): notosu HitObjectExtraBits - script-defined flags for filtering hitobjects
+    extra_bits: u64, // note(isak): from the notosu file
     combo_index: int, // note(isak): 1-indexed combo within the current map
     combo_number: u16,
     combo_color_skip_offset: u8, // note(isak): how many combo colors to skip on new combo
@@ -152,9 +152,9 @@ Hitobject :: struct {
 
     phase: Hitobject_Phase,
     notelock_shake_at_ms: f64,
-    custom_preempt_ms: f64,          // note(isak): per-object approach time override. 0 = use global
-    custom_radius_osupx: f32,        // note(isak): per-object circle size override. 0 = use global
-    deferred_activation_index: int,  // note(isak): index+1 into beatmap.deferred_activations. 0 = not in list
+    custom_preempt_ms: f64, // note(isak): per-object approach time override. 0 = use global
+    custom_radius_osupx: f32, // note(isak): per-object circle size override. 0 = use global
+    deferred_activation_index: int, // note(isak): index+1 into beatmap.deferred_activations. 0 = not in list
     custom_elements: [Hitobject_Phase][]Element_ID,
     custom_element_nums: [Hitobject_Phase]int,
     custom_hit_animation_len_ms: f64,
@@ -179,8 +179,7 @@ Slider_Handles :: struct {
     ticks: []Drawable_Handle,
 }
 
-// note(isak): addressable slider decoration parts, exposed to lua as the SliderPart enum. new parts go at the
-// end. END / END_OVERLAY / REPEAT each cover both the tail and head-turnaround instances.
+// note(isak): exposed to lua
 Slider_Part :: enum u8 {
     BALL,
     FOLLOW_CIRCLE,
@@ -190,9 +189,6 @@ Slider_Part :: enum u8 {
     END_OVERLAY,
 }
 
-// note(isak): per-edge hitsound for a slider, parsed from edgeSounds/edgeSets. one per edge: index 0 is the
-// head, 1..path_travel_count-1 are the repeats, path_travel_count is the tail. sample sets use osu's raw
-// values (0 = auto/inherit timing point, 1 = normal, 2 = soft, 3 = drum), resolved at playback.
 Slider_Edge_Hitsound :: struct {
     hitsound:     u8, // osu bitmask: whistle (2), finish (4), clap (8)
     normal_set:   u8,
@@ -205,6 +201,7 @@ Slider_State :: struct {
 
     velocity: f64,
     distance, duration_ms: f64,
+    follow_circle_radius_mult: f32,
     
     tick_interval_ms: f64,
     tick_count: int,
@@ -212,8 +209,7 @@ Slider_State :: struct {
     path_travel_count, checked_repeats_count, checked_path_ticks_count: int,
     hit_judgement_count: int,
 
-    // note(isak): per geometric tick (1..tick_count), whether it's been hit this traversal. cleared on repeat
-    // allocated with the mapset allocator
+    // note(isak): cleared on repeat. allocated with the mapset allocator
     tick_hits: []bool,
 
     contingency_window_scorepoint_count: int,
@@ -223,9 +219,7 @@ Slider_State :: struct {
     whistle_sound: slotmap.Handle,
 
     gfx: Slider_Handles,
-
-    // note(isak): per-part element override set from lua (0 = use the builtin slot). consulted at gfx creation
-    // and applied live to any already-spawned drawables. see slider_part_element / slider_set_part_element.
+    // note(isak): per-part element override set from lua (0 = use the builtin slot)
     custom_elements: [Slider_Part]Element_ID,
 }
 

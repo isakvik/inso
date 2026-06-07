@@ -92,6 +92,7 @@ function on_init()
     ely = Element.new()
     
     ball = Element.new():set_tex("reversearrow.png")
+    blank = Element.new():set_tex("blank.png")
     
     list = Hitobject.get_in_range_ms(0, 425000)
     
@@ -103,6 +104,9 @@ function on_init()
         --hobj:set_ar(9-i/100)
 
         hobj:set_slider_element(SliderPart.BALL, ball)
+
+        hobj:set_slider_follow_circle_radius(100)
+        hobj:set_slider_element(SliderPart.FOLLOW_CIRCLE, blank)
     end
     
     register_global_event("hehe", function()

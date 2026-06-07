@@ -880,10 +880,9 @@ slider_create_gfx :: proc(hobj: ^Hitobject) {
     tick_size   := radius_scale * game.active_skin.elements[.SLIDER_TICK].metrics
     repeat_size := radius_scale * game.active_skin.elements[.SLIDER_REPEAT].metrics
     ball_size   := radius_scale * game.active_skin.elements[.SLIDER_BALL].metrics
-    follow_size := vec2{2, 2} * f32(SLIDER_FOLLOW_CIRCLE_RADIUS_MULT)
+    follow_size := vec2{2, 2} * f32(slider.follow_circle_radius_mult)
     end_size    := vec2{2, 2}
 
-    // note(isak): order matters here
     gfx := &slider.gfx
     gfx.end_circle   = slider_drawable_new(hobj, .END,           end_size,    combo)
     gfx.end_overlay  = slider_drawable_new(hobj, .END_OVERLAY,   end_size,    color_white)

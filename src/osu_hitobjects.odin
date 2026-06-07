@@ -241,7 +241,7 @@ build_deferred_activations :: proc(beatmap: ^Beatmap) {
 //////////////////////////////////////////////////////
 // note(isak): slider logic core
 
-SLIDER_FOLLOW_CIRCLE_RADIUS_MULT :: 2.4
+SLIDER_FOLLOW_CIRCLE_DEFAULT_RADIUS_MULT :: 2.4
 SLIDER_TICK_POP_MS :: 100 // note(isak): how long an individual tick's scale/fade pop-in plays once its staggered turn arrives
 SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS :: 3 // note(isak) don't make ticks within n ms of the sliderend
 SLIDER_END_LENIENCY_MS :: 36
@@ -335,7 +335,7 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
     
     ball_pos      := slider_path_pos_at(hobj, map_time)
     ball_radius   := hitobject_radius_osupx(hobj)
-    follow_radius := ball_radius * SLIDER_FOLLOW_CIRCLE_RADIUS_MULT
+    follow_radius := ball_radius * slider.follow_circle_radius_mult
 
     // note(isak): if a specific key hit the head, the opposite key being freshly pressed frees tracking to any key
     if slider.down_key != 0 && controller_key_pressed(slider.down_key == 1 ? 2 : 1) {

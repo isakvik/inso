@@ -937,6 +937,7 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
             disable_ticks: bool
             slider.distance = osu_map.slider_paths[hobj.slider_path_index].distance_osupx
             slider.velocity = 1.0
+            slider.follow_circle_radius_mult = SLIDER_FOLLOW_CIRCLE_DEFAULT_RADIUS_MULT
             
             uninherited_tp := osu_map.timing_points[current_timing_point_index_uninherited]
             

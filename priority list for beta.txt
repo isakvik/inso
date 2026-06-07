@@ -5,7 +5,6 @@ bugs
     
 
 features
-    custom sliderfollowcircle radius
     slider snaking out
     mine elements
 

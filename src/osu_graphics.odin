@@ -207,6 +207,7 @@ Element :: struct {
     flags: Element_Flags,
 
     shader: Pipeline_ID,
+    render_target: Framebuffer_ID, // note(isak): 0 == DEFAULT, falls through to the layer's capture target
     ssbo: u32,
     ssbo_size: int,
     index_count: u32,
@@ -724,6 +725,12 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
     r_check_and_bind_pipeline({element.shader})
     r_check_and_bind_layer(d.layer)
 
+    target := element.render_target
+    if target == 0 {
+        target = game.active_mapset.layer_capture[d.layer]
+    }
+    r_check_and_bind_framebuffer({ write = target })
+
     if .STATIC_GEOMETRY in element.flags {
         r_bind_ssbo_raw(element.ssbo, element.ssbo_size, .VERTEX_BUFFER)
         r_push_draw_mesh(i32(element.index_count))
@@ -799,7 +806,7 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
 
     r_push_transform(slider_pf_transform)
     r_bind_pipeline({builtin_pipeline_slot(.SLIDER)})
-    r_bind_framebuffer({ write = .SLIDERS })
+    r_bind_framebuffer({ write = builtin_framebuffer(.SLIDERS) })
     r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
 
     r_clear(with_alpha(color_black, 0.0))
@@ -815,7 +822,10 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
         radius_osupx       = r,
     })
     
-    r_bind_framebuffer({ read = .SLIDERS })
+    // note(isak): the body composite bypasses render_drawable, so it has to opt into the
+    // HITOBJECTS capture target by hand; 0 (no capture) leaves it writing to the screen.
+    slider_write_target := game.active_mapset.layer_capture[.HITOBJECTS]
+    r_bind_framebuffer({ read = builtin_framebuffer(.SLIDERS), write = slider_write_target })
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
     r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
     
@@ -1075,7 +1085,7 @@ TEST_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Hand
             pos = vec2{256, 256} - playfield_base_translation_osupx,
             size = bg_size,
             anchor = .CENTER,
-            color = {100, 100, 100, 255},
+            color = {255, 255, 255, 255},
             
             start_time_ms = game.beatmap.start_time_ms,
             end_time_ms = game.beatmap.length_ms

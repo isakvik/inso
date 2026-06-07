@@ -18,6 +18,7 @@ import "core:strings"
 import "core:strconv"
 
 import "vendor:cgltf"
+import gl "vendor:OpenGL"
 import sg "vendor:sokol/gfx"
 
 /*
@@ -34,6 +35,25 @@ todo(isak): missing functionality:
 
 */
 Mapset_Buffer :: distinct GL_Buffer(u8)
+
+// note(isak): scale > 0 means the target tracks the window size; fbo is reinit'd on resize.
+// scale == 0 means a fixed pixel size that survives resizes untouched.
+Render_Target :: struct {
+    fbo:               GL_Framebuffer,
+    scale:             f32,
+    clear_every_frame: bool,
+}
+
+// note(isak): a fullscreen shader pass. emitted into the `after` layer's command queue each
+// frame, so it runs after that layer's content but before the next layer draws.
+Post_Pass :: struct {
+    pipeline:  Pipeline_ID,
+    dst:       Framebuffer_ID,
+    after:     Layer,
+    quad_index: u32,
+    src:       [4]u32,
+    src_count: u8,
+}
 
 Mapset :: struct {
     open: bool,
@@ -53,6 +73,11 @@ Mapset :: struct {
     buffers: queue.Queue(Mapset_Buffer),
     samples: queue.Queue(Sample),
     sample_slot_by_name: map[string]u32,
+
+    render_targets:        queue.Queue(Render_Target),
+    render_target_by_name: map[string]u32,
+    layer_capture:         [Layer]Framebuffer_ID,
+    post_passes:           [dynamic]Post_Pass,
 
     watch: Directory_Watch
 }
@@ -79,11 +104,30 @@ mapset_texture_slot :: proc(name: string) -> (result: u32, found: bool) {
     assert(game.active_mapset != nil)
     index: u32
     index, found = game.active_mapset.texture_slot_by_name[name]
-    if found do result = user_texture(index)
+    if found {
+        result = user_texture(index)
+        return result, found
+    }
+    // note(isak): render targets sit in the global texture slot space right after map textures,
+    // so they sample by name through the same path as any other texture.
+    index, found = game.active_mapset.render_target_by_name[name]
+    if found do result = mapset_render_target_texture_slot(index)
     return result, found
 }
 mapset_texture_slot_or_else :: proc(name: string, default: u32) -> u32 {
     return mapset_texture_slot(name) or_else default
+}
+
+mapset_render_target_texture_slot :: proc(rt_index: u32) -> u32 {
+    return user_texture(u32(game.active_mapset.textures.len) + rt_index)
+}
+
+mapset_render_target_fb :: proc(name: string) -> (result: Framebuffer_ID, found: bool) {
+    assert(game.active_mapset != nil)
+    index: u32
+    index, found = game.active_mapset.render_target_by_name[name]
+    if found do result = user_framebuffer(index)
+    return result, found
 }
 
 mapset_pipeline_slot :: proc(name: string) -> (result: u32, found: bool) {
@@ -119,6 +163,7 @@ Notosu_Section_Header_Types :: enum {
     GENERAL,
     SHADERS,
     BUFFERS,
+    RENDER_TARGETS,
     HIT_OBJECT_EXTRA_BITS,
 }
 
@@ -127,6 +172,7 @@ notosu_section_headers := []string{
     "[General]",
     "[Shaders]",
     "[Buffers]",
+    "[RenderTargets]",
     "[HitObjectExtraBits]",
 }
 
@@ -178,6 +224,9 @@ mapset_free :: proc(mapset: ^Mapset) -> string {
     for &buf in mapset.buffers.data {
         sbo_cleanup(cast(^GL_Buffer(u8))&buf)
     }
+    for &rt in mapset.render_targets.data {
+        fbo_cleanup(&rt.fbo)
+    }
     for &sample in mapset.samples.data {
         sample_destroy(&sample)
     }
@@ -220,6 +269,9 @@ mapset_open_for_editing :: proc(path: string, osu_filename: string = "") -> (^Ma
     queue.init(&mapset.textures)
     queue.init(&mapset.buffers)
     queue.init(&mapset.samples)
+    queue.init(&mapset.render_targets)
+    mapset.render_target_by_name = make(map[string]u32, 8)
+    mapset.post_passes           = make([dynamic]Post_Pass, 0, 8)
     mapset.texture_slot_by_name  = make(map[string]u32, 16)
     mapset.pipeline_slot_by_name = make(map[string]u32, 16)
     mapset.buffer_slot_by_name   = make(map[string]u32, 16)
@@ -481,6 +533,64 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
                 }
             }
             mapset_load_buffer_entry(mapset, buf_params.name, buf_params.source, buf_params.size)
+
+        case .RENDER_TARGETS:
+            rt_params: struct {
+                name:              string,
+                format:            u32,
+                scale:             f32,
+                fixed_w, fixed_h:  i32,
+                depth:             bool,
+                clear_every_frame: bool,
+            }
+            reset_rt_params :: proc(p: ^$T) {
+                p^ = {}
+                p.format = gl.RGBA8
+                p.scale = 1.0
+                p.clear_every_frame = true
+            }
+            reset_rt_params(&rt_params)
+
+            for i in 1..<len(lines) {
+                line := lines[i]
+                if line[0:2] == "[[" && line[len(line)-2:] == "]]" {
+                    mapset_load_render_target_entry(mapset, rt_params.name, rt_params.format, rt_params.scale, rt_params.fixed_w, rt_params.fixed_h, rt_params.depth, rt_params.clear_every_frame)
+                    reset_rt_params(&rt_params)
+                    rt_params.name = line[2:len(line)-2]
+                } else {
+                    key, value := get_key_value(line)
+                    switch key {
+                    case "Format":
+                        switch value {
+                        case "rgba8":   rt_params.format = gl.RGBA8
+                        case "rgba16f": rt_params.format = gl.RGBA16F
+                        case:
+                            log.errorf("mapset render target '{}': unknown Format '{}', defaulting to rgba8", rt_params.name, value)
+                            notify_warn("mapset render target '%s': unknown Format '%s'", rt_params.name, value)
+                        }
+                    case "Scale":
+                        parsed, ok := strconv.parse_f32(value)
+                        if ok do rt_params.scale = parsed
+                        else do notify_warn("mapset render target '%s': invalid Scale '%s'", rt_params.name, value)
+                    case "Size":
+                        w_str, h_str := get_key_value(value, 'x')
+                        w, w_ok := strconv.parse_int(strings.trim_space(w_str))
+                        h, h_ok := strconv.parse_int(strings.trim_space(h_str))
+                        if w_ok && h_ok {
+                            rt_params.fixed_w, rt_params.fixed_h = i32(w), i32(h)
+                            rt_params.scale = 0
+                        } else do notify_warn("mapset render target '%s': invalid Size '%s', expected WxH", rt_params.name, value)
+                    case "Depth":
+                        rt_params.depth = value != "0"
+                    case "ClearEveryFrame":
+                        rt_params.clear_every_frame = value != "0"
+                    case:
+                        log.errorf("mapset render target '{}': unknown option '{}'", rt_params.name, key)
+                        notify_warn("mapset render target '%s': unknown option '%s'", rt_params.name, key)
+                    }
+                }
+            }
+            mapset_load_render_target_entry(mapset, rt_params.name, rt_params.format, rt_params.scale, rt_params.fixed_w, rt_params.fixed_h, rt_params.depth, rt_params.clear_every_frame)
 
         case .HIT_OBJECT_EXTRA_BITS:
             // note(isak): each row is "<hitobject time>,<bits>". bits may be decimal, hex (0x) or binary (0b);
@@ -873,6 +983,29 @@ mapset_load_buffer_entry :: proc(mapset: ^Mapset, name, source: string, size: in
     mapset.buffer_slot_by_name[name_key] = u32(mapset.buffers.len)
     queue.push_back(&mapset.buffers, buf)
     log.infof("mapset buffer '{}' loaded (size: {} bytes, writable: {})", name, buf.size, buf.data != nil)
+}
+
+mapset_load_render_target_entry :: proc(mapset: ^Mapset, name: string, format: u32, scale: f32, fixed_w, fixed_h: i32, depth, clear_every_frame: bool) {
+    if name == "" do return
+
+    w, h := fixed_w, fixed_h
+    if scale > 0 {
+        w = i32(window.rect.w * scale)
+        h = i32(window.rect.h * scale)
+    }
+    w, h = max(w, 1), max(h, 1)
+
+    depth_count: u32 = 1 if depth else 0
+    rt := Render_Target{
+        fbo               = fbo_init(1, depth_count, w, h, format),
+        scale             = scale,
+        clear_every_frame = clear_every_frame,
+    }
+
+    name_key := strings.clone(name)
+    mapset.render_target_by_name[name_key] = u32(mapset.render_targets.len)
+    queue.push_back(&mapset.render_targets, rt)
+    log.infof("mapset render target '{}' loaded ({}x{}, clear: {})", name, w, h, clear_every_frame)
 }
 
 map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {

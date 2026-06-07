@@ -34,7 +34,7 @@ window: struct {
 
     shaders: q.Queue(Shader),
     pipelines: q.Queue(sg.Pipeline),
-    framebuffers: [Framebuffer_ID]GL_Framebuffer,
+    framebuffers: [Builtin_Framebuffer_Slot]GL_Framebuffer,
 
     // note(isak): we make a distinction between static and dynamic geometry; dynamic can be streamed
     // data into efficiently by using a triple buffer setup, while static is single-buffered and is fit
@@ -52,6 +52,7 @@ window: struct {
     shader_global_buffer: GL_Uniform_Buffer(Shader_Globals),
     slider_param_buffer: GL_Uniform_Buffer(Slider_Params),
     user_param_buffer: GL_Uniform_Buffer(User_Shader_Params),
+    post_param_buffer: GL_Uniform_Buffer(Post_Pass_Params),
     circle_geo_buffer: GL_Buffer(Slider_Vertex),
     texture_buffer: GL_Buffer(u64),
 
@@ -111,6 +112,14 @@ window_on_resize :: proc(new_w, new_h: i32) {
     game.playfield_dirty_transform = false
     
     fbo_reinit(&window.framebuffers[.SLIDERS], new_w, new_h)
+
+    if game.active_mapset != nil {
+        for &rt in game.active_mapset.render_targets.data {
+            if rt.scale > 0 {
+                fbo_reinit(&rt.fbo, i32(window.rect.w * rt.scale), i32(window.rect.h * rt.scale))
+            }
+        }
+    }
 }
 
 clipspace_transform := transform_from_bounds({0, 0, 1, 1}, 1)

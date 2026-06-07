@@ -23,6 +23,8 @@ MAX_TEXTURE_UNITS :: 16
 
 MAX_DRAW_CALLS_PER_LAYER :: 4096
 
+MAX_POST_PASSES :: 64
+
 UNIT_CIRCLE_VERTEX_COUNT :: 48
 
 UNMAPPED_UNIT :: 0xFF
@@ -195,12 +197,13 @@ renderer_init :: proc() {
     window.text_store = tbo_init(Glyph_Quad, MAX_BATCH_VERTICES)
 
     window.slider_instance_store = sbo_init(vec2, megabytes(256))
-    window.fullscreen_store = sbo_init(Quad, 4)
+    window.fullscreen_store = sbo_init(Quad, MAX_POST_PASSES)
     window.texture_buffer = sbo_init(u64, MAX_TEXTURE_HANDLES)
-    
+
     window.shader_global_buffer = ubo_init(Shader_Globals, 1)
     window.slider_param_buffer  = ubo_init(Slider_Params, 1)
     window.user_param_buffer    = ubo_init(User_Shader_Params, 1)
+    window.post_param_buffer    = ubo_init(Post_Pass_Params, 1)
 
 
     window.pass_action = { 
@@ -264,6 +267,7 @@ renderer_cleanup :: proc() {
     tbo_cleanup(&window.text_store)
     ubo_cleanup(&window.slider_param_buffer)
     ubo_cleanup(&window.user_param_buffer)
+    ubo_cleanup(&window.post_param_buffer)
 
     sbo_cleanup(&window.fullscreen_store)
     sbo_cleanup(&window.circle_geo_buffer)
@@ -472,6 +476,7 @@ Command_Type :: enum(u8) {
     BIND_FRAMEBUFFER,
     BIND_SSBO,
     SCISSOR_MODE,
+    POST_PASS,
 }
 
 Command_Header :: struct {
@@ -526,6 +531,16 @@ Command_Draw_Mesh :: struct {
     instance_count: i32,
 }
 
+// note(isak): a fullscreen shader pass. draws one quad from fullscreen_store sampling src
+// targets, into dst. restores the batch quad buffer + default framebuffer afterward.
+Command_Post_Pass :: struct {
+    pipeline:   Pipeline_ID,
+    dst:        Framebuffer_ID,
+    quad_index: u32,
+    src:        [4]u32,
+    src_count:  u8,
+}
+
 Command_Scissor_Mode :: struct {
     x, y, w, h: i32
 }
@@ -547,6 +562,7 @@ command_push_bind_pipeline     :: proc(cmd: Command_Bind_Pipeline) -> bool { ret
 command_push_bind_framebuffer  :: proc(cmd: Command_Bind_Framebuffer) -> bool { return _command_push(cmd, .BIND_FRAMEBUFFER) }
 command_push_bind_ssbo         :: proc(cmd: Command_Bind_SSBO) -> bool { return _command_push(cmd, .BIND_SSBO) }
 command_push_scissor_mode      :: proc(cmd: Command_Scissor_Mode) -> bool { return _command_push(cmd, .SCISSOR_MODE) }
+command_push_post_pass         :: proc(cmd: Command_Post_Pass) -> bool { return _command_push(cmd, .POST_PASS) }
 
 
 _command_push_header :: proc(type: Command_Type) -> bool {
@@ -615,6 +631,20 @@ r_push_draw :: proc(index_offset: u32, index_count: i32, instance_count: i32 = 1
     window.renderer.new_draw_on_next_push = false
 }
 
+_r_framebuffer_resolve :: proc(id: Framebuffer_ID) -> ^GL_Framebuffer {
+    builtin_count := u32(len(Builtin_Framebuffer_Slot))
+    if id < builtin_count {
+        return &window.framebuffers[Builtin_Framebuffer_Slot(id)]
+    }
+    return &queue.get_ptr(&game.active_mapset.render_targets, id - builtin_count).fbo
+}
+
+r_check_and_bind_framebuffer :: proc(cmd: Command_Bind_Framebuffer) {
+    if cmd != window.renderer.current_framebuffer {
+        r_bind_framebuffer(cmd)
+    }
+}
+
 r_bind_framebuffer :: proc(cmd: Command_Bind_Framebuffer) {
     window.renderer.new_draw_on_next_push = true
     window.renderer.current_framebuffer = cmd
@@ -668,6 +698,13 @@ r_bind_ssbo_raw :: proc(id: u32, size: int, bind_slot: Shader_SSBO_Bind_Slot) {
 r_push_draw_mesh :: proc(vertex_count: i32, instance_count: i32 = 1) {
     window.renderer.new_draw_on_next_push = true
     command_push_draw_mesh({ vertex_count = vertex_count, instance_count = instance_count })
+}
+
+// note(isak): clipspace transform maps the fullscreen_store quad ([0,1]) across the entire target
+r_post_pass :: proc(pass: Command_Post_Pass, after: Layer) {
+    r_bind_layer(after)
+    r_push_transform(clipspace_transform)
+    command_push_post_pass(pass)
 }
 
 /*
@@ -734,14 +771,23 @@ r_check_and_bind_layer :: proc(layer: Layer) {
     }
 }
 
-r_bind_layer_and_push_current_state :: proc(layer: Layer,    
-    framebuffer: Command_Bind_Framebuffer = window.renderer.current_framebuffer,
+// note(isak): a layer renders into its capture target (Beatmap.capture_layers) or the screen.
+// deriving the framebuffer from the layer instead of the leaked current_framebuffer keeps an
+// upstream captured layer from dragging later layers (ui, cursor) into its target.
+r_layer_framebuffer :: proc(layer: Layer) -> Command_Bind_Framebuffer {
+    if game.active_mapset != nil {
+        return { write = game.active_mapset.layer_capture[layer] }
+    }
+    return {}
+}
+
+r_bind_layer_and_push_current_state :: proc(layer: Layer,
     pipeline: Command_Bind_Pipeline = window.renderer.current_pipeline,
     transform: Transform = window.renderer.current_global_data.transform,
     scissor_region: Command_Scissor_Mode = window.renderer.current_scissor
 ) {
     r_bind_layer(layer)
-    r_push_current_state(framebuffer, pipeline, transform, scissor_region)
+    r_push_current_state(r_layer_framebuffer(layer), pipeline, transform, scissor_region)
 }
 
 r_push_current_state :: proc(
@@ -927,8 +973,8 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 case .BIND_FRAMEBUFFER: {
                     cmd := _command_consume(&command_queue, Command_Bind_Framebuffer)
 
-                    fbo_bind(window.framebuffers[cmd.read].id, window.framebuffers[cmd.write].id)
-                    
+                    fbo_bind(_r_framebuffer_resolve(cmd.read).id, _r_framebuffer_resolve(cmd.write).id)
+
                     if (trace) { fmt.println("  framebuffer", cmd.read, cmd.write) }
                 }
                 case .BIND_SSBO: {
@@ -949,6 +995,37 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                     gl.Scissor(cmd.x, i32(window.rect.h) - cmd.y - cmd.h, max(cmd.w, 0), max(cmd.h, 0))
 
                     if (trace) { fmt.println("  scissor", cmd.x, cmd.y, cmd.w, cmd.h) }
+                }
+                case .POST_PASS: {
+                    cmd := _command_consume(&command_queue, Command_Post_Pass)
+
+                    dst := _r_framebuffer_resolve(cmd.dst)
+                    gl.Viewport(0, 0, dst.w if dst.id != 0 else i32(window.rect.w), dst.h if dst.id != 0 else i32(window.rect.h))
+
+                    post_params: Post_Pass_Params
+                    if window.bindless_supported {
+                        post_params.src = cmd.src
+                    } else {
+                        for i in 0..<cmd.src_count {
+                            gl.BindTextureUnit(u32(i), window.tex_id_lookup[cmd.src[i]])
+                            post_params.src[i] = u32(i)
+                        }
+                    }
+                    gl.NamedBufferSubData(window.post_param_buffer.id, 0, size_of(Post_Pass_Params), &post_params)
+                    ubo_bind(&window.post_param_buffer, u32(Shader_SSBO_Bind_Slot.POST_PARAMS))
+
+                    sbo_bind(&window.fullscreen_store, u32(Shader_SSBO_Bind_Slot.VERTEX_BUFFER))
+                    sg.apply_pipeline(window.pipelines.data[cmd.pipeline])
+                    fbo_bind(0, dst.id)
+
+                    sg.draw(cmd.quad_index * 6, 6, 1)
+
+                    // note(isak): hand the batch's quad buffer + default target back to whatever draws next
+                    tbo_bind(&window.quad_store, u32(Shader_SSBO_Bind_Slot.VERTEX_BUFFER))
+                    fbo_bind(0, 0)
+                    gl.Viewport(0, 0, i32(window.rect.w), i32(window.rect.h))
+
+                    if (trace) { fmt.println("  post_pass", cmd.pipeline, cmd.dst, cmd.quad_index) }
                 }
             }
         }

@@ -490,7 +490,17 @@ begin_frame :: proc(renderer: ^Renderer) {
 
     r_bind_layer(.BACKGROUND)
     r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
-    r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
+
+    if game.active_mapset != nil {
+        for &rt, i in game.active_mapset.render_targets.data {
+            if rt.clear_every_frame {
+                r_bind_framebuffer({ write = user_framebuffer(u32(i)) })
+                r_clear(with_alpha(color_black, 0.0))
+            }
+        }
+    }
+
+    r_bind_framebuffer({read = builtin_framebuffer(.DEFAULT), write = builtin_framebuffer(.DEFAULT)})
     r_push_transform(identity_transform)
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
     r_reset_scissor_mode()
@@ -507,6 +517,19 @@ begin_frame :: proc(renderer: ^Renderer) {
 end_frame :: proc(renderer: ^Renderer) {
     text_submit_geometry(renderer)
     profiler_collect_command_buffer_memory_data()
+
+    if game.active_mapset != nil {
+        for &pass in game.active_mapset.post_passes {
+            r_post_pass(Command_Post_Pass{
+                pipeline   = pass.pipeline,
+                dst        = pass.dst,
+                quad_index = pass.quad_index,
+                src        = pass.src,
+                src_count  = pass.src_count,
+            }, pass.after)
+        }
+    }
+
     batch_end(renderer)
 }
 

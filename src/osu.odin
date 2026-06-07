@@ -582,7 +582,7 @@ osu_on_update :: proc(dt: f64) {
         }
         
         r_push_transform(game.playfield_transform)
-        r_bind_framebuffer({read = .DEFAULT, write = .DEFAULT})
+        r_bind_framebuffer({read = builtin_framebuffer(.DEFAULT), write = builtin_framebuffer(.DEFAULT)})
         
         shake_offset := hitobject_notelock_shake_offset(&hobj, map_time)
         #reverse for handle in hobj.gfx_handles {

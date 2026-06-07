@@ -15,7 +15,18 @@
       "Bash(odin check:*)",
       "Bash(command -v odin)",
       "Bash(/home/isak/odin/odin check *)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(git rm *)",
+      "Bash(cmd.exe /c \"build\\\\notosu.exe --gen-lua-docs\")",
+      "Bash(echo \"build exit=$?\")",
+      "Bash(PATH=/home/isak/odin:__TRACKED_VAR__ odin check src -define:SOKOL_USE_GL=true)",
+      "Bash(PATH=/home/isak/odin:__TRACKED_VAR__ bash build.sh)",
+      "Bash(xargs command grep -ln \"package luajit\")",
+      "Bash(odin version *)",
+      "Bash(./build.sh)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(awk -F: '$2 < 700 {print}')"
     ]
   }
 }

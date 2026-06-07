@@ -2,7 +2,7 @@ priority list for beta
 
 bugs
     judgements appear at where the slidertail is pre-move/pre-transform
-    
+    slider won't track if head isn't hit (input isn't handled)
 
 features
     slider snaking out

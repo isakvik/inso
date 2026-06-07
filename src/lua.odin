@@ -1668,6 +1668,9 @@ luaapi_element_instance_funcs := []Lua_Function {
   { "set_shader", luaapi_element_set_shader,
     "self element:set_shader( string shader_name )",
     "sets the element's shader by mapset pipeline name." },
+  { "set_render_target", luaapi_element_set_render_target,
+    "self element:set_render_target( string render_target_name )",
+    "redirects this element's draws into the named render target instead of the screen." },
   { "set_animation", luaapi_element_set_animation,
     "self element:set_animation( Animation animation )",
     "attaches an animation list to the element." },
@@ -1777,6 +1780,25 @@ luaapi_element_set_shader :: proc "c" (L: ^lua.State) -> (result: i32) {
     } else {
         log.error("User error - pipeline not found:", shader_name)
         notify_error("lua: Element:set_shader pipeline not found '%s'", shader_name)
+    }
+    return lua_return_self()
+}
+
+luaapi_element_set_render_target :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    userdata := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
+    el_id := uint(userdata^)
+    name := lua_string(2)
+    fb, found := mapset_render_target_fb(name)
+
+    if found {
+        if el_id < game.beatmap.elements.len {
+            el := q.get_ptr(&game.beatmap.elements, el_id)
+            el.render_target = fb
+        }
+    } else {
+        log.error("User error - render target not found:", name)
+        notify_error("lua: Element:set_render_target render target not found '%s'", name)
     }
     return lua_return_self()
 }
@@ -2278,6 +2300,12 @@ luaapi_beatmap_static_funcs := []Lua_Function {
   { "is_paused", luaapi_beatmap_is_paused,
     "bool Beatmap.is_paused( void )",
     "true if playback is currently paused." },
+  { "capture_layers", luaapi_beatmap_capture_layers,
+    "void Beatmap.capture_layers( string render_target_name, table layers )",
+    "redirects every drawable in the given layers into the named render target." },
+  { "add_post_pass", luaapi_beatmap_add_post_pass,
+    "void Beatmap.add_post_pass{ shader=, src=, dst=, after= }",
+    "queues a fullscreen shader pass sampling src (string or table) into dst ('screen' or a target name), running after the `after` layer (default HITOBJECTS)." },
   { "set_timing_windows", luaapi_beatmap_set_timing_windows,
     "void Beatmap.set_timing_windows( float marvelous, float good, float ok, float miss )",
     "sets the hit window half-widths in ms; expects marvelous <= good <= ok <= miss." },
@@ -2328,6 +2356,115 @@ luaapi_beatmap_is_paused :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     lua.pushboolean(L, b32(game.paused))
     return 1
+}
+
+luaapi_beatmap_capture_layers :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    name := lua_string(1)
+    fb, found := mapset_render_target_fb(name)
+    if !found {
+        notify_error("lua: Beatmap.capture_layers render target not found '%s'", name)
+        return 0
+    }
+
+    lua.L_checktype(L, 2, lua.TTABLE)
+    count := int(lua.objlen(L, 2))
+    for i in 1..=count {
+        lua.rawgeti(L, 2, lua.Integer(i))
+        layer_val := int(lua.tointeger(L, -1))
+        lua.pop(L, 1)
+        if layer_val >= 0 && layer_val < len(Layer) {
+            game.active_mapset.layer_capture[Layer(layer_val)] = fb
+        }
+    }
+    return 0
+}
+
+luaapi_beatmap_add_post_pass :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua.L_checktype(L, 1, lua.TTABLE)
+    mapset := game.active_mapset
+
+    if len(mapset.post_passes) >= MAX_POST_PASSES {
+        notify_error("lua: Beatmap.add_post_pass exceeded MAX_POST_PASSES (%d)", MAX_POST_PASSES)
+        return 0
+    }
+
+    lua.getfield(L, 1, "shader")
+    shader_name := string(lua.tostring(L, -1))
+    pipeline, shader_found := mapset_pipeline_slot(shader_name)
+    lua.pop(L, 1)
+    if !shader_found {
+        notify_error("lua: Beatmap.add_post_pass shader not found '%s'", shader_name)
+        return 0
+    }
+
+    lua.getfield(L, 1, "dst")
+    dst_name := string(lua.tostring(L, -1))
+    lua.pop(L, 1)
+    dst: Framebuffer_ID
+    if dst_name != "screen" {
+        dfb, dst_found := mapset_render_target_fb(dst_name)
+        if !dst_found {
+            notify_error("lua: Beatmap.add_post_pass dst render target not found '%s'", dst_name)
+            return 0
+        }
+        dst = dfb
+    }
+
+    after := Layer.HITOBJECTS
+    lua.getfield(L, 1, "after")
+    if !lua.isnil(L, -1) {
+        v := int(lua.tointeger(L, -1))
+        if v >= 0 && v < len(Layer) do after = Layer(v)
+    }
+    lua.pop(L, 1)
+
+    pass := Post_Pass{
+        pipeline   = pipeline,
+        dst        = dst,
+        after      = after,
+        quad_index = u32(len(mapset.post_passes)),
+    }
+
+    add_src :: proc(pass: ^Post_Pass, name: string) {
+        if pass.src_count >= 4 do return
+        slot, ok := mapset_texture_slot(name)
+        if ok {
+            pass.src[pass.src_count] = slot
+            pass.src_count += 1
+        } else {
+            notify_error("lua: Beatmap.add_post_pass src not found '%s'", name)
+        }
+    }
+
+    lua.getfield(L, 1, "src")
+    if lua.istable(L, -1) {
+        n := int(lua.objlen(L, -1))
+        for i in 1..=n {
+            lua.rawgeti(L, -1, lua.Integer(i))
+            add_src(&pass, string(lua.tostring(L, -1)))
+            lua.pop(L, 1)
+        }
+    } else {
+        add_src(&pass, string(lua.tostring(L, -1)))
+    }
+    lua.pop(L, 1)
+
+    // note(isak): tex_index carries src[0] for bindless sampling; non-bindless binds srcs to
+    // texture units 0.. and samples those, so the quad just points at unit 0.
+    quad_tex_index: u32 = pass.src[0] if window.bindless_supported else 0
+    window.fullscreen_store.data[pass.quad_index] = Quad{
+        pos_min   = {0, 0},
+        pos_max   = {1, 1},
+        uv_min    = {0, 0},
+        uv_max    = {1, 1},
+        color     = transmute(u32)color_white,
+        tex_index = quad_tex_index,
+    }
+
+    append(&mapset.post_passes, pass)
+    return 0
 }
 
 // note(isak): set_timing_windows(marvelous, good, ok, miss) - hit window half-widths in ms

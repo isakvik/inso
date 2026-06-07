@@ -243,7 +243,7 @@ build_deferred_activations :: proc(beatmap: ^Beatmap) {
 
 SLIDER_FOLLOW_CIRCLE_DEFAULT_RADIUS_MULT :: 2.4
 SLIDER_FOLLOW_CIRCLE_POP_MS :: 200
-SLIDER_TICK_POP_MS :: 100 // note(isak): how long an individual tick's scale/fade pop-in plays once its staggered turn arrives
+SLIDER_TICK_POP_MS :: 150 // note(isak): how long an individual tick's scale/fade pop-in plays once its staggered turn arrives
 SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS :: 3 // note(isak) don't make ticks within n ms of the sliderend
 SLIDER_END_LENIENCY_MS :: 36
 

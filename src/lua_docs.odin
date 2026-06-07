@@ -198,7 +198,7 @@ lua_docs_write_signature :: proc(sb: ^strings.Builder, sig: string) {
 
 lua_docs_is_type_token :: proc(s: string) -> bool {
     switch s {
-    case "void", "int", "float", "bool", "string", "any": return true
+    case "void", "int", "float", "bool", "string", "table", "any": return true
     }
     return len(s) > 0 && s[0] >= 'A' && s[0] <= 'Z'
 }

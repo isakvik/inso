@@ -1,6 +1,7 @@
 package notosu
 
 import "core:math"
+import "core:container/queue"
 
 import gl "vendor:OpenGL"
 import sg "vendor:sokol/gfx"
@@ -42,10 +43,17 @@ user_pipeline_slot :: proc(s: u32) -> u32 {
     return len(Builtin_Pipeline_Slot) + s
 }
 
-Framebuffer_ID :: enum {
+// note(isak): 0..len(Builtin_Framebuffer_Slot) are engine-owned; the rest index into
+// game.active_mapset.render_targets. 0 == DEFAULT doubles as "no redirect" for elements.
+Framebuffer_ID :: u32
+
+Builtin_Framebuffer_Slot :: enum u32 {
     DEFAULT,
     SLIDERS,
 }
+
+builtin_framebuffer :: proc(s: Builtin_Framebuffer_Slot) -> Framebuffer_ID { return Framebuffer_ID(s) }
+user_framebuffer :: proc(i: u32) -> Framebuffer_ID { return i + len(Builtin_Framebuffer_Slot) }
 
 Shader_SSBO_Bind_Slot :: enum u32 {
     NONE,
@@ -64,12 +72,19 @@ Shader_SSBO_Bind_Slot :: enum u32 {
     USER_5,
     USER_6,
     USER_7,
+    POST_PARAMS,   // post-pass src texture slots UBO; binding 16
 }
 
 // note(isak): always-bound UBO for Lua-accessible shader params.
 // shaders access it as: layout(std140, binding=7) uniform UserParams { float params[64]; };
 User_Shader_Params :: struct #align(16) {
     data: [64]f32,
+}
+
+// note(isak): per-pass src texture slots for post passes.
+// shaders access it as: layout(std140, binding=16) uniform PostParams { uvec4 srcSlots; };
+Post_Pass_Params :: struct #align(16) {
+    src: [4]u32,
 }
 
 // note(isak): per-draw slider params, uploaded before each DRAW_SLIDER command
@@ -227,6 +242,14 @@ prepare_textures_for_rendering :: proc() {
             textures[num_elements] = map_texture.tex_handle
             num_elements += 1
         }
+        // note(isak): textures.data iterates the queue's capacity (trailing zeros), so re-anchor
+        // to the real count before render targets to keep their slots contiguous with map textures.
+        num_elements = len(Builtin_Texture_Slot) + len(Skin_Element_Type) + int(game.active_mapset.textures.len)
+        for i in 0..<game.active_mapset.render_targets.len {
+            rt := queue.get_ptr(&game.active_mapset.render_targets, uint(i))
+            textures[num_elements] = rt.fbo.color_texture_handles[0]
+            num_elements += 1
+        }
         for i in 0..<num_elements {
             if textures[i] > 0 {
                 gl.MakeTextureHandleResidentARB(textures[i])
@@ -247,6 +270,12 @@ prepare_textures_for_rendering :: proc() {
             ids[num_elements] = map_texture.tex_id
             num_elements += 1
         }
+        num_elements = len(Builtin_Texture_Slot) + len(Skin_Element_Type) + int(game.active_mapset.textures.len)
+        for i in 0..<game.active_mapset.render_targets.len {
+            rt := queue.get_ptr(&game.active_mapset.render_targets, uint(i))
+            ids[num_elements] = rt.fbo.color_textures[0]
+            num_elements += 1
+        }
     }
 }
 
@@ -254,7 +283,7 @@ cleanup_textures_for_rendering :: proc() {
     if !window.bindless_supported do return
 
     textures := &window.texture_buffer.data
-    num_elements := len(Builtin_Texture_Slot) + len(Skin_Element_Type) + game.active_mapset.textures.len
+    num_elements := len(Builtin_Texture_Slot) + len(Skin_Element_Type) + game.active_mapset.textures.len + game.active_mapset.render_targets.len
     for i in 0..<num_elements {
         if textures[i] > 0 {
             gl.MakeTextureHandleNonResidentARB(textures[i])

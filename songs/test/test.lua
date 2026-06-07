@@ -105,8 +105,8 @@ function on_init()
 
         hobj:set_slider_element(SliderPart.BALL, ball)
 
-        hobj:set_slider_follow_circle_radius(100)
-        hobj:set_slider_element(SliderPart.FOLLOW_CIRCLE, blank)
+        hobj:set_slider_follow_circle_radius(2.4)
+        --hobj:set_slider_element(SliderPart.FOLLOW_CIRCLE, blank)
     end
     
     register_global_event("hehe", function()

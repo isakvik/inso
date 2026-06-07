@@ -242,6 +242,7 @@ build_deferred_activations :: proc(beatmap: ^Beatmap) {
 // note(isak): slider logic core
 
 SLIDER_FOLLOW_CIRCLE_DEFAULT_RADIUS_MULT :: 2.4
+SLIDER_FOLLOW_CIRCLE_POP_MS :: 200
 SLIDER_TICK_POP_MS :: 100 // note(isak): how long an individual tick's scale/fade pop-in plays once its staggered turn arrives
 SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS :: 3 // note(isak) don't make ticks within n ms of the sliderend
 SLIDER_END_LENIENCY_MS :: 36
@@ -249,7 +250,7 @@ SLIDER_END_LENIENCY_MS :: 36
 // note(isak): the looping slide sound is attenuated below the section volume so it doesn't drown out hits
 SLIDER_SLIDE_VOLUME :: f32(0.5)
 
-slider_snake_factor :: proc(hobj: ^Hitobject) -> f64 {
+slider_snake_out_factor :: proc(hobj: ^Hitobject) -> f64 {
     preempt_ms := hitobject_preempt_ms(hobj)
     snake_duration_ms := preempt_ms * (1.0/3.0)
     time_into_preempt  := beatmap_music_time_ms(&game.beatmap) - hobj.start_time_ms + preempt_ms
@@ -369,8 +370,15 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
         }
     }
     
-    if is_tracking do slider.flags |= {.TRACKING}
-    else do slider.flags &= ~{.TRACKING}
+    if is_tracking {
+        slider.flags |= {.TRACKING}
+        if !was_tracking {
+            slider.tracked_timestamp_at = map_time
+        }
+    } 
+    else {
+        slider.flags &= ~{.TRACKING}
+    } 
     
     if is_tracking && map_time >= hobj.end_time_ms - SLIDER_END_LENIENCY_MS {
         slider.flags |= {.END_TRACKED}

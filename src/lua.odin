@@ -896,13 +896,13 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
     "the slider ball's travel angle at the given music time in radians." },
   { "get_slider_follow_circle_radius", luaapi_hitobject_get_slider_follow_circle_radius,
     "float hitobject:get_slider_follow_circle_radius( void )",
-    "the radius multiplier of the slider follow circle (0 for non-sliders)." },
+    "the radius multiplier of the slider follow circle (0 for non-sliders). default value is 2.4." },
   { "set_slider_follow_circle_radius", luaapi_hitobject_set_slider_follow_circle_radius,
     "self hitobject:set_slider_follow_circle_radius( float mult )",
     "sets the radius multiplier of the slider follow circle." },
   { "set_slider_element", luaapi_hitobject_set_slider_element,
     "self hitobject:set_slider_element( SliderPart part, Element element )",
-    "overrides the element used for a slider part (ball, follow circle, ticks, repeats, ends). applies live and on respawn." },
+    "overrides the element used for a slider part (ball, follow circle, ticks, repeats, ends)." },
 
 }
 

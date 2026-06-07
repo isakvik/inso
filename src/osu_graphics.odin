@@ -301,10 +301,9 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
         elements.data[el_type].tex = skin_texture(skin_element_for_type_table[el_type])
     }
 
-    // note(isak): one element per digit glyph, avoids re-creating elements per hitobject
-    for d in 0..<10 {
-        elements.data[builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + d))].tex =
-            skin_texture(Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + d))
+    for digit in 0..<10 {
+        elements.data[builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + digit))].tex =
+            skin_texture(Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digit))
     }
 
     elements.data[builtin_element_slot(.HIT_CIRCLE)] = {
@@ -375,9 +374,6 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
         animations = click_animation
     }
 
-    // note(isak): slider ticks pop in (scale overshoot + quick fade) once when their staggered turn arrives.
-    // the per-tick timing comes from shifting each tick drawable's start_time_ms (see slider_update_gfx); this
-    // animation just defines the shape of a single pop over its first SLIDER_TICK_POP_MS of life.
     elements.data[builtin_element_slot(.SLIDER_TICK)].animations = animation_new(anims,
         Animation_Scale{
             tween = .LINEAR,
@@ -387,7 +383,15 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
         Animation_Scale{
             tween = .LINEAR,
             start_time = 0.5, end_time = 1,
-            start_scale = {1.2, 1.2}, end_scale = {1, 1},
+            start_scale = {1.1, 1.1}, end_scale = {1, 1},
+        },
+    )
+    
+    elements.data[builtin_element_slot(.SLIDER_FOLLOW_CIRCLE)].animations = animation_new(anims,
+        Animation_Scale{
+            tween = .QUAD_OUT,
+            start_time = 0, end_time = 1,
+            start_scale = {1/2.4, 1/2.4}, end_scale = {1, 1},
         },
     )
 
@@ -800,7 +804,7 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
 
     r_clear(with_alpha(color_black, 0.0))
 
-    slider_snake_instances := max(1, i32(f64(slider.instance_count) * slider_snake_factor(hobj)))
+    slider_snake_instances := max(1, i32(f64(slider.instance_count) * slider_snake_out_factor(hobj)))
 
     command_push_draw_slider(Command_Draw_Slider{
         base_instance      = u32(slider.first_instance_at),
@@ -837,8 +841,6 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     r_reset_scissor_mode()
 }
 
-// note(isak): the element a part draws with - a lua override if set (see slider_set_part_element), else the
-// builtin skin slot for that part.
 slider_part_element :: proc(hobj: ^Hitobject, part: Slider_Part) -> Element_ID {
     if custom := hobj.slider_state.custom_elements[part]; custom != 0 {
         return custom
@@ -906,6 +908,7 @@ slider_set_part_element :: proc(hobj: ^Hitobject, part: Slider_Part, element: El
 
     gfx := &hobj.slider_state.gfx
     update :: proc(h: Drawable_Handle, element: Element_ID) {
+        if h == {} do return
         if d, ok := slotmap.get(&game.beatmap.drawables, h); ok do d.element = element
     }
     switch part {
@@ -933,13 +936,18 @@ slider_clear_handles :: proc(hobj: ^Hitobject) {
     gfx^ = {}
 }
 
-slider_handle_update :: proc(h: Drawable_Handle, active: bool, pos: vec2, angle: f32 = 0) {
-    d, ok := slotmap.get(&game.beatmap.drawables, h)
-    if !ok do return
+
+slider_drawable_update :: proc(d: ^Drawable, active: bool, pos: vec2, angle: f32 = 0) {
     if active do d.flags |= {.ACTIVE}
     else      do d.flags &~= {.ACTIVE}
     d.pos = pos
     d.angle_rad = angle
+}
+
+slider_handle_update :: proc(h: Drawable_Handle, active: bool, pos: vec2, angle: f32 = 0) {
+    d, ok := slotmap.get(&game.beatmap.drawables, h)
+    if !ok do return
+    slider_drawable_update(d, active, pos, angle)
 }
 
 slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
@@ -949,24 +957,25 @@ slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
 
     hobj_pos := hitobject_pos(hobj)
     end_pos  := path.end_pos + hobj.script_pos_translation
-    snake_full := slider_snake_factor(hobj) >= 1
+    snake_full := slider_snake_out_factor(hobj) >= 1
 
     current_span := slider.checked_repeats_count
     last_span := slider.path_travel_count - 1
     for tick, tick_i in gfx.ticks {
-        // note(isak): we reuse the tick graphics from the current travel for the next one, similar to osu
-        span := current_span + (1 if slider.tick_hits[tick_i] else 0)
-        active := span <= last_span
-
-        tick_pos := slider_path_pos_at(hobj, hobj.start_time_ms + f64(tick_i + 1) * slider.tick_interval_ms)
-        if active {
-            if d, ok := slotmap.get(&game.beatmap.drawables, tick); ok {
+        d, ok := slotmap.get(&game.beatmap.drawables, tick)
+        if ok {
+            span := current_span + (1 if slider.tick_hits[tick_i] else 0)
+            active := span <= last_span
+            tick_pos := slider_path_pos_at(hobj, hobj.start_time_ms + f64(tick_i + 1) * slider.tick_interval_ms)
+            
+            slider_drawable_update(d, active, tick_pos)
+            if active {
+                // note(isak): we reuse the tick graphics from the current travel for the next one to emulate osu
                 pop_at := slider_tick_popin_time(hobj, tick_i + 1, span)
                 d.start_time_ms = pop_at
                 d.animation_rate = (d.end_time_ms - pop_at) / SLIDER_TICK_POP_MS
             }
         }
-        slider_handle_update(tick, active, tick_pos)
     }
 
     has_sliderend_at_end := slider.path_travel_count % 2 == 1 || current_span < last_span
@@ -991,7 +1000,15 @@ slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
     ball_active := hobj.start_time_ms <= map_time && map_time < hobj.end_time_ms
     ball_pos := slider_path_pos_at(hobj, map_time) if ball_active else vec2{}
     slider_handle_update(gfx.ball,   ball_active, ball_pos, ball_active ? slider_ball_angle_at(hobj, map_time) : 0)
-    slider_handle_update(gfx.follow, ball_active && .TRACKING in slider.flags, ball_pos)
+    
+    if d_follow, ok := slotmap.get(&game.beatmap.drawables, gfx.follow); ok {
+        slider_drawable_update(d_follow, ball_active && .TRACKING in slider.flags, ball_pos)
+        if .TRACKING in slider.flags {
+            d_follow.start_time_ms = slider.tracked_timestamp_at
+            d_follow.animation_rate = (d_follow.end_time_ms - slider.tracked_timestamp_at) / SLIDER_FOLLOW_CIRCLE_POP_MS
+        }
+    }
+    
 }
 
 slider_render_gfx :: proc(hobj: ^Hitobject, map_time: f64) {

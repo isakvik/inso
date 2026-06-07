@@ -208,9 +208,9 @@ Slider_State :: struct {
     
     path_travel_count, checked_repeats_count, checked_path_ticks_count: int,
     hit_judgement_count: int,
+    tracked_timestamp_at: f64,
 
-    // note(isak): cleared on repeat. allocated with the mapset allocator
-    tick_hits: []bool,
+    tick_hits: []bool, // note(isak): cleared on repeat. allocated with the mapset allocator
 
     contingency_window_scorepoint_count: int,
     contingency_window_scorepoints: bit_set[0..<64; u64], // note(isak): ticks are 0, repeats are 1

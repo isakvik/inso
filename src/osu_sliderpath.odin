@@ -6,10 +6,9 @@ import "core:slice"
 
 // spacing between emitted slider instances
 slider_point_dist_osupx : f64 = 2.5
-
-// how far a flattened bezier may deviate from the true curve before it's subdivided further,
-// and how finely circular arcs are tessellated. both in osu!px.
+// how far a flattened bezier may deviate from the true curve before it's subdivided further in osupx
 bezier_tolerance : f32 = 0.25
+// how finely circular arcs are tessellated in osupx
 circular_arc_tol : f32 = 0.1
 
 /*
@@ -32,12 +31,12 @@ write_instances_from_path :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Pat
     instance_count = instance_buf.count - instance_offset
 
     // note(isak): cache the bounding box, endpoints and endpoint tangents calculated from the emitted instances
-    path.bounds_min = {max(f32), max(f32)}
-    path.bounds_max = {min(f32), min(f32)}
+    path.bounds_min = { max(f32), max(f32) }
+    path.bounds_max = { min(f32), min(f32) }
     for i in instance_offset ..< instance_buf.count {
         p := instance_buf.data[i]
-        path.bounds_min = {min(path.bounds_min.x, p.x), min(path.bounds_min.y, p.y)}
-        path.bounds_max = {max(path.bounds_max.x, p.x), max(path.bounds_max.y, p.y)}
+        path.bounds_min = { min(path.bounds_min.x, p.x), min(path.bounds_min.y, p.y) }
+        path.bounds_max = { max(path.bounds_max.x, p.x), max(path.bounds_max.y, p.y) }
     }
 
     if instance_count >= 1 {

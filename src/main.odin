@@ -346,6 +346,7 @@ main :: proc() {
             r_bind_layer_and_push_current_state(.BACKGROUND, transform = window.screenspace_transform)
             osu_on_update(dt_ms)
 
+            r_check_and_bind_layer(.DEBUG)
             if app.debug_display_textures {
                 for i in 0..<50 {
                     r_draw_quad(&renderer.quad_geometry, 

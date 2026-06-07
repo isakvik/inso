@@ -69,14 +69,12 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
 //////////////////////////////////////////////////////
 // note(isak): hitobject logic core
 
-// note(isak): osu stores timing point hitsound volume as a 0-100 percentage. convert to a 0-1 multiplier
-// for sample_play, which scales it again by the global hitsound category volume.
+// note(isak): osu stores timing point hitsound volume as a 0-100 percentage
 timing_point_volume :: proc(timing_point: ^Timing_Point) -> f32 {
     return f32(timing_point.volume) / 100
 }
 
-// note(isak): resolve an osu sample set value to a skin sample set, inheriting the timing point's set when
-// the value is 0 (auto). file values are 1 = normal, 2 = soft, 3 = drum
+// note(isak): 0 = auto
 osu_sample_set_to_skin :: proc(osu_set: u8, timing_point: ^Timing_Point) -> Skin_Sample_Set {
     switch osu_set {
     case 1:  return .NORMAL
@@ -244,6 +242,7 @@ build_deferred_activations :: proc(beatmap: ^Beatmap) {
 // note(isak): slider logic core
 
 SLIDER_FOLLOW_CIRCLE_RADIUS_MULT :: 2.4
+SLIDER_TICK_POP_MS :: 100 // note(isak): how long an individual tick's scale/fade pop-in plays once its staggered turn arrives
 SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS :: 3 // note(isak) don't make ticks within n ms of the sliderend
 SLIDER_END_LENIENCY_MS :: 36
 
@@ -255,6 +254,23 @@ slider_snake_factor :: proc(hobj: ^Hitobject) -> f64 {
     snake_duration_ms := preempt_ms * (1.0/3.0)
     time_into_preempt  := beatmap_music_time_ms(&game.beatmap) - hobj.start_time_ms + preempt_ms
     return clamp(time_into_preempt / snake_duration_ms, 0, 1)
+}
+
+// note(isak): returns the map time at which the tick should begin its popin for the given span
+slider_tick_popin_time :: proc(hobj: ^Hitobject, tick_i, span: int) -> f64 {
+    slider := &hobj.slider_state
+    heading_back := span % 2 == 1
+    span_start := hobj.start_time_ms + f64(span) * slider.duration_ms
+
+    path_time := f64(tick_i) * slider.tick_interval_ms // when the ball passes this tick, measured from the head
+    travel_time := heading_back ? slider.duration_ms - path_time : path_time
+    travel_fraction := travel_time / slider.duration_ms
+
+    snake_duration := hitobject_preempt_ms(hobj) * (1.0/3.0)
+    if span == 0 {
+        return span_start - snake_duration + travel_fraction * slider.duration_ms / 2
+    }
+    return span_start - min(snake_duration, 100) + travel_fraction * slider.duration_ms / 2
 }
 
 slider_path_pos_at :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
@@ -325,9 +341,9 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
     if slider.down_key != 0 && controller_key_pressed(slider.down_key == 1 ? 2 : 1) {
         slider.down_key = 0
     }
-    key_held := slider.down_key == 0 \
-        ? controller_key_down(1) || controller_key_down(2) \
-        : controller_key_down(slider.down_key)
+    key_held := controller_key_down(1) || controller_key_down(2) if
+        slider.down_key == 0 else
+        controller_key_down(slider.down_key)
     
     is_over_sliderball := point_in_circle(game.input.mouse_pos, ball_pos, ball_radius)
     is_over_sliderfollowcircle := point_in_circle(game.input.mouse_pos, ball_pos, follow_radius)
@@ -337,8 +353,8 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
 
     // note(isak): we want the slider tracking to activate late even in the case the cursor isn't over the sliderball
     // in the circumstance that the head is clicked in time and the sliderball hasn't moved the length of the follow
-    // circle radius. this mirrors the hard-fought sliderhead leniency that's now present in lazer, and missing it
-    // is the cause of a good few frustrating slidertick misses in stable
+    // circle radius. this mirrors the sliderhead leniency that's now present in lazer, and missing it is the cause of
+    // a good few frustrating slidertick misses in stable
     if .HEAD_CONTINGENCY_WINDOW_PASSED not_in slider.flags {
         if .HEAD_HIT in slider.flags && is_over_sliderfollowcircle && key_held {
             is_tracking = true
@@ -368,8 +384,6 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
     // end of the timing window. we store them and process them in order once the timing window has passed.
     if .HEAD_CONTINGENCY_WINDOW_PASSED in slider.flags && slider.contingency_window_scorepoint_count > 0 {
         if .HEAD_HIT in slider.flags {
-            // note(isak): contingency scorepoints are the slider's earliest (traversal 0, forward), so repeats
-            // are edges 1, 2, ... and ticks are geometric ticks 1, 2, ... in order. mark hit ticks so they pop.
             contingency_repeat_edge := 1
             contingency_tick_index := 1
             for i in 0..<slider.contingency_window_scorepoint_count {
@@ -409,12 +423,14 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
         if slider_time_at >= f64(slider.checked_repeats_count + 1) * slider.duration_ms {
             return true
         }
-        
-        heading_back := slider.checked_repeats_count % 2 == 1
-        first_tick_time := heading_back ? slider.duration_ms - slider.tick_interval_ms * f64(slider.tick_count) : slider.tick_interval_ms
-        slider_path_time_at := slider_time_at - f64(slider.checked_repeats_count) * slider.duration_ms
-        if slider_path_time_at >= first_tick_time + f64(slider.checked_path_ticks_count) * slider.tick_interval_ms {
-            return true
+
+        if slider.checked_path_ticks_count < slider.tick_count {
+            heading_back := slider.checked_repeats_count % 2 == 1
+            first_tick_time := heading_back ? slider.duration_ms - slider.tick_interval_ms * f64(slider.tick_count) : slider.tick_interval_ms
+            slider_path_time_at := slider_time_at - f64(slider.checked_repeats_count) * slider.duration_ms
+            if slider_path_time_at >= first_tick_time + f64(slider.checked_path_ticks_count) * slider.tick_interval_ms {
+                return true
+            }
         }
         return false
     }
@@ -507,6 +523,7 @@ slider_expire :: proc(hobj: ^Hitobject) {
     judgement_new(hobj, result, 0)
     judgement_new_drawable(hobj)
     hitobject_emit_phase_transition(hobj, result == .MISS ? .MISS : .HIT)
+    slider_clear_handles(hobj)
     hobj.flags &~= {.VISIBLE}
     hobj.flags |= {.EXPIRED}
 }
@@ -530,9 +547,6 @@ slider_play_edge_hitsound :: proc(hobj: ^Hitobject, edge_index: int, timing_poin
     if edge.hitsound & 8 != 0 do sample_play(&game.active_skin.hitsounds[addition_set][.HITCLAP], volume)
 }
 
-// note(isak): start the slider's looping body sounds while tracking. sliderslide always loops; sliderwhistle
-// loops alongside it when the slider's object-level hitsound carries a whistle. both follow the timing point
-// sample set and volume. idempotent - each loop only starts if not already playing.
 slider_start_slide_sounds :: proc(hobj: ^Hitobject, timing_point: ^Timing_Point) {
     slider := &hobj.slider_state
     sample_set := Skin_Sample_Set(timing_point.sample_set)

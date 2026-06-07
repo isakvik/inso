@@ -88,25 +88,21 @@ function on_init()
     --    hobj:set_hit_animation_length(900)
     --    hobj:hide_combo_numbers()
     --end
-    
 
-    -- unused
-    dd = Drawable.new(el, 0, 0)
-        :set_size(100,100)
-        :set_anchor(Anchor.CENTER)
-        :set_layer(Layer.BACKGROUND)
-        :register_event("saft", function (d, beat_n) 
-            print("custom event @ beat: " .. beat_n) 
-        end)
+    ely = Element.new()
+    
+    ball = Element.new():set_tex("reversearrow.png")
     
     list = Hitobject.get_in_range_ms(0, 425000)
     
     table = {}
     for i, hobj in ipairs(list) do
-        --hobj:hide() -- todo(isak): stopped working because of the deferred spawn system
+        --hobj:hide()
         t = hobj:get_start_time()
     
-        hobj:set_ar(9-i/100)
+        --hobj:set_ar(9-i/100)
+
+        hobj:set_slider_element(SliderPart.BALL, ball)
     end
     
     register_global_event("hehe", function()
@@ -130,7 +126,7 @@ function on_update(time_ms)
         -- hobj:set_cs(math.cos(time_ms*(0.003+i*0.000005))*2 + 3)
     end
     
-    Playfield.set_rotation(math.sin(time_ms / 3000) * 0.1)
+    --Playfield.set_rotation(math.sin(time_ms / 3000) * 0.1)
 end
 
 --function on_beat(beat)

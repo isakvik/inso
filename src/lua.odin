@@ -154,7 +154,7 @@ luaapi_global_funcs := []Lua_Function {
     "loads and runs a lua file from the mapset folder, returning whatever it returns." },
   { "get_cursor_pos", luaapi_get_cursor_pos,
     "(float x, float y) get_cursor_pos( void )",
-    "the cursor position in playfield (osu!px) space." },
+    "the cursor position in playfield (osupx) space." },
   { "controller_is_down", luaapi_controller_is_down,
     "bool controller_is_down( string key )",
     "true if the named gameplay key is held. key is one of \"k1\", \"k2\", \"m1\", \"m2\"." },
@@ -185,6 +185,7 @@ luaapi_enum_constants := [?]struct { t: typeid, name: cstring }{
     { Layout_Anchor, "Anchor" },
     { Tween, "Tween" },
     { Hitobject_Phase, "Phase" },
+    { Slider_Part, "SliderPart" },
 }
 
 Lua_Event_Registration :: struct {
@@ -819,13 +820,13 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
     "true if at least one bit in mask is set on this object." },
   { "get_pos", luaapi_hitobject_get_pos,
     "(float x, float y) hitobject:get_pos( void )",
-    "the object's position in osu!px (before any script translation)." },
+    "the object's position in osupx (before any script translation)." },
   { "set_pos", luaapi_hitobject_set_pos,
     "self hitobject:set_pos( float x, float y )",
-    "moves the object to an absolute osu!px position." },
+    "moves the object to an absolute osupx position." },
   { "set_pos_screenspace", luaapi_hitobject_set_pos_screenspace,
     "self hitobject:set_pos_screenspace( float x, float y )",
-    "moves the object to a screen-space pixel position, converted into playfield osu!px." },
+    "moves the object to a screen-space pixel position, converted into playfield osupx." },
   { "get_start_time", luaapi_hitobject_get_start_time,
     "float hitobject:get_start_time( void )",
     "the object's start time in ms." },
@@ -844,6 +845,9 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
   { "add_element_for_phase", luaapi_hitobject_add_element_for_phase,
     "self hitobject:add_element_for_phase( Phase phase, Element element )",
     "adds a custom element to draw while the object is in the given phase, replacing the default graphics." },
+  { "set_slider_element", luaapi_hitobject_set_slider_element,
+    "self hitobject:set_slider_element( SliderPart part, Element element )",
+    "overrides the element used for a slider part (ball, follow circle, ticks, repeats, ends). applies live and on respawn." },
   { "clear_drawables", luaapi_hitobject_clear_drawables,
     "self hitobject:clear_drawables( void )",
     "removes all of the object's current drawables." },
@@ -874,7 +878,7 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
 
   { "get_slider_distance", luaapi_hitobject_get_slider_distance,
     "float hitobject:get_slider_distance( void )",
-    "the slider's path length in osu!px (0 for non-sliders)." },
+    "the slider's path length in osupx (0 for non-sliders)." },
   { "get_slider_velocity", luaapi_hitobject_get_slider_velocity,
     "float hitobject:get_slider_velocity( void )",
     "the slider's velocity (0 for non-sliders)." },
@@ -883,10 +887,10 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
     "the duration of one slider traversal in ms (0 for non-sliders)." },
   { "get_slider_ball_pos", luaapi_hitobject_get_slider_ball_pos,
     "(float x, float y) hitobject:get_slider_ball_pos( void )",
-    "the slider ball's current position in osu!px (the head position for non-sliders)." },
+    "the slider ball's current position in osupx (the head position for non-sliders)." },
   { "get_slider_ball_pos_at", luaapi_hitobject_get_slider_ball_pos_at,
     "(float x, float y) hitobject:get_slider_ball_pos_at( float ms )",
-    "the slider ball's position at the given music time in osu!px." },
+    "the slider ball's position at the given music time in osupx." },
   { "get_slider_ball_angle", luaapi_hitobject_get_slider_ball_angle,
     "float hitobject:get_slider_ball_angle( void )",
     "the slider ball's current travel angle in radians (0 for non-sliders)." },
@@ -1202,7 +1206,7 @@ luaapi_hitobject_get_phase :: proc "c" (L: ^lua.State) -> (result: i32) {
 luaapi_hitobject_clear_drawables :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         context = lua_beatmap.odin_context
-        clear_hitobject_drawables(hobj)
+        hitobject_clear_drawables(hobj)
         return 0
     })
 }
@@ -1214,12 +1218,26 @@ luaapi_hitobject_add_element_for_phase :: proc "c" (L: ^lua.State) -> (result: i
 
         if hobj.custom_elements[phase] == nil {
             context = lua_beatmap.odin_context
-            hobj.custom_elements[phase] = reserve_hitobject_phase_elements(hobj, phase)
+            hobj.custom_elements[phase] = hitobject_reserve_phase_elements(hobj, phase)
         }
 
         el_index := hobj.custom_element_nums[phase]
         hobj.custom_elements[phase][el_index] = el_id
         hobj.custom_element_nums[phase] += 1
+        return 0
+    })
+}
+
+luaapi_hitobject_set_slider_element :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        context = lua_beatmap.odin_context
+        part_index := int(lua_int(2))
+        if part_index < 0 || part_index >= len(Slider_Part) {
+            notify_warn("set_slider_element: invalid SliderPart %d", part_index)
+            return 0
+        }
+        el_id := (cast(^Element_ID)lua.L_checkudata(L, 3, lua_classes[.ELEMENT].name))^
+        slider_set_part_element(hobj, Slider_Part(part_index), el_id)
         return 0
     })
 }
@@ -1319,7 +1337,7 @@ luaapi_drawable_instance_funcs := []Lua_Function {
     "sets the drawable's position." },
   { "set_pos_screenspace", luaapi_drawable_set_pos_screenspace,
     "self drawable:set_pos_screenspace( float x, float y )",
-    "sets the drawable's position from a screen-space pixel position, converted into playfield osu!px." },
+    "sets the drawable's position from a screen-space pixel position, converted into playfield osupx." },
   { "get_size", luaapi_drawable_get_size,
     "(float w, float h) drawable:get_size( void )",
     "the drawable's size." },
@@ -2229,7 +2247,7 @@ luaapi_beatmap_static_funcs := []Lua_Function {
     "the map's approach (preempt) time in ms." },
   { "get_cs_osupx", luaapi_beatmap_get_cs_osupx,
     "float Beatmap.get_cs_osupx( void )",
-    "the map's circle radius in osu!px." },
+    "the map's circle radius in osupx." },
   { "is_paused", luaapi_beatmap_is_paused,
     "bool Beatmap.is_paused( void )",
     "true if playback is currently paused." },
@@ -2322,7 +2340,7 @@ luaapi_beatmap_get_timing_windows :: proc "c" (L: ^lua.State) -> i32 {
 luaapi_color_static_funcs := []Lua_Function {
   { "rgb", luaapi_color_rgb,
     "int Color.rgb( int r, int g, int b )",
-    "packs r, g, b (each 0-255) into an opaque rgba integer." },
+    "packs r, g, b (each 0-255) into an rgba integer with alpha 1." },
   { "rgba", luaapi_color_rgba,
     "int Color.rgba( int r, int g, int b, int a )",
     "packs r, g, b, a (each 0-255) into an rgba integer." },
@@ -2349,7 +2367,7 @@ luaapi_color_rgba :: proc "c" (L: ^lua.State) -> (result: i32) {
 luaapi_playfield_static_funcs := []Lua_Function {
   { "set_translation", luaapi_playfield_set_translation,
     "void Playfield.set_translation( float x, float y )",
-    "sets the playfield offset in osu!px, on top of the base centering translation." },
+    "sets the playfield offset in osupx, on top of the base centering translation." },
   { "set_scale", luaapi_playfield_set_scale,
     "void Playfield.set_scale( float scale )",
     "sets the playfield scale multiplier (1.0 = default size)." },
@@ -2358,13 +2376,13 @@ luaapi_playfield_static_funcs := []Lua_Function {
     "sets the playfield rotation in radians around its center." },
   { "translate", luaapi_playfield_translate,
     "void Playfield.translate( float x, float y )",
-    "adds to the current playfield translation in osu!px." },
+    "adds to the current playfield translation in osupx." },
   { "rotate", luaapi_playfield_rotate,
     "void Playfield.rotate( float radians )",
     "adds to the current playfield rotation in radians." },
 }
 
-// set_translation(x, y) - offset in osu!px, applied on top of the base centering translation
+// set_translation(x, y) - offset in osupx, applied on top of the base centering translation
 luaapi_playfield_set_translation :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     game.beatmap.playfield_translation_osupx = {f32(lua.L_checknumber(L, 1)), f32(lua.L_checknumber(L, 2))}
@@ -2388,7 +2406,7 @@ luaapi_playfield_set_rotation :: proc "c" (L: ^lua.State) -> i32 {
     return 0
 }
 
-// translate(x, y) - adds to the current translation in osu!px
+// translate(x, y) - adds to the current translation in osupx
 luaapi_playfield_translate :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     game.beatmap.playfield_translation_osupx += {f32(lua.L_checknumber(L, 1)), f32(lua.L_checknumber(L, 2))}

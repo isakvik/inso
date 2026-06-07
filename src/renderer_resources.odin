@@ -76,7 +76,7 @@ User_Shader_Params :: struct #align(16) {
 Slider_Params :: struct {
     border_color:       vec4,
     body_color:         vec4,
-    script_translation: vec2,  // osu!px, applied in VS before coord normalization
+    script_translation: vec2,  // osupx, applied in VS before coord normalization
     base_instance:      u32,   // replaces gl_BaseInstance for intel compat
     radius_osupx:       f32,   // per-object radius, used in VS instead of global circleSizeOsupx
 }

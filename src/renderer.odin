@@ -196,7 +196,7 @@ renderer_init :: proc() {
     window.quad_store = tbo_init(Quad, MAX_BATCH_VERTICES)
     window.text_store = tbo_init(Glyph_Quad, MAX_BATCH_VERTICES)
 
-    window.slider_instance_store = sbo_init(vec2, megabytes(256))
+    window.slider_instance_store = sbo_init(vec2, MAX_SLIDER_INSTANCES)
     window.fullscreen_store = sbo_init(Quad, MAX_POST_PASSES)
     window.texture_buffer = sbo_init(u64, MAX_TEXTURE_HANDLES)
 
@@ -631,12 +631,15 @@ r_push_draw :: proc(index_offset: u32, index_count: i32, instance_count: i32 = 1
     window.renderer.new_draw_on_next_push = false
 }
 
-_r_framebuffer_resolve :: proc(id: Framebuffer_ID) -> ^GL_Framebuffer {
+_r_framebuffer_resolve :: proc(id: Framebuffer_ID) -> (^GL_Framebuffer, bool) {
     builtin_count := u32(len(Builtin_Framebuffer_Slot))
     if id < builtin_count {
-        return &window.framebuffers[Builtin_Framebuffer_Slot(id)]
+        return &window.framebuffers[Builtin_Framebuffer_Slot(id)], true
     }
-    return &queue.get_ptr(&game.active_mapset.render_targets, id - builtin_count).fbo
+    if uint(id) < game.active_mapset.render_targets.len {
+        return &queue.get_ptr(&game.active_mapset.render_targets, id - builtin_count).fbo, true
+    }
+    return nil, false
 }
 
 r_check_and_bind_framebuffer :: proc(cmd: Command_Bind_Framebuffer) {
@@ -973,7 +976,9 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 case .BIND_FRAMEBUFFER: {
                     cmd := _command_consume(&command_queue, Command_Bind_Framebuffer)
 
-                    fbo_bind(_r_framebuffer_resolve(cmd.read).id, _r_framebuffer_resolve(cmd.write).id)
+                    read, read_ok := _r_framebuffer_resolve(cmd.read)
+                    write, write_ok := _r_framebuffer_resolve(cmd.write)
+                    fbo_bind(read.id if read_ok else 0, write.id if write_ok else 0)
 
                     if (trace) { fmt.println("  framebuffer", cmd.read, cmd.write) }
                 }
@@ -999,31 +1004,33 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 case .POST_PASS: {
                     cmd := _command_consume(&command_queue, Command_Post_Pass)
 
-                    dst := _r_framebuffer_resolve(cmd.dst)
-                    gl.Viewport(0, 0, dst.w if dst.id != 0 else i32(window.rect.w), dst.h if dst.id != 0 else i32(window.rect.h))
+                    dst, ok := _r_framebuffer_resolve(cmd.dst)
+                    if ok {
+                        gl.Viewport(0, 0, dst.w if dst.id != 0 else i32(window.rect.w), dst.h if dst.id != 0 else i32(window.rect.h))
 
-                    post_params: Post_Pass_Params
-                    if window.bindless_supported {
-                        post_params.src = cmd.src
-                    } else {
-                        for i in 0..<cmd.src_count {
-                            gl.BindTextureUnit(u32(i), window.tex_id_lookup[cmd.src[i]])
-                            post_params.src[i] = u32(i)
+                        post_params: Post_Pass_Params
+                        if window.bindless_supported {
+                            post_params.src = cmd.src
+                        } else {
+                            for i in 0..<cmd.src_count {
+                                gl.BindTextureUnit(u32(i), window.tex_id_lookup[cmd.src[i]])
+                                post_params.src[i] = u32(i)
+                            }
                         }
+                        gl.NamedBufferSubData(window.post_param_buffer.id, 0, size_of(Post_Pass_Params), &post_params)
+                        ubo_bind(&window.post_param_buffer, u32(Shader_SSBO_Bind_Slot.POST_PARAMS))
+
+                        sbo_bind(&window.fullscreen_store, u32(Shader_SSBO_Bind_Slot.VERTEX_BUFFER))
+                        sg.apply_pipeline(window.pipelines.data[cmd.pipeline])
+                        fbo_bind(0, dst.id)
+
+                        sg.draw(cmd.quad_index * 6, 6, 1)
+
+                        // note(isak): hand the batch's quad buffer + default target back to whatever draws next
+                        tbo_bind(&window.quad_store, u32(Shader_SSBO_Bind_Slot.VERTEX_BUFFER))
+                        fbo_bind(0, 0)
+                        gl.Viewport(0, 0, i32(window.rect.w), i32(window.rect.h))
                     }
-                    gl.NamedBufferSubData(window.post_param_buffer.id, 0, size_of(Post_Pass_Params), &post_params)
-                    ubo_bind(&window.post_param_buffer, u32(Shader_SSBO_Bind_Slot.POST_PARAMS))
-
-                    sbo_bind(&window.fullscreen_store, u32(Shader_SSBO_Bind_Slot.VERTEX_BUFFER))
-                    sg.apply_pipeline(window.pipelines.data[cmd.pipeline])
-                    fbo_bind(0, dst.id)
-
-                    sg.draw(cmd.quad_index * 6, 6, 1)
-
-                    // note(isak): hand the batch's quad buffer + default target back to whatever draws next
-                    tbo_bind(&window.quad_store, u32(Shader_SSBO_Bind_Slot.VERTEX_BUFFER))
-                    fbo_bind(0, 0)
-                    gl.Viewport(0, 0, i32(window.rect.w), i32(window.rect.h))
 
                     if (trace) { fmt.println("  post_pass", cmd.pipeline, cmd.dst, cmd.quad_index) }
                 }

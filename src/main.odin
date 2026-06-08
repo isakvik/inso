@@ -357,6 +357,20 @@ main :: proc() {
                         tex_index = u32(i)
                     )
                 }
+
+                r_draw_quad(&renderer.quad_geometry, 
+                    vec2{0, 0},
+                    vec2{f32(window.rect.w), f32(window.rect.h)},
+                    vec2{0,0}, vec2{1,1},
+                    color_black
+                )
+                r_draw_quad(&renderer.quad_geometry, 
+                    vec2{0, 0},
+                    vec2{f32(window.rect.w), f32(window.rect.h)},
+                    vec2{0,0}, vec2{1,1},
+                    color_white, 
+                    tex_index = builtin_texture(.SLIDER_FRAMEBUFFER)
+                )
             }
             
             if app.debug_display_game_cursor {

@@ -802,14 +802,30 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
         slider_rect.h / window.rect.h,
     }
 
-    r_set_scissor_mode(slider_rect)
-
     r_push_transform(slider_pf_transform)
     r_bind_pipeline({builtin_pipeline_slot(.SLIDER)})
     r_bind_framebuffer({ write = builtin_framebuffer(.SLIDERS) })
     r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
 
-    r_clear(with_alpha(color_black, 0.0))
+    // note(isak): on intel igpus, a scissored glClear fills the box in raw lower-left framebuffer
+    // space, ignoring ClipControl(UPPER_LEFT), while rasterized draws honor it. the SCISSOR_MODE
+    // handler's H-y-h flip is calibrated for draws, so the clear lands on the vertically mirrored
+    // half (top-of-screen slider clears the bottom), leaving the slider's rows uncleared. nvidia
+    // applies the flip to the clear consistently, so it's already correct there. on intel, pre-flip
+    // the clear's y so the handler's flip cancels and glClear hits the slider's actual rows, then
+    // restore the normal scissor for the body draw below.
+    if window.intel_gpu {
+        r_set_scissor_mode(
+            i32(slider_rect.x),
+            i32(window.rect.h - slider_rect.y - slider_rect.h),
+            i32(slider_rect.w),
+            i32(slider_rect.h))
+        r_clear(with_alpha(color_black, 0.0))
+        r_set_scissor_mode(slider_rect)
+    } else {
+        r_set_scissor_mode(slider_rect)
+        r_clear(with_alpha(color_black, 0.0))
+    }
 
     slider_snake_instances := max(1, i32(f64(slider.instance_count) * slider_snake_out_factor(hobj)))
 
@@ -1035,6 +1051,7 @@ slider_render_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
         gfx.end_circle, gfx.end_overlay, gfx.head_circle, gfx.head_overlay,
         gfx.end_repeat, gfx.head_repeat, gfx.follow, gfx.ball,
     }
+        
     for handle in ordered {
         d, ok := slotmap.get(&game.beatmap.drawables, handle)
         if ok && .ACTIVE in d.flags {

@@ -22,6 +22,7 @@ window: struct {
     minimized: bool,
     fullscreen: bool,
     bindless_supported: bool,
+    intel_gpu: bool,
 
     handle: ^sdl.Window,
     gl_context: sdl.GLContext,
@@ -90,6 +91,15 @@ window_init :: proc(rect: Rect) {
     window.bindless_supported = gl_has_extension("GL_ARB_bindless_texture")
     log.infof("GL_ARB_bindless_texture: {}", window.bindless_supported ? "supported" : "not supported")
 
+    // note(isak): intel igpus have only partial bindless texture support, but report the extension available
+    // and crash on shader compile. they also diverge from nvidia on a few other points (see slider_render_path)
+    window.intel_gpu = gl_vendor_is_intel()
+    if window.intel_gpu {
+        log.infof("intel gpu detected ({} / {}), forcing no-bindless fallback",
+            gl.GetString(gl.VENDOR), gl.GetString(gl.RENDERER))
+        window.bindless_supported = false
+    }
+
     win_x, win_y: i32
     sdl.GetWindowPosition(window.handle, &win_x, &win_y)
     window.rect.x = f32(win_x)
@@ -98,6 +108,13 @@ window_init :: proc(rect: Rect) {
     window.cursor_hidden = sdl.HideCursor()
     window.focused = true
     window.mouse_inside = true
+
+    max_vs_ssbo, max_combined_ssbo, max_fs_ssbo: i32
+    gl.GetIntegerv(gl.MAX_VERTEX_SHADER_STORAGE_BLOCKS, &max_vs_ssbo)
+    gl.GetIntegerv(gl.MAX_FRAGMENT_SHADER_STORAGE_BLOCKS, &max_fs_ssbo)
+    gl.GetIntegerv(gl.MAX_COMBINED_SHADER_STORAGE_BLOCKS, &max_combined_ssbo)
+    log.infof("SSBO blocks - vertex: {}, fragment: {}, combined: {}",
+        max_vs_ssbo, max_fs_ssbo, max_combined_ssbo)
 }
 
 window_on_resize :: proc(new_w, new_h: i32) {

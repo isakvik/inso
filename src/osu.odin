@@ -574,7 +574,7 @@ osu_on_update :: proc(dt: f64) {
             
             if hobj.type == .SLIDER {
                 path := &game.beatmap.slider_paths[hobj.slider_path_index]
-                slider_render_path(&window.renderer, &hobj, path)
+                //slider_render_path(&window.renderer, &hobj, path)
     
                 r_push_transform(game.playfield_transform)
                 slider_render_gfx(&hobj, map_time)

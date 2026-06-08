@@ -273,6 +273,7 @@ read_entire_file_to_string :: proc(path: string, allocator := context.allocator)
 
 read_entire_file_to_cstring :: proc(path: string, allocator := context.allocator) -> (cstring, int, os.Error) {
     data, err := read_entire_file(path, allocator)
+    _ = new(byte, allocator)
     len := len(data)
     return cstring(raw_data(data)), len, err
 }

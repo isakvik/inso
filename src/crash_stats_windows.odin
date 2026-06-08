@@ -136,9 +136,7 @@ crash_stats_write :: proc(frame_count: u64, dt_ms: f64) {
         copy_fixed(s.lua_last_callback[:], cb)
     }
 
-    // detect GPU extension on first write (GL context guaranteed ready by then)
     if frame_count == 0 {
-        // clear any pending GL errors before probing
         for gl.GetError() != gl.NO_ERROR {}
         val: i32
         gl.GetIntegerv(_GL_GPU_MEMORY_INFO_DEDICATED_VIDMEM_NVX, &val)
@@ -147,7 +145,7 @@ crash_stats_write :: proc(frame_count: u64, dt_ms: f64) {
         } else {
             for gl.GetError() != gl.NO_ERROR {}
             gl.GetIntegerv(_GL_TEXTURE_FREE_MEMORY_ATI, &val)
-            if gl.GetError() == gl.NO_ERROR {
+            if gl.GetError() == gl.NO_ERROR && val > 0 {
                 _gpu_vendor = .AMD
             }
             for gl.GetError() != gl.NO_ERROR {}

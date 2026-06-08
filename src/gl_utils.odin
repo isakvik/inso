@@ -1,6 +1,7 @@
 package notosu
 
 import "core:slice"
+import "core:strings"
 import "core:fmt"
 
 import gl "vendor:OpenGL"
@@ -18,6 +19,13 @@ gl_has_extension :: proc(name: cstring) -> bool {
         }
     }
     return false
+}
+
+gl_vendor_is_intel :: proc() -> bool {
+    vendor := gl.GetString(gl.VENDOR)
+    renderer := gl.GetString(gl.RENDERER)
+    return strings.contains(string(vendor), "Intel") ||
+           strings.contains(string(renderer), "Intel")
 }
 
 //////////////////////////////////////////////////////

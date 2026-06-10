@@ -121,7 +121,8 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     _ = slotmap.insert(&beatmap.drawables, null_drawable)
 
     beatmap.bg_handle = TEST_bg_drawable(game.active_map.bg_filename, game.active_notosu_map.bg_pipeline_name)
-    
+    bg_dim_apply(game.user_config.bg_dim)
+
     if lua_cares_about_event(.ON_INIT) {
         lua_call_beatmap_func("on_init")
     }

@@ -617,6 +617,9 @@ imgui_update :: proc() {
         if imgui.Checkbox("VSync", &game.user_config.vsync_enabled) {
             window_apply_vsync(game.user_config.vsync_enabled)
         }
+        if imgui.SliderFloat("Background dim##bgdim", &game.user_config.bg_dim, 0, 1) {
+            bg_dim_apply(game.user_config.bg_dim)
+        }
     }
     if imgui.CollapsingHeader("Audio") {
         if imgui.SliderFloat("Master##vol", &game.user_config.master_volume, 0, 1) {

@@ -1078,6 +1078,13 @@ write_combo_digits :: proc(buf: ^[4]int, n: int) -> (count: int) {
 
 COMBO_NUMBER_SCALE :: f32(0.9)
 
+bg_dim_apply :: proc(dim: f32) {
+    d, ok := slotmap.get(&game.beatmap.drawables, game.beatmap.bg_handle)
+    if !ok do return
+    v := u8(255 * (1 - clamp(dim, 0, 1)))
+    d.color = {v, v, v, 255}
+}
+
 TEST_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Handle) {
     tex, ok := mapset_texture(bg_path)
     if ok {

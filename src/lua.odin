@@ -85,6 +85,7 @@ Lua_Class_Type :: enum {
     COLOR,
     BEATMAP,
     PLAYFIELD,
+    WINDOW,
 }
 
 // note(isak): our own registration entry, a superset of lua.L_Reg that also carries the doc signature and
@@ -145,6 +146,10 @@ lua_classes: [Lua_Class_Type]Lua_Class = {
     .PLAYFIELD = {
         name            = "Playfield",
         static_funcs    = luaapi_playfield_static_funcs,
+    },
+    .WINDOW = {
+        name            = "Window",
+        static_funcs    = luaapi_window_static_funcs,
     },
 }
 
@@ -2634,5 +2639,82 @@ luaapi_shader_set_vec4 :: proc "c" (L: ^lua.State) -> i32 {
     vals := [4]f32{x, y, z, w}
     gl.NamedBufferSubData(window.user_param_buffer.id,
         index * size_of([4]f32), size_of([4]f32), &vals)
+    return 0
+}
+
+//////////////////////////////////////////////////////
+// note(Jacky): Window API
+
+@(private="file")
+luaapi_window_static_funcs := []Lua_Function {
+  { "get_size", luaapi_window_get_size,
+    "(float x, float y) Window.get_size( void )",
+    "returns the window size in pixels." },
+  { "get_pos", luaapi_window_get_pos,
+    "(float x, float y) Window.get_pos( void )",
+    "returns the window position in pixels." },
+  { "set_size", luaapi_window_set_size,
+    "(float width, float height) Window.set_size( float width, float height )",
+    "sets the window size in pixels." },
+  { "set_pos", luaapi_window_set_pos,
+    "(float x, float y) Window.set_pos( float x, float y )",
+    "sets the window position in pixels." },
+  { "set_opacity", luaapi_window_set_opacity,
+    "(float opacity) Window.set_opacity( float opacity )",
+    "sets the window opacity." },
+  { "debug", luaapi_window_debug,
+    "(bool ok) Window.debug( bool ok )",
+    "enables or disables debug mode." },
+}
+
+luaapi_window_get_size :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    lua.pushnumber(L, lua.Number(window.rect.w))
+    lua.pushnumber(L, lua.Number(window.rect.h))
+    return 2
+}
+
+luaapi_window_get_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    lua.pushnumber(L, lua.Number(window.rect.x))
+    lua.pushnumber(L, lua.Number(window.rect.y))
+    return 2
+}
+
+luaapi_window_set_size :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    width, heigth     := lua_number(1), lua_number(2)
+    sdl.SetWindowSize(window.handle, i32(width), i32(heigth))
+    return 0
+}
+
+luaapi_window_set_opacity :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    opacity     := lua_number(1)
+    // sdl.SetWindowOpacity(window.handle, f32(opacity))
+    bg, ok := slotmap.get(&game.beatmap.drawables, game.beatmap.bg_handle)
+    if ok {
+        bg.color.a = u8(opacity * 255)
+    }
+    if opacity >= 1 {
+        game.transparent = false
+    } else{
+        game.transparent = true
+    }
+    return 0
+}
+
+luaapi_window_debug :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    bg, ok := slotmap.get(&game.beatmap.drawables, game.beatmap.bg_handle)
+    lua.pushboolean(L, b32(ok))
+    return 1
+}
+
+luaapi_window_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    x, y     := lua_number(1), lua_number(2)
+    window.rect.x = f32(x)
+    window.rect.y = f32(y)
     return 0
 }

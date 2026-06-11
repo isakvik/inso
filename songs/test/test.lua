@@ -1,28 +1,5 @@
 local width, height = 0, 0
-
--- missing thoughts (drawable):
--- drawable layer: should be required argument, probably
-
--- expose builtin elements and animations through the api
-
--- convert slider to table of positions
---    hobj.slider.get_path_positions(point_sep_length[, offset])
-
--- map runtime data
--- Beatmap.set_time_rate(1.5)
-
-
--- things i shouldn't forget:
--- custom events (observer)
--- trigger_event("spellcard")
--- register_event("spellcard", function () end )
---
--- buffer system (you can declare buffers in the .notosu and just write stuff here)
---
--- event stuff is half-baked - you can trigger events on elements, drawables, hitobjects,
--- and you can schedule them to the future, but you can't pass arguments to them via scheduling
--- (although you can create global state and just use that in the events, but i'd rather avoid that)
-
+local dd = nil
 
 function on_init()
 
@@ -35,9 +12,19 @@ function on_init()
     print("posx: " .. posx .. "| posy: " .. posy)
     print("temp: ")
 
+    fake_window = Element.new()
+        :set_tex("blue_square.png")
+    
+    dd = Drawable.new(fake_window, 0, 100000)
+        :set_anchor(Anchor.CENTER)
+        :set_layer(Layer.OVERLAY)
+        :set_pos(0,0)
+        :set_size(10, 10)
+
 end
 
 function on_update(time_ms)
+    -- dd:set_pos(math.cos(time_ms / 1000) * 100, math.sin(time_ms / 1000) * 100)
     -- for ii, hobj in ipairs(Hitobject.get_visible()) do
     --     i = hobj:get_index()
         

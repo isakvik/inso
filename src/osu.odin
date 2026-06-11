@@ -630,15 +630,7 @@ osu_on_update :: proc(dt: f64) {
     cursor_draw(mouse.pos, skin_texture(.CURSOR))
     if app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {   
         cursor_draw(mouse_secondary.pos, skin_texture(.CURSOR))
-    }
-
-    r_bind_layer(.DEBUG)
-    if !game.transparent {
-        r_color_mask(false, false, false, true)
-        r_draw_layout_rect(&window.renderer.quad_geometry, {0, 0, window.rect.w, window.rect.h }, .TOP_LEFT, color_black)
-        r_color_mask(true, true, true, true)
-    }
-    
+    }    
 }
 
 cursor_draw :: proc(pos: vec2, tex_index: u32) {

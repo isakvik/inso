@@ -530,7 +530,19 @@ begin_frame :: proc(renderer: ^Renderer) {
 
 end_frame :: proc(renderer: ^Renderer) {
     text_submit_geometry(renderer)
-    profiler_collect_command_buffer_memory_data()
+
+    if !game.transparent {
+        // note(isak): windows window with transparency captures the alpha of the last drawn pixels and uses that for
+        // the window's opacity value. when we don't want transparency, clear alpha of every pixel to 1.0
+        r_bind_layer(.DEBUG)
+        r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
+        r_push_transform(window.screenspace_transform)
+        r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
+        r_bind_framebuffer({0, 0})
+        r_color_mask(false, false, false, true)
+        r_draw_layout_rect(&window.renderer.quad_geometry, {0, 0, window.rect.w, window.rect.h }, .TOP_LEFT, color_black)
+        r_color_mask(true, true, true, true)
+    }
 
     if game.active_mapset != nil {
         for &pass in game.active_mapset.post_passes {
@@ -544,6 +556,7 @@ end_frame :: proc(renderer: ^Renderer) {
         }
     }
 
+    profiler_collect_command_buffer_memory_data()
     batch_end(renderer)
 }
 

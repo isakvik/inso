@@ -342,3 +342,298 @@
 </body>
 </html>
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>notosu Lua API</title>
+<style>
+  :root { --bg:#1b1d23; --panel:#23262e; --line:#363a45; --text:#dfe3ea; --muted:#8b91a0; --accent:#7fb3ff; --code:#c8e1ff; }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; max-width: 980px; padding: 2rem 1.25rem 4rem;
+         font: 15px/1.55 system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  h1 { font-size: 1.8rem; margin: 0 0 .25rem; }
+  h2 { margin: 2.4rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid var(--line); color: var(--accent); }
+  h3 { margin: 1.4rem 0 .4rem; color: var(--text); }
+  p.note { color: var(--muted); margin: .2rem 0 1rem; }
+  code { font-family: ui-monospace, "Cascadia Code", Menlo, Consolas, monospace; color: var(--code); }
+  table { width: 100%; border-collapse: collapse; margin: .5rem 0 1rem; background: var(--panel); }
+  th, td { text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: .82rem; text-transform: uppercase; letter-spacing: .04em; }
+  tr:last-child td { border-bottom: none; }
+  td.todo { color: var(--muted); font-style: italic; }
+  table.enum td:nth-child(2) { font-family: ui-monospace, monospace; color: var(--muted); width: 6rem; }
+</style>
+</head>
+<body>
+<h1>notosu Lua API</h1>
+<p class="note">version 0.1.0-dev+7e66be4 &mdash; functions and enums are generated from the engine; signatures and descriptions come from <code>docs/lua_api_docs.ini</code>.</p>
+<h2 id="globals">Globals</h2>
+<p class="note">free functions, called directly.</p>
+<table>
+<thead><tr><th>Function</th><th>Signature</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>load_file</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>get_cursor_pos</code></td><td>() -&gt; x: number, y: number</td><td>the cursor position in playfield (osu!px) space</td></tr>
+<tr><td><code>controller_is_down</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>controller_is_up</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>key_is_down</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>key_is_up</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>trigger_event</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>schedule_event</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>register_global_event</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+</tbody>
+</table>
+<h2 id="Hitobject">Hitobject</h2>
+<table>
+<thead><tr><th>Function</th><th>Signature</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Hitobject.get_at_ms</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject.get_in_range_ms</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject.get_visible</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject.get_with_all_bits</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject.get_with_any_bits</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:register_event</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:hide</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:unhide</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:hide_combo_numbers</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:unhide_combo_numbers</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:get_index</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:get_extra_bits</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:has_all_bits</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:has_any_bits</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:get_pos</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:set_pos</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:get_start_time</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:set_start_time</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:get_end_time</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:set_end_time</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:get_phase</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:add_element_for_phase</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:clear_drawables</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:get_hit_animation_length</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:set_hit_animation_length</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:get_preempt</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:set_preempt</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:get_ar</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:set_ar</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:get_cs</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:set_cs</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:get_slider_distance</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:get_slider_velocity</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:get_slider_duration_ms</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:get_slider_ball_pos</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:get_slider_ball_pos_at</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:get_slider_ball_angle</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Hitobject:get_slider_ball_angle_at</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+</tbody>
+</table>
+<h2 id="Drawable">Drawable</h2>
+<table>
+<thead><tr><th>Function</th><th>Signature</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Drawable.new</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:register_event</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:clone</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:set_layer</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:get_pos</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:set_pos</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:get_size</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:set_size</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:set_anchor</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:get_color</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:set_color</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:set_vel</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:set_accel</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:set_angle_vel</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:get_start_time</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:set_start_time</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:get_end_time</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:set_end_time</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:set_time</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:hide</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Drawable:show</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+</tbody>
+</table>
+<h2 id="Element">Element</h2>
+<table>
+<thead><tr><th>Function</th><th>Signature</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Element.new</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Element:clone</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Element:register_event</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Element:set_tex</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Element:set_uv</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Element:set_shader</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Element:set_animation</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Element:set_mesh</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Element:use_combo_color</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+</tbody>
+</table>
+<h2 id="Animation">Animation</h2>
+<table>
+<thead><tr><th>Function</th><th>Signature</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Animation.new</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Animation:move</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Animation:scale</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Animation:rotate</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Animation:color</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Animation:alpha</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Animation:texture</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Animation:frames</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+</tbody>
+</table>
+<h2 id="Buffer">Buffer</h2>
+<table>
+<thead><tr><th>Function</th><th>Signature</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Buffer.get</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Buffer:bind</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Buffer:write_f32s</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Buffer:write_vec4</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Buffer:size</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+</tbody>
+</table>
+<h2 id="Sound">Sound</h2>
+<table>
+<thead><tr><th>Function</th><th>Signature</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Sound.play</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Sound.play_loop</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Sound:stop</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+</tbody>
+</table>
+<h2 id="Color">Color</h2>
+<table>
+<thead><tr><th>Function</th><th>Signature</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Color.rgb</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Color.rgba</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+</tbody>
+</table>
+<h2 id="Beatmap">Beatmap</h2>
+<table>
+<thead><tr><th>Function</th><th>Signature</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Beatmap.get_music_time_ms</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Beatmap.get_length_ms</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Beatmap.get_bpm</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Beatmap.get_beat_length_ms</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Beatmap.get_ar_ms</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Beatmap.get_cs_osupx</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Beatmap.is_paused</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+</tbody>
+</table>
+<h2 id="Playfield">Playfield</h2>
+<table>
+<thead><tr><th>Function</th><th>Signature</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Playfield.set_translation</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Playfield.set_scale</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Playfield.set_rotation</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Playfield.translate</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Playfield.rotate</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+</tbody>
+</table>
+<h2 id="Window">Window</h2>
+<table>
+<thead><tr><th>Function</th><th>Signature</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Window.get_size</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Window.get_pos</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Window.set_size</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Window.set_pos</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Window.set_opacity</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+<tr><td><code>Window.debug</code></td><td class="todo">TODO</td><td class="todo">TODO</td></tr>
+</tbody>
+</table>
+<h2 id="enums">Enums</h2>
+<h3>Layer</h3>
+<table class="enum">
+<thead><tr><th>Constant</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td><code>Layer.BACKGROUND</code></td><td>0</td></tr>
+<tr><td><code>Layer.FOREGROUND</code></td><td>1</td></tr>
+<tr><td><code>Layer.HITOBJECTS</code></td><td>2</td></tr>
+<tr><td><code>Layer.OVERLAY</code></td><td>3</td></tr>
+<tr><td><code>Layer.UI</code></td><td>4</td></tr>
+<tr><td><code>Layer.DEBUG</code></td><td>5</td></tr>
+</tbody>
+</table>
+<h3>Judgement</h3>
+<table class="enum">
+<thead><tr><th>Constant</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td><code>Judgement.NONE</code></td><td>0</td></tr>
+<tr><td><code>Judgement.MISS</code></td><td>1</td></tr>
+<tr><td><code>Judgement.OK</code></td><td>2</td></tr>
+<tr><td><code>Judgement.GOOD</code></td><td>3</td></tr>
+<tr><td><code>Judgement.MARVELOUS</code></td><td>4</td></tr>
+<tr><td><code>Judgement.SLIDER_SMALL_SCOREPOINT</code></td><td>5</td></tr>
+<tr><td><code>Judgement.SLIDER_LARGE_SCOREPOINT</code></td><td>6</td></tr>
+<tr><td><code>Judgement.SLIDER_SCOREPOINT_MISS</code></td><td>7</td></tr>
+<tr><td><code>Judgement.IGNORED_HIT</code></td><td>8</td></tr>
+<tr><td><code>Judgement.COMBO_BREAK</code></td><td>9</td></tr>
+</tbody>
+</table>
+<h3>Anchor</h3>
+<table class="enum">
+<thead><tr><th>Constant</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td><code>Anchor.TOP_LEFT</code></td><td>0</td></tr>
+<tr><td><code>Anchor.TOP_MIDDLE</code></td><td>1</td></tr>
+<tr><td><code>Anchor.TOP_RIGHT</code></td><td>2</td></tr>
+<tr><td><code>Anchor.MIDDLE_LEFT</code></td><td>3</td></tr>
+<tr><td><code>Anchor.CENTER</code></td><td>4</td></tr>
+<tr><td><code>Anchor.MIDDLE_RIGHT</code></td><td>5</td></tr>
+<tr><td><code>Anchor.BOTTOM_LEFT</code></td><td>6</td></tr>
+<tr><td><code>Anchor.BOTTOM_MIDDLE</code></td><td>7</td></tr>
+<tr><td><code>Anchor.BOTTOM_RIGHT</code></td><td>8</td></tr>
+</tbody>
+</table>
+<h3>Tween</h3>
+<table class="enum">
+<thead><tr><th>Constant</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td><code>Tween.LINEAR</code></td><td>0</td></tr>
+<tr><td><code>Tween.QUAD_IN</code></td><td>1</td></tr>
+<tr><td><code>Tween.QUAD_OUT</code></td><td>2</td></tr>
+<tr><td><code>Tween.QUAD_IN_OUT</code></td><td>3</td></tr>
+<tr><td><code>Tween.CUBIC_IN</code></td><td>4</td></tr>
+<tr><td><code>Tween.CUBIC_OUT</code></td><td>5</td></tr>
+<tr><td><code>Tween.CUBIC_IN_OUT</code></td><td>6</td></tr>
+<tr><td><code>Tween.QUARTIC_IN</code></td><td>7</td></tr>
+<tr><td><code>Tween.QUARTIC_OUT</code></td><td>8</td></tr>
+<tr><td><code>Tween.QUARTIC_IN_OUT</code></td><td>9</td></tr>
+<tr><td><code>Tween.QUINTIC_IN</code></td><td>10</td></tr>
+<tr><td><code>Tween.QUINTIC_OUT</code></td><td>11</td></tr>
+<tr><td><code>Tween.QUINTIC_IN_OUT</code></td><td>12</td></tr>
+<tr><td><code>Tween.SINE_IN</code></td><td>13</td></tr>
+<tr><td><code>Tween.SINE_OUT</code></td><td>14</td></tr>
+<tr><td><code>Tween.SINE_IN_OUT</code></td><td>15</td></tr>
+<tr><td><code>Tween.EXPO_IN</code></td><td>16</td></tr>
+<tr><td><code>Tween.EXPO_OUT</code></td><td>17</td></tr>
+<tr><td><code>Tween.EXPO_IN_OUT</code></td><td>18</td></tr>
+<tr><td><code>Tween.BACK_IN</code></td><td>19</td></tr>
+<tr><td><code>Tween.BACK_OUT</code></td><td>20</td></tr>
+<tr><td><code>Tween.BACK_IN_OUT</code></td><td>21</td></tr>
+<tr><td><code>Tween.ELASTIC_OUT</code></td><td>22</td></tr>
+<tr><td><code>Tween.BOUNCE_OUT</code></td><td>23</td></tr>
+</tbody>
+</table>
+<h3>Phase</h3>
+<table class="enum">
+<thead><tr><th>Constant</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td><code>Phase.NONE</code></td><td>0</td></tr>
+<tr><td><code>Phase.PREEMPT</code></td><td>1</td></tr>
+<tr><td><code>Phase.POSTEMPT</code></td><td>2</td></tr>
+<tr><td><code>Phase.HOLD</code></td><td>3</td></tr>
+<tr><td><code>Phase.HIT</code></td><td>4</td></tr>
+<tr><td><code>Phase.MISS</code></td><td>5</td></tr>
+</tbody>
+</table>
+</body>
+</html>

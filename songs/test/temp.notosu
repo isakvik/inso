@@ -6,10 +6,6 @@ BackgroundPipeline: wave
 DoubleMouse: 0
 
 [Shaders]
-[[wave]]
-VertexShader: builtin.quad
-FragmentShader: quad_wave.fs.glsl
-BlendMode: Alpha
 
 [Buffers]
 [[my_model]]

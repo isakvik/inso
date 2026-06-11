@@ -72,7 +72,7 @@ window_init :: proc(rect: Rect) {
     window.rect = rect
     window.handle = sdl.CreateWindow(
         fmt.ctprintf("notosu! - v%s", VERSION), 
-        i32(rect.w), i32(rect.h), sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE)
+        i32(rect.w), i32(rect.h), sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE | sdl.WINDOW_TRANSPARENT)
     window.aspect_ratio = f32(rect.h) / f32(rect.w)
 
     stbi.set_flip_vertically_on_load_thread(true)

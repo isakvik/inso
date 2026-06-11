@@ -98,16 +98,6 @@ Lua_Function :: struct {
     description: string,
 }
 
-// note(isak): our own registration entry, a superset of lua.L_Reg that also carries the doc signature and
-// description inline so lua_docs.odin can generate the API reference straight from these tables - the docs
-// can never drift from what's actually registered. registration synthesizes the lua calls from name/func.
-Lua_Function :: struct {
-    name:        cstring,
-    func:        lua.CFunction,
-    signature:   string,  // typed call form shown in the docs, e.g. "(float x, float y) hitobject:get_pos( void )"
-    description: string,
-}
-
 Lua_Class :: struct {
     name: cstring,
     static_funcs: []Lua_Function,
@@ -2516,17 +2506,28 @@ luaapi_shader_set_vec4 :: proc "c" (L: ^lua.State) -> i32 {
 }
 
 //////////////////////////////////////////////////////
-// note(Jacky): Windows API
+// note(Jacky): Window API
 
 @(private="file")
-luaapi_window_static_funcs := []lua.L_Reg {
-  { "get_size", luaapi_window_get_size },
-  { "get_pos", luaapi_window_get_pos },
-  { "set_size", luaapi_window_set_size },
-  { "set_pos", luaapi_window_set_size },
-  { "set_opacity", luaapi_window_set_opacity },
-  { "debug", luaapi_window_debug },
-  { nil, nil },
+luaapi_window_static_funcs := []Lua_Function {
+  { "get_size", luaapi_window_get_size,
+    "(float x, float y) ",
+    "returns the window size in pixels." },
+  { "get_pos", luaapi_window_get_pos,
+    "(float x, float y)",
+    "returns the window position in pixels." },
+  { "set_size", luaapi_window_set_size,
+    "(float width, float height)",
+    "sets the window size in pixels." },
+  { "set_pos", luaapi_window_set_pos,
+    "(float x, float y)",
+    "sets the window position in pixels." },
+  { "set_opacity", luaapi_window_set_opacity,
+    "(float opacity)",
+    "sets the window opacity." },
+  { "debug", luaapi_window_debug,
+    "(bool ok)",
+    "enables or disables debug mode." },
 }
 
 luaapi_window_get_size :: proc "c" (L: ^lua.State) -> (result: i32) {

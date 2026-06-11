@@ -2511,22 +2511,22 @@ luaapi_shader_set_vec4 :: proc "c" (L: ^lua.State) -> i32 {
 @(private="file")
 luaapi_window_static_funcs := []Lua_Function {
   { "get_size", luaapi_window_get_size,
-    "(float x, float y) ",
+    "(float x, float y) Window.get_size( void )",
     "returns the window size in pixels." },
   { "get_pos", luaapi_window_get_pos,
-    "(float x, float y)",
+    "(float x, float y) Window.get_pos( void )",
     "returns the window position in pixels." },
   { "set_size", luaapi_window_set_size,
-    "(float width, float height)",
+    "(float width, float height) Window.set_size( float width, float height )",
     "sets the window size in pixels." },
   { "set_pos", luaapi_window_set_pos,
-    "(float x, float y)",
+    "(float x, float y) Window.set_pos( float x, float y )",
     "sets the window position in pixels." },
   { "set_opacity", luaapi_window_set_opacity,
-    "(float opacity)",
+    "(float opacity) Window.set_opacity( float opacity )",
     "sets the window opacity." },
   { "debug", luaapi_window_debug,
-    "(bool ok)",
+    "(bool ok) Window.debug( bool ok )",
     "enables or disables debug mode." },
 }
 

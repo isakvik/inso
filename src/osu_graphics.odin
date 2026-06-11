@@ -299,7 +299,7 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
     elements.len += len(Element_Type)
     
     for el_type in Element_Type {
-        elements.data[el_type].tex = skin_texture(skin_element_for_type_table[el_type])
+        elements.data[el_type].tex = skin_texture(skin_render_element(skin_element_for_type_table[el_type]))
     }
 
     for digit in 0..<10 {

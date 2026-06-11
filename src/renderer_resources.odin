@@ -75,8 +75,11 @@ Shader_SSBO_Bind_Slot :: enum u32 {
     POST_PARAMS,   // post-pass src texture slots UBO; binding 16
 }
 
-// note(isak): always-bound UBO for Lua-accessible shader params.
-// shaders access it as: layout(std140, binding=7) uniform UserParams { float params[64]; };
+// note(isak): always-bound UBO for Lua-accessible shader params (Shader.set_param / set_vec4).
+// the 64 floats are tightly packed here; in std140 a `float[]` array has a 16-byte stride, so
+// shaders must read them as a vec4 array to match this layout:
+//   layout(std140, binding=7) uniform UserParams { vec4 params[16]; };
+// the i-th float written by Shader.set_param(i, v) is then params[i/4][i%4].
 User_Shader_Params :: struct #align(16) {
     data: [64]f32,
 }

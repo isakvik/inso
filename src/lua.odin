@@ -241,7 +241,7 @@ lua_create_beatmap_script_context :: proc(script_path: string) {
 
     lua_register_global_funcs(L)
     lua_register_classes(L)
-    //lua_register_shader_global(L)
+    lua_register_shader_global(L)
     for e in luaapi_enum_constants {
         lua_register_enum(L, e.t, e.name)
     }

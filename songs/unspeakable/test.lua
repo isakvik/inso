@@ -123,6 +123,9 @@ function on_init()
     Beatmap.add_post_pass{ shader = "blur_h",    src = "scene",                dst = "bloom_a", after = Layer.HITOBJECTS }
     Beatmap.add_post_pass{ shader = "blur_v",    src = "bloom_a",              dst = "bloom_b", after = Layer.HITOBJECTS }
     Beatmap.add_post_pass{ shader = "composite", src = { "scene", "bloom_b" }, dst = "screen",  after = Layer.HITOBJECTS }
+
+    -- bloom strength: param 0 is read by composite.fs.glsl as BLOOM_STRENGTH (params[0].x)
+    Shader.set_param(0, 1.4)
 end
 
 function on_update(time_ms)

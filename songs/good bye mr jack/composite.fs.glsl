@@ -15,6 +15,14 @@ layout(std140, binding = 16) uniform PostParams {
     uvec4 srcSlots;
 };
 
+// note: Lua-configurable params. Shader.set_param(i, v) writes the i-th float into a
+// tightly-packed buffer; in std140 those read back as vec4 params[16], so the i-th float
+// is params[i/4][i%4]. param 0 is the bloom strength (set in test.lua on_init).
+layout(std140, binding = 7) uniform UserParams {
+    vec4 params[16];
+};
+#define BLOOM_STRENGTH params[0].x
+
 in vec3 uv;
 in vec4 color;
 flat in uint texIndex;
@@ -26,5 +34,5 @@ void main() {
     vec3 bloom = texture(textures[srcSlots.y], vec3(uv.xy, 0.0)).rgb;
     // additive blend mode adds this on top of the crisp screen (background + slider bodies),
     // so scene re-adds the captured circles and bloom layers their glow.
-    fragColor = vec4(scene + bloom * 1.4, 1.0);
+    fragColor = vec4(scene + bloom * BLOOM_STRENGTH, 1.0);
 }

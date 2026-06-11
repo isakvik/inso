@@ -636,7 +636,7 @@ _r_framebuffer_resolve :: proc(id: Framebuffer_ID) -> (^GL_Framebuffer, bool) {
     if id < builtin_count {
         return &window.framebuffers[Builtin_Framebuffer_Slot(id)], true
     }
-    if uint(id) < game.active_mapset.render_targets.len {
+    if id < builtin_count + u32(game.active_mapset.render_targets.len) {
         return &queue.get_ptr(&game.active_mapset.render_targets, id - builtin_count).fbo, true
     }
     return nil, false

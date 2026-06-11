@@ -188,15 +188,30 @@ skin_load_elements :: proc(skin: ^Skin) {
     }
     
     
-    // note(isak): fallbacks
+    // note(isak): fallbacks. copies the metadata (metrics) so anything reading the slider-end
+    // element's size sees the hitcircle's. the texture itself is redirected separately at element
+    // creation via skin_render_element - see the note there.
     for element in Skin_Element_Type {
-        if skin.elements[element].texture == 0 {
+        if window.skin_textures[element].tex_id == 0 {
             #partial switch element {
             case .SLIDER_END:         skin.elements[element] = skin.elements[.HITCIRCLE]
             case .SLIDER_END_OVERLAY: skin.elements[element] = skin.elements[.HITCIRCLEOVERLAY]
             }
         }
     }
+}
+
+// note(isak): resolves the skin slot an element should actually sample. skins that omit the
+// slider-end graphics fall back to the regular hitcircle/overlay. we redirect to the fallback
+// slot (rather than copying the texture into the slider-end slot) so the same bindless handle
+// isn't duplicated across two slots - that would double-resident it and raise GL_INVALID_OPERATION.
+skin_render_element :: proc(el: Skin_Element_Type) -> Skin_Element_Type {
+    if window.skin_textures[el].tex_id != 0 do return el
+    #partial switch el {
+    case .SLIDER_END:         return .HITCIRCLE
+    case .SLIDER_END_OVERLAY: return .HITCIRCLEOVERLAY
+    }
+    return el
 }
 
 skin_load_hitsounds :: proc(skin: ^Skin) {

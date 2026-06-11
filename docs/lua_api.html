@@ -3,6 +3,350 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<title>inso Lua API</title>
+<style>
+  :root { --bg:#181518; --panel:#1e1b23; --line:#9d8edc40; --text:#ccdcff; --muted:#8b91a0; --accent:#79a6f4; }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; max-width: 980px; padding: 2rem 1.25rem 4rem;
+         font: 15px/1.55 system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  h1 { font-size: 1.8rem; margin: 0 0 .25rem; }
+  h2 { margin: 2.4rem 0 .6rem; padding-bottom: .3rem; border-bottom: 1px solid var(--line); color: var(--accent); scroll-margin-top: 1rem; }
+  h3 { margin: 1.4rem 0 .4rem; color: var(--text); }
+  h2 a.hlink { color: inherit; text-decoration: none; display: inline-block; }
+  h2 a.hlink .htarget { color: var(--muted); font-weight: 400; opacity: 0; }
+  h2 a.hlink:hover .htarget { opacity: 1; }
+  p.note { color: var(--muted); margin: .2rem 0 1rem; }
+  nav.toc { display: flex; flex-wrap: wrap; gap: .4rem; margin: 1.2rem 0 2rem; }
+  nav.toc a { color: var(--accent); text-decoration: none; background: var(--panel);
+              border-radius: .4rem; padding: .2rem .6rem; font-size: .85rem; }
+  nav.toc a:hover { text-decoration: underline; }
+  code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--code); }
+  table { width: 100%; border-collapse: collapse; margin: .5rem 0 1rem; background: var(--panel); }
+  th, td { text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: .82rem; text-transform: uppercase; letter-spacing: .04em; }
+  tr:last-child td { border-bottom: none; }
+  code.sig { display: block; line-height: 1.7; }
+  code.sig .type { color: rgb(86, 156, 214); }
+  code.sig .self { color: rgb(190, 150, 225); }
+  code.sig .function { color: rgb(220, 220, 170); font-weight: 600; }
+  code.sig .receiver { color: rgb(156, 220, 254); }
+  code.sig .argument { color: #dfe3ea; }
+  code.sig .callback { color: rgb(200, 150, 225); }
+  code.sig .number { color: #e0a071; }
+  code.sig .punctuation { color: rgb(150, 140, 160); }
+  .desc { color: var(--muted); margin-top: .35rem; }
+  table.enum td:nth-child(2) { font-family: ui-monospace, monospace; color: var(--muted); width: 6rem; }
+</style>
+</head>
+<body>
+
+<h1>Lua API for inso v0.1.2-dev+9c73a6c</h1>
+<p class="note">Documentation automatically generated from the engine's registration tables</p>
+<p class="note">A method with return type <span class="sig s">self</span> returns its own object, so calls can be chained.</p>
+<nav class="toc">
+<a href="#globals">Globals</a>
+<a href="#Hitobject">Hitobject</a>
+<a href="#Drawable">Drawable</a>
+<a href="#Element">Element</a>
+<a href="#Animation">Animation</a>
+<a href="#Buffer">Buffer</a>
+<a href="#Sound">Sound</a>
+<a href="#Color">Color</a>
+<a href="#Beatmap">Beatmap</a>
+<a href="#Playfield">Playfield</a>
+<a href="#enums">Enums</a>
+</nav>
+<h2 id="globals"><a class="hlink" href="#globals">Globals <span class="htarget">#</span></a></h2>
+<p class="note">Free functions, called directly.</p>
+<table>
+<thead><tr><th>Method</th></tr></thead>
+<tbody>
+<tr><td><code class="sig"><span class="type">any</span> <span class="function">load_file</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">filename</span> <span class="punctuation">)</span></code><div class="desc">loads and runs a lua file from the mapset folder, returning whatever it returns.</div></td></tr>
+<tr><td><code class="sig"><span class="punctuation">(</span><span class="type">float</span> <span class="argument">x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">y</span><span class="punctuation">)</span> <span class="function">get_cursor_pos</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the cursor position in playfield (osupx) space.</div></td></tr>
+<tr><td><code class="sig"><span class="type">bool</span> <span class="function">controller_is_down</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">key</span> <span class="punctuation">)</span></code><div class="desc">true if the named gameplay key is held. key is one of "k1", "k2", "m1", "m2".</div></td></tr>
+<tr><td><code class="sig"><span class="type">bool</span> <span class="function">controller_is_up</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">key</span> <span class="punctuation">)</span></code><div class="desc">true if the named gameplay key is not held. key is one of "k1", "k2", "m1", "m2".</div></td></tr>
+<tr><td><code class="sig"><span class="type">bool</span> <span class="function">key_is_down</span><span class="punctuation">(</span> <span class="type">string</span><span class="punctuation">|</span><span class="type">int</span> <span class="argument">key</span> <span class="punctuation">)</span></code><div class="desc">true if the given keyboard key is held. accepts an sdl scancode name or a numeric scancode.</div></td></tr>
+<tr><td><code class="sig"><span class="type">bool</span> <span class="function">key_is_up</span><span class="punctuation">(</span> <span class="type">string</span><span class="punctuation">|</span><span class="type">int</span> <span class="argument">key</span> <span class="punctuation">)</span></code><div class="desc">true if the given keyboard key is not held. accepts an sdl scancode name or a numeric scancode.</div></td></tr>
+<tr><td><code class="sig"><span class="type">void</span> <span class="function">trigger_event</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">name</span><span class="punctuation">,</span> <span class="punctuation">.</span><span class="punctuation">.</span><span class="punctuation">.</span> <span class="punctuation">)</span></code><div class="desc">fires every callback registered under name. object callbacks get (self, ...), globals get (...).</div></td></tr>
+<tr><td><code class="sig"><span class="type">void</span> <span class="function">schedule_event</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">name</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">delay_ms</span> <span class="punctuation">)</span></code><div class="desc">fires trigger_event(name) after delay_ms of music time. safe to call again from within a callback.</div></td></tr>
+<tr><td><code class="sig"><span class="type">void</span> <span class="function">register_global_event</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">name</span><span class="punctuation">,</span> <span class="callback">fn</span> <span class="argument">callback</span> <span class="punctuation">)</span></code><div class="desc">registers a callback not tied to any object; it receives only the extra args from trigger_event.</div></td></tr>
+</tbody>
+</table>
+<h2 id="Hitobject"><a class="hlink" href="#Hitobject">Hitobject <span class="htarget">#</span></a></h2>
+<table>
+<thead><tr><th>Method</th></tr></thead>
+<tbody>
+<tr><td><code class="sig"><span class="type">Hitobject</span> <span class="receiver">Hitobject</span><span class="punctuation">.</span><span class="function">get_at_ms</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">ms</span> <span class="punctuation">)</span></code><div class="desc">the hitobject whose start time is exactly ms. errors if there's no object at that time.</div></td></tr>
+<tr><td><code class="sig"><span class="type">Hitobject</span><span class="punctuation">[</span><span class="punctuation">]</span> <span class="receiver">Hitobject</span><span class="punctuation">.</span><span class="function">get_in_range_ms</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">from_ms</span><span class="punctuation">,</span> <span class="type">int</span> <span class="argument">to_ms</span> <span class="punctuation">)</span></code><div class="desc">all hitobjects with start times in [from_ms, to_ms].</div></td></tr>
+<tr><td><code class="sig"><span class="type">Hitobject</span><span class="punctuation">[</span><span class="punctuation">]</span> <span class="receiver">Hitobject</span><span class="punctuation">.</span><span class="function">get_visible</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">all hitobjects currently within their visible time window.</div></td></tr>
+<tr><td><code class="sig"><span class="type">Hitobject</span><span class="punctuation">[</span><span class="punctuation">]</span> <span class="receiver">Hitobject</span><span class="punctuation">.</span><span class="function">get_with_all_bits</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">mask</span> <span class="punctuation">)</span></code><div class="desc">all hitobjects with every extra-bit in mask set. a zero mask returns nothing.</div></td></tr>
+<tr><td><code class="sig"><span class="type">Hitobject</span><span class="punctuation">[</span><span class="punctuation">]</span> <span class="receiver">Hitobject</span><span class="punctuation">.</span><span class="function">get_with_any_bits</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">mask</span> <span class="punctuation">)</span></code><div class="desc">all hitobjects with at least one extra-bit in mask set. a zero mask returns nothing.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">register_event</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">name</span><span class="punctuation">,</span> <span class="callback">fn</span> <span class="argument">callback</span> <span class="punctuation">)</span></code><div class="desc">registers callback to run when name is triggered for this object; it receives (self, ...).</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">hide</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">stops the object (and its slider body) from rendering until unhide(). persists across phase transitions; still hittable.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">unhide</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">undoes hide().</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">hide_combo_numbers</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">stops drawing the combo number on this object's circle.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">unhide_combo_numbers</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">undoes hide_combo_numbers().</div></td></tr>
+<tr><td><code class="sig"><span class="type">int</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">get_index</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the object's index into the beatmap's hitobject list.</div></td></tr>
+<tr><td><code class="sig"><span class="type">int</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">get_extra_bits</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the object's script-defined extra-bits mask used for filtering.</div></td></tr>
+<tr><td><code class="sig"><span class="type">bool</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">has_all_bits</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">mask</span> <span class="punctuation">)</span></code><div class="desc">true if every bit in mask is set on this object.</div></td></tr>
+<tr><td><code class="sig"><span class="type">bool</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">has_any_bits</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">mask</span> <span class="punctuation">)</span></code><div class="desc">true if at least one bit in mask is set on this object.</div></td></tr>
+<tr><td><code class="sig"><span class="punctuation">(</span><span class="type">float</span> <span class="argument">x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">y</span><span class="punctuation">)</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">get_pos</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the object's position in osupx (before any script translation).</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">set_pos</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">y</span> <span class="punctuation">)</span></code><div class="desc">moves the object to an absolute osupx position.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">set_pos_screenspace</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">y</span> <span class="punctuation">)</span></code><div class="desc">moves the object to a screen-space pixel position, converted into playfield osupx.</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">get_start_time</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the object's start time in ms.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">set_start_time</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">ms</span> <span class="punctuation">)</span></code><div class="desc">sets the object's start time in ms.</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">get_end_time</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the object's end time in ms (equals start time for circles).</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">set_end_time</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">ms</span> <span class="punctuation">)</span></code><div class="desc">sets the object's end time in ms.</div></td></tr>
+<tr><td><code class="sig"><span class="type">Phase</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">get_phase</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the object's current lifecycle phase.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">add_element_for_phase</span><span class="punctuation">(</span> <span class="type">Phase</span> <span class="argument">phase</span><span class="punctuation">,</span> <span class="type">Element</span> <span class="argument">element</span> <span class="punctuation">)</span></code><div class="desc">adds a custom element to draw while the object is in the given phase, replacing the default graphics.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">set_slider_element</span><span class="punctuation">(</span> <span class="type">SliderPart</span> <span class="argument">part</span><span class="punctuation">,</span> <span class="type">Element</span> <span class="argument">element</span> <span class="punctuation">)</span></code><div class="desc">overrides the element used for a slider part (ball, follow circle, ticks, repeats, ends). applies live and on respawn.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">clear_drawables</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">removes all of the object's current drawables.</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">get_hit_animation_length</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the object's hit animation length in ms.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">set_hit_animation_length</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">ms</span> <span class="punctuation">)</span></code><div class="desc">overrides the object's hit animation length in ms.</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">get_preempt</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the object's approach (preempt) time in ms.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">set_preempt</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">ms</span> <span class="punctuation">)</span></code><div class="desc">overrides the object's approach (preempt) time in ms.</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">get_ar</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the object's approach rate, derived from its preempt time.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">set_ar</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">ar</span> <span class="punctuation">)</span></code><div class="desc">overrides the object's approach rate (converted to a preempt time).</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">get_cs</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the object's circle size, derived from its radius.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">set_cs</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">cs</span> <span class="punctuation">)</span></code><div class="desc">overrides the object's circle size (converted to a radius).</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">get_slider_distance</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the slider's path length in osupx (0 for non-sliders).</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">get_slider_velocity</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the slider's velocity (0 for non-sliders).</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">get_slider_duration_ms</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the duration of one slider traversal in ms (0 for non-sliders).</div></td></tr>
+<tr><td><code class="sig"><span class="punctuation">(</span><span class="type">float</span> <span class="argument">x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">y</span><span class="punctuation">)</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">get_slider_ball_pos</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the slider ball's current position in osupx (the head position for non-sliders).</div></td></tr>
+<tr><td><code class="sig"><span class="punctuation">(</span><span class="type">float</span> <span class="argument">x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">y</span><span class="punctuation">)</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">get_slider_ball_pos_at</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">ms</span> <span class="punctuation">)</span></code><div class="desc">the slider ball's position at the given music time in osupx.</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">get_slider_ball_angle</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the slider ball's current travel angle in radians (0 for non-sliders).</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">hitobject</span><span class="punctuation">:</span><span class="function">get_slider_ball_angle_at</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">ms</span> <span class="punctuation">)</span></code><div class="desc">the slider ball's travel angle at the given music time in radians.</div></td></tr>
+</tbody>
+</table>
+<h2 id="Drawable"><a class="hlink" href="#Drawable">Drawable <span class="htarget">#</span></a></h2>
+<table>
+<thead><tr><th>Method</th></tr></thead>
+<tbody>
+<tr><td><code class="sig"><span class="type">Drawable</span> <span class="receiver">Drawable</span><span class="punctuation">.</span><span class="function">new</span><span class="punctuation">(</span> <span class="type">string</span><span class="punctuation">|</span><span class="type">Element</span> <span class="argument">source</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">start_ms</span> <span class="punctuation">=</span> <span class="number">0</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">end_ms</span> <span class="punctuation">=</span> <span class="number">0</span> <span class="punctuation">)</span></code><div class="desc">creates a drawable from a texture name or an Element, on the current render layer.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">register_event</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">name</span><span class="punctuation">,</span> <span class="callback">fn</span> <span class="argument">callback</span> <span class="punctuation">)</span></code><div class="desc">registers callback to run when name is triggered for this drawable; it receives (self, ...).</div></td></tr>
+<tr><td><code class="sig"><span class="type">Drawable</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">clone</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">creates an independent copy of this drawable.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">set_layer</span><span class="punctuation">(</span> <span class="type">Layer</span> <span class="argument">layer</span> <span class="punctuation">)</span></code><div class="desc">moves the drawable to the given render layer.</div></td></tr>
+<tr><td><code class="sig"><span class="punctuation">(</span><span class="type">float</span> <span class="argument">x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">y</span><span class="punctuation">)</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">get_pos</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the drawable's position.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">set_pos</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">y</span> <span class="punctuation">)</span></code><div class="desc">sets the drawable's position.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">set_pos_screenspace</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">y</span> <span class="punctuation">)</span></code><div class="desc">sets the drawable's position from a screen-space pixel position, converted into playfield osupx.</div></td></tr>
+<tr><td><code class="sig"><span class="punctuation">(</span><span class="type">float</span> <span class="argument">w</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">h</span><span class="punctuation">)</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">get_size</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the drawable's size.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">set_size</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">w</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">h</span> <span class="punctuation">)</span></code><div class="desc">sets the drawable's size.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">set_anchor</span><span class="punctuation">(</span> <span class="type">Anchor</span> <span class="argument">anchor</span> <span class="punctuation">)</span></code><div class="desc">sets the drawable's anchor point.</div></td></tr>
+<tr><td><code class="sig"><span class="type">int</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">get_color</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the drawable's color as a packed rgba integer.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">set_color</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">color</span> <span class="punctuation">)</span></code><div class="desc">sets the drawable's color from a packed rgba integer (see Color.rgb / Color.rgba).</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">set_vel</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">y</span> <span class="punctuation">)</span></code><div class="desc">sets the drawable's linear velocity.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">set_accel</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">y</span> <span class="punctuation">)</span></code><div class="desc">sets the drawable's linear acceleration.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">set_angle_vel</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">angle_vel</span> <span class="punctuation">)</span></code><div class="desc">sets the drawable's angular velocity.</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">get_start_time</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the drawable's start time in ms.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">set_start_time</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">ms</span> <span class="punctuation">)</span></code><div class="desc">sets the drawable's start time in ms.</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">get_end_time</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the drawable's end time in ms.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">set_end_time</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">ms</span> <span class="punctuation">)</span></code><div class="desc">sets the drawable's end time in ms.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">set_time</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">start_ms</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">end_ms</span> <span class="punctuation">)</span></code><div class="desc">sets the drawable's start and end time in ms.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">hide</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">stops the drawable from rendering (clears its active flag).</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">show</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">resumes rendering the drawable (sets its active flag).</div></td></tr>
+</tbody>
+</table>
+<h2 id="Element"><a class="hlink" href="#Element">Element <span class="htarget">#</span></a></h2>
+<table>
+<thead><tr><th>Method</th></tr></thead>
+<tbody>
+<tr><td><code class="sig"><span class="type">Element</span> <span class="receiver">Element</span><span class="punctuation">.</span><span class="function">new</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">creates a blank white quad element using the default shader.</div></td></tr>
+<tr><td><code class="sig"><span class="type">Element</span> <span class="receiver">element</span><span class="punctuation">:</span><span class="function">clone</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">creates an independent copy of this element.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">element</span><span class="punctuation">:</span><span class="function">register_event</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">name</span><span class="punctuation">,</span> <span class="callback">fn</span> <span class="argument">callback</span> <span class="punctuation">)</span></code><div class="desc">registers callback to run when name is triggered for this element; it receives (self, ...).</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">element</span><span class="punctuation">:</span><span class="function">set_tex</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">texture_name</span> <span class="punctuation">)</span></code><div class="desc">sets the element's texture by mapset texture name.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">element</span><span class="punctuation">:</span><span class="function">set_uv</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">y</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">w</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">h</span> <span class="punctuation">)</span></code><div class="desc">sets the uv sub-rect in [0,1] space, picking a region of the texture.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">element</span><span class="punctuation">:</span><span class="function">set_shader</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">shader_name</span> <span class="punctuation">)</span></code><div class="desc">sets the element's shader by mapset pipeline name.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">element</span><span class="punctuation">:</span><span class="function">set_animation</span><span class="punctuation">(</span> <span class="type">Animation</span> <span class="argument">animation</span> <span class="punctuation">)</span></code><div class="desc">attaches an animation list to the element.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">element</span><span class="punctuation">:</span><span class="function">set_mesh</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">buffer_name</span><span class="punctuation">,</span> <span class="type">int</span> <span class="argument">vertex_count</span> <span class="punctuation">)</span></code><div class="desc">marks the element as mesh-drawn, sourcing geometry from the named SSBO instead of the quad batch.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">element</span><span class="punctuation">:</span><span class="function">use_combo_color</span><span class="punctuation">(</span> <span class="type">bool</span> <span class="argument">enabled</span> <span class="punctuation">)</span></code><div class="desc">when enabled, the element tints with the hitobject's combo color.</div></td></tr>
+</tbody>
+</table>
+<h2 id="Animation"><a class="hlink" href="#Animation">Animation <span class="htarget">#</span></a></h2>
+<table>
+<thead><tr><th>Method</th></tr></thead>
+<tbody>
+<tr><td><code class="sig"><span class="type">Animation</span> <span class="receiver">Animation</span><span class="punctuation">.</span><span class="function">new</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">creates an empty animation list to attach to an element.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">animation</span><span class="punctuation">:</span><span class="function">move</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">start</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">end</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">from_x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">from_y</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">to_x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">to_y</span><span class="punctuation">,</span> <span class="type">Tween</span> <span class="argument">tween</span> <span class="punctuation">=</span> <span class="number">0</span> <span class="punctuation">)</span></code><div class="desc">appends a positional tween from (from_x, from_y) to (to_x, to_y) over [start, end].</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">animation</span><span class="punctuation">:</span><span class="function">scale</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">start</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">end</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">from_x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">from_y</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">to_x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">to_y</span><span class="punctuation">,</span> <span class="type">Tween</span> <span class="argument">tween</span> <span class="punctuation">=</span> <span class="number">0</span> <span class="punctuation">)</span></code><div class="desc">appends a scale tween from (from_x, from_y) to (to_x, to_y) over [start, end].</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">animation</span><span class="punctuation">:</span><span class="function">rotate</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">start</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">end</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">from</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">to</span><span class="punctuation">,</span> <span class="type">Tween</span> <span class="argument">tween</span> <span class="punctuation">=</span> <span class="number">0</span> <span class="punctuation">)</span></code><div class="desc">appends a rotation tween in radians from from to to over [start, end].</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">animation</span><span class="punctuation">:</span><span class="function">color</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">start</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">end</span><span class="punctuation">,</span> <span class="type">int</span> <span class="argument">from_color</span><span class="punctuation">,</span> <span class="type">int</span> <span class="argument">to_color</span><span class="punctuation">,</span> <span class="type">Tween</span> <span class="argument">tween</span> <span class="punctuation">=</span> <span class="number">0</span> <span class="punctuation">)</span></code><div class="desc">appends a color tween between two packed rgba colors over [start, end].</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">animation</span><span class="punctuation">:</span><span class="function">alpha</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">start</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">end</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">from</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">to</span><span class="punctuation">,</span> <span class="type">Tween</span> <span class="argument">tween</span> <span class="punctuation">=</span> <span class="number">0</span> <span class="punctuation">)</span></code><div class="desc">appends an alpha tween from from to to over [start, end].</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">animation</span><span class="punctuation">:</span><span class="function">texture</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">start</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">end</span><span class="punctuation">,</span> <span class="type">string</span> <span class="argument">texture_name</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">layer</span> <span class="punctuation">=</span> <span class="number">0</span> <span class="punctuation">)</span></code><div class="desc">appends a keyframe that swaps to the named texture (and array layer) over [start, end].</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">animation</span><span class="punctuation">:</span><span class="function">frames</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">start</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">end</span><span class="punctuation">,</span> <span class="type">string</span> <span class="argument">texture_name</span> <span class="punctuation">)</span></code><div class="desc">spreads every layer of a texture array as evenly-spaced frames over [start, end].</div></td></tr>
+</tbody>
+</table>
+<h2 id="Buffer"><a class="hlink" href="#Buffer">Buffer <span class="htarget">#</span></a></h2>
+<table>
+<thead><tr><th>Method</th></tr></thead>
+<tbody>
+<tr><td><code class="sig"><span class="type">Buffer</span> <span class="receiver">Buffer</span><span class="punctuation">.</span><span class="function">get</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">name</span> <span class="punctuation">)</span></code><div class="desc">looks up a mapset buffer (SSBO) by name; returns nil if not found.</div></td></tr>
+<tr><td><code class="sig"><span class="type">void</span> <span class="receiver">buffer</span><span class="punctuation">:</span><span class="function">bind</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">user_slot</span> <span class="punctuation">)</span></code><div class="desc">binds the buffer to a user SSBO slot (0-7, mapping to USER_0..USER_7).</div></td></tr>
+<tr><td><code class="sig"><span class="type">void</span> <span class="receiver">buffer</span><span class="punctuation">:</span><span class="function">write_f32s</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">byte_offset</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">value</span><span class="punctuation">,</span> <span class="punctuation">.</span><span class="punctuation">.</span><span class="punctuation">.</span> <span class="punctuation">)</span></code><div class="desc">writes one or more f32s at byte_offset (must be 4-byte aligned).</div></td></tr>
+<tr><td><code class="sig"><span class="type">void</span> <span class="receiver">buffer</span><span class="punctuation">:</span><span class="function">write_vec4</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">vec4_index</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">y</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">z</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">w</span> <span class="punctuation">)</span></code><div class="desc">writes four f32s at vec4_index * 16 bytes.</div></td></tr>
+<tr><td><code class="sig"><span class="type">int</span> <span class="receiver">buffer</span><span class="punctuation">:</span><span class="function">size</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the buffer's size in bytes.</div></td></tr>
+</tbody>
+</table>
+<h2 id="Sound"><a class="hlink" href="#Sound">Sound <span class="htarget">#</span></a></h2>
+<table>
+<thead><tr><th>Method</th></tr></thead>
+<tbody>
+<tr><td><code class="sig"><span class="type">void</span> <span class="receiver">Sound</span><span class="punctuation">.</span><span class="function">play</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">name</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">volume</span> <span class="punctuation">=</span> <span class="number">1.0</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">pan</span> <span class="punctuation">=</span> <span class="number">0.0</span> <span class="punctuation">)</span></code><div class="desc">plays a mapset sample once at the given volume and stereo pan.</div></td></tr>
+<tr><td><code class="sig"><span class="type">Sound</span> <span class="receiver">Sound</span><span class="punctuation">.</span><span class="function">play_loop</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">name</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">volume</span> <span class="punctuation">=</span> <span class="number">1.0</span> <span class="punctuation">)</span></code><div class="desc">starts looping a mapset sample and returns a handle you can stop().</div></td></tr>
+<tr><td><code class="sig"><span class="type">void</span> <span class="receiver">sound</span><span class="punctuation">:</span><span class="function">stop</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">stops a looping sound started by Sound.play_loop.</div></td></tr>
+</tbody>
+</table>
+<h2 id="Color"><a class="hlink" href="#Color">Color <span class="htarget">#</span></a></h2>
+<table>
+<thead><tr><th>Method</th></tr></thead>
+<tbody>
+<tr><td><code class="sig"><span class="type">int</span> <span class="receiver">Color</span><span class="punctuation">.</span><span class="function">rgb</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">r</span><span class="punctuation">,</span> <span class="type">int</span> <span class="argument">g</span><span class="punctuation">,</span> <span class="type">int</span> <span class="argument">b</span> <span class="punctuation">)</span></code><div class="desc">packs r, g, b (each 0-255) into an rgba integer with alpha 1.</div></td></tr>
+<tr><td><code class="sig"><span class="type">int</span> <span class="receiver">Color</span><span class="punctuation">.</span><span class="function">rgba</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">r</span><span class="punctuation">,</span> <span class="type">int</span> <span class="argument">g</span><span class="punctuation">,</span> <span class="type">int</span> <span class="argument">b</span><span class="punctuation">,</span> <span class="type">int</span> <span class="argument">a</span> <span class="punctuation">)</span></code><div class="desc">packs r, g, b, a (each 0-255) into an rgba integer.</div></td></tr>
+</tbody>
+</table>
+<h2 id="Beatmap"><a class="hlink" href="#Beatmap">Beatmap <span class="htarget">#</span></a></h2>
+<table>
+<thead><tr><th>Method</th></tr></thead>
+<tbody>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">Beatmap</span><span class="punctuation">.</span><span class="function">get_music_time_ms</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the current music playback time in ms.</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">Beatmap</span><span class="punctuation">.</span><span class="function">get_length_ms</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the total length of the map's audio in ms.</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">Beatmap</span><span class="punctuation">.</span><span class="function">get_bpm</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the bpm at the current timing point.</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">Beatmap</span><span class="punctuation">.</span><span class="function">get_beat_length_ms</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the beat length in ms at the current timing point.</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">Beatmap</span><span class="punctuation">.</span><span class="function">get_ar_ms</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the map's approach (preempt) time in ms.</div></td></tr>
+<tr><td><code class="sig"><span class="type">float</span> <span class="receiver">Beatmap</span><span class="punctuation">.</span><span class="function">get_cs_osupx</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the map's circle radius in osupx.</div></td></tr>
+<tr><td><code class="sig"><span class="type">bool</span> <span class="receiver">Beatmap</span><span class="punctuation">.</span><span class="function">is_paused</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">true if playback is currently paused.</div></td></tr>
+<tr><td><code class="sig"><span class="type">void</span> <span class="receiver">Beatmap</span><span class="punctuation">.</span><span class="function">set_timing_windows</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">marvelous</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">good</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">ok</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">miss</span> <span class="punctuation">)</span></code><div class="desc">sets the hit window half-widths in ms; expects marvelous &lt;= good &lt;= ok &lt;= miss.</div></td></tr>
+<tr><td><code class="sig"><span class="punctuation">(</span><span class="type">float</span> <span class="argument">marvelous</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">good</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">ok</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">miss</span><span class="punctuation">)</span> <span class="receiver">Beatmap</span><span class="punctuation">.</span><span class="function">get_timing_windows</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the current hit window half-widths in ms.</div></td></tr>
+</tbody>
+</table>
+<h2 id="Playfield"><a class="hlink" href="#Playfield">Playfield <span class="htarget">#</span></a></h2>
+<table>
+<thead><tr><th>Method</th></tr></thead>
+<tbody>
+<tr><td><code class="sig"><span class="type">void</span> <span class="receiver">Playfield</span><span class="punctuation">.</span><span class="function">set_translation</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">y</span> <span class="punctuation">)</span></code><div class="desc">sets the playfield offset in osupx, on top of the base centering translation.</div></td></tr>
+<tr><td><code class="sig"><span class="type">void</span> <span class="receiver">Playfield</span><span class="punctuation">.</span><span class="function">set_scale</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">scale</span> <span class="punctuation">)</span></code><div class="desc">sets the playfield scale multiplier (1.0 = default size).</div></td></tr>
+<tr><td><code class="sig"><span class="type">void</span> <span class="receiver">Playfield</span><span class="punctuation">.</span><span class="function">set_rotation</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">radians</span> <span class="punctuation">)</span></code><div class="desc">sets the playfield rotation in radians around its center.</div></td></tr>
+<tr><td><code class="sig"><span class="type">void</span> <span class="receiver">Playfield</span><span class="punctuation">.</span><span class="function">translate</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">y</span> <span class="punctuation">)</span></code><div class="desc">adds to the current playfield translation in osupx.</div></td></tr>
+<tr><td><code class="sig"><span class="type">void</span> <span class="receiver">Playfield</span><span class="punctuation">.</span><span class="function">rotate</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">radians</span> <span class="punctuation">)</span></code><div class="desc">adds to the current playfield rotation in radians.</div></td></tr>
+</tbody>
+</table>
+<h2 id="enums"><a class="hlink" href="#enums">Enums <span class="htarget">#</span></a></h2>
+<h3>Layer</h3>
+<table class="enum">
+<thead><tr><th>Constant</th><th>Value</th></tr></thead>
+<tbody>
+
+<tr><td><code>Layer.BACKGROUND</code></td><td>0</td></tr>
+<tr><td><code>Layer.FOREGROUND</code></td><td>1</td></tr>
+<tr><td><code>Layer.HITOBJECTS</code></td><td>2</td></tr>
+<tr><td><code>Layer.OVERLAY</code></td><td>3</td></tr>
+<tr><td><code>Layer.UI</code></td><td>4</td></tr>
+<tr><td><code>Layer.DEBUG</code></td><td>5</td></tr>
+</tbody>
+</table>
+
+<h3>Judgement</h3>
+<table class="enum">
+<thead><tr><th>Constant</th><th>Value</th></tr></thead>
+<tbody>
+
+<tr><td><code>Judgement.NONE</code></td><td>0</td></tr>
+<tr><td><code>Judgement.MISS</code></td><td>1</td></tr>
+<tr><td><code>Judgement.OK</code></td><td>2</td></tr>
+<tr><td><code>Judgement.GOOD</code></td><td>3</td></tr>
+<tr><td><code>Judgement.MARVELOUS</code></td><td>4</td></tr>
+<tr><td><code>Judgement.SLIDER_SMALL_SCOREPOINT</code></td><td>5</td></tr>
+<tr><td><code>Judgement.SLIDER_LARGE_SCOREPOINT</code></td><td>6</td></tr>
+<tr><td><code>Judgement.SLIDER_SCOREPOINT_MISS</code></td><td>7</td></tr>
+<tr><td><code>Judgement.IGNORED_HIT</code></td><td>8</td></tr>
+<tr><td><code>Judgement.COMBO_BREAK</code></td><td>9</td></tr>
+</tbody>
+</table>
+
+<h3>Anchor</h3>
+<table class="enum">
+<thead><tr><th>Constant</th><th>Value</th></tr></thead>
+<tbody>
+
+<tr><td><code>Anchor.TOP_LEFT</code></td><td>0</td></tr>
+<tr><td><code>Anchor.TOP_MIDDLE</code></td><td>1</td></tr>
+<tr><td><code>Anchor.TOP_RIGHT</code></td><td>2</td></tr>
+<tr><td><code>Anchor.MIDDLE_LEFT</code></td><td>3</td></tr>
+<tr><td><code>Anchor.CENTER</code></td><td>4</td></tr>
+<tr><td><code>Anchor.MIDDLE_RIGHT</code></td><td>5</td></tr>
+<tr><td><code>Anchor.BOTTOM_LEFT</code></td><td>6</td></tr>
+<tr><td><code>Anchor.BOTTOM_MIDDLE</code></td><td>7</td></tr>
+<tr><td><code>Anchor.BOTTOM_RIGHT</code></td><td>8</td></tr>
+</tbody>
+</table>
+
+<h3>Tween</h3>
+<table class="enum">
+<thead><tr><th>Constant</th><th>Value</th></tr></thead>
+<tbody>
+
+<tr><td><code>Tween.LINEAR</code></td><td>0</td></tr>
+<tr><td><code>Tween.QUAD_IN</code></td><td>1</td></tr>
+<tr><td><code>Tween.QUAD_OUT</code></td><td>2</td></tr>
+<tr><td><code>Tween.QUAD_IN_OUT</code></td><td>3</td></tr>
+<tr><td><code>Tween.CUBIC_IN</code></td><td>4</td></tr>
+<tr><td><code>Tween.CUBIC_OUT</code></td><td>5</td></tr>
+<tr><td><code>Tween.CUBIC_IN_OUT</code></td><td>6</td></tr>
+<tr><td><code>Tween.QUARTIC_IN</code></td><td>7</td></tr>
+<tr><td><code>Tween.QUARTIC_OUT</code></td><td>8</td></tr>
+<tr><td><code>Tween.QUARTIC_IN_OUT</code></td><td>9</td></tr>
+<tr><td><code>Tween.QUINTIC_IN</code></td><td>10</td></tr>
+<tr><td><code>Tween.QUINTIC_OUT</code></td><td>11</td></tr>
+<tr><td><code>Tween.QUINTIC_IN_OUT</code></td><td>12</td></tr>
+<tr><td><code>Tween.SINE_IN</code></td><td>13</td></tr>
+<tr><td><code>Tween.SINE_OUT</code></td><td>14</td></tr>
+<tr><td><code>Tween.SINE_IN_OUT</code></td><td>15</td></tr>
+<tr><td><code>Tween.EXPO_IN</code></td><td>16</td></tr>
+<tr><td><code>Tween.EXPO_OUT</code></td><td>17</td></tr>
+<tr><td><code>Tween.EXPO_IN_OUT</code></td><td>18</td></tr>
+<tr><td><code>Tween.BACK_IN</code></td><td>19</td></tr>
+<tr><td><code>Tween.BACK_OUT</code></td><td>20</td></tr>
+<tr><td><code>Tween.BACK_IN_OUT</code></td><td>21</td></tr>
+<tr><td><code>Tween.ELASTIC_OUT</code></td><td>22</td></tr>
+<tr><td><code>Tween.BOUNCE_OUT</code></td><td>23</td></tr>
+</tbody>
+</table>
+
+<h3>Phase</h3>
+<table class="enum">
+<thead><tr><th>Constant</th><th>Value</th></tr></thead>
+<tbody>
+
+<tr><td><code>Phase.NONE</code></td><td>0</td></tr>
+<tr><td><code>Phase.PREEMPT</code></td><td>1</td></tr>
+<tr><td><code>Phase.POSTEMPT</code></td><td>2</td></tr>
+<tr><td><code>Phase.HOLD</code></td><td>3</td></tr>
+<tr><td><code>Phase.HIT</code></td><td>4</td></tr>
+<tr><td><code>Phase.MISS</code></td><td>5</td></tr>
+</tbody>
+</table>
+
+<h3>SliderPart</h3>
+<table class="enum">
+<thead><tr><th>Constant</th><th>Value</th></tr></thead>
+<tbody>
+
+<tr><td><code>SliderPart.BALL</code></td><td>0</td></tr>
+<tr><td><code>SliderPart.FOLLOW_CIRCLE</code></td><td>1</td></tr>
+<tr><td><code>SliderPart.TICK</code></td><td>2</td></tr>
+<tr><td><code>SliderPart.REPEAT</code></td><td>3</td></tr>
+<tr><td><code>SliderPart.END</code></td><td>4</td></tr>
+<tr><td><code>SliderPart.END_OVERLAY</code></td><td>5</td></tr>
+</tbody>
+</table>
+
+</body>
+</html>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>notosu Lua API</title>
 <style>
   :root { --bg:#1b1d23; --panel:#23262e; --line:#363a45; --text:#dfe3ea; --muted:#8b91a0; --accent:#7fb3ff; --code:#c8e1ff; }

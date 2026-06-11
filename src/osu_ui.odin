@@ -223,11 +223,11 @@ timeline_update :: proc(ui: ^UI_Timeline) {
 }
 
 render_timeline_clipspace :: proc(ui: ^UI_Timeline) {
-    map_len_with_preempt := game.beatmap.length_ms + (-game.beatmap.start_time_ms)
-    map_time_with_preempt := game.beatmap.music_time_ms + (-game.beatmap.start_time_ms)
+    map_len_with_preempt := game.beatmap.length_ms - game.beatmap.start_time_ms
+    map_time_with_preempt := game.beatmap.music_time_ms - game.beatmap.start_time_ms
     
     beatmap_leadin_fract := f32((-game.beatmap.preempt_ms - game.beatmap.music_time_ms) / -game.beatmap.start_time_ms)
-    beatmap_finish_fract := f32(map_time_with_preempt / map_len_with_preempt)
+    beatmap_finish_fract := f32(game.beatmap.music_time_ms / map_len_with_preempt)
     
     r_push_transform(clipspace_transform)
     

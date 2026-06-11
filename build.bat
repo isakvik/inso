@@ -9,7 +9,7 @@ set exec_name=notosu.exe
 
 if "%VERSION%"=="" (
     for /f "tokens=*" %%i in ('git rev-parse --short HEAD') do set GIT_HASH=%%i
-    set VERSION=0.1.0-dev+!GIT_HASH!
+    set VERSION=0.1.2-dev+!GIT_HASH!
 )
 
 echo [build] %VERSION%

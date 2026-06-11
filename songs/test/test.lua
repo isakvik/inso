@@ -21,6 +21,94 @@ function on_init()
         :set_pos(0,0)
         :set_size(10, 10)
 
+    a = Animation.new()
+        :scale(0, 1, 1,1, 8,8, Tween.CUBIC_OUT)
+        :color(0, 1, Color.rgba(255,0,0,255), Color.rgba(0,0,0,0))
+        :rotate(0, 1, 0, 999999)
+    
+    el = Element.new()
+        :set_tex("reversearrow.png")
+        :set_animation(a)
+        :set_shader("wave")
+    
+    anim_left = Animation.new()
+        :move(0, 1, -3, 0, 0, 0)
+        :scale(0,1, 2,2, 2,2)
+    anim_right = Animation.new()
+        :move(0, 1, 3, 0, 0, 0)
+        :scale(0,1, 2,2, 2,2)
+        :rotate(0, 0, 3.1415, 3.1415)
+        
+    custom_left = Element.new()
+        :set_tex("reversearrow.png")
+        :set_animation(anim_left)
+        :use_combo_color(true)
+    custom_right = Element.new()
+        :set_tex("reversearrow.png")
+        :set_animation(anim_right)
+        :use_combo_color(true)
+        
+    anim_stillleft = Animation.new()
+        :alpha(0, 1, 1, 0)
+        :scale(0, 0, 2,2, 2,2)
+    anim_stillright = Animation.new()
+        :alpha(0, 1, 1, 0)
+        :scale(0, 0, 2,2, 2,2)
+        :rotate(0, 0, 3.1415, 3.1415)
+        
+    custom_stillleft = custom_left:clone()
+        :set_animation(anim_stillleft)
+    custom_stillright = custom_right:clone()
+        :set_animation(anim_stillright)
+    
+    --for i, hobj in ipairs(Hitobject.get_in_range_ms(30000, 60000)) do
+    --    hobj:clear_drawables()
+    --    hobj:add_element_for_phase(Phase.PREEMPT, custom_left)
+    --    hobj:add_element_for_phase(Phase.PREEMPT, custom_right)
+    --    hobj:add_element_for_phase(Phase.POSTEMPT, custom_stillleft)
+    --    hobj:add_element_for_phase(Phase.POSTEMPT, custom_stillright)
+    --    
+    --    hobj:add_element_for_phase(Phase.HIT, el)
+    --    hobj:set_hit_animation_length(400)
+    --    hobj:hide_combo_numbers()
+    --end
+    --for i, hobj in ipairs(Hitobject.get_in_range_ms(60000, 90000)) do
+    --    hobj:clear_drawables()
+    --    hobj:add_element_for_phase(Phase.PREEMPT, custom_left)
+    --    hobj:add_element_for_phase(Phase.PREEMPT, custom_right)
+    --    hobj:add_element_for_phase(Phase.POSTEMPT, custom_stillleft)
+    --    hobj:add_element_for_phase(Phase.POSTEMPT, custom_stillright)
+    --    
+    --    hobj:add_element_for_phase(Phase.HIT, el)
+    --    hobj:set_hit_animation_length(900)
+    --    hobj:hide_combo_numbers()
+    --end
+
+    ely = Element.new()
+    
+    ball = Element.new():set_tex("reversearrow.png")
+    blank = Element.new():set_tex("blank.png")
+    
+    list = Hitobject.get_in_range_ms(0, 425000)
+    
+    table = {}
+    for i, hobj in ipairs(list) do
+        --hobj:hide()
+        t = hobj:get_start_time()
+    
+        --hobj:set_ar(9-i/100)
+
+        hobj:set_slider_element(SliderPart.BALL, ball)
+
+        hobj:set_slider_follow_circle_radius(2.4)
+        --hobj:set_slider_element(SliderPart.FOLLOW_CIRCLE, blank)
+    end
+    
+    register_global_event("hehe", function()
+        -- note that this drifts over time, it's not a clean repeat every 250ms
+        schedule_event("hehe", 250)
+        print("hehe loop " .. Beatmap.get_music_time_ms())
+    end)
 end
 
 function on_update(time_ms)
@@ -64,6 +152,7 @@ function on_update(time_ms)
     -- else
     --     new_h = math.random(1, 100) * 10
     -- end
+    --Playfield.set_rotation(math.sin(time_ms / 3000) * 0.1)
 end
 
 --function on_beat(beat)

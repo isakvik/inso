@@ -215,10 +215,12 @@ mapset_free :: proc(mapset: ^Mapset) -> string {
     }
     for i in len(Builtin_Pipeline_Slot)..<window.pipelines.len {
         sg.destroy_pipeline(window.pipelines.data[i])
+    }
+    for i in len(Builtin_Shader_Slot)..<window.shaders.len {
         shader_delete(&window.shaders.data[i])
     }
     window.pipelines.len = len(Builtin_Pipeline_Slot)
-    window.shaders.len = len(Builtin_Pipeline_Slot)
+    window.shaders.len = len(Builtin_Shader_Slot)
     buffer_clear(&window.renderer.slider_instances)
 
     for &buf in mapset.buffers.data {
@@ -486,9 +488,11 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
                     case "FragmentShader": shader_params.fs_path = resolve_fs(value)
                     case "BlendMode":
                         switch value {
-                        case "Alpha":    shader_params.blend_mode = .ALPHA
-                        case "Additive": shader_params.blend_mode = .ADDITIVE
-                        case "None":     shader_params.blend_mode = .NONE
+                        case "Alpha":         shader_params.blend_mode = .ALPHA
+                        case "Additive":      shader_params.blend_mode = .ADDITIVE
+                        case "Max":           shader_params.blend_mode = .MAX
+                        case "None":          shader_params.blend_mode = .NONE
+                        case "Premultiplied": shader_params.blend_mode = .PREMULTIPLIED
                         case:
                             log.errorf("mapset shader '{}': unknown BlendMode '{}', defaulting to alpha", shader_params.name, value)
                             notify_warn("mapset shader '%s': unknown BlendMode '%s', defaulting to alpha", shader_params.name, value)
@@ -649,16 +653,17 @@ mapset_reinit_custom_shaders :: proc(mapset: ^Mapset) {
     os.change_directory(mapset.folder_path)
     defer os.change_directory(app.base_dir)
     
-    base := len(Builtin_Pipeline_Slot)
-    for i in base..<base + mapset.num_shaders {
-        err := shader_reinit(&window.shaders.data[i])
+    shader_base := len(Builtin_Shader_Slot)
+    pipeline_base := len(Builtin_Pipeline_Slot)
+    for i in 0..<mapset.num_shaders {
+        err := shader_reinit(&window.shaders.data[shader_base + i])
         if err != .NONE do continue
-        
-        blend_mode := mapset.shader_blend_modes[i - base]
+
+        blend_mode := mapset.shader_blend_modes[i]
         desc := quad_pipeline_desc()
-        desc.shader = window.shaders.data[i].shader
+        desc.shader = window.shaders.data[shader_base + i].shader
         desc.colors[0].blend = blend_state_for_mode(blend_mode)
-        pipeline_reinit(&window.pipelines.data[i], desc)
+        pipeline_reinit(&window.pipelines.data[pipeline_base + i], desc)
     }
     log.info("reloaded mapset custom shaders")
 }

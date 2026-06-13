@@ -386,6 +386,8 @@ Layer :: enum {
     HITOBJECTS,
     OVERLAY,
     UI,
+    CURSOR,
+    TOP, // todo(isak): what to call this?
     DEBUG
 }
 
@@ -402,11 +404,11 @@ Judgement_Type :: enum {
     GOOD,
     MARVELOUS,
     
-    SLIDER_SMALL_SCOREPOINT, // 10
-    SLIDER_LARGE_SCOREPOINT, // 30
+    SLIDER_SMALL_SCOREPOINT, // tick, 10
+    SLIDER_LARGE_SCOREPOINT, // repeat, 30
     SLIDER_SCOREPOINT_MISS,
     
-    IGNORED_HIT, // note(isak): used when we need a result that doesn't affect score
+    IGNORED_HIT, // note(isak): intended for when we need a result that doesn't affect score
     COMBO_BREAK, // note(isak): intended for scripted misses
 }
 
@@ -565,7 +567,7 @@ osu_on_update :: proc(dt: f64) {
     process_hitobject_phase_transitions()
 
     // game render
-
+    
     r_bind_layer_and_push_current_state(.HITOBJECTS, transform = game.playfield_transform)
 
     #reverse for &hobj in visible_hobjs {
@@ -602,7 +604,7 @@ osu_on_update :: proc(dt: f64) {
     // ui render
     r_bind_layer_and_push_current_state(.UI, 
         transform = game.playfield_transform,
-        pipeline = {builtin_pipeline_slot(.QUAD)})
+        pipeline = { pipeline = builtin_pipeline_slot(.QUAD) })
     
     // -- @temp playfield border
     playfield_border_draw :: proc() {
@@ -626,6 +628,7 @@ osu_on_update :: proc(dt: f64) {
         input_display_draw_screenspace()
     }
 
+    r_bind_layer_and_push_current_state(.CURSOR)
     r_push_transform(window.screenspace_transform)
     cursor_draw(mouse.pos, skin_texture(.CURSOR))
     if app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {   

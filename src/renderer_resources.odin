@@ -29,10 +29,23 @@ Pipeline_Index :: struct {
 
 Pipeline_ID :: u32
 
-Builtin_Pipeline_Slot :: enum {
+Builtin_Shader_Slot :: enum {
     QUAD,
     SLIDER,
-    TEXT
+    TEXT,
+}
+
+builtin_shader_slot :: proc(s: Builtin_Shader_Slot) -> u32 {
+    return u32(s)
+}
+
+Builtin_Pipeline_Slot :: enum {
+    QUAD,
+    QUAD_PREMULTIPLIED,
+    QUAD_PREMULTIPLIED_OVER,
+    SLIDER,
+    TEXT,
+    TEXT_PREMULTIPLIED,
 }
 
 builtin_pipeline_slot :: proc(s: Builtin_Pipeline_Slot) -> u32 {
@@ -43,8 +56,6 @@ user_pipeline_slot :: proc(s: u32) -> u32 {
     return len(Builtin_Pipeline_Slot) + s
 }
 
-// note(isak): 0..len(Builtin_Framebuffer_Slot) are engine-owned; the rest index into
-// game.active_mapset.render_targets. 0 == DEFAULT doubles as "no redirect" for elements.
 Framebuffer_ID :: u32
 
 Builtin_Framebuffer_Slot :: enum u32 {
@@ -128,20 +139,51 @@ user_texture :: proc(tex_id: u32) -> u32 { return tex_id + len(Builtin_Texture_S
 
 
 Blend_Mode :: enum {
-    ALPHA, 
-    ADDITIVE, 
-    MAX, 
-    NONE, 
+    NONE,
+    ALPHA,
+    ADDITIVE,
+    MAX,
+    PREMULTIPLIED,
+    PREMULTIPLIED_OVER,
 }
 
 blend_state_for_mode :: proc(mode: Blend_Mode) -> (blend: sg.Blend_State) {
     switch mode {
+    case .NONE:
+        blend = { enabled = false }
     case .ALPHA:
         blend = {
             enabled          = true,
             op_alpha         = .SUBTRACT,
             src_factor_rgb   = .SRC_ALPHA,
             src_factor_alpha = .SRC_ALPHA,
+            dst_factor_rgb   = .ONE_MINUS_SRC_ALPHA,
+            dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
+        }
+    case .PREMULTIPLIED:
+        // note(isak): takes straight-alpha shader output and accumulates a correctly premultiplied
+        // result: rgb = src.rgb*src.a + dst.rgb*(1-src.a), a = src.a + dst.a*(1-src.a). unlike
+        // .ALPHA's screen-tuned alpha, this produces a coverage alpha valid for re-sampling. draw
+        // the resulting texture back with premultiplied-over (src factor ONE) to composite it.
+        blend = {
+            enabled          = true,
+            op_rgb           = .ADD,
+            op_alpha         = .ADD,
+            src_factor_rgb   = .SRC_ALPHA,
+            src_factor_alpha = .ONE,
+            dst_factor_rgb   = .ONE_MINUS_SRC_ALPHA,
+            dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
+        }
+    case .PREMULTIPLIED_OVER:
+        // note(isak): composites an already-premultiplied source (e.g. a captured render target)
+        // over the destination: rgb = src.rgb + dst.rgb*(1-src.a). the src rgb is taken as-is
+        // (factor ONE) rather than re-multiplied by alpha, which is what .ALPHA would wrongly do.
+        blend = {
+            enabled          = true,
+            op_rgb           = .ADD,
+            op_alpha         = .ADD,
+            src_factor_rgb   = .ONE,
+            src_factor_alpha = .ONE,
             dst_factor_rgb   = .ONE_MINUS_SRC_ALPHA,
             dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
         }
@@ -164,8 +206,6 @@ blend_state_for_mode :: proc(mode: Blend_Mode) -> (blend: sg.Blend_State) {
             dst_factor_rgb   = .ONE,
             dst_factor_alpha = .ONE,
         }
-    case .NONE:
-        blend = { enabled = false }
     }
     return blend
 }
@@ -173,15 +213,15 @@ blend_state_for_mode :: proc(mode: Blend_Mode) -> (blend: sg.Blend_State) {
 //////////////////////////////////////////////////////
 // note(isak): pipeline definitions
 
-quad_pipeline_desc :: proc() -> sg.Pipeline_Desc {
+quad_pipeline_desc :: proc(blend: Blend_Mode = .ALPHA) -> sg.Pipeline_Desc {
     return {
         label = "builtin.quad",
-        shader = window.shaders.data[builtin_pipeline_slot(.QUAD)].shader,
+        shader = window.shaders.data[builtin_shader_slot(.QUAD)].shader,
         //index_type = .UINT16,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
         colors = {
-            0 = { blend = blend_state_for_mode(.ALPHA) }
+            0 = { blend = blend_state_for_mode(blend) }
         },
         depth = {compare = .LESS_EQUAL, write_enabled = true},
     },
@@ -190,7 +230,7 @@ quad_pipeline_desc :: proc() -> sg.Pipeline_Desc {
 slider_pipeline_desc :: proc() -> sg.Pipeline_Desc {
     return {
         label = "builtin.slider",
-        shader = window.shaders.data[builtin_pipeline_slot(.SLIDER)].shader,
+        shader = window.shaders.data[builtin_shader_slot(.SLIDER)].shader,
         //index_type = .UINT16,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 0.0}, // note(isak): clears to 0 alpha so black transparency works
@@ -198,14 +238,14 @@ slider_pipeline_desc :: proc() -> sg.Pipeline_Desc {
     }
 }
 
-text_pipeline_desc :: proc() -> sg.Pipeline_Desc {
+text_pipeline_desc :: proc(blend: Blend_Mode = .ALPHA) -> sg.Pipeline_Desc {
     return {
         label = "builtin.text",
-        shader = window.shaders.data[builtin_pipeline_slot(.TEXT)].shader,
+        shader = window.shaders.data[builtin_shader_slot(.TEXT)].shader,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
         colors = {
-            0 = { blend = blend_state_for_mode(.ALPHA) }
+            0 = { blend = blend_state_for_mode(blend) }
         },
         //depth = {compare = .LESS_EQUAL, write_enabled = true},
     },

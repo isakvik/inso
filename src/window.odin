@@ -91,8 +91,8 @@ window_init :: proc(rect: Rect) {
     window.bindless_supported = gl_has_extension("GL_ARB_bindless_texture")
     log.infof("GL_ARB_bindless_texture: {}", window.bindless_supported ? "supported" : "not supported")
 
-    // note(isak): intel igpus have only partial bindless texture support, but report the extension available
-    // and crash on shader compile. they also diverge from nvidia on a few other points (see slider_render_path)
+    // note(isak): intel igpus don't support bindless handles in arrays and CRASH on shader compile. 
+    // they also diverge from nvidia on a few other points (see slider_render_path)
     window.intel_gpu = gl_vendor_is_intel()
     if window.intel_gpu {
         log.infof("intel gpu detected ({} / {}), forcing no-bindless fallback",

@@ -239,6 +239,10 @@ Drawable_Flag :: enum u32 {
     // note(isak): fades alpha from 0 to 1 over the first 40% of the drawable's lifetime (capped at 400ms).
     // set on preempt-phase drawables so they fade in using baked timing, not live hitobject preempt.
     FADE_IN,
+
+    // note(isak): the quad covers the whole render target (size is derived each frame), while pos
+    // still nudges it in osupx. handy for compositing a screen-sized capture without size math.
+    FULLSCREEN,
 }
 
 Drawable_Handle :: slotmap.Handle
@@ -656,6 +660,15 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
     pos_x := d.pos.x * (current_radius if .SCALE_POS_BY_RADIUS in d.flags else 1)
     pos_y := d.pos.y * (current_radius if .SCALE_POS_BY_RADIUS in d.flags else 1)
     rect := Rect{pos_x + parent_pos.x + phys_x, pos_y + parent_pos.y + phys_y, d.size.x * current_radius, d.size.y * current_radius}
+
+    // note(isak): fullscreen derives its size each frame by inverse-mapping the screen corners into
+    // playfield osupx, so it covers the render target (resize-safe) while pos stays an osupx nudge.
+    if .FULLSCREEN in d.flags {
+        tl := screenspace_to_playfield_osupx({0, 0})
+        br := screenspace_to_playfield_osupx({window.rect.w, window.rect.h})
+        rect = {tl.x + rect.x, tl.y + rect.y, br.x - tl.x, br.y - tl.y}
+    }
+
     angle := d.angle_rad + d.angle_vel * t_sec
     color := d.color
 
@@ -722,14 +735,22 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
         color.a = u8(f32(color.a) * f32(clamp(relative_time_at / fade_in_ms, 0, 1)))
     }
 
-    r_check_and_bind_pipeline({element.shader})
     r_check_and_bind_layer(d.layer)
+
+    // note(isak): a drawable can be emitted into any layer's queue from another layer's recording
+    // context, so it can't trust inherited state - it re-establishes everything it draws with.
+    // drawables always position in playfield space so a script gets consistent osupx coordinates no
+    // matter which layer it targets, and the full-window scissor keeps a never-scissored layer from
+    // clipping the draw.
+    r_push_transform(game.playfield_transform)
+    _r_push_scissor({ 0, 0, i32(window.rect.w), i32(window.rect.h) })
+    r_bind_pipeline({ pipeline = element.shader })
 
     target := element.render_target
     if target == 0 {
         target = game.active_mapset.layer_capture[d.layer]
     }
-    r_check_and_bind_framebuffer({ write = target })
+    r_bind_framebuffer({ write = target })
 
     if .STATIC_GEOMETRY in element.flags {
         r_bind_ssbo_raw(element.ssbo, element.ssbo_size, .VERTEX_BUFFER)
@@ -737,6 +758,8 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
         // note(isak): restore quad VERTEX_BUFFER for subsequent quad draws
         r_bind_tbo(&window.quad_store, .VERTEX_BUFFER)
     } else {
+        r_bind_tbo(&window.quad_store, .VERTEX_BUFFER)
+
         uv_rect := element.uv
         if uv_rect.w == 0 || uv_rect.h == 0 {
             uv_rect = {0, 0, 1, 1}
@@ -803,7 +826,7 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     }
 
     r_push_transform(slider_pf_transform)
-    r_bind_pipeline({builtin_pipeline_slot(.SLIDER)})
+    r_bind_pipeline({ pipeline = builtin_pipeline_slot(.SLIDER) })
     r_bind_framebuffer({ write = builtin_framebuffer(.SLIDERS) })
     r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
 
@@ -843,7 +866,7 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     slider_write_target := game.active_mapset.layer_capture[.HITOBJECTS]
     r_bind_framebuffer({ read = builtin_framebuffer(.SLIDERS), write = slider_write_target })
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
-    r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
+    r_bind_pipeline({ pipeline = builtin_pipeline_slot(.QUAD) })
     
     r_push_transform(window.screenspace_transform)
     if app.debug_display_slider_bounds {

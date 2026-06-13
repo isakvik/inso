@@ -346,41 +346,8 @@ main :: proc() {
             r_bind_layer_and_push_current_state(.BACKGROUND, transform = window.screenspace_transform)
             osu_on_update(dt_ms)
 
-            r_check_and_bind_layer(.DEBUG)
-            if app.debug_display_textures {
-                for i in 0..<50 {
-                    r_draw_quad(&renderer.quad_geometry, 
-                        vec2{400 + 40*(f32(i%10)), 10 + 40*f32(i/10)},
-                        vec2{440 + 40*(f32(i%10)), 50 + 40*f32(i/10)},
-                        vec2{0,0}, vec2{1,1},
-                        color_white, 
-                        tex_index = u32(i)
-                    )
-                }
-
-                r_draw_quad(&renderer.quad_geometry, 
-                    vec2{0, 0},
-                    vec2{f32(window.rect.w), f32(window.rect.h)},
-                    vec2{0,0}, vec2{1,1},
-                    color_black
-                )
-                r_draw_quad(&renderer.quad_geometry, 
-                    vec2{0, 0},
-                    vec2{f32(window.rect.w), f32(window.rect.h)},
-                    vec2{0,0}, vec2{1,1},
-                    color_white, 
-                    tex_index = builtin_texture(.SLIDER_FRAMEBUFFER)
-                )
-            }
-            
-            if app.debug_display_game_cursor {
-                r_push_transform(game.playfield_transform)
-                pf_cur_rect: Rect = { game.input.mouse_pos.x, game.input.mouse_pos.y, 20, 20 }
-                r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, builtin_texture(.WHITE),
-                    f32(time_s_since_beginning_of_program()))
-            }
-
-            if app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY {                
+            if app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY {        
+                r_check_and_bind_layer(.DEBUG)        
                 r_push_transform(fullscreen_transform)
                 r_draw_quad(&renderer.quad_geometry,
                     vec2{0,0}, vec2{1,1},
@@ -395,6 +362,7 @@ main :: proc() {
                     align_v = .Middle)
                 
             } else if app.mouse_input_mode == .REBINDING_MOUSE_SECONDARY {
+                r_check_and_bind_layer(.DEBUG)
                 r_push_transform(fullscreen_transform)
                 r_draw_quad(&renderer.quad_geometry,
                     vec2{0,0}, vec2{1,1},
@@ -435,6 +403,40 @@ main :: proc() {
             }
             if app.debug_display_memory_profiler {
                 profiler_push_memory_diag_text(renderer)
+            }
+            
+            if app.debug_display_textures {
+                /*for i in 0..<50 {
+                    r_draw_quad(&renderer.quad_geometry, 
+                        vec2{400 + 40*(f32(i%10)), 10 + 40*f32(i/10)},
+                        vec2{440 + 40*(f32(i%10)), 50 + 40*f32(i/10)},
+                        vec2{0,0}, vec2{1,1},
+                        color_white, 
+                        tex_index = u32(i)
+                    )
+                }*/
+
+                r_push_transform(window.screenspace_transform)
+                r_draw_quad(&renderer.quad_geometry, 
+                    vec2{0, 0},
+                    vec2{f32(window.rect.w), f32(window.rect.h)},
+                    vec2{0,0}, vec2{1,1},
+                    color_black
+                )
+                r_draw_quad(&renderer.quad_geometry, 
+                    vec2{0, 0},
+                    vec2{f32(window.rect.w), f32(window.rect.h)},
+                    vec2{0,0}, vec2{1,1},
+                    color_white, 
+                    tex_index = builtin_texture(.SLIDER_FRAMEBUFFER)
+                )
+            }
+            
+            if app.debug_display_playfield_cursor {
+                r_push_transform(game.playfield_transform)
+                pf_cur_rect: Rect = { game.input.mouse_pos.x, game.input.mouse_pos.y, 20, 20 }
+                r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, builtin_texture(.WHITE),
+                    f32(time_s_since_beginning_of_program()))
             }
 
             notifications_draw(renderer)
@@ -503,7 +505,7 @@ begin_frame :: proc(renderer: ^Renderer) {
     })
 
     r_bind_layer(.BACKGROUND)
-    r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
+    r_bind_pipeline({ pipeline = builtin_pipeline_slot(.QUAD) })
 
     if game.active_mapset != nil {
         for &rt, i in game.active_mapset.render_targets.data {
@@ -518,6 +520,10 @@ begin_frame :: proc(renderer: ^Renderer) {
     r_push_transform(identity_transform)
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
     r_reset_scissor_mode()
+
+    for &layer_state in window.renderer.layer_state {
+        layer_state.scissor = Command_Scissor_Mode{0, 0, i32(window.rect.w), i32(window.rect.h)}
+    }
 
     renderer.transform_queue.len = 0
 
@@ -535,7 +541,7 @@ end_frame :: proc(renderer: ^Renderer) {
         // note(isak): windows window with transparency captures the alpha of the last drawn pixels and uses that for
         // the window's opacity value. when we don't want transparency, clear alpha of every pixel to 1.0
         r_bind_layer(.DEBUG)
-        r_bind_pipeline({builtin_pipeline_slot(.QUAD)})
+        r_bind_pipeline({ pipeline = builtin_pipeline_slot(.QUAD) })
         r_push_transform(window.screenspace_transform)
         r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
         r_bind_framebuffer({0, 0})
@@ -711,7 +717,7 @@ handle_debug_ui_events :: proc() {
     }
     if key_is_pressed(.F2) {
         app.debug_display_slider_bounds = !app.debug_display_slider_bounds
-        app.debug_display_game_cursor = app.debug_display_slider_bounds
+        app.debug_display_playfield_cursor = app.debug_display_slider_bounds
     }
     if key_is_pressed(.F3) {
         app.debug_display_frame_profiler = !app.debug_display_frame_profiler
@@ -754,17 +760,20 @@ handle_debug_ui_events :: proc() {
 process_builtin_shader_changes :: proc(watch: ^Directory_Watch) {
     updated_systems := mapset_check_system_file_watch(watch)
     if updated_systems[.SHADERS] {
-        for &shader in window.shaders.data[:len(Builtin_Pipeline_Slot)] {
+        for &shader in window.shaders.data[:len(Builtin_Shader_Slot)] {
             shader_reinit(&shader)
         }
         // note(isak): mapset custom shaders may share a builtin VS, so reinit them too
         mapset_reinit_custom_shaders(game.active_mapset)
-        
+
         fmt.println("reloaded mapset shaders")
 
         pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.QUAD)], quad_pipeline_desc())
+        pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.QUAD_PREMULTIPLIED)], quad_pipeline_desc(.PREMULTIPLIED))
+        pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.QUAD_PREMULTIPLIED_OVER)], quad_pipeline_desc(.PREMULTIPLIED_OVER))
         pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.SLIDER)], slider_pipeline_desc())
         pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.TEXT)], text_pipeline_desc())
+        pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.TEXT_PREMULTIPLIED)], text_pipeline_desc(.PREMULTIPLIED))
     }
 }
 

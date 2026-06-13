@@ -26,7 +26,7 @@ app: struct {
     debug_display_fontatlas:       bool, // todo(isak): never written to
     debug_display_slider_bounds:   bool,
     debug_display_textures:        bool,
-    debug_display_game_cursor:     bool,
+    debug_display_playfield_cursor:     bool,
 
     map_references:      [dynamic]Map_Reference,
     map_reference_names: [dynamic]cstring, // note(isak): parallel for imgui

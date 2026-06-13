@@ -7,10 +7,25 @@ function on_init()
     -- capture the hitobjects into "scene", prefilter+blur it through two half-res targets,
     -- then additively composite the glow back over the (still crisp) screen
     --Beatmap.capture_layers("scene", { Layer.BACKGROUND, Layer.HITOBJECTS, Layer.UI })
-    Beatmap.add_post_pass{ shader = "blur_h",    src = "scene",                dst = "bloom_a", after = Layer.UI }
-    Beatmap.add_post_pass{ shader = "blur_v",    src = "bloom_a",              dst = "bloom_b", after = Layer.UI }
-    Beatmap.add_post_pass{ shader = "composite", src = { "scene", "bloom_b" }, dst = "screen",  after = Layer.UI }
 
+    Beatmap.capture_layers("scene", { Layer.HITOBJECTS, Layer.CURSOR })
+
+    el_scene = Element.new()
+        :set_tex("scene")
+        :set_premultiplied(true)
+    el_scenecopy = Element.new()
+        :set_tex("scene")
+
+    target = Drawable.new(el_scene, -9999, 999999)
+        :set_fullscreen(true)
+        :set_layer(Layer.DEBUG)
+        --:set_pos(-20, 0)
+
+    target2 = Drawable.new(el_scenecopy, -9999, 999999)
+        :set_fullscreen(true)
+        :set_angle(3.14)
+        :set_layer(Layer.DEBUG)
+        :set_color(Color.rgba(255,255,255,128))
 end
 
 bloom_set = 0
@@ -35,7 +50,10 @@ function on_update(time_ms)
         --Playfield.set_rotation(math.sin(time_ms / 3000) * 0.1)
 
         if bloom_set == 0 then
-            Beatmap.capture_layers("scene", { Layer.BACKGROUND, Layer.HITOBJECTS })
+            Beatmap.add_post_pass{ shader = "blur_h",    src = "scene",                dst = "bloom_a", after = Layer.DEBUG }
+            Beatmap.add_post_pass{ shader = "blur_v",    src = "bloom_a",              dst = "bloom_b", after = Layer.DEBUG }
+            Beatmap.add_post_pass{ shader = "composite", src = { "scene", "bloom_b" }, dst = "screen",  after = Layer.DEBUG }
+
             bloom_set = 1
         end
     end

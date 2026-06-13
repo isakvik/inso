@@ -80,6 +80,26 @@ Shader_Globals :: struct {
     resolution: [2]f32,
 }
 
+// note(isak): commands execute in layer order from per-layer queues, but they get recorded in
+// arbitrary emission order (a drawable can be emitted into a later layer's queue from another
+// layer's recording context). so dedup can't trust an emission-order global "current" value: at
+// execution time a layer's queue inherits whatever GL state the previously-executed layer left,
+// which capture redirects make genuinely vary. instead each layer tracks what it has actually
+// emitted into its own queue this frame; the `emitted` set is cleared at frame start so the first
+// touch of each layer always (re)establishes its state, then same-value binds dedup as usual.
+Layer_State_Field :: enum { FRAMEBUFFER, PIPELINE, TRANSFORM, SCISSOR }
+
+Layer_Render_State :: struct {
+    framebuffer: Command_Bind_Framebuffer,
+    pipeline:    Command_Bind_Pipeline,
+    transform:   Transform,
+    scissor:     Command_Scissor_Mode,
+    ssbo:        [Shader_SSBO_Bind_Slot]Command_Bind_SSBO,
+
+    emitted:      bit_set[Layer_State_Field],
+    ssbo_emitted: bit_set[Shader_SSBO_Bind_Slot],
+}
+
 Renderer :: struct {
     quad_geometry: Buffer(Quad),
     slider_instances: Buffer(vec2),
@@ -98,12 +118,15 @@ Renderer :: struct {
     new_draw_on_next_push: bool,
     current_layer: Layer,
     current_global_data: Shader_Globals,
+
+    // note(isak): "last value emitted anywhere", used only as inheritance defaults for
+    // r_push_current_state. the per-layer layer_state drives the actual dedup decisions.
     current_scissor: Command_Scissor_Mode,
     current_framebuffer: Command_Bind_Framebuffer,
     current_pipeline: Command_Bind_Pipeline,
-
-    current_pipeline_for_layer: [Layer]Command_Bind_Pipeline,
     current_ssbo_binds: [Shader_SSBO_Bind_Slot]Command_Bind_SSBO,
+
+    layer_state: [Layer]Layer_Render_State,
 
     // note(isak): non-bindless texture unit tracking
     texture_unit_map: Texture_Unit_Map,
@@ -176,6 +199,8 @@ renderer_init :: proc() {
         assert(err == .NONE)
         queue.push(&window.shaders, quad_shader)
         queue.push(&window.pipelines, sg.make_pipeline(quad_pipeline_desc()))
+        queue.push(&window.pipelines, sg.make_pipeline(quad_pipeline_desc(.PREMULTIPLIED)))
+        queue.push(&window.pipelines, sg.make_pipeline(quad_pipeline_desc(.PREMULTIPLIED_OVER)))
     }
     {
         slider_shader, err := shader_init(slider_vs_path, slider_fs_path, context.temp_allocator)
@@ -188,8 +213,9 @@ renderer_init :: proc() {
         assert(err == .NONE)
         queue.push(&window.shaders, text_shader)
         queue.push(&window.pipelines, sg.make_pipeline(text_pipeline_desc()))
+        queue.push(&window.pipelines, sg.make_pipeline(text_pipeline_desc(.PREMULTIPLIED)))
     }
-    
+
     window.framebuffers[.SLIDERS] = fbo_init(1, 1, i32(window.rect.w), i32(window.rect.h), gl.RGBA8)
     
 
@@ -642,28 +668,26 @@ _r_framebuffer_resolve :: proc(id: Framebuffer_ID) -> (^GL_Framebuffer, bool) {
     return nil, false
 }
 
-r_check_and_bind_framebuffer :: proc(cmd: Command_Bind_Framebuffer) {
-    if cmd != window.renderer.current_framebuffer {
-        r_bind_framebuffer(cmd)
-    }
-}
-
+// note(isak): each of these dedups against what this layer has already emitted this frame, so a
+// same-value re-bind is free and won't break the current draw batch. the first touch of a layer
+// each frame always emits (the `emitted` set was cleared in batch_begin).
 r_bind_framebuffer :: proc(cmd: Command_Bind_Framebuffer) {
-    window.renderer.new_draw_on_next_push = true
+    ls := &window.renderer.layer_state[window.renderer.current_layer]
+    if .FRAMEBUFFER in ls.emitted && cmd == ls.framebuffer do return
+    ls.framebuffer = cmd
+    ls.emitted += {.FRAMEBUFFER}
     window.renderer.current_framebuffer = cmd
+    window.renderer.new_draw_on_next_push = true
     command_push_bind_framebuffer(cmd)
 }
 
-r_check_and_bind_pipeline :: proc(cmd: Command_Bind_Pipeline) {
-    if cmd.pipeline != window.renderer.current_pipeline_for_layer[window.renderer.current_layer].pipeline {
-        r_bind_pipeline(cmd)
-    }
-}
-
 r_bind_pipeline :: proc(cmd: Command_Bind_Pipeline) {
-    window.renderer.new_draw_on_next_push = true
+    ls := &window.renderer.layer_state[window.renderer.current_layer]
+    if .PIPELINE in ls.emitted && cmd == ls.pipeline do return
+    ls.pipeline = cmd
+    ls.emitted += {.PIPELINE}
     window.renderer.current_pipeline = cmd
-    window.renderer.current_pipeline_for_layer[window.renderer.current_layer] = cmd
+    window.renderer.new_draw_on_next_push = true
     command_push_bind_pipeline(cmd)
 }
 
@@ -676,11 +700,14 @@ _r_get_ssbo_cmd_from_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_slot: Shader_S
 }
 
 _r_push_ssbo :: proc(cmd: Command_Bind_SSBO) {
-    if cmd.slot != .NONE {
-        window.renderer.new_draw_on_next_push = true
-        window.renderer.current_ssbo_binds[cmd.slot] = cmd
-        command_push_bind_ssbo(cmd)
-    }
+    if cmd.slot == .NONE do return
+    ls := &window.renderer.layer_state[window.renderer.current_layer]
+    if cmd.slot in ls.ssbo_emitted && cmd == ls.ssbo[cmd.slot] do return
+    ls.ssbo[cmd.slot] = cmd
+    ls.ssbo_emitted += {cmd.slot}
+    window.renderer.current_ssbo_binds[cmd.slot] = cmd
+    window.renderer.new_draw_on_next_push = true
+    command_push_bind_ssbo(cmd)
 }
 
 r_bind_sbo :: proc(sbo: ^GL_Buffer($T), bind_index: Shader_SSBO_Bind_Slot) {
@@ -721,8 +748,12 @@ r_post_pass :: proc(pass: Command_Post_Pass, after: Layer) {
     screen transform, such that w=1, h=1 corresponds to one pixel.
 */
 r_push_transform :: proc(transform: Transform) {
-    window.renderer.new_draw_on_next_push = true
+    ls := &window.renderer.layer_state[window.renderer.current_layer]
+    if .TRANSFORM in ls.emitted && transform == ls.transform do return
+    ls.transform = transform
+    ls.emitted += {.TRANSFORM}
     window.renderer.current_global_data.transform = transform
+    window.renderer.new_draw_on_next_push = true
     command_push_push_transform({transform})
 }
 
@@ -730,19 +761,22 @@ r_pop_transform :: proc() {
     // todo(isak) implement
 }
 
-r_begin_scissor_mode_pixels :: proc(x, y, w, h: i32) {
-    cmd := Command_Scissor_Mode{x, y, w, h}
-    window.renderer.new_draw_on_next_push = true
+_r_push_scissor :: proc(cmd: Command_Scissor_Mode) {
+    ls := &window.renderer.layer_state[window.renderer.current_layer]
+    if .SCISSOR in ls.emitted && cmd == ls.scissor do return
+    ls.scissor = cmd
+    ls.emitted += {.SCISSOR}
     window.renderer.current_scissor = cmd
+    window.renderer.new_draw_on_next_push = true
     command_push_scissor_mode(cmd)
 }
 
+r_begin_scissor_mode_pixels :: proc(x, y, w, h: i32) {
+    _r_push_scissor(Command_Scissor_Mode{x, y, w, h})
+}
+
 r_begin_scissor_mode_rect :: proc(r: Rect) {
-    // note(isak): y value convention is flipped here
-    cmd := Command_Scissor_Mode{i32(r.x), i32(r.y), i32(r.w), i32(r.h)}
-    window.renderer.new_draw_on_next_push = true
-    window.renderer.current_scissor = cmd
-    command_push_scissor_mode(cmd)
+    _r_push_scissor(Command_Scissor_Mode{i32(r.x), i32(r.y), i32(r.w), i32(r.h)})
 }
 
 r_set_scissor_mode :: proc {
@@ -758,9 +792,7 @@ r_reset_scissor_mode :: proc() {
 /*
     note(isak): layers are processed sequentially via the command buffer system (for transparency blending purposes). 
     this means that if render procedures/scripts are run without matching this order, we might have state issues
-    since the bound state at the end of a layer might not match what one would expect from reading the code.
-    
-    (maybe just keeping state per layer is better? this may require some discipline though.)
+    since the bound state at the end of a layer might not match what one would expect from reading the code
 */
 r_bind_layer :: proc(layer: Layer) {
     window.renderer.current_layer = layer
@@ -770,7 +802,6 @@ r_bind_layer :: proc(layer: Layer) {
 r_check_and_bind_layer :: proc(layer: Layer) {
     if layer != window.renderer.current_layer {
         r_bind_layer(layer)
-        window.renderer.new_draw_on_next_push = true
     }
 }
 
@@ -802,7 +833,7 @@ r_push_current_state :: proc(
     r_bind_framebuffer(cmd_framebuffer)
     r_bind_pipeline(cmd_pipeline)
     r_push_transform(transform)
-    r_begin_scissor_mode_pixels(scissor_region.x, scissor_region.y, scissor_region.w, scissor_region.h)
+    _r_push_scissor(scissor_region)
 
     for ssbo_slot in Shader_SSBO_Bind_Slot {
         _r_push_ssbo(window.renderer.current_ssbo_binds[ssbo_slot])
@@ -836,6 +867,14 @@ commit_transform :: proc(transform: Transform) {
 }
 
 batch_begin :: proc(renderer: ^Renderer) {
+    // note(isak): clear per-layer emission flags so the first state touch of every layer this
+    // frame re-emits, never inheriting another layer's leftover GL state. values persist across
+    // frames so out-of-band drawables can re-establish a layer's last-known state by themselves.
+    for &ls in renderer.layer_state {
+        ls.emitted      = {}
+        ls.ssbo_emitted = {}
+    }
+
     renderer.quad_geometry.data = tbo_advance_and_get(&window.quad_store)
     renderer.quad_geometry.count = 0
 
@@ -872,9 +911,27 @@ batch_flush :: proc(renderer: ^Renderer) {
     batch_begin(renderer)
 }
 
+// note(isak): builtin quad/text draws into an offscreen target (a layer capture) get rerouted
+// through their premultiplied-alpha variants so the captured texture ends up with correct
+// premultiplied rgba. consumers compositing a capture back out point element.shader straight at
+// QUAD_PREMULTIPLIED_OVER, which isn't quad/text so it passes through here unremapped.
+_r_effective_pipeline :: proc(pipeline: Pipeline_ID, write_offscreen: bool) -> Pipeline_ID {
+    if write_offscreen {
+        if pipeline == builtin_pipeline_slot(.QUAD) do return builtin_pipeline_slot(.QUAD_PREMULTIPLIED)
+        if pipeline == builtin_pipeline_slot(.TEXT) do return builtin_pipeline_slot(.TEXT_PREMULTIPLIED)
+    }
+    return pipeline
+}
+
 batch_process_command_buffer :: proc(renderer: ^Renderer) {
     trace := renderer.trace_frame
-    
+
+    // note(isak): the bound pipeline and whether we're writing offscreen both feed pipeline
+    // selection, and they change via separate commands, so track them across the whole frame
+    // (gl state is continuous between layers) and re-resolve the effective pipeline on either.
+    bound_pipeline: Pipeline_ID = builtin_pipeline_slot(.QUAD)
+    write_offscreen: bool
+
     for layer in Layer {
         command_queue := renderer.layer_command_queues[layer]
 
@@ -969,8 +1026,9 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 case .BIND_PIPELINE: {
                     cmd := _command_consume(&command_queue, Command_Bind_Pipeline)
 
-                    sg.apply_pipeline(window.pipelines.data[cmd.pipeline])
-                    
+                    bound_pipeline = cmd.pipeline
+                    sg.apply_pipeline(window.pipelines.data[_r_effective_pipeline(bound_pipeline, write_offscreen)])
+
                     if (trace) { fmt.println("  pipeline", cmd.pipeline) }
                 }
                 case .BIND_FRAMEBUFFER: {
@@ -978,7 +1036,13 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
 
                     read, read_ok := _r_framebuffer_resolve(cmd.read)
                     write, write_ok := _r_framebuffer_resolve(cmd.write)
-                    fbo_bind(read.id if read_ok else 0, write.id if write_ok else 0)
+                    write_id := write.id if write_ok else 0
+                    fbo_bind(read.id if read_ok else 0, write_id)
+
+                    // note(isak): a fb change alone can flip the premultiplied routing (render_drawable
+                    // binds its pipeline before its target), so re-apply the bound pipeline here.
+                    write_offscreen = write_id != 0
+                    sg.apply_pipeline(window.pipelines.data[_r_effective_pipeline(bound_pipeline, write_offscreen)])
 
                     if (trace) { fmt.println("  framebuffer", cmd.read, cmd.write) }
                 }
@@ -1030,6 +1094,11 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                         tbo_bind(&window.quad_store, u32(Shader_SSBO_Bind_Slot.VERTEX_BUFFER))
                         fbo_bind(0, 0)
                         gl.Viewport(0, 0, i32(window.rect.w), i32(window.rect.h))
+
+                        // note(isak): the post pass set its own pipeline + restored the default
+                        // target out from under our trackers; keep them in sync for the next bind.
+                        bound_pipeline = cmd.pipeline
+                        write_offscreen = false
                     }
 
                     if (trace) { fmt.println("  post_pass", cmd.pipeline, cmd.dst, cmd.quad_index) }

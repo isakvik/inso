@@ -86,6 +86,7 @@ Lua_Class_Type :: enum {
     BEATMAP,
     PLAYFIELD,
     WINDOW,
+    SHADER,
 }
 
 // note(isak): our own registration entry, a superset of lua.L_Reg that also carries the doc signature and
@@ -150,6 +151,10 @@ lua_classes: [Lua_Class_Type]Lua_Class = {
     .WINDOW = {
         name            = "Window",
         static_funcs    = luaapi_window_static_funcs,
+    },
+    .SHADER = {
+        name            = "Shader",
+        static_funcs    = luaapi_shader_static_funcs,
     },
 }
 
@@ -246,7 +251,6 @@ lua_create_beatmap_script_context :: proc(script_path: string) {
 
     lua_register_global_funcs(L)
     lua_register_classes(L)
-    lua_register_shader_global(L)
     for e in luaapi_enum_constants {
         lua_register_enum(L, e.t, e.name)
     }
@@ -497,7 +501,8 @@ luaapi_register_global_event :: proc "c" (L: ^lua.State) -> i32 {
     return 0
 }
 
-// note(isak): schedule_event(delay_ms, name) - fires trigger_event(name) after delay_ms of music time.
+
+// note(isak): schedule_event(name, delay_ms) - fires trigger_event(name) after delay_ms of music time.
 // fires even if the script has no on_update. re-entrant safe: callbacks may call schedule_event again.
 luaapi_schedule_event :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
@@ -533,6 +538,31 @@ lua_drain_scheduled_events :: proc(time_ms: f64) {
             i += 1
         }
     }
+}
+
+// note(isak): generic instance-method handler. each class resolves its userdata handle to a
+// pointer differently (slotmap vs slice index), so the resolver is passed in.
+//_lua_op appends self for chainable setters, _lua_get doesn't.
+_lua_op :: proc "c" (
+    L: ^lua.State,
+    resolve: proc "c" (L: ^lua.State) -> (^$T, bool),
+    op: proc "c" (L: ^lua.State, it: ^T) -> i32,
+) -> i32 {
+    context = lua_beatmap.odin_context
+    it, ok := resolve(L)
+    if !ok do return 0
+    return op(L, it) + lua_return_self()
+}
+
+_lua_get :: proc "c" (
+    L: ^lua.State,
+    resolve: proc "c" (L: ^lua.State) -> (^$T, bool),
+    op: proc "c" (L: ^lua.State, it: ^T) -> i32,
+) -> i32 {
+    context = lua_beatmap.odin_context
+    it, ok := resolve(L)
+    if !ok do return 0
+    return op(L, it)
 }
 
 //////////////////////////////////////////////////////
@@ -1006,17 +1036,8 @@ luaapi_hitobject_get_with_any_bits :: proc "c" (L: ^lua.State) -> i32 {
     return _luaapi_hitobject_collect_by_bits(L, require_all = false)
 }
 
-_luaapi_hitobject_op :: proc "c" (
-    L: ^lua.State,
-    op: proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32
-) -> (result: i32) {
-    handle := cast(^int)lua.L_checkudata(L, 1, lua_classes[.HITOBJECT].name)
-    if handle^ < len(game.beatmap.hitobjects) {
-        hobj := &game.beatmap.hitobjects[handle^]
-        result = op(L, hobj) + lua_return_self()
-    }
-    return result
-}
+_luaapi_hitobject_op  :: proc "c" (L: ^lua.State, op: proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32) -> i32 { return _lua_op (L, _lua_resolve_hitobject, op) }
+_luaapi_hitobject_get :: proc "c" (L: ^lua.State, op: proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32) -> i32 { return _lua_get(L, _lua_resolve_hitobject, op) }
 
 luaapi_hitobject_hide :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
@@ -1047,14 +1068,14 @@ luaapi_hitobject_unhide_combo_numbers :: proc "c" (L: ^lua.State) -> (result: i3
 }
 
 luaapi_hitobject_get_index :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         lua.pushinteger(L, lua.Integer(hobj.index))
         return 1
     })
 }
 
 luaapi_hitobject_get_extra_bits :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         lua.pushinteger(L, lua.Integer(hobj.extra_bits))
         return 1
     })
@@ -1062,7 +1083,7 @@ luaapi_hitobject_get_extra_bits :: proc "c" (L: ^lua.State) -> (result: i32) {
 
 // note(isak): has_all_bits(mask) - true if every bit in mask is set on this object
 luaapi_hitobject_has_all_bits :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         context = lua_beatmap.odin_context
         mask := u64(lua_int(2))
         lua.pushboolean(L, b32((hobj.extra_bits & mask) == mask))
@@ -1072,7 +1093,7 @@ luaapi_hitobject_has_all_bits :: proc "c" (L: ^lua.State) -> (result: i32) {
 
 // note(isak): has_any_bits(mask) - true if at least one bit in mask is set on this object
 luaapi_hitobject_has_any_bits :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         context = lua_beatmap.odin_context
         mask := u64(lua_int(2))
         lua.pushboolean(L, b32((hobj.extra_bits & mask) != 0))
@@ -1081,7 +1102,7 @@ luaapi_hitobject_has_any_bits :: proc "c" (L: ^lua.State) -> (result: i32) {
 }
 
 luaapi_hitobject_get_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         lua.pushnumber(L, lua.Number(hobj.pos.x))
         lua.pushnumber(L, lua.Number(hobj.pos.y))
         return 2
@@ -1106,7 +1127,7 @@ luaapi_hitobject_set_pos_screenspace :: proc "c" (L: ^lua.State) -> (result: i32
 }
 
 luaapi_hitobject_get_start_time :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         lua.pushnumber(L, lua.Number(hobj.start_time_ms))
         return 1
     })
@@ -1119,7 +1140,7 @@ luaapi_hitobject_set_start_time :: proc "c" (L: ^lua.State) -> (result: i32) {
 }
 
 luaapi_hitobject_get_end_time :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         lua.pushnumber(L, lua.Number(hobj.end_time_ms))
         return 1
     })
@@ -1132,7 +1153,7 @@ luaapi_hitobject_set_end_time :: proc "c" (L: ^lua.State) -> (result: i32) {
 }
 
 luaapi_hitobject_get_phase :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         lua.pushinteger(L, lua.Integer(hobj.phase))
         return 1
     })
@@ -1178,11 +1199,11 @@ luaapi_hitobject_set_slider_element :: proc "c" (L: ^lua.State) -> (result: i32)
 }
 
 luaapi_hitobject_get_hit_animation_length :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         context = lua_beatmap.odin_context
         hit_anim_len := hobj.custom_hit_animation_len_ms if hobj.custom_hit_animation_len_ms != 0 else OSU_HIT_ANIMATION_LENGTH
         lua.pushnumber(L, lua.Number(hit_anim_len))
-        return 0
+        return 1
     })
 }
 
@@ -1195,7 +1216,7 @@ luaapi_hitobject_set_hit_animation_length :: proc "c" (L: ^lua.State) -> (result
 }
 
 luaapi_hitobject_get_preempt :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         preempt := hobj.custom_preempt_ms if hobj.custom_preempt_ms != 0 else game.beatmap.preempt_ms
         lua.pushnumber(L, lua.Number(preempt))
         return 1
@@ -1211,7 +1232,7 @@ luaapi_hitobject_set_preempt :: proc "c" (L: ^lua.State) -> (result: i32) {
 }
 
 luaapi_hitobject_get_ar :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         context = lua_beatmap.odin_context
         preempt := hobj.custom_preempt_ms if hobj.custom_preempt_ms != 0 else game.beatmap.preempt_ms
         lua.pushnumber(L, lua.Number(convert_preempt_ms_to_approach_rate(preempt)))
@@ -1228,7 +1249,7 @@ luaapi_hitobject_set_ar :: proc "c" (L: ^lua.State) -> (result: i32) {
 }
 
 luaapi_hitobject_get_cs :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         r := f64(hobj.custom_radius_osupx if hobj.custom_radius_osupx != 0 else game.beatmap.circle_radius_osupx)
         lua.pushnumber(L, lua.Number((54.4 * 1.00041 - r) / (4.48 * 1.00041)))
         return 1
@@ -1245,7 +1266,7 @@ luaapi_hitobject_set_cs :: proc "c" (L: ^lua.State) -> (result: i32) {
 
 
 luaapi_hitobject_get_slider_distance :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         distance := hobj.slider_state.distance if hobj.type == .SLIDER else 0
         lua.pushnumber(L, lua.Number(distance))
         return 1
@@ -1253,7 +1274,7 @@ luaapi_hitobject_get_slider_distance :: proc "c" (L: ^lua.State) -> (result: i32
 }
 
 luaapi_hitobject_get_slider_velocity :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         velocity := hobj.slider_state.velocity if hobj.type == .SLIDER else 0
         lua.pushnumber(L, lua.Number(velocity))
         return 1
@@ -1261,7 +1282,7 @@ luaapi_hitobject_get_slider_velocity :: proc "c" (L: ^lua.State) -> (result: i32
 }
 
 luaapi_hitobject_get_slider_duration_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         duration := hobj.slider_state.duration_ms if hobj.type == .SLIDER else 0
         lua.pushnumber(L, lua.Number(duration))
         return 1
@@ -1269,7 +1290,7 @@ luaapi_hitobject_get_slider_duration_ms :: proc "c" (L: ^lua.State) -> (result: 
 }
 
 luaapi_hitobject_get_slider_ball_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         pos := hobj.pos
         if hobj.type == .SLIDER {
             context = lua_beatmap.odin_context
@@ -1283,7 +1304,7 @@ luaapi_hitobject_get_slider_ball_pos :: proc "c" (L: ^lua.State) -> (result: i32
 }
 
 luaapi_hitobject_get_slider_ball_pos_at :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         pos := hobj.pos
         if hobj.type == .SLIDER {
             context = lua_beatmap.odin_context
@@ -1297,11 +1318,10 @@ luaapi_hitobject_get_slider_ball_pos_at :: proc "c" (L: ^lua.State) -> (result: 
 }
 
 luaapi_hitobject_get_slider_ball_angle :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         angle: f32
         if hobj.type == .SLIDER {
             context = lua_beatmap.odin_context
-            path := game.beatmap.slider_paths[hobj.slider_path_index]
             angle = slider_ball_angle_at(hobj, beatmap_music_time_ms(&game.beatmap))
         }
         lua.pushnumber(L, lua.Number(angle))
@@ -1309,11 +1329,10 @@ luaapi_hitobject_get_slider_ball_angle :: proc "c" (L: ^lua.State) -> (result: i
     })
 }
 luaapi_hitobject_get_slider_ball_angle_at :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         angle: f32
         if hobj.type == .SLIDER {
             context = lua_beatmap.odin_context
-            path := game.beatmap.slider_paths[hobj.slider_path_index]
             angle = slider_ball_angle_at(hobj, f64(lua_number(2)))
         }
         lua.pushnumber(L, lua.Number(angle))
@@ -1322,7 +1341,7 @@ luaapi_hitobject_get_slider_ball_angle_at :: proc "c" (L: ^lua.State) -> (result
 }
 
 luaapi_hitobject_get_slider_follow_circle_radius :: proc "c" (L: ^lua.State) -> (result: i32) {
-    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         mult: f32
         if hobj.type == .SLIDER {
             mult = hobj.slider_state.follow_circle_radius_mult
@@ -1336,7 +1355,7 @@ luaapi_hitobject_set_slider_follow_circle_radius :: proc "c" (L: ^lua.State) -> 
         if hobj.type == .SLIDER {
             hobj.slider_state.follow_circle_radius_mult = f32(lua_number(2))
         }
-        return lua_return_self()
+        return 0
     })
 }
 
@@ -1346,7 +1365,7 @@ luaapi_hitobject_set_slider_follow_circle_radius :: proc "c" (L: ^lua.State) -> 
 
 luaapi_drawable_static_funcs := []Lua_Function {
   { "new", luaapi_drawable_new,
-    "Drawable Drawable.new( string|Element source, float start_ms = 0, float end_ms = 0 )",
+    "Drawable Drawable.new( string|Element source, float start_ms = 0, float end_ms = 0, Layer layer = Layer.BACKGROUND )",
     "creates a drawable from a texture name or an Element, on the current render layer." },
 }
 
@@ -1358,6 +1377,9 @@ luaapi_drawable_instance_funcs := []Lua_Function {
   { "clone", luaapi_drawable_clone,
     "Drawable drawable:clone( void )",
     "creates an independent copy of this drawable." },
+  { "get_layer", luaapi_drawable_get_layer,
+    "Layer drawable:get_layer( void )",
+    "the drawable's render layer." },
   { "set_layer", luaapi_drawable_set_layer,
     "self drawable:set_layer( Layer layer )",
     "moves the drawable to the given render layer." },
@@ -1376,24 +1398,51 @@ luaapi_drawable_instance_funcs := []Lua_Function {
   { "set_size", luaapi_drawable_set_size,
     "self drawable:set_size( float w, float h )",
     "sets the drawable's size." },
+  { "get_anchor", luaapi_drawable_get_anchor,
+    "Anchor drawable:get_anchor( void )",
+    "the drawable's anchor point." },
   { "set_anchor", luaapi_drawable_set_anchor,
     "self drawable:set_anchor( Anchor anchor )",
     "sets the drawable's anchor point." },
+  { "set_fullscreen", luaapi_drawable_set_fullscreen,
+    "self drawable:set_fullscreen( bool enabled )",
+    "makes the drawable cover the whole render target (size derived each frame, tracks resizes); pos still nudges it in osupx and set_pos_screenspace in pixels. handy for compositing a captured layer." },
   { "get_color", luaapi_drawable_get_color,
     "int drawable:get_color( void )",
     "the drawable's color as a packed rgba integer." },
   { "set_color", luaapi_drawable_set_color,
     "self drawable:set_color( int color )",
     "sets the drawable's color from a packed rgba integer (see Color.rgb / Color.rgba)." },
+  { "get_vel", luaapi_drawable_get_vel,
+    "(float x, float y) drawable:get_vel( void )",
+    "the drawable's linear velocity." },
   { "set_vel", luaapi_drawable_set_vel,
     "self drawable:set_vel( float x, float y )",
     "sets the drawable's linear velocity." },
+  { "get_accel", luaapi_drawable_get_accel,
+    "(float x, float y) drawable:get_accel( void )",
+    "the drawable's linear acceleration." },
   { "set_accel", luaapi_drawable_set_accel,
     "self drawable:set_accel( float x, float y )",
     "sets the drawable's linear acceleration." },
+  { "get_angle", luaapi_drawable_get_angle,
+    "float drawable:get_angle( void )",
+    "the drawable's rotation in radians." },
+  { "set_angle", luaapi_drawable_set_angle,
+    "self drawable:set_angle( float angle_rad )",
+    "sets the drawable's rotation in radians." },
+  { "get_angle_vel", luaapi_drawable_get_angle_vel,
+    "float drawable:get_angle_vel( void )",
+    "the drawable's angular velocity." },
   { "set_angle_vel", luaapi_drawable_set_angle_vel,
     "self drawable:set_angle_vel( float angle_vel )",
     "sets the drawable's angular velocity." },
+  { "get_animation_rate", luaapi_drawable_get_animation_rate,
+    "float drawable:get_animation_rate( void )",
+    "the drawable's animation playback rate multiplier (1 = normal)." },
+  { "set_animation_rate", luaapi_drawable_set_animation_rate,
+    "self drawable:set_animation_rate( float rate )",
+    "sets the drawable's animation playback rate multiplier (1 = normal)." },
   { "get_start_time", luaapi_drawable_get_start_time,
     "float drawable:get_start_time( void )",
     "the drawable's start time in ms." },
@@ -1490,23 +1539,41 @@ luaapi_drawable_clone :: proc "c" (L: ^lua.State) -> (result: i32) {
     return result
 }
 
-_luaapi_drawable_op :: proc "c" (
-    L: ^lua.State, 
-    op: proc "c" (L: ^lua.State, d: ^Drawable) -> i32
-) -> (result: i32) {
+_lua_resolve_drawable :: proc "c" (L: ^lua.State) -> (^Drawable, bool) {
     context = lua_beatmap.odin_context
     handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
-    d, found := slotmap.get(&game.beatmap.drawables, handle^)
-    
-    if found {
-        result = op(L, d) + lua_return_self()
+    return slotmap.get(&game.beatmap.drawables, handle^)
+}
+
+_lua_resolve_hitobject :: proc "c" (L: ^lua.State) -> (^Hitobject, bool) {
+    handle := cast(^int)lua.L_checkudata(L, 1, lua_classes[.HITOBJECT].name)
+    if handle^ < len(game.beatmap.hitobjects) {
+        return &game.beatmap.hitobjects[handle^], true
     }
-    return result
+    return nil, false
+}
+
+_luaapi_drawable_op  :: proc "c" (L: ^lua.State, op: proc "c" (L: ^lua.State, d: ^Drawable) -> i32) -> i32 { 
+    return _lua_op (L, _lua_resolve_drawable, op) 
+}
+_luaapi_drawable_get :: proc "c" (L: ^lua.State, op: proc "c" (L: ^lua.State, d: ^Drawable) -> i32) -> i32 { 
+    return _lua_get(L, _lua_resolve_drawable, op)
 }
 
 luaapi_drawable_set_layer :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         d.layer = Layer(lua_int(2))
+        return 0
+    })
+}
+
+luaapi_drawable_set_fullscreen :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        if lua_boolean(2) {
+            d.flags += {.FULLSCREEN}
+        } else {
+            d.flags -= {.FULLSCREEN}
+        }
         return 0
     })
 }
@@ -1562,57 +1629,75 @@ luaapi_drawable_set_time :: proc "c" (L: ^lua.State) -> (result: i32) {
         return 0
     })
 }
-luaapi_drawable_get_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_beatmap.odin_context
-    handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
-    d, found := slotmap.get(&game.beatmap.drawables, handle^)
-    if found {
+luaapi_drawable_get_pos :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         lua.pushnumber(L, lua.Number(d.pos.x))
         lua.pushnumber(L, lua.Number(d.pos.y))
-        result = 2
-    }
-    return result
+        return 2
+    })
 }
-luaapi_drawable_get_size :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_beatmap.odin_context
-    handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
-    d, found := slotmap.get(&game.beatmap.drawables, handle^)
-    if found {
+luaapi_drawable_get_size :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         lua.pushnumber(L, lua.Number(d.size.x))
         lua.pushnumber(L, lua.Number(d.size.y))
-        result = 2
-    }
-    return result
+        return 2
+    })
 }
-luaapi_drawable_get_color :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_beatmap.odin_context
-    handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
-    d, found := slotmap.get(&game.beatmap.drawables, handle^)
-    if found {
+luaapi_drawable_get_color :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         lua.pushinteger(L, lua.Integer(color_to_pixel_u8(d.color)))
-        result = 1
-    }
-    return result
+        return 1
+    })
 }
-luaapi_drawable_get_start_time :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_beatmap.odin_context
-    handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
-    d, found := slotmap.get(&game.beatmap.drawables, handle^)
-    if found {
+luaapi_drawable_get_start_time :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         lua.pushnumber(L, lua.Number(d.start_time_ms))
-        result = 1
-    }
-    return result
+        return 1
+    })
 }
-luaapi_drawable_get_end_time :: proc "c" (L: ^lua.State) -> (result: i32) {
-    context = lua_beatmap.odin_context
-    handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
-    d, found := slotmap.get(&game.beatmap.drawables, handle^)
-    if found {
+luaapi_drawable_get_end_time :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         lua.pushnumber(L, lua.Number(d.end_time_ms))
-        result = 1
-    }
-    return result
+        return 1
+    })
+}
+luaapi_drawable_get_layer :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        lua.pushinteger(L, lua.Integer(d.layer))
+        return 1
+    })
+}
+luaapi_drawable_get_anchor :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        lua.pushinteger(L, lua.Integer(d.anchor))
+        return 1
+    })
+}
+luaapi_drawable_get_vel :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        lua.pushnumber(L, lua.Number(d.vel.x))
+        lua.pushnumber(L, lua.Number(d.vel.y))
+        return 2
+    })
+}
+luaapi_drawable_get_accel :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        lua.pushnumber(L, lua.Number(d.accel.x))
+        lua.pushnumber(L, lua.Number(d.accel.y))
+        return 2
+    })
+}
+luaapi_drawable_get_angle_vel :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        lua.pushnumber(L, lua.Number(d.angle_vel))
+        return 1
+    })
+}
+luaapi_drawable_get_animation_rate :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        lua.pushnumber(L, lua.Number(d.animation_rate))
+        return 1
+    })
 }
 luaapi_drawable_set_vel :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
@@ -1623,6 +1708,24 @@ luaapi_drawable_set_vel :: proc "c" (L: ^lua.State) -> (result: i32) {
 luaapi_drawable_set_accel :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         d.accel = vec2{f32(lua_number(2)), f32(lua_number(3))}
+        return 0
+    })
+}
+luaapi_drawable_set_animation_rate :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        d.animation_rate = f64(lua_number(2))
+        return 0
+    })
+}
+luaapi_drawable_get_angle :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        lua.pushnumber(L, lua.Number(d.angle_rad))
+        return 1
+    })
+}
+luaapi_drawable_set_angle :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        d.angle_rad = f32(lua_number(2))
         return 0
     })
 }
@@ -1673,6 +1776,9 @@ luaapi_element_instance_funcs := []Lua_Function {
   { "set_shader", luaapi_element_set_shader,
     "self element:set_shader( string shader_name )",
     "sets the element's shader by mapset pipeline name." },
+  { "set_premultiplied", luaapi_element_set_premultiplied,
+    "self element:set_premultiplied( bool enabled )",
+    "composites the element as an already-premultiplied source (e.g. a captured render target sampled back out) using premultiplied-over blend instead of straight alpha. builtin quad shader only." },
   { "set_render_target", luaapi_element_set_render_target,
     "self element:set_render_target( string render_target_name )",
     "redirects this element's draws into the named render target instead of the screen." },
@@ -1785,6 +1891,17 @@ luaapi_element_set_shader :: proc "c" (L: ^lua.State) -> (result: i32) {
     } else {
         log.error("User error - pipeline not found:", shader_name)
         notify_error("lua: Element:set_shader pipeline not found '%s'", shader_name)
+    }
+    return lua_return_self()
+}
+
+luaapi_element_set_premultiplied :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    userdata := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
+    el_id := uint(userdata^)
+    if el_id < game.beatmap.elements.len {
+        el := q.get_ptr(&game.beatmap.elements, el_id)
+        el.shader = builtin_pipeline_slot(.QUAD_PREMULTIPLIED_OVER if lua_boolean(2) else .QUAD)
     }
     return lua_return_self()
 }
@@ -2308,8 +2425,11 @@ luaapi_beatmap_static_funcs := []Lua_Function {
   { "capture_layers", luaapi_beatmap_capture_layers,
     "void Beatmap.capture_layers( string render_target_name, table layers )",
     "redirects every drawable in the given layers into the named render target." },
+  { "stop_capturing_layers", luaapi_beatmap_stop_capturing_layers,
+    "void Beatmap.stop_capturing_layers( table layers )",
+    "stops redirecting the given layers into a render target." },
   { "add_post_pass", luaapi_beatmap_add_post_pass,
-    "void Beatmap.add_post_pass{ shader=, src=, dst=, after= }",
+    "void Beatmap.add_post_pass{ shader=, src=, dst=, Layer after }",
     "queues a fullscreen shader pass sampling src (string or table) into dst ('screen' or a target name), running after the `after` layer (default HITOBJECTS)." },
   { "set_timing_windows", luaapi_beatmap_set_timing_windows,
     "void Beatmap.set_timing_windows( float marvelous, float good, float ok, float miss )",
@@ -2380,6 +2500,21 @@ luaapi_beatmap_capture_layers :: proc "c" (L: ^lua.State) -> i32 {
         lua.pop(L, 1)
         if layer_val >= 0 && layer_val < len(Layer) {
             game.active_mapset.layer_capture[Layer(layer_val)] = fb
+        }
+    }
+    return 0
+}
+
+luaapi_beatmap_stop_capturing_layers :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua.L_checktype(L, 1, lua.TTABLE)
+    count := int(lua.objlen(L, 1))
+    for i in 1..=count {
+        lua.rawgeti(L, 1, lua.Integer(i))
+        layer_val := int(lua.tointeger(L, -1))
+        lua.pop(L, 1)
+        if layer_val >= 0 && layer_val < len(Layer) {
+            game.active_mapset.layer_capture[Layer(layer_val)] = builtin_framebuffer(.DEFAULT)
         }
     }
     return 0
@@ -2596,22 +2731,17 @@ luaapi_playfield_rotate :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(isak): shader object API
 
-// todo(isak): this is untested code. it's handled in a slightly strange way, so it should be rewritten.
-// currently not hooked up anywhere.
+// todo(isak): this is mostly untested code.
 
-luaapi_shader_funcs := []lua.L_Reg {
-  { "set_param", luaapi_shader_set_param },
-  { "set_vec4",  luaapi_shader_set_vec4  },
-  { nil,         nil                     },
+luaapi_shader_static_funcs := []Lua_Function {
+  { "set_param", luaapi_shader_set_param,
+    "void Shader.set_param( int index, float value )",
+    "writes a single float into the user param buffer at index (0-63)." },
+  { "set_vec4", luaapi_shader_set_vec4,
+    "void Shader.set_vec4( int index, float x, float y, float z, float w )",
+    "writes a vec4 into the user param buffer at index (0-15)." },
 }
 
-lua_register_shader_global :: proc(L: ^lua.State) {
-    lua.newtable(L)
-    lua.L_setfuncs(L, raw_data(luaapi_shader_funcs), 0)
-    lua.setglobal(L, "Shader")
-}
-
-// Shader.set_param(index, value) -- write f32 at index (0-63) into the user param UBO
 luaapi_shader_set_param :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     index := int(lua_int(1))
@@ -2625,7 +2755,6 @@ luaapi_shader_set_param :: proc "c" (L: ^lua.State) -> i32 {
     return 0
 }
 
-// Shader.set_vec4(index, x, y, z, w) -- write 4 floats starting at index*4 (0-15)
 luaapi_shader_set_vec4 :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     index := int(lua_int(1))
@@ -2661,7 +2790,7 @@ luaapi_window_static_funcs := []Lua_Function {
     "sets the window position in pixels." },
   { "set_opacity", luaapi_window_set_opacity,
     "(float opacity) Window.set_opacity( float opacity )",
-    "sets the window opacity." },
+    "fades the background drawable to opacity (0-1) and toggles window transparency below 1." },
   { "debug", luaapi_window_debug,
     "(bool ok) Window.debug( bool ok )",
     "enables or disables debug mode." },
@@ -2683,8 +2812,8 @@ luaapi_window_get_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
 
 luaapi_window_set_size :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_beatmap.odin_context
-    width, heigth     := lua_number(1), lua_number(2)
-    sdl.SetWindowSize(window.handle, i32(width), i32(heigth))
+    width, height     := lua_number(1), lua_number(2)
+    sdl.SetWindowSize(window.handle, i32(width), i32(height))
     return 0
 }
 
@@ -2714,6 +2843,7 @@ luaapi_window_debug :: proc "c" (L: ^lua.State) -> (result: i32) {
 luaapi_window_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_beatmap.odin_context
     x, y     := lua_number(1), lua_number(2)
+    sdl.SetWindowPosition(window.handle, i32(x), i32(y))
     window.rect.x = f32(x)
     window.rect.y = f32(y)
     return 0

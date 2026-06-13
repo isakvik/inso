@@ -199,7 +199,8 @@ luaapi_enum_constants := [?]struct { t: typeid, name: cstring }{
 }
 
 Lua_Event_Registration :: struct {
-    name:         string,   // points into Lua state memory - valid until Lua state is closed
+    name:         string,   // borrows the name_ref'd Lua string's bytes; valid while name_ref is held
+    name_ref:     lua.Ref,  // luaL_ref pinning the name string against GC so `name` stays valid
     callback_ref: lua.Ref,  // luaL_ref into LUA_REGISTRYINDEX
     class:        Lua_Class_Type,
     handle_key:   u64,      // raw handle bits used for GC identification
@@ -207,7 +208,8 @@ Lua_Event_Registration :: struct {
 }
 
 Scheduled_Event :: struct {
-    event_name: string,  // points into Lua state memory - valid until Lua state is closed
+    event_name: string,    // borrows the name_ref'd Lua string's bytes; valid while name_ref is held
+    name_ref:   lua.Ref,   // luaL_ref pinning the name string against GC; released when the event fires
     fire_at_ms: f64,
 }
 
@@ -387,6 +389,17 @@ lua_return_self :: proc "c" () -> i32 {
     return 1
 }
 
+// note(isak): pins the string at stack index `at` in the registry so its TString never gets
+// collected (5.1's GC never relocates it either), keeping the returned borrowed view valid until
+// the paired ref is L_unref'd. used for event names we stash across calls.
+lua_pin_string :: proc "c" (at: i32) -> (borrowed: string, ref: lua.Ref) {
+    L := lua_beatmap.state
+    borrowed = lua_string(at)
+    lua.pushvalue(L, lua.Index(at))
+    ref = lua.L_ref(L, lua.REGISTRYINDEX)
+    return
+}
+
 
 lua_log_error :: proc "c" (log_str: string = "Lua error:", location := #caller_location) {
     L:= lua_beatmap.state
@@ -429,15 +442,21 @@ _lua_push_event_target :: proc(L: ^lua.State, class: Lua_Class_Type, handle_key:
 // and release the callback refs back to the Lua registry.
 _unregister_events_for_handle :: proc(class: Lua_Class_Type, handle_key: u64) {
     L := lua_beatmap.state
+    removed := 0
     i := 0
     for i < len(lua_beatmap.event_registrations) {
         reg := lua_beatmap.event_registrations[i]
         if reg.class == class && reg.handle_key == handle_key {
             lua.L_unref(L, lua.REGISTRYINDEX, c.int(reg.callback_ref))
+            lua.L_unref(L, lua.REGISTRYINDEX, c.int(reg.name_ref))
             unordered_remove(&lua_beatmap.event_registrations, i)
+            removed += 1
         } else {
             i += 1
         }
+    }
+    if removed > 0 {
+        log.infof("lua: collected a {} handle that still had {} event(s) bound", class, removed)
     }
 }
 
@@ -446,14 +465,15 @@ _unregister_events_for_handle :: proc(class: Lua_Class_Type, handle_key: u64) {
 //
 // also note that the handles are casted into a 64 byte key, so there's a limitation on handle types here
 _register_event :: proc(L: ^lua.State, class: Lua_Class_Type, handle_key: u64) -> i32 {
-    event_name := lua_string(2)
     if !lua.isfunction(L, 3) {
         return lua.L_error(L, "register_event: argument 3 must be a function")
     }
+    event_name, name_ref := lua_pin_string(2)
     lua.pushvalue(L, 3)
     callback_ref := lua.L_ref(L, lua.REGISTRYINDEX)
     append(&lua_beatmap.event_registrations, Lua_Event_Registration{
         name         = event_name,
+        name_ref     = name_ref,
         callback_ref = callback_ref,
         class        = class,
         handle_key   = handle_key,
@@ -487,14 +507,15 @@ luaapi_trigger_event :: proc "c" (L: ^lua.State) -> i32 {
 // callback receives only the extra args passed to trigger_event, with no leading self.
 luaapi_register_global_event :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
-    event_name := lua_string(1)
     if !lua.isfunction(L, 2) {
         return lua.L_error(L, "register_global_event: argument 2 must be a function")
     }
+    event_name, name_ref := lua_pin_string(1)
     lua.pushvalue(L, 2)
     callback_ref := lua.L_ref(L, lua.REGISTRYINDEX)
     append(&lua_beatmap.event_registrations, Lua_Event_Registration{
         name         = event_name,
+        name_ref     = name_ref,
         callback_ref = callback_ref,
         is_global    = true,
     })
@@ -506,10 +527,11 @@ luaapi_register_global_event :: proc "c" (L: ^lua.State) -> i32 {
 // fires even if the script has no on_update. re-entrant safe: callbacks may call schedule_event again.
 luaapi_schedule_event :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
-    event_name := lua_string(1)
-    delay_ms   := f64(lua.L_checknumber(L, 2))
+    delay_ms             := f64(lua.L_checknumber(L, 2))
+    event_name, name_ref := lua_pin_string(1)
     append(&lua_beatmap.scheduled_events, Scheduled_Event{
         event_name = event_name,
+        name_ref   = name_ref,
         fire_at_ms = beatmap_music_time_ms(&game.beatmap) + delay_ms,
     })
     return 0
@@ -534,6 +556,7 @@ lua_drain_scheduled_events :: proc(time_ms: f64) {
                 n_args := i32(0) if reg.is_global else i32(1)
                 lua_pcall_with_watchdog(L, n_args, 0, "schedule_event error:")
             }
+            lua.L_unref(L, lua.REGISTRYINDEX, c.int(ev.name_ref))
         } else {
             i += 1
         }
@@ -579,8 +602,10 @@ luaapi_load_file :: proc "c" (L: ^lua.State) -> i32 {
     if lua.L_loadfile(L, full_path) != lua.OK {
         return lua.L_error(L, "User error - script file not found: %s", full_path)
     }
-    
-    lua.pcall(L, 0, 1, 0)
+
+    if lua.pcall(L, 0, 1, 0) != lua.OK {
+        return i32(lua.error(L)) // re-raise the loaded script's runtime error instead of swallowing it
+    }
     return 1
 }
 
@@ -1499,12 +1524,13 @@ luaapi_drawable_new :: proc "c" (L: ^lua.State) -> (result: i32) {
 
     start_time := f64(lua.L_optnumber(L, 2, 0))
     end_time   := f64(lua.L_optnumber(L, 3, 0))
+    layer      := Layer(lua.L_optnumber(L, 4, 0)) // note(isak): default is .BACKGROUND
     
     handle := cast(^Drawable_Handle)lua.newuserdata(L, size_of(Drawable_Handle))
     handle^ = drawable_new_expiring(&game.beatmap.map_expiring_gfx, {
         element = element_id,
         flags = {.ACTIVE},
-        layer = window.renderer.current_layer,
+        layer = layer,
         anchor = .TOP_LEFT,
         
         size = {40, 40}, // note(isak): default size just so we don't get confused when it's not set...
@@ -2380,7 +2406,6 @@ luaapi_sound_play_loop :: proc "c" (L: ^lua.State) -> i32 {
     return 1
 }
 
-// handle:stop()
 luaapi_sound_stop :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     handle := cast(^slotmap.Handle)lua.L_checkudata(L, 1, lua_classes[.SOUND].name)
@@ -2392,6 +2417,9 @@ luaapi_sound_stop :: proc "c" (L: ^lua.State) -> i32 {
 luaapi_sound_gc :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     handle := cast(^slotmap.Handle)lua.L_checkudata(L, 1, lua_classes[.SOUND].name)
+    if game_sound_is_playing(handle^) {
+        log.info("lua: GC collected a Sound handle whose loop was still playing. keep the handle in a variable or call :stop() yourself if this wasn't intended.")
+    }
     game_sound_stop(handle^)
     return 0
 }

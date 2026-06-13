@@ -13,18 +13,16 @@ function on_init()
     el_scene = Element.new()
         :set_tex("scene")
         :set_premultiplied(true)
-    el_scenecopy = Element.new()
-        :set_tex("scene")
+    el_scenecopy = el_scene:clone()
+        :set_premultiplied(false)
 
-    target = Drawable.new(el_scene, -9999, 999999)
+    target = Drawable.new(el_scene, -9999, 999999, Layer.DEBUG)
         :set_fullscreen(true)
-        :set_layer(Layer.DEBUG)
         --:set_pos(-20, 0)
 
-    target2 = Drawable.new(el_scenecopy, -9999, 999999)
+    target2 = Drawable.new(el_scenecopy, -9999, 999999, Layer.DEBUG)
         :set_fullscreen(true)
-        :set_angle(3.14)
-        :set_layer(Layer.DEBUG)
+        :set_angle(math.pi)
         :set_color(Color.rgba(255,255,255,128))
 end
 

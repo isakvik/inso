@@ -171,6 +171,7 @@ Slider_Flag :: enum {
     HEAD_HIT,
     HEAD_CONTINGENCY_WINDOW_PASSED,
     END_TRACKED,
+    FINALIZED, // note(isak): scoring done at end_time; the slider lingers for its fade-out tail
 }
 
 Slider_Handles :: struct {
@@ -490,7 +491,15 @@ playfield_build_transform :: proc "contextless" () -> Transform {
         0, 0,  1,
     }
 
-    return mat3_to_transform(ndc_from_px * mat3_affine({cx, cy}, k, game.beatmap.playfield_rotation_rad) * t_center)
+    anchor_px := vec2{cx, cy} + k * (game.beatmap.playfield_rotation_anchor_osupx - PLAYFIELD_SIZE_OSUPX * 0.5)
+    rotate_about_anchor := mat3_affine(anchor_px, 1, game.beatmap.playfield_rotation_rad) * mat3{
+        1, 0, -anchor_px.x,
+        0, 1, -anchor_px.y,
+        0, 0,  1,
+    }
+    px_from_osupx := mat3_affine({cx, cy}, k, 0) * t_center
+
+    return mat3_to_transform(ndc_from_px * rotate_about_anchor * px_from_osupx)
 }
 
 
@@ -573,12 +582,12 @@ osu_on_update :: proc(dt: f64) {
     #reverse for &hobj in visible_hobjs {
         if .HIDDEN_BY_SCRIPT in hobj.flags do continue
         r_check_and_bind_layer(.HITOBJECTS)
-        if hobj.start_time_ms - hitobject_preempt_ms(&hobj) <= map_time && map_time <= hobj.end_time_ms {
-            
+        if hobj.start_time_ms - hitobject_preempt_ms(&hobj) <= map_time && map_time <= hobj.end_time_ms + OSU_HIT_ANIMATION_LENGTH {
+
             if hobj.type == .SLIDER {
                 path := &game.beatmap.slider_paths[hobj.slider_path_index]
-                slider_render_path(&window.renderer, &hobj, path)
-    
+                slider_render_path(&window.renderer, &hobj, path, map_time)
+
                 r_push_transform(game.playfield_transform)
                 slider_render_gfx(&hobj, map_time)
             }

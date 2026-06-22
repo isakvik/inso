@@ -42,6 +42,7 @@ Beatmap :: struct {
     playfield_translation_osupx: vec2,
     playfield_scale: f32,
     playfield_rotation_rad: f32,
+    playfield_rotation_anchor_osupx: vec2,
 
     deferred_activations: [dynamic]Deferred_Activation,
     
@@ -97,6 +98,7 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     beatmap.playfield_scale = 1.0
     beatmap.playfield_translation_osupx = {}
     beatmap.playfield_rotation_rad = 0
+    beatmap.playfield_rotation_anchor_osupx = {256, 192}
     game.playfield_dirty_transform = true
     
     queue.init(&beatmap.judgements, 8192, memory.allocators[.JUDGEMENTS])

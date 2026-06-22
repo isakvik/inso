@@ -14,9 +14,7 @@ judgement_new :: proc(hobj: ^Hitobject, type: Judgement_Type, time_error_ms: f64
     hobj.judgement_index = int(game.beatmap.judgements.len)
     queue.append(&game.beatmap.judgements, Judgement{ type, time })
     
-    if lua_cares_about_event(.ON_JUDGEMENT) {
-        lua_beatmap_on_judgement(hobj.index, type, time_error_ms)
-    }
+    lua_beatmap_on_judgement(hobj.index, type, time_error_ms)
 }
 
 judgement_new_drawable :: proc(hobj: ^Hitobject) {
@@ -303,19 +301,26 @@ slider_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
         slider.flags |= {.HEAD_CHECKED}
     }
 
-    if map_time >= hobj.start_time_ms {
+    if map_time >= hobj.start_time_ms && .FINALIZED not_in slider.flags {
         slider_update(hobj, map_time)
     }
 
-    // note(isak): we gotta process results (and the contingency) before we let the slider expire
+    // note(isak): score the slider at end_time, then keep it alive through the fade-out tail before teardown
     if .HEAD_CHECKED in slider.flags && map_time > hobj.end_time_ms {
-        slider_expire(hobj)
-        expired = true
+        if .FINALIZED not_in slider.flags {
+            slider_finalize(hobj)
+        }
+        if map_time > hobj.end_time_ms + OSU_HIT_ANIMATION_LENGTH {
+            slider_clear_handles(hobj)
+            hobj.flags &~= {.VISIBLE}
+            hobj.flags |= {.EXPIRED}
+            expired = true
+        }
     }
     return expired
 }
 
-// note(isak): slider head click is recorded, final judgement is deferred to slider_expire
+// note(isak): slider head click is recorded, final judgement is deferred to slider_finalize
 slider_on_click :: proc(hobj: ^Hitobject, result: Judgement_Type) {
     slider := &hobj.slider_state
 
@@ -501,7 +506,7 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
     }
 }
 
-slider_expire :: proc(hobj: ^Hitobject) {
+slider_finalize :: proc(hobj: ^Hitobject) {
     slider := &hobj.slider_state
 
     if .END_TRACKED in slider.flags {
@@ -531,9 +536,7 @@ slider_expire :: proc(hobj: ^Hitobject) {
     judgement_new(hobj, result, 0)
     judgement_new_drawable(hobj)
     hitobject_emit_phase_transition(hobj, result == .MISS ? .MISS : .HIT)
-    slider_clear_handles(hobj)
-    hobj.flags &~= {.VISIBLE}
-    hobj.flags |= {.EXPIRED}
+    slider.flags |= {.FINALIZED}
 }
 
 // note(isak): play the hitsound for one slider edge (head/repeat/tail). normal hit comes from the edge's

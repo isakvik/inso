@@ -185,9 +185,18 @@ end
 --    end
 --end
 
---function on_judgement(hobj, judgement, timing_error_ms) 
---    print(judgement)
+--function on_judgement(hobj, judgement, timing_error_ms)
+--    if judgement == Judgement.MISS then print("ouch") end
 --end
+--
+---- per-note reaction, attach when you build the object (gets self):
+----   hobj:register_event("judgement", function(self, judgement, err) ... end)
+---- or globally (no self); "judgement" for all, "judgement:Miss" for one type:
+----   register_global_event("judgement:Miss", function(judgement, err) ... end)
+--
+---- run a snippet on the next frame at/after a music time, or after a delay:
+----   schedule_at(31200, function() Playfield.set_rotation(0.3) end)
+----   schedule_after(250, function() print("quarter second later") end)
 --
 --function on_kiai_change(kiai) 
 --    print("kiai time: ", kiai)

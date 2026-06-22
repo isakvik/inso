@@ -181,8 +181,14 @@ luaapi_global_funcs := []Lua_Function {
     "void trigger_event( string name, ... )",
     "fires every callback registered under name. object callbacks get (self, ...), globals get (...)." },
   { "schedule_event", luaapi_schedule_event,
-    "void schedule_event( string name, float delay_ms )",
+    "void schedule_event( string name, float delay_ms = 0 )",
     "fires trigger_event(name) after delay_ms of music time. safe to call again from within a callback." },
+  { "schedule_at", luaapi_schedule_at,
+    "void schedule_at( float time_ms, fn callback )",
+    "runs callback on the first frame at or after music time time_ms. safe to call again from within a callback." },
+  { "schedule_after", luaapi_schedule_after,
+    "void schedule_after( float delay_ms, fn callback )",
+    "runs callback on the first frame at least delay_ms of music time from now. safe to call again from within a callback." },
   { "register_global_event", luaapi_register_global_event,
     "void register_global_event( string name, fn callback )",
     "registers a callback not tied to any object; it receives only the extra args from trigger_event." },
@@ -208,9 +214,12 @@ Lua_Event_Registration :: struct {
 }
 
 Scheduled_Event :: struct {
-    event_name: string,    // borrows the name_ref'd Lua string's bytes; valid while name_ref is held
-    name_ref:   lua.Ref,   // luaL_ref pinning the name string against GC; released when the event fires
-    fire_at_ms: f64,
+    fire_at_ms:   f64,
+    // exactly one path is active. callback_ref != lua.NOREF -> run that closure directly.
+    // otherwise fall through to the named trigger_event fan-out below.
+    callback_ref: lua.Ref,
+    event_name:   string,  // borrows the name_ref'd Lua string's bytes; valid while name_ref is held
+    name_ref:     lua.Ref, // luaL_ref pinning the name string against GC; released when the event fires
 }
 
 
@@ -413,8 +422,7 @@ lua_log_error :: proc "c" (log_str: string = "Lua error:", location := #caller_l
     //intrinsics.debug_trap()
 }
 
-// note(isak): pushes a handle and associates it with the given name. 
-// to lua, the handle is opaque
+// note(isak): pushes a handle and associates it with the given name. to lua, the handle is opaque
 lua_create_userdata :: proc "c" (L: ^lua.State, handle: $T, name: cstring) {
     data := cast(^T)lua.newuserdata(L, size_of(T))
     data^ = handle
@@ -426,8 +434,7 @@ lua_create_userdata :: proc "c" (L: ^lua.State, handle: $T, name: cstring) {
 // note(isak): custom event hook API
 
 // note(isak): pushes the object userdata for the given class + handle_key onto the Lua stack.
-// called at trigger time - we reconstruct the userdata rather than holding a ref to it,
-// so the object's GC can fire freely.
+// called at trigger time
 _lua_push_event_target :: proc(L: ^lua.State, class: Lua_Class_Type, handle_key: u64) {
     #partial switch class {
     case .HITOBJECT: lua_create_userdata(L, int(handle_key), lua_classes[.HITOBJECT].name)
@@ -463,7 +470,7 @@ _unregister_events_for_handle :: proc(class: Lua_Class_Type, handle_key: u64) {
 // note(isak): shared implementation for all three :register_event instance methods.
 // called after context is set and the class/handle_key are extracted from the userdata.
 //
-// also note that the handles are casted into a 64 byte key, so there's a limitation on handle types here
+// also note that the handles are cast into a 64 byte key, so there's a limitation on handle types here
 _register_event :: proc(L: ^lua.State, class: Lua_Class_Type, handle_key: u64) -> i32 {
     if !lua.isfunction(L, 3) {
         return lua.L_error(L, "register_event: argument 3 must be a function")
@@ -523,18 +530,43 @@ luaapi_register_global_event :: proc "c" (L: ^lua.State) -> i32 {
 }
 
 
-// note(isak): schedule_event(name, delay_ms) - fires trigger_event(name) after delay_ms of music time.
-// fires even if the script has no on_update. re-entrant safe: callbacks may call schedule_event again.
 luaapi_schedule_event :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     delay_ms             := f64(lua.L_checknumber(L, 2))
     event_name, name_ref := lua_pin_string(1)
     append(&lua_beatmap.scheduled_events, Scheduled_Event{
-        event_name = event_name,
-        name_ref   = name_ref,
-        fire_at_ms = beatmap_music_time_ms(&game.beatmap) + delay_ms,
+        event_name   = event_name,
+        name_ref     = name_ref,
+        callback_ref = lua.NOREF,
+        fire_at_ms   = beatmap_music_time_ms(&game.beatmap) + delay_ms,
     })
     return 0
+}
+
+_schedule_callback :: proc "c" (L: ^lua.State, fire_at_ms: f64) -> i32 {
+    context = lua_beatmap.odin_context
+    if !lua.isfunction(L, 2) {
+        return lua.L_error(L, "schedule: argument 2 must be a function")
+    }
+    lua.pushvalue(L, 2)
+    callback_ref := lua.L_ref(L, lua.REGISTRYINDEX)
+    append(&lua_beatmap.scheduled_events, Scheduled_Event{
+        fire_at_ms   = fire_at_ms,
+        callback_ref = callback_ref,
+        name_ref     = lua.NOREF,
+    })
+    return 0
+}
+
+luaapi_schedule_at :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    return _schedule_callback(L, f64(lua.L_checknumber(L, 1)))
+}
+
+luaapi_schedule_after :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    delay_ms := f64(lua.L_checknumber(L, 1))
+    return _schedule_callback(L, beatmap_music_time_ms(&game.beatmap) + delay_ms)
 }
 
 // note(isak): called each frame from beatmap_on_update. fires any scheduled events whose
@@ -545,8 +577,17 @@ lua_drain_scheduled_events :: proc(time_ms: f64) {
     i := 0
     for i < len(lua_beatmap.scheduled_events) {
         ev := lua_beatmap.scheduled_events[i]
-        if ev.fire_at_ms <= time_ms {
-            unordered_remove(&lua_beatmap.scheduled_events, i)
+        if ev.fire_at_ms > time_ms {
+            i += 1
+            continue
+        }
+        unordered_remove(&lua_beatmap.scheduled_events, i)
+
+        if ev.callback_ref != lua.NOREF {
+            lua.rawgeti(L, lua.REGISTRYINDEX, lua.Integer(ev.callback_ref))
+            lua_pcall_with_watchdog(L, 0, 0, "schedule_at error:")
+            lua.L_unref(L, lua.REGISTRYINDEX, c.int(ev.callback_ref))
+        } else {
             for reg in lua_beatmap.event_registrations {
                 if reg.name != ev.event_name do continue
                 lua.rawgeti(L, lua.REGISTRYINDEX, lua.Integer(reg.callback_ref))
@@ -557,8 +598,6 @@ lua_drain_scheduled_events :: proc(time_ms: f64) {
                 lua_pcall_with_watchdog(L, n_args, 0, "schedule_event error:")
             }
             lua.L_unref(L, lua.REGISTRYINDEX, c.int(ev.name_ref))
-        } else {
-            i += 1
         }
     }
 }
@@ -774,35 +813,71 @@ lua_beatmap_on_cursor_moved :: proc(pos: vec2) {
     )
 }
 
-lua_beatmap_on_judgement :: proc(hobj_index: int, judgement: Judgement_Type, timing_error_ms: f64) {
-    Lua_Judgement_Result :: struct {
-        hobj_index: int,
-        judgement: Judgement_Type,
-        timing_error_ms: f64,
+// note(isak): the bus event key suffix for a judgement type, e.g. "judgement:Miss".
+// only used to build/match registration names; callbacks receive the numeric enum value.
+judgement_type_name :: proc "contextless" (j: Judgement_Type) -> cstring {
+    switch j {
+    case .NONE:                    return "None"
+    case .MISS:                    return "Miss"
+    case .OK:                      return "Ok"
+    case .GOOD:                    return "Good"
+    case .MARVELOUS:               return "Marvelous"
+    case .SLIDER_SMALL_SCOREPOINT: return "SliderSmallScorepoint"
+    case .SLIDER_LARGE_SCOREPOINT: return "SliderLargeScorepoint"
+    case .SLIDER_SCOREPOINT_MISS:  return "SliderScorepointMiss"
+    case .IGNORED_HIT:             return "IgnoredHit"
+    case .COMBO_BREAK:             return "ComboBreak"
     }
-    lua_call_beatmap_func(lua_beatmap_event_names[.ON_JUDGEMENT], Lua_Judgement_Result{hobj_index, judgement, timing_error_ms},
-        proc(judgement: Lua_Judgement_Result) -> i32 {
-            
-            judgement_name: cstring
-            switch judgement.judgement {
-            case .NONE: judgement_name = "None"
-            case .MISS: judgement_name = "Miss"
-            case .OK: judgement_name = "Ok"
-            case .GOOD: judgement_name = "Good"
-            case .MARVELOUS: judgement_name = "Marvelous"
-            case .SLIDER_SMALL_SCOREPOINT: judgement_name = "SliderSmallScorepoint"
-            case .SLIDER_LARGE_SCOREPOINT: judgement_name = "SliderLargeScorepoint"
-            case .SLIDER_SCOREPOINT_MISS: judgement_name = "SliderScorepointMiss"
-            case .IGNORED_HIT: judgement_name = "IgnoredHit"
-            case .COMBO_BREAK: judgement_name = "ComboBreak"
-            }
-            
-            lua_create_userdata(lua_beatmap.state, judgement.hobj_index, lua_classes[.HITOBJECT].name)
-            lua.pushstring(lua_beatmap.state, judgement_name)
-            lua.pushnumber(lua_beatmap.state, lua.Number(judgement.timing_error_ms))
-            return 3
+    return "None"
+}
+
+// note(isak): fires the event-bus side of a judgement. per-object callbacks registered on this
+// exact hitobject under "judgement" get (self, value, err); globals registered under "judgement"
+// and "judgement:<Type>" get (value, err). value is the numeric Judgement enum, so scripts compare
+// against the exported Judgement table. composes with register_event / register_global_event - no
+// separate firing path to keep in sync.
+_lua_dispatch_judgement_events :: proc(hobj_index: int, judgement: Judgement_Type, timing_error_ms: f64) {
+    L := lua_beatmap.state
+    typed := strings.concatenate({"judgement:", string(judgement_type_name(judgement))}, context.temp_allocator)
+
+    for reg in lua_beatmap.event_registrations {
+        per_object := !reg.is_global &&
+            reg.class == .HITOBJECT &&
+            reg.handle_key == u64(hobj_index) &&
+            reg.name == "judgement"
+        global := reg.is_global && (reg.name == "judgement" || reg.name == typed)
+        if !per_object && !global do continue
+
+        lua.rawgeti(L, lua.REGISTRYINDEX, lua.Integer(reg.callback_ref))
+        n_args := i32(2)
+        if per_object {
+            _lua_push_event_target(L, .HITOBJECT, u64(hobj_index))
+            n_args = 3
         }
-    )
+        lua.pushinteger(L, cast(lua.Integer)judgement)
+        lua.pushnumber(L, lua.Number(timing_error_ms))
+        lua_pcall_with_watchdog(L, n_args, 0, "judgement event error:")
+    }
+}
+
+lua_beatmap_on_judgement :: proc(hobj_index: int, judgement: Judgement_Type, timing_error_ms: f64) {
+    if lua_cares_about_event(.ON_JUDGEMENT) {
+        Lua_Judgement_Result :: struct {
+            hobj_index:      int,
+            judgement:       Judgement_Type,
+            timing_error_ms: f64,
+        }
+        lua_call_beatmap_func(lua_beatmap_event_names[.ON_JUDGEMENT], Lua_Judgement_Result{hobj_index, judgement, timing_error_ms},
+            proc(result: Lua_Judgement_Result) -> i32 {
+                lua_create_userdata(lua_beatmap.state, result.hobj_index, lua_classes[.HITOBJECT].name)
+                lua.pushinteger(lua_beatmap.state, cast(lua.Integer)result.judgement)
+                lua.pushnumber(lua_beatmap.state, lua.Number(result.timing_error_ms))
+                return 3
+            }
+        )
+    }
+
+    _lua_dispatch_judgement_events(hobj_index, judgement, timing_error_ms)
 }
 
 
@@ -1402,6 +1477,12 @@ luaapi_drawable_instance_funcs := []Lua_Function {
   { "clone", luaapi_drawable_clone,
     "Drawable drawable:clone( void )",
     "creates an independent copy of this drawable." },
+  { "get_element", luaapi_drawable_get_element,
+    "Element drawable:get_element( void )",
+    "gets the underlying element type of the drawable." },
+  { "set_element", luaapi_drawable_set_element,
+    "self drawable:set_element( Element el )",
+    "sets the underlying element type of the drawable to the given element." },
   { "get_layer", luaapi_drawable_get_layer,
     "Layer drawable:get_layer( void )",
     "the drawable's render layer." },
@@ -1758,6 +1839,18 @@ luaapi_drawable_set_angle :: proc "c" (L: ^lua.State) -> (result: i32) {
 luaapi_drawable_set_angle_vel :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         d.angle_vel = f32(lua_number(2))
+        return 0
+    })
+}
+luaapi_drawable_get_element :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        lua_create_userdata(L, d.element, lua_classes[.ELEMENT].name)
+        return 1
+    })
+}
+luaapi_drawable_set_element :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        d.element = (cast(^Element_ID)lua.L_checkudata(L, 2, lua_classes[.ELEMENT].name))^
         return 0
     })
 }
@@ -2705,7 +2798,10 @@ luaapi_playfield_static_funcs := []Lua_Function {
     "sets the playfield scale multiplier (1.0 = default size)." },
   { "set_rotation", luaapi_playfield_set_rotation,
     "void Playfield.set_rotation( float radians )",
-    "sets the playfield rotation in radians around its center." },
+    "sets the playfield rotation in radians around the rotation anchor." },
+  { "set_rotation_anchor", luaapi_playfield_set_rotation_anchor,
+    "void Playfield.set_rotation_anchor( float x, float y )",
+    "sets the rotation pivot in osupx (default 256, 192 = visible playfield center)." },
   { "translate", luaapi_playfield_translate,
     "void Playfield.translate( float x, float y )",
     "adds to the current playfield translation in osupx." },
@@ -2730,10 +2826,18 @@ luaapi_playfield_set_scale :: proc "c" (L: ^lua.State) -> i32 {
     return 0
 }
 
-// set_rotation(rad) - rotation in radians around the playfield center
+// set_rotation(rad) - rotation in radians around the rotation anchor
 luaapi_playfield_set_rotation :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     game.beatmap.playfield_rotation_rad = f32(lua.L_checknumber(L, 1))
+    game.playfield_dirty_transform = true
+    return 0
+}
+
+// set_rotation_anchor(x, y) - rotation pivot in osupx (default 256, 192)
+luaapi_playfield_set_rotation_anchor :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    game.beatmap.playfield_rotation_anchor_osupx = {f32(lua.L_checknumber(L, 1)), f32(lua.L_checknumber(L, 2))}
     game.playfield_dirty_transform = true
     return 0
 }

@@ -1,6 +1,6 @@
 @echo off
 
-set VERSION=0.1.2
+set VERSION=0.1.3
 set release_dir=build-release
 set exec_name=notosu.exe
 set zip_name=notosu-%VERSION%.zip

@@ -139,7 +139,9 @@ function on_update(time_ms)
         -- hobj:set_cs(math.cos(time_ms*(0.003+i*0.000005))*2 + 3)
     end
     
-    --Playfield.set_rotation(math.sin(time_ms / 3000) * 0.1)
+    -- rotation anchor demo: pivot the whole playfield about its top-left corner instead of center
+    Playfield.set_rotation_anchor(0, 0)
+    Playfield.set_rotation(math.sin(time_ms / 3000) * 0.1)
 end
 
 --function on_beat(beat)

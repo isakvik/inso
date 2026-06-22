@@ -20,13 +20,17 @@ function on_init()
         :set_fullscreen(true)
         --:set_pos(-20, 0)
 
-    target2 = Drawable.new(el_scenecopy, -9999, 999999, Layer.DEBUG)
-        :set_fullscreen(true)
+    target2 = target:clone()
+        :set_element(el_scenecopy)
         :set_angle(math.pi)
         :set_color(Color.rgba(255,255,255,128))
-end
 
-bloom_set = 0
+    schedule_at(30000, function () 
+        Beatmap.add_post_pass{ shader = "blur_h",    src = "scene",                dst = "bloom_a", after = Layer.DEBUG }
+        Beatmap.add_post_pass{ shader = "blur_v",    src = "bloom_a",              dst = "bloom_b", after = Layer.DEBUG }
+        Beatmap.add_post_pass{ shader = "composite", src = { "scene", "bloom_b" }, dst = "screen",  after = Layer.DEBUG }
+    end)
+end
 
 function on_update(time_ms)
     for ii, hobj in ipairs(Hitobject.get_visible()) do
@@ -45,15 +49,6 @@ function on_update(time_ms)
     if time_ms > 31000 then
         -- bloom strength: param 0 is read by composite.fs.glsl as BLOOM_STRENGTH (params[0].x)
         Shader.set_param(0, (time_ms/10000 - 3)*math.sin(time_ms*0.0002))
-        --Playfield.set_rotation(math.sin(time_ms / 3000) * 0.1)
-
-        if bloom_set == 0 then
-            Beatmap.add_post_pass{ shader = "blur_h",    src = "scene",                dst = "bloom_a", after = Layer.DEBUG }
-            Beatmap.add_post_pass{ shader = "blur_v",    src = "bloom_a",              dst = "bloom_b", after = Layer.DEBUG }
-            Beatmap.add_post_pass{ shader = "composite", src = { "scene", "bloom_b" }, dst = "screen",  after = Layer.DEBUG }
-
-            bloom_set = 1
-        end
     end
 end
 

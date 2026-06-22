@@ -240,6 +240,9 @@ Drawable_Flag :: enum u32 {
     // set on preempt-phase drawables so they fade in using baked timing, not live hitobject preempt.
     FADE_IN,
 
+    // note(isak): fades alpha from 1 to 0 over the last OSU_HIT_ANIMATION_LENGTH ms before end_time_ms.
+    FADE_OUT,
+
     // note(isak): the quad covers the whole render target (size is derived each frame), while pos
     // still nudges it in osupx. handy for compositing a screen-sized capture without size math.
     FULLSCREEN,
@@ -734,6 +737,10 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
         fade_in_ms := min((fade_ref_ms - d.start_time_ms) * 0.4, 400.0)
         color.a = u8(f32(color.a) * f32(clamp(relative_time_at / fade_in_ms, 0, 1)))
     }
+    if .FADE_OUT in d.flags {
+        fade_out_ms := f64(OSU_HIT_ANIMATION_LENGTH)
+        color.a = u8(f32(color.a) * f32(clamp((d.end_time_ms - at_time) / fade_out_ms, 0, 1)))
+    }
 
     r_check_and_bind_layer(d.layer)
 
@@ -809,7 +816,20 @@ slider_screenspace_bounding_box :: proc(hobj: ^Hitobject, slider: ^Slider_Path, 
 }
 
 
-slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Path) {
+// note(isak): the immediate-mode body can't use the drawable FADE_IN/FADE_OUT flags, so it mirrors their
+// math here: fade in over the preempt (same as circles), fade out over the tail past end_time.
+slider_body_alpha :: proc(hobj: ^Hitobject, map_time: f64) -> f32 {
+    preempt := hitobject_preempt_ms(hobj)
+    fade_in_ms := min(preempt * 0.4, 400.0)
+    fade_in := clamp((map_time - (hobj.start_time_ms - preempt)) / fade_in_ms, 0, 1)
+
+    fade_out_ms := f64(OSU_HIT_ANIMATION_LENGTH)
+    fade_out := clamp((hobj.end_time_ms + fade_out_ms - map_time) / fade_out_ms, 0, 1)
+
+    return f32(min(fade_in, fade_out))
+}
+
+slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Path, map_time: f64) {
     // note(isak): slider geometry is in CS-normalized units (osupx / radius)
     r := hitobject_radius_osupx(hobj)
     cs_to_osupx := mat3{r, 0, 0, 0, r, 0, 0, 0, 1}
@@ -882,10 +902,10 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     }   
     r_set_scissor_mode(scissor_rect)
     
-    r_draw_rect_with_uv(&renderer.quad_geometry, 
+    r_draw_rect_with_uv(&renderer.quad_geometry,
                         slider_rect,
                         slider_uvs,
-                        color_white, 
+                        with_alpha(color_white, slider_body_alpha(hobj, map_time)),
                         builtin_texture(.SLIDER_FRAMEBUFFER))
     r_reset_scissor_mode()
 }
@@ -907,15 +927,16 @@ slider_part_element :: proc(hobj: ^Hitobject, part: Slider_Part) -> Element_ID {
 }
 
 // note(isak): size is in radius units (multiplied by the CS radius at render time via hobj_index)
-slider_drawable_new :: proc(hobj: ^Hitobject, part: Slider_Part, size_radius_units: vec2, color: Color) -> Drawable_Handle {
+slider_drawable_new :: proc(hobj: ^Hitobject, part: Slider_Part, size_radius_units: vec2, color: Color, flags: Drawable_Flags = {}) -> Drawable_Handle {
     return drawable_new(Drawable{
+        flags         = flags,
         element       = slider_part_element(hobj, part),
         layer         = .HITOBJECTS,
         size          = size_radius_units,
         anchor        = .CENTER,
         color         = color,
         start_time_ms = hobj.start_time_ms - hitobject_preempt_ms(hobj),
-        end_time_ms   = hobj.end_time_ms + OSU_HIT_ANIMATION_LENGTH,
+        end_time_ms   = hobj.end_time_ms,
         hobj_index    = hobj.index + 1,
     })
 }
@@ -935,10 +956,10 @@ slider_create_gfx :: proc(hobj: ^Hitobject) {
     end_size    := vec2{2, 2}
 
     gfx := &slider.gfx
-    gfx.end_circle   = slider_drawable_new(hobj, .END,           end_size,    combo)
-    gfx.end_overlay  = slider_drawable_new(hobj, .END_OVERLAY,   end_size,    color_white)
-    gfx.head_circle  = slider_drawable_new(hobj, .END,           end_size,    combo)
-    gfx.head_overlay = slider_drawable_new(hobj, .END_OVERLAY,   end_size,    color_white)
+    gfx.end_circle   = slider_drawable_new(hobj, .END,           end_size,    combo,       {.FADE_IN})
+    gfx.end_overlay  = slider_drawable_new(hobj, .END_OVERLAY,   end_size,    color_white, {.FADE_IN})
+    gfx.head_circle  = slider_drawable_new(hobj, .END,           end_size,    combo,       {.FADE_IN})
+    gfx.head_overlay = slider_drawable_new(hobj, .END_OVERLAY,   end_size,    color_white, {.FADE_IN})
     gfx.end_repeat   = slider_drawable_new(hobj, .REPEAT,        repeat_size, color_white)
     gfx.head_repeat  = slider_drawable_new(hobj, .REPEAT,        repeat_size, color_white)
     gfx.follow       = slider_drawable_new(hobj, .FOLLOW_CIRCLE, follow_size, color_white)

@@ -972,7 +972,6 @@ slider_create_gfx :: proc(hobj: ^Hitobject) {
 }
 
 // note(isak): sets the lua element override for a slider part and applies it to any already-spawned drawables
-// for that part. takes effect immediately mid-slide and is also picked up by slider_create_gfx on respawn.
 slider_set_part_element :: proc(hobj: ^Hitobject, part: Slider_Part, element: Element_ID) {
     hobj.slider_state.custom_elements[part] = element
 

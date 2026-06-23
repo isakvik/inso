@@ -209,6 +209,7 @@ main :: proc() {
 
             // message handling, time handling
             for &mouse in mice {
+                mouse.scroll_delta = 0
                 for &button in mouse.buttons {
                     button.was_down = button.is_down
                 }
@@ -262,6 +263,7 @@ main :: proc() {
                     }
 
                 case sdl.EventType.MOUSE_WHEEL:
+                    mouse.scroll_delta += event.wheel.y
                     imgui.IO_AddMouseWheelEvent(imgui.GetIO(), event.wheel.x, event.wheel.y)
 
                 case sdl.EventType.KEY_DOWN:

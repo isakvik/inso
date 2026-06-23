@@ -133,7 +133,7 @@ function on_update(time_ms)
         x = x + math.cos((time_ms*i*0.001) / 1000 + i*0.1)* i/10
         y = y + math.sin((time_ms*i*0.001) / 1000 + i*0.1)* i/10
         
-        hobj:set_pos(x,y)
+        hobj:set_pos(100+x,y)
         --table[i]:set_pos(x,y)
 
         -- hobj:set_cs(math.cos(time_ms*(0.003+i*0.000005))*2 + 3)

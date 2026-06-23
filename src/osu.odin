@@ -532,10 +532,14 @@ osu_on_update :: proc(dt: f64) {
     
     // todo(isak): this really handles a bunch of debug stuff too. fix up the modes and such
     #partial switch game.mode {
-        case .PLAY: 
+        case .PLAY:
             handle_menu_input_events() // @temp todo(isak): mode switching isn't handled yet
             handle_play_input_events()
-            
+            handle_editor_input_events()
+
+        case .EDITOR:
+            handle_menu_input_events()
+
         case .MAIN_MENU: handle_menu_input_events()
     }
     
@@ -753,6 +757,41 @@ handle_play_input_events :: proc() {
         if button_is_released(game.input.m1) do lua_beatmap_on_controller_released("m1")
         if button_is_released(game.input.m2) do lua_beatmap_on_controller_released("m2")
     }
+}
+
+EDITOR_BEAT_DIVISOR :: 1
+
+handle_editor_input_events :: proc() {
+    if app.ui_wants_mouse do return
+
+    steps := -int(math.round(mouse.scroll_delta)) // scroll up (>0) seeks backward
+    if key_is_pressed(.LEFT)  do steps -= 1
+    if key_is_pressed(.RIGHT) do steps += 1
+
+    if steps != 0 do editor_scrub_steps(&game.beatmap, steps)
+}
+
+// note(isak): snaps the playhead to the beat-divisor grid
+editor_scrub_steps :: proc(beatmap: ^Beatmap, steps: int) {
+    timing_point := &game.active_map.timing_points[beatmap.current_timing_point_index_uninherited]
+    division_ms := timing_point.beat_length / EDITOR_BEAT_DIVISOR
+
+    grid_pos := (beatmap.music_time_ms - timing_point.time) / division_ms
+    eps := 1e-6
+    target_grid: f64
+    if steps > 0 {
+        target_grid = math.floor(grid_pos + eps) + f64(steps)
+    } else {
+        target_grid = math.floor(grid_pos - eps) + f64(steps)
+    }
+
+    target := timing_point.time + target_grid * division_ms - f64(game.user_config.universal_offset_ms)
+    target = clamp(target, beatmap.start_time_ms, beatmap.length_ms)
+    
+    notify_info("%v", steps)
+    notify_info("%v", target)
+    notify_info("%v", target_grid)
+    beatmap_seek(beatmap, target)
 }
 
 handle_menu_input_events :: proc() {

@@ -96,9 +96,10 @@ Mouse_ID :: enum {
 Mouse :: struct {
     device_handle: Mouse_Handle,
     pos: vec2,
+    scroll_delta: f32, // note(isak): vertical wheel delta accumulated this frame, reset before polling. >0 = scroll up
     buttons: [Mouse_Button]Button_State,
     last_click_position: [Mouse_Button]vec2,
-    
+
     is_rebinding: bool,
 }
 

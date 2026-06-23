@@ -1,47 +1,43 @@
 priority list for beta
 
 bugs
-    judgements appear at where the slidertail is pre-move/pre-transform
-    slider won't track if head isn't hit (input isn't handled)
+    slider tracking doesnt play sound if head is ignored
+    refresh while external map is loaded crashes game
 
-features
+bugs low priority
+    scrubbing doesnt regen timed gameplay graphics (edit mode...)
+
+old features
+    reverse arrow animation
+    combobreak sound
+    cursor ripple
+
+extra features
     slider snaking out
     mine elements
 
 scripting
     Animated_Drawable - pass a spritesheet
-    multiple custom drawables per step
-
-rendering
-    postprocessing
-    render to FBO
-    lua frame object
 
 TEST
-    mouse buttons when keyboard held down and vice versa
     notosu custom buffers
-    custom animations
     limit testing
     
 rendering
     locking bugfix
     3d pipeline support
-    renderer limit handling
     
 gameplay
     non-scalar playfield scale
     score system
     replays
     
-    finish animations
-        texture array handling is kinda half baked
-    
     phase 2 visuals
         cursortrail (mcosu uses a custom shader here)
         followpoints
         note stacking
         object dimming
-    
+
 lua 
     REPL console
     particle system

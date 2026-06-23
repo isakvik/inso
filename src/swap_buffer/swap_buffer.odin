@@ -29,6 +29,11 @@ swap :: proc(m: ^$M/Swap_Buffer($T)) {
     clear(m.next)
 }
 
+reset :: proc(m: ^$M/Swap_Buffer($T)) {
+    clear(m.current)
+    clear(m.next)
+}
+
 append :: proc(m: ^$M/Swap_Buffer($T), el: T) {
     if len(m.current) >= cap(m.current) {
         new_len := cap(m.current) * 2

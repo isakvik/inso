@@ -209,6 +209,7 @@ timeline_update :: proc(ui: ^UI_Timeline) {
             
             seek_to_ms := seek_to_music_fract * sound_get_length_ms(&game.beatmap.music)
             beatmap_seek(&game.beatmap, seek_to_ms)
+            beatmap_reset_object_state(&game.beatmap)
         }
         
         if game.ui_timeline.clicked {

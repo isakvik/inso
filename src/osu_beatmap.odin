@@ -257,6 +257,28 @@ beatmap_seek :: proc(beatmap: ^Beatmap, pos: f64) {
     beatmap.music_time_ms = beatmap_music_position_interpolated_ms(beatmap)
 }
 
+// note(isak): rewinds the time-based visibility/expiry state. useful for scrolling 
+// the visible-set window, the expiring lists and pending phase transitions are dropped, gameplay effect gfx
+// are freed, and every touched object has its transient state reset. baked map/geometry data is untouched.
+//
+// @leak slider_create_gfx / hitobject_create_phase_drawables both allocate drawables which are not cleared or reused
+beatmap_reset_object_state :: proc(beatmap: ^Beatmap) {
+    beatmap.visible_hitobject_state = {}
+    sb.reset(&beatmap.expiring_hitobjects)
+    sb.reset(&beatmap.phase_transitions)
+
+    for handle in beatmap.gameplay_expiring_gfx.current {
+        slotmap.remove(&beatmap.drawables, handle)
+    }
+    sb.reset(&beatmap.gameplay_expiring_gfx)
+
+    for &hobj in beatmap.hitobjects {
+        if hobj.phase != .NONE || hobj.flags & {.VISIBLE, .HIT, .EXPIRED} != {} {
+            hitobject_reset_transient(&hobj)
+        }
+    }
+}
+
 beatmap_music_time_ms :: proc(beatmap: ^Beatmap) -> f64 {
     return beatmap.music_time_ms + f64(game.user_config.universal_offset_ms) // + beatmap.local_offset_ms
 }

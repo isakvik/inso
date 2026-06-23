@@ -505,7 +505,7 @@ playfield_build_transform :: proc "contextless" () -> Transform {
 
 osu_on_init :: proc() {
     game.time_rate = 1.0
-    game.mode = .PLAY
+    game.mode = .EDITOR
 
     game_sounds_clear()
     ui_init_timeline(&game.ui_timeline)
@@ -539,6 +539,7 @@ osu_on_update :: proc(dt: f64) {
 
         case .EDITOR:
             handle_menu_input_events()
+            handle_editor_input_events()
 
         case .MAIN_MENU: handle_menu_input_events()
     }
@@ -576,7 +577,9 @@ osu_on_update :: proc(dt: f64) {
     }
 
     process_expiring_hitobjects(&game.beatmap.expiring_hitobjects)
-    process_hitobject_hittesting(visible_hobjs, map_time)
+    if game.mode == .PLAY {
+        process_hitobject_hittesting(visible_hobjs, map_time)
+    }
     process_hitobject_phase_transitions()
 
     // game render
@@ -667,6 +670,20 @@ screenspace_to_playfield_osupx :: proc(pos: vec2) -> vec2 {
     )
 }
 
+// note(isak): the forward direction, osupx -> screen-space pixels. inverse of the above.
+playfield_osupx_to_screenspace :: proc(pos: vec2) -> vec2 {
+    return transform_point_space(pos,
+        transform_to_mat3(game.playfield_transform),
+        transform_to_mat3(window.screenspace_transform)
+    )
+}
+
+// note(isak): the uniform pixels-per-osupx factor of the playfield transform (no rotation/translation).
+// for converting sizes/extents between the two spaces; positions should round-trip the full transform.
+playfield_px_per_osupx :: proc "contextless" () -> f32 {
+    return playfield_base_scale * game.beatmap.playfield_scale * window.rect.h / PLAYFIELD_SIZE_OSUPX
+}
+
 transform_mouse_pos :: proc(pos: vec2) -> vec2 {
     return screenspace_to_playfield_osupx(pos)
 }
@@ -674,22 +691,6 @@ transform_mouse_pos :: proc(pos: vec2) -> vec2 {
 handle_play_input_events :: proc() {
     if key_is_pressed(.ESCAPE) || key_is_pressed(.SPACE) {
         beatmap_pause(&game.beatmap, !game.paused)
-    }
-    if key_is_pressed(.R) {
-        beatmap_open(game.beatmap.map_reference, !key_is_down(.LSHIFT))
-    }
-    
-    if key_is_pressed(.HOME) {
-        game.time_rate = 1
-        sound_set_speed(&game.beatmap.music, game.time_rate)
-    }
-    if key_is_pressed(.PAGEUP) {
-        game.time_rate *= 2
-        sound_set_speed(&game.beatmap.music, game.time_rate)
-    }
-    if key_is_pressed(.PAGEDOWN) {
-        game.time_rate /= 2
-        sound_set_speed(&game.beatmap.music, game.time_rate)
     }
     
     if key_is_pressed(.KP_PLUS) {
@@ -759,16 +760,37 @@ handle_play_input_events :: proc() {
     }
 }
 
-EDITOR_BEAT_DIVISOR :: 1
+EDITOR_BEAT_DIVISOR :: 4
 
 handle_editor_input_events :: proc() {
-    if app.ui_wants_mouse do return
-
-    steps := -int(math.round(mouse.scroll_delta)) // scroll up (>0) seeks backward
-    if key_is_pressed(.LEFT)  do steps -= 1
-    if key_is_pressed(.RIGHT) do steps += 1
-
-    if steps != 0 do editor_scrub_steps(&game.beatmap, steps)
+    if key_is_pressed(.ESCAPE) || key_is_pressed(.SPACE) {
+        beatmap_pause(&game.beatmap, !game.paused)
+    }
+    
+    if key_is_pressed(.R) {
+        beatmap_open(game.beatmap.map_reference, !key_is_down(.LSHIFT))
+    }
+    
+    if key_is_pressed(.HOME) {
+        game.time_rate = 1
+        sound_set_speed(&game.beatmap.music, game.time_rate)
+    }
+    if key_is_pressed(.PAGEUP) {
+        game.time_rate *= 1.5
+        sound_set_speed(&game.beatmap.music, game.time_rate)
+    }
+    if key_is_pressed(.PAGEDOWN) {
+        game.time_rate /= 1.5
+        sound_set_speed(&game.beatmap.music, game.time_rate)
+    }
+    
+    if !app.ui_wants_mouse {
+        steps := -int(math.round(mouse.scroll_delta)) // scroll up (>0) seeks backward
+        if key_is_pressed(.LEFT)  do steps -= 1
+        if key_is_pressed(.RIGHT) do steps += 1
+    
+        if steps != 0 do editor_scrub_steps(&game.beatmap, steps)
+    }
 }
 
 // note(isak): snaps the playhead to the beat-divisor grid
@@ -788,9 +810,8 @@ editor_scrub_steps :: proc(beatmap: ^Beatmap, steps: int) {
     target := timing_point.time + target_grid * division_ms - f64(game.user_config.universal_offset_ms)
     target = clamp(target, beatmap.start_time_ms, beatmap.length_ms)
     
-    notify_info("%v", steps)
-    notify_info("%v", target)
-    notify_info("%v", target_grid)
+    // note(isak): backward seeks must re-show objects the forward-only play path already finished and deleted
+    if target < beatmap.music_time_ms do beatmap_reset_object_state(beatmap)
     beatmap_seek(beatmap, target)
 }
 

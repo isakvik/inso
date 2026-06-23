@@ -215,6 +215,35 @@ hitcircle_process_expiry :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: b
     return expired
 }
 
+// note(isak): the play path mutates object state forward-only (phase, expiry, drawables), so seeking backward
+// leaves finished objects deleted. these rewind only the transient render/gameplay state; map data (combo,
+// hitsounds) and baked geometry/timing stay, so the normal spawn logic re-evaluates the object from scratch.
+hitobject_reset_transient :: proc(hobj: ^Hitobject) {
+    hitobject_clear_drawables(hobj)
+    if hobj.type == .SLIDER do slider_reset_transient(hobj)
+
+    hobj.phase = .NONE
+    hobj.flags &~= {.VISIBLE, .HIT, .EXPIRED}
+    hobj.judgement_index = 0
+    hobj.notelock_shake_at_ms = 0
+}
+
+slider_reset_transient :: proc(hobj: ^Hitobject) {
+    slider := &hobj.slider_state
+    slider_stop_slide_sounds(slider)
+    slider_clear_handles(hobj)
+
+    slider.flags = {}
+    slider.down_key = 0
+    slider.checked_repeats_count = 0
+    slider.checked_path_ticks_count = 0
+    slider.hit_judgement_count = 0
+    slider.tracked_timestamp_at = 0
+    slider.contingency_window_scorepoint_count = 0
+    slider.contingency_window_scorepoints = {}
+    for &hit in slider.tick_hits do hit = false
+}
+
 build_deferred_activations :: proc(beatmap: ^Beatmap) {
     max_preempt := beatmap.preempt_ms
     count := 0

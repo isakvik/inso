@@ -1495,15 +1495,24 @@ luaapi_drawable_instance_funcs := []Lua_Function {
   { "set_pos", luaapi_drawable_set_pos,
     "self drawable:set_pos( float x, float y )",
     "sets the drawable's position." },
-  { "set_pos_screenspace", luaapi_drawable_set_pos_screenspace,
-    "self drawable:set_pos_screenspace( float x, float y )",
+  { "set_pos_px", luaapi_drawable_set_pos_px,
+    "self drawable:set_pos_px( float x, float y )",
     "sets the drawable's position from a screen-space pixel position, converted into playfield osupx." },
+  { "set_pos_screenspace", luaapi_drawable_set_pos_px,
+    "self drawable:set_pos_screenspace( float x, float y )",
+    "deprecated alias for set_pos_px." },
   { "get_size", luaapi_drawable_get_size,
     "(float w, float h) drawable:get_size( void )",
-    "the drawable's size." },
+    "the drawable's size in osupx." },
   { "set_size", luaapi_drawable_set_size,
     "self drawable:set_size( float w, float h )",
-    "sets the drawable's size." },
+    "sets the drawable's size in osupx." },
+  { "get_size_px", luaapi_drawable_get_size_px,
+    "(float w, float h) drawable:get_size_px( void )",
+    "the drawable's size in screen-space pixels." },
+  { "set_size_px", luaapi_drawable_set_size_px,
+    "self drawable:set_size_px( float w, float h )",
+    "sets the drawable's size from a screen-space pixel size, converted into osupx." },
   { "get_anchor", luaapi_drawable_get_anchor,
     "Anchor drawable:get_anchor( void )",
     "the drawable's anchor point." },
@@ -1691,7 +1700,7 @@ luaapi_drawable_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
         return 0
     })
 }
-luaapi_drawable_set_pos_screenspace :: proc "c" (L: ^lua.State) -> (result: i32) {
+luaapi_drawable_set_pos_px :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         context = lua_beatmap.odin_context
         d.pos = screenspace_to_playfield_osupx({f32(lua_number(2)), f32(lua_number(3))})
@@ -1702,6 +1711,12 @@ luaapi_drawable_set_size :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         w, h := lua_number(2), lua_number(3)
         d.size = vec2{f32(w), f32(h)}
+        return 0
+    })
+}
+luaapi_drawable_set_size_px :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        d.size = vec2{f32(lua_number(2)), f32(lua_number(3))} / playfield_px_per_osupx()
         return 0
     })
 }
@@ -1747,6 +1762,14 @@ luaapi_drawable_get_size :: proc "c" (L: ^lua.State) -> i32 {
     return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         lua.pushnumber(L, lua.Number(d.size.x))
         lua.pushnumber(L, lua.Number(d.size.y))
+        return 2
+    })
+}
+luaapi_drawable_get_size_px :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        k := playfield_px_per_osupx()
+        lua.pushnumber(L, lua.Number(d.size.x * k))
+        lua.pushnumber(L, lua.Number(d.size.y * k))
         return 2
     })
 }
@@ -2911,6 +2934,18 @@ luaapi_window_static_funcs := []Lua_Function {
   { "get_size", luaapi_window_get_size,
     "(float x, float y) Window.get_size( void )",
     "returns the window size in pixels." },
+  { "get_size_px", luaapi_window_get_size,
+    "(float x, float y) Window.get_size_px( void )",
+    "returns the window size in pixels (alias of get_size)." },
+  { "get_size_osupx", luaapi_window_get_size_osupx,
+    "(float w, float h) Window.get_size_osupx( void )",
+    "returns the window size in playfield osupx. set a drawable's size to this to fill the screen, then move it freely in osupx. assumes no playfield rotation; use drawable:set_fullscreen for the rotated case." },
+  { "px_to_osupx", luaapi_window_px_to_osupx,
+    "(float x, float y) Window.px_to_osupx( float x, float y )",
+    "converts a screen-space pixel position into playfield osupx (full transform: translate/scale/rotate)." },
+  { "osupx_to_px", luaapi_window_osupx_to_px,
+    "(float x, float y) Window.osupx_to_px( float x, float y )",
+    "converts a playfield osupx position into screen-space pixels (full transform: translate/scale/rotate)." },
   { "get_pos", luaapi_window_get_pos,
     "(float x, float y) Window.get_pos( void )",
     "returns the window position in pixels." },
@@ -2932,6 +2967,30 @@ luaapi_window_get_size :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_beatmap.odin_context
     lua.pushnumber(L, lua.Number(window.rect.w))
     lua.pushnumber(L, lua.Number(window.rect.h))
+    return 2
+}
+
+luaapi_window_get_size_osupx :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    k := playfield_px_per_osupx()
+    lua.pushnumber(L, lua.Number(window.rect.w / k))
+    lua.pushnumber(L, lua.Number(window.rect.h / k))
+    return 2
+}
+
+luaapi_window_px_to_osupx :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    osupx := screenspace_to_playfield_osupx({f32(lua_number(1)), f32(lua_number(2))})
+    lua.pushnumber(L, lua.Number(osupx.x))
+    lua.pushnumber(L, lua.Number(osupx.y))
+    return 2
+}
+
+luaapi_window_osupx_to_px :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    px := playfield_osupx_to_screenspace({f32(lua_number(1)), f32(lua_number(2))})
+    lua.pushnumber(L, lua.Number(px.x))
+    lua.pushnumber(L, lua.Number(px.y))
     return 2
 }
 

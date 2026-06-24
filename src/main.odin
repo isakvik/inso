@@ -330,6 +330,11 @@ main :: proc() {
             io.DisplaySize = {window.rect.w, window.rect.h}
             io.DeltaTime = f32(time_current_frame - time_last_frame)
 
+            if game.mode != .EDITOR {
+                imgui.GetIO().WantCaptureMouse = false
+            }
+            app.ui_enabled = game.mode == .EDITOR
+            
             // prepare drawing
             begin_frame(renderer)
         }
@@ -338,7 +343,7 @@ main :: proc() {
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
             
             handle_debug_ui_events()
-            if key_is_pressed(.F5) {
+            if key_is_down(.LCTRL) && key_is_pressed(.F5) {
                 discover_maps("songs/")
                 discover_skins("skins/")
             }
@@ -605,6 +610,15 @@ imgui_update :: proc() {
             open_external_map(external_map_path)
         }
     }
+    imgui.Separator()
+
+    if imgui.SmallButton("play") {
+        beatmap_play(&game.beatmap, true)
+    }
+    if imgui.SmallButton("play from beginning") {
+        beatmap_play(&game.beatmap, false)
+    }
+    
     imgui.Separator()
     
     imgui_dropdown_draw(&app.skin_dropdown)

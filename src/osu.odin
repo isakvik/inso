@@ -22,8 +22,7 @@ NOTELOCK_SHAKE_AMPLITUDE_OSUPX :: f32(8)
 NOTELOCK_SHAKE_OSCILLATIONS :: f64(3)
 
 // note(isak): osu!'s actual play area is 512x384 within the 512x512 osupx coordinate space,
-// with a small vertical offset for the HUD. these constants define that base placement and
-// are always applied in playfield_build_transform, independent of any lua adjustments.
+// with a small vertical offset for the HUD
 playfield_base_scale :: f32(512.0 / 480.0)
 playfield_base_translation_osupx :: vec2{0, 72} // (512-384)/2 + 8
 
@@ -239,10 +238,7 @@ hitobject_duration :: proc(hobj: ^Hitobject) -> (result: f64) {
     return hobj.end_time_ms - hobj.start_time_ms
 }
 
-// note(isak): whether the object's head can still receive a press, which is what notelock keys off. we look
-// at the start time window only, never the end time - so an in-progress slider (head hit, or its head window
-// elapsed) stops blocking the next object, matching osu!. a hit head sits in HOLD so the phase check excludes
-// it; an unhit head stops counting once its late window passes.
+// note(isak): whether the object's head can still receive a press, used in notelock calcs
 hitobject_head_hittable :: proc(hobj: ^Hitobject, map_time: f64) -> bool {
     if hobj.phase != .PREEMPT && hobj.phase != .POSTEMPT do return false
     if hobj.type != .CIRCLE && hobj.type != .SLIDER do return false
@@ -413,7 +409,7 @@ Judgement_Type :: enum {
     COMBO_BREAK, // note(isak): intended for scripted misses
 }
 
-// note(isak): need to handle (min_result, max_result) somehow
+// todo(isak): need to handle (min_result, max_result) somehow
 Judgement :: struct {
     result: Judgement_Type,
     time: f64,
@@ -518,24 +514,22 @@ osu_on_init :: proc() {
 osu_on_update :: proc(dt: f64) {
     game.dt = dt
 
-    updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
-    if updated_systems[.OSU_FILE] || updated_systems[.NOTOSU_FILE] || updated_systems[.SCRIPTS] {
-        beatmap_open(game.beatmap.map_reference, true)
-    }
-    if updated_systems[.SHADERS] {
-        mapset_reinit_custom_shaders(game.active_mapset)
+    if game.mode != .PLAY {
+        updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
+        if updated_systems[.OSU_FILE] || updated_systems[.NOTOSU_FILE] || updated_systems[.SCRIPTS] {
+            beatmap_open(game.beatmap.map_reference, true)
+        }
+        if updated_systems[.SHADERS] {
+            mapset_reinit_custom_shaders(game.active_mapset)
+        }
     }
     
     // note(isak): game logic - map
     
-    beatmap_on_update(&game.beatmap)
-    
     // todo(isak): this really handles a bunch of debug stuff too. fix up the modes and such
     #partial switch game.mode {
         case .PLAY:
-            handle_menu_input_events() // @temp todo(isak): mode switching isn't handled yet
             handle_play_input_events()
-            handle_editor_input_events()
 
         case .EDITOR:
             handle_menu_input_events()
@@ -543,6 +537,8 @@ osu_on_update :: proc(dt: f64) {
 
         case .MAIN_MENU: handle_menu_input_events()
     }
+    
+    beatmap_on_update(&game.beatmap)
     
     map_time := beatmap_music_time_ms(&game.beatmap)
     visible_hobjs := beatmap_get_visible_hitobjects(&game.beatmap, map_time)
@@ -577,9 +573,7 @@ osu_on_update :: proc(dt: f64) {
     }
 
     process_expiring_hitobjects(&game.beatmap.expiring_hitobjects)
-    if game.mode == .PLAY {
-        process_hitobject_hittesting(visible_hobjs, map_time)
-    }
+    process_hitobject_hittesting(visible_hobjs, map_time)
     process_hitobject_phase_transitions()
 
     // game render
@@ -617,35 +611,35 @@ osu_on_update :: proc(dt: f64) {
     r_bind_layer_and_push_current_state(.BACKGROUND, transform = game.playfield_transform)
     process_and_draw_expiring_gfx_refs(&game.beatmap.map_expiring_gfx)
     
-    // ui render
+    // note(isak): ui render
+    // todo(isak): "screens" implementation for determining relevant UI components?
+    
     r_bind_layer_and_push_current_state(.UI, 
         transform = game.playfield_transform,
         pipeline = { pipeline = builtin_pipeline_slot(.QUAD) })
     
-    // -- @temp playfield border
-    playfield_border_draw :: proc() {
-        cs := game.beatmap.circle_radius_osupx
-        pf_outline := Rect{
-            -cs, -cs, PLAYFIELD_SIZE_OSUPX+2*cs, (PLAYFIELD_SIZE_OSUPX*3/4)+2*cs
+    if game.mode == .EDITOR {
+        // -- @temp playfield border
+        playfield_border_draw :: proc() {
+            cs := game.beatmap.circle_radius_osupx
+            pf_outline := Rect{
+                -cs, -cs, PLAYFIELD_SIZE_OSUPX+2*cs, (PLAYFIELD_SIZE_OSUPX*3/4)+2*cs
+            }
+            r_draw_rect_outline(&window.renderer.quad_geometry, pf_outline, with_alpha(color_white, 0.1), 2)
         }
-        r_draw_rect_outline(&window.renderer.quad_geometry, pf_outline, with_alpha(color_white, 0.1), 2)
-    }
-    if !game.transparent {
         playfield_border_draw()
+        // --
+        
+        timeline_update(&game.ui_timeline)
+        render_timeline_clipspace(&game.ui_timeline)
     }
-    // --
-    
-    // todo(isak): "screens" implementation for determining relevant UI components?
-    timeline_update(&game.ui_timeline)
-    render_timeline_clipspace(&game.ui_timeline)
-    
-    if !game.transparent {
+    if game.mode == .PLAY {
         hit_error_bar_draw_screenspace(&game.hit_error_bar)
         input_display_draw_screenspace()
     }
 
-    r_bind_layer_and_push_current_state(.CURSOR)
-    r_push_transform(window.screenspace_transform)
+    r_bind_layer_and_push_current_state(.CURSOR, transform = window.screenspace_transform)
+    
     cursor_draw(mouse.pos, skin_texture(.CURSOR))
     if app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {   
         cursor_draw(mouse_secondary.pos, skin_texture(.CURSOR))
@@ -689,8 +683,10 @@ transform_mouse_pos :: proc(pos: vec2) -> vec2 {
 }
 
 handle_play_input_events :: proc() {
-    if key_is_pressed(.ESCAPE) || key_is_pressed(.SPACE) {
-        beatmap_pause(&game.beatmap, !game.paused)
+    if key_is_pressed(.ESCAPE) {
+        game.mode = .EDITOR
+        beatmap_open(game.beatmap.map_reference, true)
+        beatmap_pause(&game.beatmap, true)
     }
     
     if key_is_pressed(.KP_PLUS) {
@@ -766,7 +762,9 @@ handle_editor_input_events :: proc() {
     if key_is_pressed(.ESCAPE) || key_is_pressed(.SPACE) {
         beatmap_pause(&game.beatmap, !game.paused)
     }
-    
+    if key_is_pressed(.F5) && !key_is_down(.LCTRL) {
+        beatmap_play(&game.beatmap, !key_is_down(.LSHIFT))
+    }
     if key_is_pressed(.R) {
         beatmap_open(game.beatmap.map_reference, !key_is_down(.LSHIFT))
     }

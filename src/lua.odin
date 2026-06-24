@@ -959,8 +959,8 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
   { "set_pos", luaapi_hitobject_set_pos,
     "self hitobject:set_pos( float x, float y )",
     "moves the object to an absolute osupx position." },
-  { "set_pos_screenspace", luaapi_hitobject_set_pos_screenspace,
-    "self hitobject:set_pos_screenspace( float x, float y )",
+  { "set_pos_px", luaapi_hitobject_set_pos_px,
+    "self hitobject:set_pos_px( float x, float y )",
     "moves the object to a screen-space pixel position, converted into playfield osupx." },
   { "get_start_time", luaapi_hitobject_get_start_time,
     "float hitobject:get_start_time( void )",
@@ -1217,7 +1217,7 @@ luaapi_hitobject_set_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
     })
 }
 
-luaapi_hitobject_set_pos_screenspace :: proc "c" (L: ^lua.State) -> (result: i32) {
+luaapi_hitobject_set_pos_px :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         context = lua_beatmap.odin_context
         osupx := screenspace_to_playfield_osupx({f32(lua_number(2)), f32(lua_number(3))})
@@ -1483,6 +1483,9 @@ luaapi_drawable_instance_funcs := []Lua_Function {
   { "set_element", luaapi_drawable_set_element,
     "self drawable:set_element( Element el )",
     "sets the underlying element type of the drawable to the given element." },
+  { "set_animation", luaapi_drawable_set_animation,
+    "self drawable:set_animation( Animation anim )",
+    "overrides this drawable's animation with the given list, replacing the element template's for this instance only." },
   { "get_layer", luaapi_drawable_get_layer,
     "Layer drawable:get_layer( void )",
     "the drawable's render layer." },
@@ -1498,9 +1501,6 @@ luaapi_drawable_instance_funcs := []Lua_Function {
   { "set_pos_px", luaapi_drawable_set_pos_px,
     "self drawable:set_pos_px( float x, float y )",
     "sets the drawable's position from a screen-space pixel position, converted into playfield osupx." },
-  { "set_pos_screenspace", luaapi_drawable_set_pos_px,
-    "self drawable:set_pos_screenspace( float x, float y )",
-    "deprecated alias for set_pos_px." },
   { "get_size", luaapi_drawable_get_size,
     "(float w, float h) drawable:get_size( void )",
     "the drawable's size in osupx." },
@@ -1521,7 +1521,7 @@ luaapi_drawable_instance_funcs := []Lua_Function {
     "sets the drawable's anchor point." },
   { "set_fullscreen", luaapi_drawable_set_fullscreen,
     "self drawable:set_fullscreen( bool enabled )",
-    "makes the drawable cover the whole render target (size derived each frame, tracks resizes); pos still nudges it in osupx and set_pos_screenspace in pixels. handy for compositing a captured layer." },
+    "makes the drawable cover the whole render target (size derived each frame, tracks resizes); pos still nudges it in osupx and set_pos_px in pixels. handy for compositing a captured layer." },
   { "get_color", luaapi_drawable_get_color,
     "int drawable:get_color( void )",
     "the drawable's color as a packed rgba integer." },
@@ -1575,10 +1575,13 @@ luaapi_drawable_instance_funcs := []Lua_Function {
     "sets the drawable's start and end time in ms." },
   { "hide", luaapi_drawable_hide,
     "self drawable:hide( void )",
-    "stops the drawable from rendering (clears its active flag)." },
+    "stops the drawable from rendering without destroying it; pair with show() to bring it back." },
   { "show", luaapi_drawable_show,
     "self drawable:show( void )",
-    "resumes rendering the drawable (sets its active flag)." },
+    "resumes rendering a hidden drawable." },
+  { "destroy", luaapi_drawable_destroy,
+    "self drawable:destroy( void )",
+    "permanently reaps the drawable next frame; its handle becomes invalid." },
 }
 
 luaapi_drawable_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
@@ -1877,16 +1880,30 @@ luaapi_drawable_set_element :: proc "c" (L: ^lua.State) -> (result: i32) {
         return 0
     })
 }
+luaapi_drawable_set_animation :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        context = lua_beatmap.odin_context
+        list := cast(^Script_Animation_List)lua.L_checkudata(L, 2, lua_classes[.ANIMATION].name)
+        d.animations = game.beatmap.animations.data[list.at:list.at + list.num_animations]
+        return 0
+    })
+}
 
 luaapi_drawable_hide :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
-        d.flags &= ~{.ACTIVE}
+        d.flags |= {.HIDDEN}
         return 0
     })
 }
 luaapi_drawable_show :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
-        d.flags |= {.ACTIVE}
+        d.flags &= ~{.HIDDEN}
+        return 0
+    })
+}
+luaapi_drawable_destroy :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        d.flags &= ~{.ACTIVE}
         return 0
     })
 }

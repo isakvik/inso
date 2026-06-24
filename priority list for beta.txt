@@ -39,17 +39,14 @@ gameplay
         object dimming
 
 lua 
-    REPL console
     particle system
 
 game
     ui core (low priority)
-        map select
-        skin select
         offset change
         audio settings
         
-    entity hierarchy inspector
+    drawable inspector
     offset wizard
 
 platform

@@ -246,6 +246,10 @@ Drawable_Flag :: enum u32 {
     // note(isak): the quad covers the whole render target (size is derived each frame), while pos
     // still nudges it in osupx. handy for compositing a screen-sized capture without size math.
     FULLSCREEN,
+
+    // note(isak): skips drawing without reaping. ACTIVE means "still alive, keep me" (the expiring-gfx
+    // reaper drops anything non-active), so a visibility toggle has to live on its own flag.
+    HIDDEN,
 }
 
 Drawable_Handle :: slotmap.Handle
@@ -274,6 +278,11 @@ Drawable :: struct {
     angle_vel: f32,
     
     start_time_ms, end_time_ms: f64,
+
+    // note(isak): per-instance animation override. when non-empty, render uses this slice instead of the
+    // element template's, so a single drawable can carry a custom animation without a throwaway element.
+    // points into game.beatmap.animations (same immutable storage as element.animations); never owned.
+    animations: []Animation,
 
     // note(isak): index+1 into game.beatmap.hitobjects. 0 = no associated hitobject.
     // when set, d.size is stored in radius units and multiplied by hitobject_radius_osupx at render time.
@@ -643,6 +652,9 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
     if d.end_time_ms < at_time {
         return false
     }
+    if .HIDDEN in d.flags {
+        return true // note(isak): alive, just not drawn this frame
+    }
     relative_time_at := at_time - d.start_time_ms
 
     element := &game.beatmap.elements.data[d.element]
@@ -682,8 +694,9 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
         anim_time_at = math.mod(anim_time_at, 1.0)
     }
 
+    animations := d.animations if len(d.animations) > 0 else element.animations
     seen_animation_of_type: [Animation_Variant]bool
-    #reverse for &animation in game.beatmap.elements.data[d.element].animations {
+    #reverse for &animation in animations {
         base := cast(^Base_Animation)&animation
         if anim_time_at < base.start_time || seen_animation_of_type[animation_variant(animation)] {
             continue

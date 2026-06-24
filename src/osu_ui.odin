@@ -122,6 +122,7 @@ UI_Timeline :: struct {
     clicked, released: bool,
     dragging: bool,
     pause_on_release: bool,
+    last_seek_mouse_x_pos: f32,
 
     using Common: struct {
         ease: ease.Ease,
@@ -204,12 +205,13 @@ timeline_update :: proc(ui: ^UI_Timeline) {
         
         if seek_to_fract < leadin_fract {
             game.beatmap.music_time_ms = game.beatmap.start_time_ms + seek_to_fract * map_len_with_preempt
-        } else {
+        } else if mouse.pos.x != ui.last_seek_mouse_x_pos {
             seek_to_music_fract := (seek_to_fract - leadin_fract) * (1 / (1.0 - leadin_fract))
             
             seek_to_ms := seek_to_music_fract * sound_get_length_ms(&game.beatmap.music)
             beatmap_seek(&game.beatmap, seek_to_ms)
             beatmap_reset_object_state(&game.beatmap)
+            ui.last_seek_mouse_x_pos = mouse.pos.x
         }
         
         if game.ui_timeline.clicked {

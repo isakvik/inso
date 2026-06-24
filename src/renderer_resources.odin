@@ -131,6 +131,10 @@ Texture_Index :: struct {
     index: u32
 }
 
+// note(isak): map textures and render targets share the global slot space after the builtin and skin
+// slots, so this is how many of them can coexist before we run out of texture handles.
+MAX_USER_TEXTURES :: MAX_TEXTURE_HANDLES - len(Builtin_Texture_Slot) - len(Skin_Element_Type)
+
 // note(isak): these return indices into the bindless texture buffer
 builtin_texture :: proc(slot: Builtin_Texture_Slot) -> u32 { return u32(slot) }
 skin_texture :: proc(skin_el: Skin_Element_Type) -> u32 { return u32(skin_el) + len(Builtin_Texture_Slot) }
@@ -281,14 +285,13 @@ prepare_textures_for_rendering :: proc() {
             textures[num_elements] = window.skin_textures[skin_el].tex_handle
             num_elements += 1
         }
-        for map_texture in game.active_mapset.textures.data {
-            textures[num_elements] = map_texture.tex_handle
+        for i in 0..<int(game.active_mapset.textures.len) {
+            if num_elements >= MAX_TEXTURE_HANDLES do break
+            textures[num_elements] = queue.get_ptr(&game.active_mapset.textures, uint(i)).tex_handle
             num_elements += 1
         }
-        // note(isak): textures.data iterates the queue's capacity (trailing zeros), so re-anchor
-        // to the real count before render targets to keep their slots contiguous with map textures.
-        num_elements = len(Builtin_Texture_Slot) + len(Skin_Element_Type) + int(game.active_mapset.textures.len)
         for i in 0..<game.active_mapset.render_targets.len {
+            if num_elements >= MAX_TEXTURE_HANDLES do break
             rt := queue.get_ptr(&game.active_mapset.render_targets, uint(i))
             textures[num_elements] = rt.fbo.color_texture_handles[0]
             num_elements += 1
@@ -309,12 +312,13 @@ prepare_textures_for_rendering :: proc() {
             ids[num_elements] = window.skin_textures[skin_el].tex_id
             num_elements += 1
         }
-        for map_texture in game.active_mapset.textures.data {
-            ids[num_elements] = map_texture.tex_id
+        for i in 0..<int(game.active_mapset.textures.len) {
+            if num_elements >= MAX_TEXTURE_HANDLES do break
+            ids[num_elements] = queue.get_ptr(&game.active_mapset.textures, uint(i)).tex_id
             num_elements += 1
         }
-        num_elements = len(Builtin_Texture_Slot) + len(Skin_Element_Type) + int(game.active_mapset.textures.len)
         for i in 0..<game.active_mapset.render_targets.len {
+            if num_elements >= MAX_TEXTURE_HANDLES do break
             rt := queue.get_ptr(&game.active_mapset.render_targets, uint(i))
             ids[num_elements] = rt.fbo.color_textures[0]
             num_elements += 1
@@ -326,7 +330,7 @@ cleanup_textures_for_rendering :: proc() {
     if !window.bindless_supported do return
 
     textures := &window.texture_buffer.data
-    num_elements := len(Builtin_Texture_Slot) + len(Skin_Element_Type) + game.active_mapset.textures.len + game.active_mapset.render_targets.len
+    num_elements := min(len(Builtin_Texture_Slot) + len(Skin_Element_Type) + game.active_mapset.textures.len + game.active_mapset.render_targets.len, MAX_TEXTURE_HANDLES)
     for i in 0..<num_elements {
         if textures[i] > 0 {
             gl.MakeTextureHandleNonResidentARB(textures[i])

@@ -140,7 +140,7 @@ function on_update(time_ms)
     end
     
     -- rotation anchor demo: pivot the whole playfield about its top-left corner instead of center
-    Playfield.set_rotation_anchor(0, 0)
+    --Playfield.set_rotation_anchor(0, 0)
     Playfield.set_rotation(math.sin(time_ms / 3000) * 0.1)
 end
 

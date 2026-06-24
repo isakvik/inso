@@ -25,6 +25,10 @@ Beatmap :: struct {
     
     last_music_position_interpolation_check_time: f64,
     last_accurate_music_position_set_time: f64,
+
+    // note(isak): editor auto-hit tracks the previous frame's playhead so it only hits objects whose start
+    // crossed during continuous playback; seeks snap it to the landing time so jumped-over objects are skipped.
+    auto_last_hit_time_ms: f64,
     
     hitobjects: []Hitobject,
     slider_paths: []Slider_Path,
@@ -91,6 +95,7 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     beatmap.length_ms = sound_get_length_ms(&beatmap.music)
     beatmap.start_time_ms = min(beatmap_game_time_to_music_time(beatmap, -beatmap.preempt_ms), -500)
     beatmap.music_time_ms = beatmap.start_time_ms
+    beatmap.auto_last_hit_time_ms = beatmap_music_time_ms(beatmap)
     
     beatmap.hitobjects = game.active_map.hitobjects
     beatmap.slider_paths = game.active_map.slider_paths
@@ -255,6 +260,7 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false) {
 beatmap_seek :: proc(beatmap: ^Beatmap, pos: f64) {
     sound_set_position_ms(&game.beatmap.music, pos)
     beatmap.music_time_ms = beatmap_music_position_interpolated_ms(beatmap)
+    beatmap.auto_last_hit_time_ms = beatmap_music_time_ms(beatmap)
 }
 
 // note(isak): rewinds the time-based visibility/expiry state. useful for scrolling 
@@ -373,6 +379,12 @@ beatmap_get_visible_hitobjects :: proc(beatmap: ^Beatmap, map_time: f64) -> (res
         result = hitobjects[state.earliest_i:min(state.latest_i, len(hitobjects))]
     }
     return result
+}
+
+beatmap_play :: proc(beatmap: ^Beatmap, keep_position: bool) {
+    game.mode = .PLAY
+    beatmap_open(beatmap.map_reference, keep_position)
+    beatmap_pause(beatmap, false)
 }
 
 beatmap_pause :: proc(beatmap: ^Beatmap, pause: bool) {

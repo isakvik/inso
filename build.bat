@@ -8,8 +8,9 @@ if not exist "build\Roboto-Regular.ttf" copy ".\data\Roboto-Regular.ttf" ".\buil
 set exec_name=notosu.exe
 
 if "%VERSION%"=="" (
+    set /p BASE_VERSION=<VERSION
     for /f "tokens=*" %%i in ('git rev-parse --short HEAD') do set GIT_HASH=%%i
-    set VERSION=0.1.2-dev+!GIT_HASH!
+    set VERSION=!BASE_VERSION!-dev+!GIT_HASH!
 )
 
 echo [build] %VERSION%

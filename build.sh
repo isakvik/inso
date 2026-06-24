@@ -4,7 +4,8 @@ set -e
 mkdir -p build
 
 GIT_HASH=$(git rev-parse --short HEAD)
-VERSION="0.1.0-dev+${GIT_HASH}"
+BASE_VERSION=$(tr -d '[:space:]' < VERSION)
+VERSION="${BASE_VERSION}-dev+${GIT_HASH}"
 
 # copy runtime libraries if not already present
 cp -u lib/linux/* build/

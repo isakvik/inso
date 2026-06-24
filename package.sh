@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-VERSION=0.1.2
+VERSION=$(tr -d '[:space:]' < VERSION)
 release_dir=build-release
 exec_name=notosu
 zip_name=notosu-${VERSION}-linux.zip

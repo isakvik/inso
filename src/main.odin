@@ -600,7 +600,7 @@ open_external_map :: proc(external_map_path: string) -> (success: bool) {
 }
 
 imgui_update :: proc() {
-    imgui.Begin("Info")
+    imgui.Begin("Editor options")
     defer imgui.End()
     
     imgui_dropdown_draw(&app.map_dropdown)

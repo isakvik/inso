@@ -31,9 +31,9 @@ controller_key_pressed :: proc(key_num: int) -> bool {
 // returns whether key_num (1 or 2) is currently held
 controller_key_down :: proc(key_num: int) -> bool {
     if key_num == 1 {
-        return button_is_down(game.input.k1) || game.input.mouse_keys_enabled && button_is_down(game.input.m1)
+        return button_is_down(game.input.k1) || button_is_down(game.input.m1)
     } else {
-        return button_is_down(game.input.k2) || game.input.mouse_keys_enabled && button_is_down(game.input.m2)
+        return button_is_down(game.input.k2) || button_is_down(game.input.m2)
     }
 }
 

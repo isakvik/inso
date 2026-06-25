@@ -767,8 +767,10 @@ handle_play_input_events :: proc() {
     game.input.k1.was_down = keyboard.buttons_prev_frame[game.input.keys[.K1]]
     game.input.k2.is_down = keyboard.buttons[game.input.keys[.K2]]
     game.input.k2.was_down = keyboard.buttons_prev_frame[game.input.keys[.K2]]
-    game.input.m1 = mouse.buttons[.LEFT]
-    game.input.m2 = mouse.buttons[.RIGHT]
+    if game.input.mouse_keys_enabled {
+        game.input.m1 = mouse.buttons[.LEFT]
+        game.input.m2 = mouse.buttons[.RIGHT]
+    }
     
     old_mouse_pos := game.input.mouse_pos
     game.input.mouse_pos = transform_mouse_pos(vec2{mouse.pos.x, mouse.pos.y})

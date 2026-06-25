@@ -45,6 +45,7 @@ Imgui_Dropdown :: struct {
 imgui_dropdown_draw :: proc(dropdown: ^Imgui_Dropdown) {
     dropdown.changed = false
     if len(dropdown.items^) == 0 do return
+    dropdown.selected = clamp(dropdown.selected, 0, len(dropdown.items^) - 1)
     preview := dropdown.items^[dropdown.selected]
     if !imgui.BeginCombo(dropdown.label, preview) do return
     defer imgui.EndCombo()

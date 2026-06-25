@@ -23,6 +23,7 @@ window: struct {
     fullscreen: bool,
     bindless_supported: bool,
     intel_gpu: bool,
+    transparent: bool,
 
     handle: ^sdl.Window,
     gl_context: sdl.GLContext,

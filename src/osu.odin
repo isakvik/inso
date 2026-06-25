@@ -33,7 +33,6 @@ game: struct {
     active_notosu_map: ^Notosu_Map,
     active_map: ^Osu_Map,
     active_skin: ^Skin,
-    transparent: bool,
     
     mode: Game_Mode,
     
@@ -41,7 +40,9 @@ game: struct {
     
     input: struct {
         k1, k2, m1, m2: Button_State,
-        k1_key, k2_key: sdl.Scancode, //TODO(yokes): add keybinding menu
+        keys: [Rebindable_Input_Key]sdl.Scancode,
+
+        rebinding_key: Rebindable_Input_Key,
 
         mouse_keys_enabled: bool,
         mouse_pos: vec2,
@@ -465,39 +466,6 @@ Osu_Map :: struct {
     timing_points: []Timing_Point,
 }
 
-// note(isak): builds game.playfield_transform from playfield_offset_osupx, playfield_scale,
-// and playfield_rotation_rad. maps osupx -> NDC with full affine support (translate, scale, rotate). 
-// the inverse correctly maps window pixels back to osupx without extra adjustment.
-playfield_build_transform :: proc "contextless" () -> Transform {
-    effective_scale       := playfield_base_scale * game.beatmap.playfield_scale
-    effective_translation := playfield_base_translation_osupx + game.beatmap.playfield_translation_osupx
-
-    k  := effective_scale * window.rect.h / PLAYFIELD_SIZE_OSUPX
-    cx := window.rect.w * 0.5 + effective_translation.x * k
-    cy := window.rect.h * 0.5 + effective_translation.y * k
-
-    ndc_from_px := mat3{
-        2 / window.rect.w, 0,                 -1,
-        0,                 2 / window.rect.h, -1,
-        0,                 0,                  1,
-    }
-    t_center := mat3{
-        1, 0, -PLAYFIELD_SIZE_OSUPX * 0.5,
-        0, 1, -PLAYFIELD_SIZE_OSUPX * 0.5,
-        0, 0,  1,
-    }
-
-    anchor_px := vec2{cx, cy} + k * (game.beatmap.playfield_rotation_anchor_osupx - PLAYFIELD_SIZE_OSUPX * 0.5)
-    rotate_about_anchor := mat3_affine(anchor_px, 1, game.beatmap.playfield_rotation_rad) * mat3{
-        1, 0, -anchor_px.x,
-        0, 1, -anchor_px.y,
-        0, 0,  1,
-    }
-    px_from_osupx := mat3_affine({cx, cy}, k, 0) * t_center
-
-    return mat3_to_transform(ndc_from_px * rotate_about_anchor * px_from_osupx)
-}
-
 
 osu_on_init :: proc() {
     game.time_rate = 1.0
@@ -506,8 +474,7 @@ osu_on_init :: proc() {
     game_sounds_clear()
     ui_init_timeline(&game.ui_timeline)
 
-    game.input.k1_key = sdl.Scancode.Z
-    game.input.k2_key = sdl.Scancode.X
+    game.input.keys = game.user_config.keys
 }
 
 
@@ -632,6 +599,13 @@ osu_on_update :: proc(dt: f64) {
         
         timeline_update(&game.ui_timeline)
         render_timeline_clipspace(&game.ui_timeline)
+
+        push_text(&window.renderer, "Edit mode",
+            pos     = {window.rect.w / 2, 30},
+            size    = 24,
+            color   = {255, 255, 255, 150},
+            align_h = .Center,
+            align_v = .Bottom)
     }
     if game.mode == .PLAY {
         hit_error_bar_draw_screenspace(&game.hit_error_bar)
@@ -641,9 +615,32 @@ osu_on_update :: proc(dt: f64) {
     r_bind_layer_and_push_current_state(.CURSOR, transform = window.screenspace_transform)
     
     cursor_draw(mouse.pos, skin_texture(.CURSOR))
-    if app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {   
+    if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {   
         cursor_draw(mouse_secondary.pos, skin_texture(.CURSOR))
-    }    
+    }
+
+    if game.input.rebinding_key != .NONE {
+        r_check_and_bind_layer(.DEBUG)        
+        r_push_transform(fullscreen_transform)
+        r_draw_quad(&window.renderer.quad_geometry,
+            vec2{0,0}, vec2{1,1},
+            vec2{0,0}, vec2{1,1},
+            with_alpha(color_black, 0.5))
+            
+        prompt := strings.concatenate({"Rebinding: ", rebindable_input_key_names[game.input.rebinding_key]}, context.temp_allocator)
+        push_text(&window.renderer, prompt,
+            pos = {window.rect.w / 2, window.rect.h / 2 - 12},
+            size = 16,
+            color = {255, 255, 255, 150},
+            align_h = .Center,
+            align_v = .Middle)
+        push_text(&window.renderer, "Press any key...",
+            pos = {window.rect.w / 2, window.rect.h / 2 + 12},
+            size = 16,
+            color = {255, 255, 255, 150},
+            align_h = .Center,
+            align_v = .Middle)
+    }
 }
 
 cursor_draw :: proc(pos: vec2, tex_index: u32) {
@@ -653,6 +650,42 @@ cursor_draw :: proc(pos: vec2, tex_index: u32) {
         tex_index, f32(time_s_since_beginning_of_program()))
 }
 
+
+//////////////////////////////////////////////////////
+// note(isak): playfield math
+
+// note(isak): builds game.playfield_transform from playfield_offset_osupx, playfield_scale,
+// and playfield_rotation_rad. maps osupx -> NDC with full affine support (translate, scale, rotate). 
+// the inverse correctly maps window pixels back to osupx without extra adjustment.
+playfield_build_transform :: proc "contextless" () -> Transform {
+    effective_scale       := playfield_base_scale * game.beatmap.playfield_scale
+    effective_translation := playfield_base_translation_osupx + game.beatmap.playfield_translation_osupx
+
+    k  := effective_scale * window.rect.h / PLAYFIELD_SIZE_OSUPX
+    cx := window.rect.w * 0.5 + effective_translation.x * k
+    cy := window.rect.h * 0.5 + effective_translation.y * k
+
+    ndc_from_px := mat3{
+        2 / window.rect.w, 0,                 -1,
+        0,                 2 / window.rect.h, -1,
+        0,                 0,                  1,
+    }
+    t_center := mat3{
+        1, 0, -PLAYFIELD_SIZE_OSUPX * 0.5,
+        0, 1, -PLAYFIELD_SIZE_OSUPX * 0.5,
+        0, 0,  1,
+    }
+
+    anchor_px := vec2{cx, cy} + k * (game.beatmap.playfield_rotation_anchor_osupx - PLAYFIELD_SIZE_OSUPX * 0.5)
+    rotate_about_anchor := mat3_affine(anchor_px, 1, game.beatmap.playfield_rotation_rad) * mat3{
+        1, 0, -anchor_px.x,
+        0, 1, -anchor_px.y,
+        0, 0,  1,
+    }
+    px_from_osupx := mat3_affine({cx, cy}, k, 0) * t_center
+
+    return mat3_to_transform(ndc_from_px * rotate_about_anchor * px_from_osupx)
+}
 
 // note(isak): converts a screen-space pixel position (origin top-left, in window pixels) into playfield
 // osupx space, the coordinate space hitobjects and playfield drawables live in. the inverse of the
@@ -682,6 +715,26 @@ transform_mouse_pos :: proc(pos: vec2) -> vec2 {
     return screenspace_to_playfield_osupx(pos)
 }
 
+//////////////////////////////////////////////////////
+// note(isak): input
+
+Rebindable_Input_Key :: enum {
+    NONE,
+    K1,
+    K2,
+}
+
+rebindable_input_key_names := [Rebindable_Input_Key]string {
+    .NONE = "",
+    .K1 = "Primary",
+    .K2 = "Secondary",
+}
+
+rebindable_input_key_code :: proc(key: Rebindable_Input_Key) -> cstring {
+    return sdl.GetScancodeName(game.input.keys[key])
+}
+
+
 handle_play_input_events :: proc() {
     if key_is_pressed(.ESCAPE) {
         game.mode = .EDITOR
@@ -696,15 +749,24 @@ handle_play_input_events :: proc() {
         game.user_config.universal_offset_ms -= key_is_down(.LSHIFT) ? 1 : 5
     }
     
+    if key_is_pressed(.PAGEUP) {
+        game.time_rate *= 1.5
+        sound_set_speed(&game.beatmap.music, game.time_rate)
+    }
+    if key_is_pressed(.PAGEDOWN) {
+        game.time_rate /= 1.5
+        sound_set_speed(&game.beatmap.music, game.time_rate)
+    }
+    
     if key_is_pressed(.F10) {
         game.input.mouse_keys_enabled = !game.input.mouse_keys_enabled
         notify_warn("mouse keys enabled" if game.input.mouse_keys_enabled else "mouse keys disabled")
     }
     
-    game.input.k1.is_down = keyboard.buttons[game.input.k1_key]
-    game.input.k1.was_down = keyboard.buttons_prev_frame[game.input.k1_key]
-    game.input.k2.is_down = keyboard.buttons[game.input.k2_key]
-    game.input.k2.was_down = keyboard.buttons_prev_frame[game.input.k2_key]
+    game.input.k1.is_down = keyboard.buttons[game.input.keys[.K1]]
+    game.input.k1.was_down = keyboard.buttons_prev_frame[game.input.keys[.K1]]
+    game.input.k2.is_down = keyboard.buttons[game.input.keys[.K2]]
+    game.input.k2.was_down = keyboard.buttons_prev_frame[game.input.keys[.K2]]
     game.input.m1 = mouse.buttons[.LEFT]
     game.input.m2 = mouse.buttons[.RIGHT]
     
@@ -715,7 +777,7 @@ handle_play_input_events :: proc() {
         lua_beatmap_on_cursor_moved(game.input.mouse_pos)
     }
 
-    if app.mouse_input_mode == .DOUBLE_MOUSE_INPUT {
+    if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {
         game.input.mouse_secondary_pos = transform_mouse_pos(vec2{mouse_secondary.pos.x, mouse_secondary.pos.y})
         game.input.ms1 = mouse_secondary.buttons[.LEFT]
         game.input.ms2 = mouse_secondary.buttons[.RIGHT]

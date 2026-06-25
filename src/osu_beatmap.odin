@@ -104,6 +104,7 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     beatmap.playfield_translation_osupx = {}
     beatmap.playfield_rotation_rad = 0
     beatmap.playfield_rotation_anchor_osupx = {256, 192}
+    
     game.playfield_dirty_transform = true
     
     queue.init(&beatmap.judgements, 8192, memory.allocators[.JUDGEMENTS])
@@ -233,6 +234,7 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false) {
     beatmap_on_init(ref, &game.beatmap)
     sound_set_speed(&game.beatmap.music, game.time_rate)
     game.beatmap_active = true
+    window.transparent = false
 
     notify_info("loaded beatmap in %.3vs", time_s_since_beginning_of_program() - load_start)
 

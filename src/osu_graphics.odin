@@ -30,6 +30,11 @@ skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
     .JUDGEMENT_OK        = .HIT50,
     .JUDGEMENT_GOOD      = .HIT100,
     .JUDGEMENT_MARVELOUS = .HIT300,
+
+    .CLICKED_HIT_CIRCLE = .HITCIRCLE,
+    .CLICKED_HIT_CIRCLE_OVERLAY = .HITCIRCLEOVERLAY,
+    .FINISHED_SLIDER_END_CIRCLE = .SLIDER_END,
+    .FINISHED_SLIDER_END_CIRCLE_OVERLAY = .SLIDER_END_OVERLAY,
 }
 
 //////////////////////////////////////////////////////
@@ -176,6 +181,9 @@ Element_Type :: enum {
 
     CLICKED_HIT_CIRCLE,
     CLICKED_HIT_CIRCLE_OVERLAY,
+    FINISHED_SLIDER_END_CIRCLE,
+    FINISHED_SLIDER_END_CIRCLE_OVERLAY,
+    
     JUDGEMENT_MISS,
     JUDGEMENT_OK,
     JUDGEMENT_GOOD,
@@ -315,6 +323,7 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
     elements.len += len(Element_Type)
     
     for el_type in Element_Type {
+        elements.data[el_type].type = el_type
         elements.data[el_type].tex = skin_texture(skin_render_element(skin_element_for_type_table[el_type]))
     }
 
@@ -340,7 +349,7 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
         })
     }
     
-    hit_anims := animation_new(anims,
+    anim_judgement := animation_new(anims,
         Animation_Scale{
             tween = .QUAD_OUT,
             start_time  = 0,   
@@ -355,9 +364,9 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
             end_alpha = 0.0,
         },
     )
-    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS)].animations = hit_anims
-    elements.data[builtin_element_slot(.JUDGEMENT_GOOD)].animations      = hit_anims
-    elements.data[builtin_element_slot(.JUDGEMENT_OK)].animations        = hit_anims
+    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS)].animations = anim_judgement
+    elements.data[builtin_element_slot(.JUDGEMENT_GOOD)].animations      = anim_judgement
+    elements.data[builtin_element_slot(.JUDGEMENT_OK)].animations        = anim_judgement
 
     elements.data[builtin_element_slot(.JUDGEMENT_MISS)].animations = animation_new(anims,
         Animation_Alpha{
@@ -366,7 +375,7 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
         },
     )
     
-    click_animation := animation_new(anims, 
+    anim_hit := animation_new(anims, 
         Animation_Scale{
             start_time = 0,
             end_time = 1,
@@ -380,15 +389,12 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
             end_alpha = 0.0,
         }
     )
-    
-    elements.data[builtin_element_slot(.CLICKED_HIT_CIRCLE)] = {
-        tex = skin_texture(.HITCIRCLE),
-        animations = click_animation
+
+    clickables := [?]Element_Type{
+        .CLICKED_HIT_CIRCLE, .CLICKED_HIT_CIRCLE_OVERLAY, .FINISHED_SLIDER_END_CIRCLE, .FINISHED_SLIDER_END_CIRCLE_OVERLAY
     }
-    
-    elements.data[builtin_element_slot(.CLICKED_HIT_CIRCLE_OVERLAY)] = {
-        tex = skin_texture(.HITCIRCLEOVERLAY),
-        animations = click_animation
+    for el in clickables {
+        elements.data[builtin_element_slot(el)].animations = anim_hit
     }
 
     elements.data[builtin_element_slot(.SLIDER_TICK)].animations = animation_new(anims,
@@ -411,10 +417,6 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
             start_scale = {1/2.4, 1/2.4}, end_scale = {1, 1},
         },
     )
-
-    for el_type in Element_Type {
-        elements.data[el_type].type = el_type
-    }
 }
 
 //////////////////////////////////////////////////////
@@ -542,12 +544,17 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
         // note(isak): size and pos are in radius units so they scale correctly with CS changes at runtime.
         hc_size := game.active_skin.elements[.HITCIRCLE].metrics
         number_scale_norm := 2 / max(hc_size.x, 1) * COMBO_NUMBER_SCALE
-    
+        // note(isak): HitCircleOverlap is a pixel count at the glyph's metric size, so it normalizes
+        // through the same factor as the digit widths. it trims the gap between adjacent digits.
+        overlap_norm := game.active_skin.font_hit_circle_overlap * number_scale_norm
+
         total_digits_w_norm: f32
         for digit in 0..<num_digits {
             digit_el := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[digit])
             total_digits_w_norm += game.active_skin.elements[digit_el].metrics.x * number_scale_norm
         }
+        total_digits_w_norm -= overlap_norm * f32(num_digits - 1)
+
         x_norm := -total_digits_w_norm / 2
         for di in 0..<num_digits {
             digit_el      := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[di])
@@ -565,21 +572,24 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
                 end_time_ms   = hobj.start_time_ms + game.beatmap.timing_windows.ok,
                 hobj_index    = hobj.index + 1,
             })
-            x_norm += digit_size_norm.x
+            x_norm += digit_size_norm.x - overlap_norm
         }
     }
 }
 
-hitcircle_create_default_hit_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_time: f64) {
+hitcircle_create_default_hit_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_time: f64, sliderend: bool) {
     if .HIDDEN_BY_SCRIPT in hobj.flags {
         return
     }
+
+    el_overlay: Element_Type = sliderend ? .FINISHED_SLIDER_END_CIRCLE_OVERLAY : .CLICKED_HIT_CIRCLE_OVERLAY
+    el_circle: Element_Type = sliderend ? .FINISHED_SLIDER_END_CIRCLE : .CLICKED_HIT_CIRCLE
     
     combo_color := hitobject_combo_color(hobj)
 
     drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
         flags = {.ACTIVE},
-        element = builtin_element_slot(.CLICKED_HIT_CIRCLE_OVERLAY),
+        element = builtin_element_slot(el_overlay),
         layer = .HITOBJECTS,
         pos = pos,
         size = {2, 2},
@@ -591,7 +601,7 @@ hitcircle_create_default_hit_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_
     })
     drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
         flags = {.ACTIVE},
-        element = builtin_element_slot(.CLICKED_HIT_CIRCLE),
+        element = builtin_element_slot(el_circle),
         layer = .HITOBJECTS,
         pos = pos,
         size = {2, 2},
@@ -622,7 +632,7 @@ process_hitobject_phase_transitions :: proc() {
         case .HOLD:
             hitobject_clear_drawables(hobj)
             
-            hitcircle_create_default_hit_drawables(hobj, hitobject_pos(hobj), map_time)
+            hitcircle_create_default_hit_drawables(hobj, hitobject_pos(hobj), map_time, false)
             hitobject_create_phase_drawables(hobj, .HOLD, hobj.start_time_ms)
         case .HIT:
             hitobject_clear_drawables(hobj)
@@ -630,9 +640,9 @@ process_hitobject_phase_transitions :: proc() {
             // note(isak): custom hit animations override the default circle expanding animation
             if hobj.custom_element_nums[.HIT] == 0 {
                 if transition.from == .PREEMPT || transition.from == .POSTEMPT {
-                    hitcircle_create_default_hit_drawables(hobj, hitobject_pos(hobj), map_time)
+                    hitcircle_create_default_hit_drawables(hobj, hitobject_pos(hobj), map_time, false)
                 } else if transition.from == .HOLD {
-                    hitcircle_create_default_hit_drawables(hobj, hitobject_tail_pos(hobj), map_time)
+                    hitcircle_create_default_hit_drawables(hobj, hitobject_tail_pos(hobj), map_time, true)
                 }
             }
             hitobject_create_phase_drawables(hobj, .HIT, map_time)
@@ -885,11 +895,16 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
 
     slider_snake_instances := max(1, i32(f64(slider.instance_count) * slider_snake_out_factor(hobj)))
 
+    // note(isak): skin SliderBorder/SliderTrackOverride tint the rgb; alpha stays the render's own.
+    // unset skin colours (zero alpha) fall back to the default white.
+    border_rgb := game.active_skin.slider_border.a != 0 ? game.active_skin.slider_border : color_white
+    body_rgb   := game.active_skin.slider_track_override.a != 0 ? game.active_skin.slider_track_override : color_white
+
     command_push_draw_slider(Command_Draw_Slider{
         base_instance      = u32(slider.first_instance_at),
         instance_count     = slider_snake_instances,
-        border_color       = with_alpha(color_white, 0.9),
-        body_color         = with_alpha(color_white, 0.7),
+        border_color       = with_alpha(border_rgb, 0.9),
+        body_color         = with_alpha(body_rgb, 0.7),
         script_translation = translation,
         radius_osupx       = r,
     })

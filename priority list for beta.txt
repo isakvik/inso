@@ -4,13 +4,11 @@ bugs
     slider tracking doesnt play sound if head is ignored
     refresh while external map is loaded crashes game
 
-bugs low priority
-    scrubbing doesnt regen timed gameplay graphics (edit mode...)
-
 old features
     reverse arrow animation
     combobreak sound
     cursor ripple
+    note stacking
 
 extra features
     slider snaking out
@@ -38,14 +36,10 @@ gameplay
         note stacking
         object dimming
 
-lua 
+lua
     particle system
 
 game
-    ui core (low priority)
-        offset change
-        audio settings
-        
     drawable inspector
     offset wizard
 

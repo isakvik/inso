@@ -81,7 +81,7 @@ _win32_message_hook :: proc(userdata: rawptr, msg: ^windows.MSG) -> bool {
     m := &raw.data.mouse
 
     switch app.mouse_input_mode {
-    case .DOUBLE_MOUSE_INPUT:
+    case .RAW_DOUBLE_MOUSE_INPUT:
         target: ^Mouse
         if raw.header.hDevice == mouse.device_handle {
             target = &mouse
@@ -92,7 +92,7 @@ _win32_message_hook :: proc(userdata: rawptr, msg: ^windows.MSG) -> bool {
         }
         apply_raw_mouse_update(target, m)
 
-    case .SINGLE_MOUSE_INPUT:
+    case .RAW_SINGLE_MOUSE_INPUT:
         // note(isak): any physical mouse drives the primary cursor, so no handle filtering here
         apply_raw_mouse_update(&mouse, m)
 

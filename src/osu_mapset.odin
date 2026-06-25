@@ -303,9 +303,19 @@ discover_maps :: proc(
         return
     }
     
+    // note(isak): externally-opened maps don't live under songs_dir, so carry them across the
+    // rebuild instead of dropping them (and orphaning the active beatmap / dropdown selection).
+    preserved_refs  := make([dynamic]Map_Reference, temp_alloc)
+    preserved_names := make([dynamic]cstring, temp_alloc)
+    for ref, i in app.map_references {
+        if !ref.external do continue
+        append(&preserved_refs, ref)
+        append(&preserved_names, app.map_reference_names[i])
+    }
+
     clear(&app.map_references)
     clear(&app.map_reference_names)
-    
+
     dirs, _ := os.read_dir(dir_handle, 1024, temp_alloc)
 
     count := 0
@@ -335,6 +345,21 @@ discover_maps :: proc(
             count += 1
         }
     }
+    for ref, i in preserved_refs {
+        append(&app.map_references, ref)
+        append(&app.map_reference_names, preserved_names[i])
+    }
+
+    // note(isak): the rebuild shuffles indices, so re-point the dropdown at the active map
+    app.map_dropdown.selected = 0
+    for ref, i in app.map_references {
+        if ref.folder_path == game.beatmap.map_reference.folder_path &&
+           ref.osu_filename == game.beatmap.map_reference.osu_filename {
+            app.map_dropdown.selected = i
+            break
+        }
+    }
+
     notify_info("discover_maps: found %v maps in '%s'", count, songs_dir)
 }
 

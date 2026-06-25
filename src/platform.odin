@@ -13,6 +13,7 @@ Map_Reference :: struct {
     folder_path:  string,
     osu_filename: string, // note(isak): which .osu file to load within the folder
     hash: u64,
+    external: bool, // note(isak): opened from outside songs/; survives a songs-folder rediscovery
 }
 
 app: struct {
@@ -61,9 +62,11 @@ app_init :: proc() {
 
     // note(isak): logger is created after the working-dir fixup so a file logger lands in the app root
     app.logger = logging_create_logger()
+    crash_stats_init()
 }
 
 app_cleanup :: proc() {
+    crash_stats_cleanup()
     logging_destroy_logger(app.logger)
 }
 
@@ -72,8 +75,8 @@ app_cleanup :: proc() {
 
 Mouse_Input_Mode :: enum {
     SDL_INPUT,
-    DOUBLE_MOUSE_INPUT,
-    SINGLE_MOUSE_INPUT,
+    RAW_SINGLE_MOUSE_INPUT,
+    RAW_DOUBLE_MOUSE_INPUT,
     REBINDING_MOUSE_PRIMARY,
     REBINDING_MOUSE_SECONDARY,
 }
@@ -165,7 +168,7 @@ mouse_enable_double_mouse_mode :: proc() -> bool {
         return false
     }
     
-    app.mouse_input_mode = .DOUBLE_MOUSE_INPUT
+    app.mouse_input_mode = .RAW_DOUBLE_MOUSE_INPUT
     for &mouse in mice {
         mouse.pos = mouse_get_position_relative_to_window()
     }
@@ -174,8 +177,8 @@ mouse_enable_double_mouse_mode :: proc() -> bool {
 
 // note(isak): single mouse mode drives the primary cursor from raw input regardless of which physical
 // mouse sends it, so no device handle needs to be bound
-mouse_enable_single_mouse_mode :: proc() {
-    app.mouse_input_mode = .SINGLE_MOUSE_INPUT
+mouse_enable_raw_input_mode :: proc() {
+    app.mouse_input_mode = .RAW_SINGLE_MOUSE_INPUT
     mouse.pos = mouse_get_position_relative_to_window()
 }
 

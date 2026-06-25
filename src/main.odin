@@ -16,6 +16,7 @@ import "core:time"
 import vmem "core:mem/virtual"
 
 import "core:c"
+import "bass"
 import imgui "imgui"
 import imgui_gl3 "imgui/imgui_impl_opengl3"
 import sdl "vendor:sdl3"
@@ -136,7 +137,9 @@ main :: proc() {
     defer window_cleanup()
     
     audio_init()
-    assert(audio.ready)
+    if !audio.ready {
+        log.panic("BASS audio init error:", bass.ErrorGetCode())
+    }
     defer audio_cleanup()
 
     renderer_init()
@@ -184,12 +187,11 @@ main :: proc() {
         len(app.map_references) > 0 ? app.map_references[0] : Map_Reference{ folder_path = "songs/test/" }
     //--
 
-    crash_stats_init()
-    defer crash_stats_cleanup()
-
     osu_on_init()
     notify_info("notosu! loaded in %.3vs", notosu_load_time)
+    
     beatmap_open(initial_map_ref)
+    
     notify_info("Press F8 to view previous notifications")
 
     time_current_frame := current_time_s()
@@ -267,13 +269,19 @@ main :: proc() {
                     imgui.IO_AddMouseWheelEvent(imgui.GetIO(), event.wheel.x, event.wheel.y)
 
                 case sdl.EventType.KEY_DOWN:
-                    //lua_enqueue_key_event(event.key.scancode, true)
                     imgui.IO_AddKeyEvent(imgui.GetIO(), sdl_scancode_to_imgui(event.key.scancode), true)
                     if event.key.scancode == .RETURN && (event.key.mod & sdl.KMOD_ALT) != {} {
                         window_toggle_fullscreen()
                     }
+                    
+                    if game.input.rebinding_key != .NONE {
+                        defer game.input.rebinding_key = .NONE
+
+                        game.input.keys[game.input.rebinding_key] = event.key.scancode
+                        game.user_config.keys[game.input.rebinding_key] = event.key.scancode
+                    }
+                    
                 case sdl.EventType.KEY_UP:
-                    //lua_enqueue_key_event(event.key.scancode, false)
                     imgui.IO_AddKeyEvent(imgui.GetIO(), sdl_scancode_to_imgui(event.key.scancode), false)
                 case sdl.EventType.TEXT_INPUT:
                     imgui.IO_AddInputCharactersUTF8(imgui.GetIO(), event.text.text)
@@ -311,7 +319,7 @@ main :: proc() {
                 // note(isak): this ensures cursor movement updates despite not receiving raw input messages 
                 mouse.pos = mouse_get_position_relative_to_window()
             }
-            raw_mouse_active := app.mouse_input_mode == .DOUBLE_MOUSE_INPUT || app.mouse_input_mode == .SINGLE_MOUSE_INPUT
+            raw_mouse_active := app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT || app.mouse_input_mode == .RAW_SINGLE_MOUSE_INPUT
             if window.focused && window.mouse_inside && raw_mouse_active {
                 sdl.WarpMouseInWindow(window.handle, mouse.pos.x, mouse.pos.y)
             }
@@ -353,7 +361,7 @@ main :: proc() {
             r_bind_layer_and_push_current_state(.BACKGROUND, transform = window.screenspace_transform)
             osu_on_update(dt_ms)
 
-            if app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY {        
+            if app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY {
                 r_check_and_bind_layer(.DEBUG)        
                 r_push_transform(fullscreen_transform)
                 r_draw_quad(&renderer.quad_geometry,
@@ -437,6 +445,12 @@ main :: proc() {
                     color_white, 
                     tex_index = builtin_texture(.SLIDER_FRAMEBUFFER)
                 )
+                push_text(renderer, "Slider texture buffer (press F6 to hide)",
+                    pos     = {window.rect.w / 2, 50},
+                    size    = 18,
+                    color   = {255, 255, 255, 150},
+                    align_h = .Center,
+                    align_v = .Bottom)
             }
             
             if app.debug_display_playfield_cursor {
@@ -544,7 +558,7 @@ begin_frame :: proc(renderer: ^Renderer) {
 end_frame :: proc(renderer: ^Renderer) {
     text_submit_geometry(renderer)
 
-    if !game.transparent {
+    if !window.transparent {
         // note(isak): windows window with transparency captures the alpha of the last drawn pixels and uses that for
         // the window's opacity value. when we don't want transparency, clear alpha of every pixel to 1.0
         r_bind_layer(.DEBUG)
@@ -588,6 +602,7 @@ open_external_map :: proc(external_map_path: string) -> (success: bool) {
         folder_path = external_map_path[:idx + 1],
         osu_filename = filepath.base(external_map_path),
         hash = hash,
+        external = true,
     })
     ref := app.map_references[len(app.map_references) - 1]
     ref_display_cstr  := fmt.caprintf("%s", ref.osu_filename)
@@ -672,15 +687,34 @@ imgui_update :: proc() {
         imgui.SameLine()
         imgui.SliderFloat("Cursor sensitivity##mouse", &game.user_config.cursor_sensitivity, 0.1, 5.0)
             
-        single_mouse := app.mouse_input_mode == .SINGLE_MOUSE_INPUT
-        if imgui.Checkbox("Raw single mouse input", &single_mouse) {
-            if single_mouse {
-                mouse_enable_single_mouse_mode()
+        raw_input := app.mouse_input_mode == .RAW_SINGLE_MOUSE_INPUT
+        if imgui.Checkbox("Raw input", &raw_input) {
+            if raw_input {
+                mouse_enable_raw_input_mode()
             } else {
                 mouse_disable_raw_input_mode()
             }
         }
+        
+        imgui.Text("\nKey bindings (click to rebind)")
+        if imgui.BeginTable("keybinds", 2, imgui.TableFlags_RowBg | imgui.TableFlags_SizingFixedFit) {
+            for key in Rebindable_Input_Key {
+                if key == .NONE do continue
 
+                imgui.TableNextRow()
+                imgui.TableSetColumnIndex(0)
+                is_rebinding := game.input.rebinding_key == key
+                row_label := fmt.ctprintf("%s##%s", rebindable_input_key_names[key], fmt.enum_value_to_string(key))
+                if imgui.Selectable(row_label, is_rebinding, {.SpanAllColumns}) {
+                    game.input.rebinding_key = key
+                }
+                imgui.TableSetColumnIndex(1)
+                imgui.Text(fmt.ctprintf("%s", rebindable_input_key_code(key)))
+            }
+            imgui.EndTable()
+        }
+        
+        /*
         imgui.Text("Rebind mice")
         if imgui.Button("primary") {
             app.mouse_input_mode = .REBINDING_MOUSE_PRIMARY
@@ -691,6 +725,7 @@ imgui_update :: proc() {
             app.mouse_input_mode = .REBINDING_MOUSE_SECONDARY
             mice[.SECONDARY].is_rebinding = true
         }
+        */
     }
 
     write_offset_window()
@@ -726,6 +761,8 @@ handle_debug_ui_events :: proc() {
         game.active_skin = skin_load(skin_ref)
         game.user_config.skin_path = skin_ref
         prepare_textures_for_rendering()
+
+        beatmap_open(game.beatmap.map_reference, true)
     }
     
     if key_is_pressed(.F1) {

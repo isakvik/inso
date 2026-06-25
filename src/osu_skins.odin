@@ -5,13 +5,23 @@ import "core:fmt"
 import "core:log"
 import "core:mem/virtual"
 import os "core:os"
+import "core:strconv"
 import "core:strings"
 
 
 Skin :: struct {
     path: string,
+    element_paths: [Skin_Element_Type]string,
     elements: [Skin_Element_Type]Skin_Element,
     hitsounds: [Skin_Sample_Set][Skin_Hitsound_Type]Hitsound,
+
+    using ini_options: struct {
+        slider_border: Color,
+        slider_track_override: Color,
+    
+        font_hit_circle_prefix: string,
+        font_hit_circle_overlap: f32,
+    },
 }
 
 supported_image_extensions :: []string{".png", ".jpg"}
@@ -57,35 +67,34 @@ Skin_Element :: struct {
     metrics: vec2,
 }
 
-Skin_Element_Path := [Skin_Element_Type]string {
-    .CURSOR          = "cursor",
-    .APPROACHCIRCLE  = "approachcircle",
-    .HITCIRCLE       = "hitcircle",
-    .HITCIRCLEOVERLAY = "hitcircleoverlay",
-    .LIGHTING        = "lighting",
+skin_load_element_paths :: proc(
+    skin: ^Skin, alloc: runtime.Allocator = context.allocator
+) -> (result: [Skin_Element_Type]string) {  
+    result[.CURSOR]           = "cursor"
+    result[.APPROACHCIRCLE]   = "approachcircle"
+    result[.HITCIRCLE]        = "hitcircle"
+    result[.HITCIRCLEOVERLAY] = "hitcircleoverlay"
+    result[.LIGHTING]         = "lighting"
+    
+    result[.HIT0]    = "hit0"
+    result[.HIT50]   = "hit50"
+    result[.HIT100]  = "hit100"
+    result[.HIT300]  = "hit300"
 
-    .HIT0    = "hit0",
-    .HIT50   = "hit50",
-    .HIT100  = "hit100",
-    .HIT300  = "hit300",
-
-    .COMBO_0 = "default-0",
-    .COMBO_1 = "default-1",
-    .COMBO_2 = "default-2",
-    .COMBO_3 = "default-3",
-    .COMBO_4 = "default-4",
-    .COMBO_5 = "default-5",
-    .COMBO_6 = "default-6",
-    .COMBO_7 = "default-7",
-    .COMBO_8 = "default-8",
-    .COMBO_9 = "default-9",
-
-    .SLIDER_BALL = "sliderb0",
-    .SLIDER_FOLLOW_CIRCLE = "sliderfollowcircle",
-    .SLIDER_REPEAT = "reversearrow",
-    .SLIDER_TICK = "sliderscorepoint",
-    .SLIDER_END = "sliderendcircle",
-    .SLIDER_END_OVERLAY = "sliderendcircleoverlay",
+    result[.SLIDER_BALL]          = "sliderb"
+    result[.SLIDER_FOLLOW_CIRCLE] = "sliderfollowcircle"
+    result[.SLIDER_REPEAT]        = "reversearrow"
+    result[.SLIDER_TICK]          = "sliderscorepoint"
+    result[.SLIDER_END]           = "sliderendcircle"
+    result[.SLIDER_END_OVERLAY]   = "sliderendcircleoverlay"
+    
+    digit_postfix := [10]string {"-0", "-1", "-2", "-3", "-4", "-5", "-6", "-7", "-8", "-9"}
+    for digit in 0..<10 {
+        type := .COMBO_0 + Skin_Element_Type(digit)
+        result[type] = strings.concatenate({skin.font_hit_circle_prefix, digit_postfix[digit]}, alloc) 
+    }
+    
+    return result
 }
 
 // -- skin hitsound elements
@@ -114,28 +123,31 @@ skin_sample_set_name := [Skin_Sample_Set]string {
 }
 
 skin_hitsound_type_name := [Skin_Hitsound_Type]string {
-    .HITNORMAL   = "hitnormal",
-    .HITWHISTLE  = "hitwhistle",
-    .HITFINISH   = "hitfinish",
-    .HITCLAP     = "hitclap",
-    .SLIDERSLIDE = "sliderslide",
+    .HITNORMAL     = "hitnormal",
+    .HITWHISTLE    = "hitwhistle",
+    .HITFINISH     = "hitfinish",
+    .HITCLAP       = "hitclap",
+    .SLIDERSLIDE   = "sliderslide",
     .SLIDERWHISTLE = "sliderwhistle",
-    .SLIDERTICK  = "slidertick",
+    .SLIDERTICK    = "slidertick",
 }
 
 Hitsound :: Sample
 
 
 skin_load :: proc(skin_path: string) -> (result: ^Skin) {
-    load_start := time_s_since_beginning_of_program()
-    
     context.allocator = memory.allocators[.SKIN]
+    
+    load_start := time_s_since_beginning_of_program()
     result = new(Skin)
     result.path, _ = strings.clone(skin_path)
 
     os.change_directory(result.path)
     defer os.change_directory(app.base_dir)
 
+    skin_handle_ini(result)
+    result.element_paths = skin_load_element_paths(result)
+    
     skin_load_elements(result)
     skin_load_hitsounds(result)
     
@@ -152,13 +164,45 @@ skin_load :: proc(skin_path: string) -> (result: ^Skin) {
     return result
 }
 
+skin_handle_ini :: proc(skin: ^Skin) {
+    skin.font_hit_circle_prefix = "default"
+
+    src, read_err := read_entire_file_to_string("skin.ini", context.temp_allocator)
+    if read_err != nil {
+        log.infof("skin '{}': no readable skin.ini ({}), using defaults", skin.path, read_err)
+        return
+    }
+
+    sections := parse_osu_ini(src, context.temp_allocator)
+
+    get :: proc(sections: map[string]map[string]string, section, key: string) -> (string, bool) {
+        pairs, has_section := sections[section]
+        if !has_section do return "", false
+        v, has_key := pairs[key]
+        return v, has_key && len(v) > 0
+    }
+
+    if v, ok := get(sections, "Fonts", "HitCirclePrefix"); ok {
+        skin.font_hit_circle_prefix = strings.clone(v)
+    }
+    if v, ok := get(sections, "Fonts", "HitCircleOverlap"); ok {
+        skin.font_hit_circle_overlap, _ = strconv.parse_f32(v)
+    }
+    if v, ok := get(sections, "Colours", "SliderBorder"); ok {
+        if c, parsed := parse_osu_color(v); parsed do skin.slider_border = c
+    }
+    if v, ok := get(sections, "Colours", "SliderTrackOverride"); ok {
+        if c, parsed := parse_osu_color(v); parsed do skin.slider_track_override = c
+    }
+}
+
 skin_load_elements :: proc(skin: ^Skin) {
     for element in Skin_Element_Type {
         tex_store := &window.skin_textures[element]
         tex_err: os.Error
 
         for extension in supported_image_extensions {
-            element_path := strings.concatenate({Skin_Element_Path[element], "@2x", extension})
+            element_path := strings.concatenate({skin.element_paths[element], "@2x", extension})
             tex_store^, tex_err = texture_from_file(element_path)
             if tex_err == os.General_Error.None {
                 skin.elements[element].is_high_resolution = true
@@ -166,7 +210,12 @@ skin_load_elements :: proc(skin: ^Skin) {
             }
 
             if tex_err == os.General_Error.Not_Exist {
-                element_path = strings.concatenate({Skin_Element_Path[element], extension})
+                element_path = strings.concatenate({skin.element_paths[element], extension})
+                tex_store^, tex_err = texture_from_file(element_path)
+            }
+            
+            if tex_err == os.General_Error.Not_Exist {
+                element_path = strings.concatenate({skin.element_paths[element], "0", extension})
                 tex_store^, tex_err = texture_from_file(element_path)
             }
 
@@ -201,8 +250,7 @@ skin_load_elements :: proc(skin: ^Skin) {
     }
 }
 
-// note(isak): resolves the skin slot an element should actually sample. skins that omit the
-// slider-end graphics fall back to the regular hitcircle/overlay. we redirect to the fallback
+// note(isak): resolves the skin slot an element should actually sample. we redirect to the fallback
 // slot (rather than copying the texture into the slider-end slot) so the same bindless handle
 // isn't duplicated across two slots - that would double-resident it and raise GL_INVALID_OPERATION.
 skin_render_element :: proc(el: Skin_Element_Type) -> Skin_Element_Type {

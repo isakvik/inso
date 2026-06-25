@@ -5,6 +5,7 @@ import "core:log"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import sdl "vendor:sdl3"
 
 
 // note(isak): user config is saved to a .ini file, just like osu
@@ -20,6 +21,7 @@ User_Configuration :: struct {
     cursor_size_multiplier: f32,
     cursor_sensitivity: f32,
     bg_dim: f32, // note(isak): 0 = background fully visible, 1 = fully black
+    keys: [Rebindable_Input_Key]sdl.Scancode,
 }
 
 config_load :: proc(path: string) -> (result: User_Configuration) {
@@ -33,7 +35,7 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         return strings.trim_space(v), ok && len(v) > 0
     }
 
-    // note(isak): top level is sectionless
+    // note(isak): our config top level is sectionless
     if gen, ok := m[""]; ok {
         if v, ok := get(gen, "universal_offset_ms"); ok {
             result.universal_offset_ms, ok = strconv.parse_int(v)
@@ -68,6 +70,12 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         if v, ok := get(gen, "bg_dim"); ok {
             if f, ok2 := strconv.parse_f32(v); ok2 do result.bg_dim = f
         }
+        for key in Rebindable_Input_Key {
+            if key == .NONE do continue
+            if v, ok := get(gen, rebindable_input_key_names[key]); ok {
+                if n, ok2 := strconv.parse_int(v); ok2 do result.keys[key] = sdl.Scancode(n)
+            }
+        }
     }
     return
 }
@@ -87,6 +95,10 @@ config_save :: proc(path: string) {
     ini.write_pair(w, "cursor_size_multiplier", game.user_config.cursor_size_multiplier)
     ini.write_pair(w, "cursor_sensitivity",     game.user_config.cursor_sensitivity)
     ini.write_pair(w, "bg_dim",                 game.user_config.bg_dim)
+    for key in Rebindable_Input_Key {
+        if key == .NONE do continue
+        ini.write_pair(w, rebindable_input_key_names[key], int(game.user_config.keys[key]))
+    }
 
     err := os.write_entire_file(path, transmute([]byte)strings.to_string(sb))
     if err != os.General_Error.None {
@@ -102,14 +114,17 @@ config_save :: proc(path: string) {
 }
 
 config_supply_default :: proc() -> (result: User_Configuration) {
-    return {
-        universal_offset_ms = -28,
-        vsync_enabled       = false,
-        master_volume       = 0.5,
-        music_volume        = 0.5,
-        hitsound_volume     = 0.8,
+    result = {
+        universal_offset_ms    = -28,
+        vsync_enabled          = false,
+        master_volume          = 0.5,
+        music_volume           = 0.5,
+        hitsound_volume        = 0.8,
         skin_path              = "skins/gn/",
         cursor_size_multiplier = 1.0,
         cursor_sensitivity     = 1.0,
     }
+    result.keys[.K1] = .Z
+    result.keys[.K2] = .X
+    return
 }

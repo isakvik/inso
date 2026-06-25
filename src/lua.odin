@@ -953,9 +953,12 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
   { "has_any_bits", luaapi_hitobject_has_any_bits,
     "bool hitobject:has_any_bits( int mask )",
     "true if at least one bit in mask is set on this object." },
+  { "get_base_pos", luaapi_hitobject_get_base_pos,
+    "(float x, float y) hitobject:get_base_pos( void )",
+    "the object's current position in osupx before any script translation." },
   { "get_pos", luaapi_hitobject_get_pos,
     "(float x, float y) hitobject:get_pos( void )",
-    "the object's position in osupx (before any script translation)." },
+    "the object's current position in osupx." },
   { "set_pos", luaapi_hitobject_set_pos,
     "self hitobject:set_pos( float x, float y )",
     "moves the object to an absolute osupx position." },
@@ -1201,10 +1204,18 @@ luaapi_hitobject_has_any_bits :: proc "c" (L: ^lua.State) -> (result: i32) {
     })
 }
 
-luaapi_hitobject_get_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
+
+luaapi_hitobject_get_base_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         lua.pushnumber(L, lua.Number(hobj.pos.x))
         lua.pushnumber(L, lua.Number(hobj.pos.y))
+        return 2
+    })
+}
+luaapi_hitobject_get_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        lua.pushnumber(L, lua.Number(hobj.pos.x + hobj.script_pos_translation.x))
+        lua.pushnumber(L, lua.Number(hobj.pos.y + hobj.script_pos_translation.y))
         return 2
     })
 }
@@ -3034,9 +3045,9 @@ luaapi_window_set_opacity :: proc "c" (L: ^lua.State) -> (result: i32) {
         bg.color.a = u8(opacity * 255)
     }
     if opacity >= 1 {
-        game.transparent = false
+        window.transparent = false
     } else{
-        game.transparent = true
+        window.transparent = true
     }
     return 0
 }

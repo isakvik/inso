@@ -406,6 +406,12 @@ Judgement_Type :: enum {
     SLIDER_LARGE_SCOREPOINT, // repeat, 30
     SLIDER_SCOREPOINT_MISS,
     
+    // note(isak): these don't affect score, but are useful for triggering effects in lua
+    SLIDER_HEAD_MISS,
+    SLIDER_HEAD_OK,
+    SLIDER_HEAD_GOOD,
+    SLIDER_HEAD_MARVELOUS,
+    
     IGNORED_HIT, // note(isak): intended for when we need a result that doesn't affect score
     COMBO_BREAK, // note(isak): intended for scripted misses
 }
@@ -464,6 +470,7 @@ Osu_Map :: struct {
     hitobjects: []Hitobject,
     slider_paths: []Slider_Path,
     timing_points: []Timing_Point,
+    bookmarks_ms: []f64, // note(isak): [Editor] Bookmarks, ascending music-time ms
 }
 
 
@@ -846,13 +853,44 @@ handle_editor_input_events :: proc() {
         sound_set_speed(&game.beatmap.music, game.time_rate)
     }
     
+    if key_is_pressed(.Z) && len(game.beatmap.hitobjects) > 0 {
+        editor_seek(&game.beatmap, game.beatmap.hitobjects[0].start_time_ms)
+    }
+
+    if key_is_down(.LCTRL) {
+        if key_is_pressed(.LEFT)  do editor_seek_bookmark(&game.beatmap, -1)
+        if key_is_pressed(.RIGHT) do editor_seek_bookmark(&game.beatmap, +1)
+    }
+
     if !app.ui_wants_mouse {
         steps := -int(math.round(mouse.scroll_delta)) // scroll up (>0) seeks backward
-        if key_is_pressed(.LEFT)  do steps -= 1
-        if key_is_pressed(.RIGHT) do steps += 1
-    
+        if !key_is_down(.LCTRL) {
+            if key_is_pressed(.LEFT)  do steps -= 1
+            if key_is_pressed(.RIGHT) do steps += 1
+        }
+
         if steps != 0 do editor_scrub_steps(&game.beatmap, steps)
     }
+}
+
+// note(isak): jumps to the nearest bookmark strictly past the playhead in the given direction
+editor_seek_bookmark :: proc(beatmap: ^Beatmap, direction: int) {
+    bookmarks := game.active_map.bookmarks_ms
+    eps := 1.0
+    target: f64
+    found: bool
+    if direction > 0 {
+        for b in bookmarks do if b > beatmap.music_time_ms + eps {
+            target, found = b, true
+            break
+        }
+    } else {
+        #reverse for b in bookmarks do if b < beatmap.music_time_ms - eps {
+            target, found = b, true
+            break
+        }
+    }
+    if found do editor_seek(beatmap, target)
 }
 
 // note(isak): snaps the playhead to the beat-divisor grid
@@ -871,7 +909,11 @@ editor_scrub_steps :: proc(beatmap: ^Beatmap, steps: int) {
 
     target := timing_point.time + target_grid * division_ms - f64(game.user_config.universal_offset_ms)
     target = clamp(target, beatmap.start_time_ms, beatmap.length_ms)
-    
+
+    editor_seek(beatmap, target)
+}
+
+editor_seek :: proc(beatmap: ^Beatmap, target: f64) {
     // note(isak): backward seeks must re-show objects the forward-only play path already finished and deleted
     if target < beatmap.music_time_ms do beatmap_reset_object_state(beatmap)
     beatmap_seek(beatmap, target)

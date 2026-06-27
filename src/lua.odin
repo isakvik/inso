@@ -445,11 +445,16 @@ _lua_push_event_target :: proc(L: ^lua.State, class: Lua_Class_Type, handle_key:
     }
 }
 
-// note(isak): called from each object's __gc to clean up its registered events
-// and release the callback refs back to the Lua registry.
+_log_lua_gc :: proc(class: Lua_Class_Type, handle_key: u64) {
+    if !app.debug_log_lua_gc do return
+    log.infof("lua gc: collected %s handle %v", lua_classes[class].name, handle_key)
+}
+
+// note(isak): releases an object's registered event callback refs back to the Lua registry.
+// hitobjects/elements call this from __gc; drawables call it from the expiring-gfx reap, since
+// a drawable outlives its lua handle and is owned by the engine instead.
 _unregister_events_for_handle :: proc(class: Lua_Class_Type, handle_key: u64) {
     L := lua_beatmap.state
-    removed := 0
     i := 0
     for i < len(lua_beatmap.event_registrations) {
         reg := lua_beatmap.event_registrations[i]
@@ -457,13 +462,9 @@ _unregister_events_for_handle :: proc(class: Lua_Class_Type, handle_key: u64) {
             lua.L_unref(L, lua.REGISTRYINDEX, c.int(reg.callback_ref))
             lua.L_unref(L, lua.REGISTRYINDEX, c.int(reg.name_ref))
             unordered_remove(&lua_beatmap.event_registrations, i)
-            removed += 1
         } else {
             i += 1
         }
-    }
-    if removed > 0 {
-        log.infof("lua: collected a {} handle that still had {} event(s) bound", class, removed)
     }
 }
 
@@ -825,6 +826,10 @@ judgement_type_name :: proc "contextless" (j: Judgement_Type) -> cstring {
     case .SLIDER_SMALL_SCOREPOINT: return "SliderSmallScorepoint"
     case .SLIDER_LARGE_SCOREPOINT: return "SliderLargeScorepoint"
     case .SLIDER_SCOREPOINT_MISS:  return "SliderScorepointMiss"
+    case .SLIDER_HEAD_MISS:        return "SliderHeadMiss"
+    case .SLIDER_HEAD_OK:          return "SliderHeadOk"
+    case .SLIDER_HEAD_GOOD:        return "SliderHeadGood"
+    case .SLIDER_HEAD_MARVELOUS:   return "SliderHeadMarvelous"
     case .IGNORED_HIT:             return "IgnoredHit"
     case .COMBO_BREAK:             return "ComboBreak"
     }
@@ -1047,6 +1052,7 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
 luaapi_hitobject_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_beatmap.odin_context
     handle := cast(^int)lua.L_checkudata(L, 1, lua_classes[.HITOBJECT].name)
+    _log_lua_gc(.HITOBJECT, u64(handle^))
     _unregister_events_for_handle(.HITOBJECT, u64(handle^))
     return result
 }
@@ -1595,11 +1601,12 @@ luaapi_drawable_instance_funcs := []Lua_Function {
     "permanently reaps the drawable next frame; its handle becomes invalid." },
 }
 
+// note(isak): lifetime is owned by the map_expiring_gfx buffer, which destroys the drawable (and its events) 
+// once it passes end_time or has .ACTIVE cleared via destroy()
 luaapi_drawable_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_beatmap.odin_context
     handle := cast(^Drawable_Handle)lua.L_checkudata(L, 1, lua_classes[.DRAWABLE].name)
-    slotmap.remove(&game.beatmap.drawables, handle^)
-    _unregister_events_for_handle(.DRAWABLE, transmute(u64)handle^)
+    _log_lua_gc(.DRAWABLE, transmute(u64)handle^)
     return result
 }
 
@@ -1966,6 +1973,7 @@ luaapi_element_instance_funcs := []Lua_Function {
 luaapi_element_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_beatmap.odin_context
     handle := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
+    _log_lua_gc(.ELEMENT, u64(handle^))
     _unregister_events_for_handle(.ELEMENT, u64(handle^))
     return result
 }
@@ -2561,6 +2569,7 @@ luaapi_sound_stop :: proc "c" (L: ^lua.State) -> i32 {
 luaapi_sound_gc :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     handle := cast(^slotmap.Handle)lua.L_checkudata(L, 1, lua_classes[.SOUND].name)
+    _log_lua_gc(.SOUND, transmute(u64)handle^)
     if game_sound_is_playing(handle^) {
         log.info("lua: GC collected a Sound handle whose loop was still playing. keep the handle in a variable or call :stop() yourself if this wasn't intended.")
     }

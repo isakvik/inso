@@ -756,6 +756,20 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                             }
                     }
                 }
+            case .EDITOR:
+                for i in 1..<len(lines) {
+                    key, value := get_key_value(lines[i])
+                    if key == "Bookmarks" {
+                        parts := strings.split(value, ",", context.temp_allocator)
+                        bookmarks := make([dynamic]f64, 0, len(parts))
+                        for part in parts {
+                            ms, ok := strconv.parse_f64(strings.trim_space(part))
+                            if ok do append(&bookmarks, ms)
+                        }
+                        slice.sort(bookmarks[:])
+                        result.bookmarks_ms = bookmarks[:]
+                    }
+                }
             case .METADATA:
                 for i in 1..<len(lines) {
                     key, value := get_key_value(lines[i])

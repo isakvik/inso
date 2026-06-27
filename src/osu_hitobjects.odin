@@ -1,5 +1,6 @@
 package notosu
 
+import "core:time"
 import "core:log"
 import "core:container/queue"
 import "core:math"
@@ -32,7 +33,8 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
         case .SLIDER_SMALL_SCOREPOINT:  el_type = .LIGHTING
         case .SLIDER_LARGE_SCOREPOINT:  el_type = .LIGHTING
 
-        case .NONE, .COMBO_BREAK, .IGNORED_HIT, .SLIDER_SCOREPOINT_MISS:
+        case .NONE, .COMBO_BREAK, .IGNORED_HIT, .SLIDER_SCOREPOINT_MISS, 
+            .SLIDER_HEAD_MISS, .SLIDER_HEAD_OK, .SLIDER_HEAD_GOOD, .SLIDER_HEAD_MARVELOUS:
             return
         }
 
@@ -107,7 +109,7 @@ hitobject_on_click :: proc(hobj: ^Hitobject, click_time: f64) -> (result: Judgem
         hit_error_bar_record(&game.hit_error_bar, time_error_ms, result)
 
         if hobj.type == .SLIDER {
-            slider_on_click(hobj, result)
+            slider_on_click(hobj, result, time_error_ms)
         } else {
             judgement_new(hobj, result, time_error_ms)
             hobj.flags |= {.HIT, .EXPIRED}
@@ -187,8 +189,7 @@ process_hitobject_hittesting :: proc(visible_hobjs: []Hitobject, map_time: f64) 
 }
 
 // note(isak): editor auto-play. hits each object exactly at its start time (perfect timing) the frame its
-// start crosses the playhead, reusing the normal judgement/hitsound path. objects whose start was jumped over
-// by a seek fall outside the [last, now] crossing window, so they're left to expire silently - no sound spam.
+// start crosses the playhead, reusing the normal judgement/hitsound path
 editor_auto_hit :: proc(visible_hobjs: []Hitobject, map_time: f64) {
     last_time := game.beatmap.auto_last_hit_time_ms
     for &hobj in visible_hobjs {
@@ -353,9 +354,12 @@ slider_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
     slider := &hobj.slider_state
 
     // note(isak): one-time head miss check once the miss window has passed without a click
-    if .HEAD_HIT in slider.flags ||
-        map_time > hobj.start_time_ms + game.beatmap.timing_windows.ok {
+    if .HEAD_HIT in slider.flags {
         slider.flags |= {.HEAD_CHECKED}
+    }
+    else if .HEAD_CHECKED not_in slider.flags && map_time > hobj.start_time_ms + game.beatmap.timing_windows.ok {
+        slider.flags |= {.HEAD_CHECKED}
+        judgement_new(hobj, .SLIDER_HEAD_MISS, game.beatmap.timing_windows.ok)
     }
 
     if map_time >= hobj.start_time_ms && .FINALIZED not_in slider.flags {
@@ -378,7 +382,7 @@ slider_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
 }
 
 // note(isak): slider head click is recorded, final judgement is deferred to slider_finalize
-slider_on_click :: proc(hobj: ^Hitobject, result: Judgement_Type) {
+slider_on_click :: proc(hobj: ^Hitobject, result: Judgement_Type, timing_error_ms: f64) {
     slider := &hobj.slider_state
 
     if result != .MISS {
@@ -390,6 +394,15 @@ slider_on_click :: proc(hobj: ^Hitobject, result: Judgement_Type) {
     }
     
     slider.down_key = pressed_controller_key()
+
+    slider_head_judgement := result
+    #partial switch result {
+    case .MISS: slider_head_judgement = .SLIDER_HEAD_MISS
+    case .OK: slider_head_judgement = .SLIDER_HEAD_OK
+    case .GOOD: slider_head_judgement = .SLIDER_HEAD_GOOD
+    case .MARVELOUS: slider_head_judgement = .SLIDER_HEAD_MARVELOUS
+    }
+    judgement_new(hobj, slider_head_judgement, timing_error_ms)
 }
 
 slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
@@ -607,7 +620,7 @@ slider_finalize :: proc(hobj: ^Hitobject) {
 }
 
 slider_play_tick_hitsound :: proc(hobj: ^Hitobject, sample_set: Skin_Sample_Set, volume: f32) {
-    if game.ui_timeline.dragging do return
+    if game.paused || game.ui_timeline.dragging || game.ui_timeline.released do return
 
     sample_play(&game.active_skin.hitsounds[sample_set][.SLIDERTICK], volume)
 }
@@ -616,7 +629,7 @@ slider_play_tick_hitsound :: proc(hobj: ^Hitobject, sample_set: Skin_Sample_Set,
 // normal set, the whistle/finish/clap additions from its addition set. falls back to a plain hit from the
 // timing point set if the slider has no parsed edge data.
 slider_play_edge_hitsound :: proc(hobj: ^Hitobject, edge_index: int, timing_point: ^Timing_Point, volume: f32) {
-    if game.ui_timeline.dragging do return
+    if game.paused || game.ui_timeline.dragging || game.ui_timeline.released do return
     
     if edge_index < 0 || edge_index >= len(hobj.slider_edge_hitsounds) {
         sample_play(&game.active_skin.hitsounds[Skin_Sample_Set(timing_point.sample_set)][.HITNORMAL], volume)

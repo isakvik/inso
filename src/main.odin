@@ -633,6 +633,14 @@ imgui_update :: proc() {
     if imgui.SmallButton("play from beginning") {
         beatmap_play(&game.beatmap, false)
     }
+    if imgui.SmallButton("play from first object") {
+        time_of_first_obj: f64
+        if len(game.beatmap.hitobjects) > 0 {
+            time_of_first_obj = game.beatmap.hitobjects[0].start_time_ms - 1500
+        }
+        beatmap_seek(&game.beatmap, time_of_first_obj)
+        beatmap_play(&game.beatmap, true)
+    }
     
     imgui.Separator()
     
@@ -726,6 +734,9 @@ imgui_update :: proc() {
             mice[.SECONDARY].is_rebinding = true
         }
         */
+    }
+    if imgui.CollapsingHeader("Debug") {
+        imgui.Checkbox("Log Lua GC", &app.debug_log_lua_gc)
     }
 
     write_offset_window()

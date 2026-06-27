@@ -122,7 +122,6 @@ UI_Timeline :: struct {
     clicked, released: bool,
     dragging: bool,
     pause_on_release: bool,
-    last_seek_mouse_x_pos: f32,
 
     using Common: struct {
         ease: ease.Ease,
@@ -205,13 +204,12 @@ timeline_update :: proc(ui: ^UI_Timeline) {
         
         if seek_to_fract < leadin_fract {
             game.beatmap.music_time_ms = game.beatmap.start_time_ms + seek_to_fract * map_len_with_preempt
-        } else if mouse.pos.x != ui.last_seek_mouse_x_pos {
+        } else {
             seek_to_music_fract := (seek_to_fract - leadin_fract) * (1 / (1.0 - leadin_fract))
             
             seek_to_ms := seek_to_music_fract * sound_get_length_ms(&game.beatmap.music)
             beatmap_seek(&game.beatmap, seek_to_ms)
             beatmap_reset_object_state(&game.beatmap)
-            ui.last_seek_mouse_x_pos = mouse.pos.x
         }
         
         if game.ui_timeline.clicked {
@@ -230,7 +228,7 @@ render_timeline_clipspace :: proc(ui: ^UI_Timeline) {
     map_time_with_preempt := game.beatmap.music_time_ms - game.beatmap.start_time_ms
     
     beatmap_leadin_fract := f32((-game.beatmap.preempt_ms - game.beatmap.music_time_ms) / -game.beatmap.start_time_ms)
-    beatmap_finish_fract := f32(game.beatmap.music_time_ms / map_len_with_preempt)
+    beatmap_finish_fract := f32(map_time_with_preempt / map_len_with_preempt)
     
     r_push_transform(clipspace_transform)
     
@@ -239,8 +237,16 @@ render_timeline_clipspace :: proc(ui: ^UI_Timeline) {
     r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, beatmap_finish_fract, ui.display_h_px / window.rect.h}, 
                      .BOTTOM_LEFT, with_alpha(color_white, 0.4))
     if beatmap_leadin_fract > 0 {
-        r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, beatmap_leadin_fract, ui.display_h_px / window.rect.h}, 
+        r_draw_layout_rect(&window.renderer.quad_geometry, {0, 1, beatmap_leadin_fract, ui.display_h_px / window.rect.h},
                          .BOTTOM_LEFT, with_alpha(color_lime_green, 0.2))
+    }
+
+    line_w := 2 / window.rect.w
+    line_h := max(ui.display_h_px, 10) / window.rect.h
+    for bookmark_ms in game.active_map.bookmarks_ms {
+        fract := f32((bookmark_ms - game.beatmap.start_time_ms) / map_len_with_preempt)
+        r_draw_layout_rect(&window.renderer.quad_geometry, {fract, 1, line_w, line_h},
+            .BOTTOM_MIDDLE, with_alpha(color_dim_blue, 1))
     }
 }
 

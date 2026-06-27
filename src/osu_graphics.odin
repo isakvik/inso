@@ -806,15 +806,12 @@ process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Dr
     map_time := beatmap_music_time_ms(&game.beatmap)
     for handle in expiring_gfx_refs.current {
         e := slotmap.get(&game.beatmap.drawables, handle) or_continue
-        if .ACTIVE in e.flags {
-            still_alive := render_drawable(e, map_time)
-            if still_alive {
-                sb.append_next(expiring_gfx_refs, handle)
-            } else {
-                slotmap.remove(&game.beatmap.drawables, handle)
-            }
+        still_alive := .ACTIVE in e.flags && render_drawable(e, map_time)
+        if still_alive {
+            sb.append_next(expiring_gfx_refs, handle)
         } else {
             slotmap.remove(&game.beatmap.drawables, handle)
+            _unregister_events_for_handle(.DRAWABLE, transmute(u64)handle)
         }
     }
     sb.swap(expiring_gfx_refs)

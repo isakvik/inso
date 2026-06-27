@@ -29,6 +29,8 @@ app: struct {
     debug_display_textures:        bool,
     debug_display_playfield_cursor:     bool,
 
+    debug_log_lua_gc: bool,
+
     map_references:      [dynamic]Map_Reference,
     map_reference_names: [dynamic]cstring, // note(isak): parallel for imgui
 

@@ -22,6 +22,8 @@ Skin :: struct {
         font_hit_circle_prefix: string,
         font_hit_circle_overlap: f32,
     },
+
+    has_sliderend: bool,
 }
 
 supported_image_extensions :: []string{".png", ".jpg"}
@@ -34,7 +36,7 @@ Skin_Element_Type :: enum u32 {
     CURSOR,
     APPROACHCIRCLE,
     HITCIRCLE,
-    HITCIRCLEOVERLAY,
+    HITCIRCLE_OVERLAY,
     LIGHTING,
 
     HIT0,
@@ -59,6 +61,8 @@ Skin_Element_Type :: enum u32 {
     SLIDER_TICK,
     SLIDER_END,
     SLIDER_END_OVERLAY,
+
+    FOLLOWPOINT,
 }
 
 Skin_Element :: struct {
@@ -67,33 +71,63 @@ Skin_Element :: struct {
     metrics: vec2,
 }
 
+skin_element_names := [Skin_Element_Type]string {
+    .CURSOR           = "cursor",
+    .APPROACHCIRCLE   = "approachcircle",
+    .HITCIRCLE        = "hitcircle",
+    .HITCIRCLE_OVERLAY = "hitcircleoverlay",
+    .LIGHTING         = "lighting",
+
+    .HIT0   = "hit0",
+    .HIT50  = "hit50",
+    .HIT100 = "hit100",
+    .HIT300 = "hit300",
+
+    .COMBO_0 = "combo",
+    .COMBO_1 = "combo",
+    .COMBO_2 = "combo",
+    .COMBO_3 = "combo",
+    .COMBO_4 = "combo",
+    .COMBO_5 = "combo",
+    .COMBO_6 = "combo",
+    .COMBO_7 = "combo",
+    .COMBO_8 = "combo",
+    .COMBO_9 = "combo",
+
+    .SLIDER_BALL          = "sliderb",
+    .SLIDER_FOLLOW_CIRCLE = "sliderfollowcircle",
+    .SLIDER_REPEAT        = "reversearrow",
+    .SLIDER_TICK          = "sliderscorepoint",
+    .SLIDER_END           = "sliderendcircle",
+    .SLIDER_END_OVERLAY   = "sliderendcircleoverlay",
+
+    .FOLLOWPOINT          = "followpoint",
+}
+
+// note(isak): resolves a "skin:" texture expression suffix (e.g. "cursor", "sliderb") to its element
+// by matching skin_element_names case-insensitively. "combo" maps to the first digit glyph.
+skin_element_by_name :: proc(name: string) -> (result: Skin_Element_Type, found: bool) {
+    for el_name, el in skin_element_names {
+        if strings.equal_fold(name, el_name) {
+            return el, true
+        }
+    }
+    return {}, false
+}
+
 skin_load_element_paths :: proc(
     skin: ^Skin, alloc: runtime.Allocator = context.allocator
-) -> (result: [Skin_Element_Type]string) {  
-    result[.CURSOR]           = "cursor"
-    result[.APPROACHCIRCLE]   = "approachcircle"
-    result[.HITCIRCLE]        = "hitcircle"
-    result[.HITCIRCLEOVERLAY] = "hitcircleoverlay"
-    result[.LIGHTING]         = "lighting"
-    
-    result[.HIT0]    = "hit0"
-    result[.HIT50]   = "hit50"
-    result[.HIT100]  = "hit100"
-    result[.HIT300]  = "hit300"
+) -> (result: [Skin_Element_Type]string) {
+    result = skin_element_names
 
-    result[.SLIDER_BALL]          = "sliderb"
-    result[.SLIDER_FOLLOW_CIRCLE] = "sliderfollowcircle"
-    result[.SLIDER_REPEAT]        = "reversearrow"
-    result[.SLIDER_TICK]          = "sliderscorepoint"
-    result[.SLIDER_END]           = "sliderendcircle"
-    result[.SLIDER_END_OVERLAY]   = "sliderendcircleoverlay"
-    
+    // note(isak): digits load from the skin's configurable prefix (skin.ini HitCirclePrefix), so they
+    // override the "combo" handle with the actual per-digit file stems.
     digit_postfix := [10]string {"-0", "-1", "-2", "-3", "-4", "-5", "-6", "-7", "-8", "-9"}
     for digit in 0..<10 {
         type := .COMBO_0 + Skin_Element_Type(digit)
-        result[type] = strings.concatenate({skin.font_hit_circle_prefix, digit_postfix[digit]}, alloc) 
+        result[type] = strings.concatenate({skin.font_hit_circle_prefix, digit_postfix[digit]}, alloc)
     }
-    
+
     return result
 }
 
@@ -165,7 +199,13 @@ skin_load :: proc(skin_path: string) -> (result: ^Skin) {
 }
 
 skin_handle_ini :: proc(skin: ^Skin) {
-    skin.font_hit_circle_prefix = "default"
+    skin.ini_options = {
+        font_hit_circle_prefix = "default",
+        font_hit_circle_overlap = 3,
+
+        slider_border = color_white,
+        slider_track_override = 0
+    }
 
     src, read_err := read_entire_file_to_string("skin.ini", context.temp_allocator)
     if read_err != nil {
@@ -235,7 +275,10 @@ skin_load_elements :: proc(skin: ^Skin) {
         display_scale: f32 = skin.elements[element].is_high_resolution ? 0.5 : 1.0
         skin.elements[element].metrics = {f32(tex_store.w) * display_scale, f32(tex_store.h) * display_scale}
     }
-    
+
+    if skin.elements[.SLIDER_END].texture > 0 {
+        skin.has_sliderend = true
+    }
     
     // note(isak): fallbacks. copies the metadata (metrics) so anything reading the slider-end
     // element's size sees the hitcircle's. the texture itself is redirected separately at element
@@ -243,8 +286,10 @@ skin_load_elements :: proc(skin: ^Skin) {
     for element in Skin_Element_Type {
         if window.skin_textures[element].tex_id == 0 {
             #partial switch element {
-            case .SLIDER_END:         skin.elements[element] = skin.elements[.HITCIRCLE]
-            case .SLIDER_END_OVERLAY: skin.elements[element] = skin.elements[.HITCIRCLEOVERLAY]
+            case .SLIDER_END:
+                skin.elements[element] = skin.elements[.HITCIRCLE]
+            case .SLIDER_END_OVERLAY: 
+                skin.elements[element] = skin.elements[.SLIDER_END if skin.has_sliderend else .HITCIRCLE_OVERLAY]
             }
         }
     }
@@ -253,11 +298,11 @@ skin_load_elements :: proc(skin: ^Skin) {
 // note(isak): resolves the skin slot an element should actually sample. we redirect to the fallback
 // slot (rather than copying the texture into the slider-end slot) so the same bindless handle
 // isn't duplicated across two slots - that would double-resident it and raise GL_INVALID_OPERATION.
-skin_render_element :: proc(el: Skin_Element_Type) -> Skin_Element_Type {
+skin_render_element :: proc(skin: ^Skin, el: Skin_Element_Type) -> Skin_Element_Type {
     if window.skin_textures[el].tex_id != 0 do return el
     #partial switch el {
     case .SLIDER_END:         return .HITCIRCLE
-    case .SLIDER_END_OVERLAY: return .HITCIRCLEOVERLAY
+    case .SLIDER_END_OVERLAY: return .SLIDER_END if skin.has_sliderend else .HITCIRCLE_OVERLAY
     }
     return el
 }

@@ -110,6 +110,9 @@ Hitobject_Flag :: enum {
 
     HIDE_COMBO_NUMBERS,
     HIDDEN_BY_SCRIPT,
+
+    NO_FOLLOWPOINT_IN,  // note(isak): suppress the followpoint arriving at this object
+    NO_FOLLOWPOINT_OUT, // note(isak): suppress the followpoint leaving this object
 }
 
 Hitobject_Phase :: enum u8 {
@@ -129,6 +132,11 @@ Phase_Transition :: struct {
 Deferred_Activation :: struct {
     hitobject_index: int,
     visible_start_time_ms: f64,
+}
+
+Followpoint_Connection :: struct {
+    from_index, to_index:  int, // note(isak): into beatmap.hitobjects; positions resolved live at emit
+    visible_start_time_ms: f64, // note(isak): from.end_time - preempt; a coarse lower bound for culling
 }
 
 Hitobject :: struct {
@@ -271,7 +279,7 @@ hitobject_radius_osupx :: proc(hobj: ^Hitobject) -> f32 {
 hitobject_visible_start_time :: proc(hobj: ^Hitobject) -> (result: f64) {
     start_time := hobj.start_time_ms
     #partial switch hobj.type {
-    case .CIRCLE, .SLIDER: start_time -= max(game.beatmap.max_preempt_ms, game.beatmap.timing_windows.miss)
+    case .CIRCLE, .SLIDER, .SPINNER: start_time -= max(game.beatmap.max_preempt_ms, game.beatmap.timing_windows.miss)
     }
     return start_time
 }
@@ -385,7 +393,7 @@ Layer :: enum {
     OVERLAY,
     UI,
     CURSOR,
-    TOP, // todo(isak): what to call this?
+    TOP,
     DEBUG
 }
 
@@ -511,6 +519,7 @@ osu_on_update :: proc(dt: f64) {
 
         case .MAIN_MENU: handle_menu_input_events()
     }
+    handle_universal_input_events()
     
     beatmap_on_update(&game.beatmap)
     
@@ -540,7 +549,7 @@ osu_on_update :: proc(dt: f64) {
             sb.append(&game.beatmap.expiring_hitobjects, hobj.index)
         }
     }
-    
+
     if game.playfield_dirty_transform {
         game.playfield_transform = playfield_build_transform()
         game.playfield_dirty_transform = false
@@ -553,6 +562,12 @@ osu_on_update :: proc(dt: f64) {
     // game render
     
     r_bind_layer_and_push_current_state(.HITOBJECTS, transform = game.playfield_transform)
+
+    for i in followpoint_first_active(&game.beatmap, map_time)..<len(game.beatmap.followpoint_connections) {
+        conn := &game.beatmap.followpoint_connections[i]
+        if conn.visible_start_time_ms > map_time do break
+        followpoint_emit(&game.beatmap, conn, map_time)
+    }
 
     #reverse for &hobj in visible_hobjs {
         if .HIDDEN_BY_SCRIPT in hobj.flags do continue
@@ -584,7 +599,7 @@ osu_on_update :: proc(dt: f64) {
     
     r_bind_layer_and_push_current_state(.BACKGROUND, transform = game.playfield_transform)
     process_and_draw_expiring_gfx_refs(&game.beatmap.map_expiring_gfx)
-    
+
     // note(isak): ui render
     // todo(isak): "screens" implementation for determining relevant UI components?
     
@@ -593,16 +608,16 @@ osu_on_update :: proc(dt: f64) {
         pipeline = { pipeline = builtin_pipeline_slot(.QUAD) })
     
     if game.mode == .EDITOR {
-        // -- @temp playfield border
-        playfield_border_draw :: proc() {
+        playfield_border_draw :: proc(opacity: f32) {
             cs := game.beatmap.circle_radius_osupx
             pf_outline := Rect{
                 -cs, -cs, PLAYFIELD_SIZE_OSUPX+2*cs, (PLAYFIELD_SIZE_OSUPX*3/4)+2*cs
             }
-            r_draw_rect_outline(&window.renderer.quad_geometry, pf_outline, with_alpha(color_white, 0.1), 2)
+            r_draw_rect_outline(&window.renderer.quad_geometry, pf_outline, with_alpha(color_white, opacity), 2)
         }
-        playfield_border_draw()
-        // --
+        if game.user_config.playfield_border_opacity > 0 {
+            playfield_border_draw(game.user_config.playfield_border_opacity)
+        }
         
         timeline_update(&game.ui_timeline)
         render_timeline_clipspace(&game.ui_timeline)
@@ -619,11 +634,13 @@ osu_on_update :: proc(dt: f64) {
         input_display_draw_screenspace()
     }
 
-    r_bind_layer_and_push_current_state(.CURSOR, transform = window.screenspace_transform)
-    
-    cursor_draw(mouse.pos, skin_texture(.CURSOR))
-    if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {   
-        cursor_draw(mouse_secondary.pos, skin_texture(.CURSOR))
+    if !lua_beatmap.hide_skin_cursor {
+        r_bind_layer_and_push_current_state(.CURSOR, transform = window.screenspace_transform)
+
+        cursor_draw(mouse.pos, skin_texture(.CURSOR))
+        if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {
+            cursor_draw(mouse_secondary.pos, skin_texture(.CURSOR))
+        }
     }
 
     if game.input.rebinding_key != .NONE {
@@ -765,11 +782,6 @@ handle_play_input_events :: proc() {
         sound_set_speed(&game.beatmap.music, game.time_rate)
     }
     
-    if key_is_pressed(.F10) {
-        game.input.mouse_keys_enabled = !game.input.mouse_keys_enabled
-        notify_warn("mouse keys enabled" if game.input.mouse_keys_enabled else "mouse keys disabled")
-    }
-    
     game.input.k1.is_down = keyboard.buttons[game.input.keys[.K1]]
     game.input.k1.was_down = keyboard.buttons_prev_frame[game.input.keys[.K1]]
     game.input.k2.is_down = keyboard.buttons[game.input.keys[.K2]]
@@ -853,8 +865,14 @@ handle_editor_input_events :: proc() {
         sound_set_speed(&game.beatmap.music, game.time_rate)
     }
     
-    if key_is_pressed(.Z) && len(game.beatmap.hitobjects) > 0 {
-        editor_seek(&game.beatmap, game.beatmap.hitobjects[0].start_time_ms)
+    if key_is_pressed(.Z) {
+        if len(game.beatmap.hitobjects) > 0 && 
+           !f64_within(game.beatmap.music_time_ms, game.beatmap.hitobjects[0].start_time_ms, 3) {
+            editor_seek(&game.beatmap, game.beatmap.hitobjects[0].start_time_ms)
+        }
+        else {
+            editor_seek(&game.beatmap, game.beatmap.start_time_ms)
+        }
     }
 
     if key_is_down(.LCTRL) {
@@ -871,52 +889,8 @@ handle_editor_input_events :: proc() {
 
         if steps != 0 do editor_scrub_steps(&game.beatmap, steps)
     }
-}
-
-// note(isak): jumps to the nearest bookmark strictly past the playhead in the given direction
-editor_seek_bookmark :: proc(beatmap: ^Beatmap, direction: int) {
-    bookmarks := game.active_map.bookmarks_ms
-    eps := 1.0
-    target: f64
-    found: bool
-    if direction > 0 {
-        for b in bookmarks do if b > beatmap.music_time_ms + eps {
-            target, found = b, true
-            break
-        }
-    } else {
-        #reverse for b in bookmarks do if b < beatmap.music_time_ms - eps {
-            target, found = b, true
-            break
-        }
-    }
-    if found do editor_seek(beatmap, target)
-}
-
-// note(isak): snaps the playhead to the beat-divisor grid
-editor_scrub_steps :: proc(beatmap: ^Beatmap, steps: int) {
-    timing_point := &game.active_map.timing_points[beatmap.current_timing_point_index_uninherited]
-    division_ms := timing_point.beat_length / EDITOR_BEAT_DIVISOR
-
-    grid_pos := (beatmap.music_time_ms - timing_point.time) / division_ms
-    eps := 1e-6
-    target_grid: f64
-    if steps > 0 {
-        target_grid = math.floor(grid_pos + eps) + f64(steps)
-    } else {
-        target_grid = math.floor(grid_pos - eps) + f64(steps)
-    }
-
-    target := timing_point.time + target_grid * division_ms - f64(game.user_config.universal_offset_ms)
-    target = clamp(target, beatmap.start_time_ms, beatmap.length_ms)
-
-    editor_seek(beatmap, target)
-}
-
-editor_seek :: proc(beatmap: ^Beatmap, target: f64) {
-    // note(isak): backward seeks must re-show objects the forward-only play path already finished and deleted
-    if target < beatmap.music_time_ms do beatmap_reset_object_state(beatmap)
-    beatmap_seek(beatmap, target)
+    
+    game.input.mouse_pos = transform_mouse_pos(vec2{mouse.pos.x, mouse.pos.y})
 }
 
 handle_menu_input_events :: proc() {
@@ -926,6 +900,14 @@ handle_menu_input_events :: proc() {
         }
     }
 }
+
+handle_universal_input_events :: proc() {
+    if key_is_pressed(.F10) {
+        game.input.mouse_keys_enabled = !game.input.mouse_keys_enabled
+        notify_warn("mouse keys enabled" if game.input.mouse_keys_enabled else "mouse keys disabled")
+    }
+}
+
 
 
 //////////////////////////////////////////////////////

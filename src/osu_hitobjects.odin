@@ -273,7 +273,7 @@ slider_reset_transient :: proc(hobj: ^Hitobject) {
     for &hit in slider.tick_hits do hit = false
 }
 
-build_deferred_activations :: proc(beatmap: ^Beatmap) {
+allocate_deferred_activations :: proc(beatmap: ^Beatmap) {
     max_preempt := beatmap.preempt_ms
     count := 0
     for &hobj in beatmap.hitobjects {
@@ -283,13 +283,110 @@ build_deferred_activations :: proc(beatmap: ^Beatmap) {
         }
     }
     beatmap.max_preempt_ms = max_preempt
-
     beatmap.deferred_activations = make([dynamic]Deferred_Activation, 0, count, memory.allocators[.MAPSET])
+}
+
+build_deferred_activations :: proc(beatmap: ^Beatmap) {
     for &hobj in beatmap.hitobjects {
         if hobj.custom_preempt_ms != 0 {
             append(&beatmap.deferred_activations, Deferred_Activation{hobj.index, hobj.start_time_ms - hobj.custom_preempt_ms})
             hobj.deferred_activation_index = len(beatmap.deferred_activations) // index+1
         }
+    }
+}
+
+build_followpoint_connections :: proc(beatmap: ^Beatmap) {
+    prev := -1
+    for &hobj, i in beatmap.hitobjects {
+        if hobj.type == .SPINNER {
+            prev = -1
+            continue
+        }
+        if prev >= 0 && .NEW_COMBO not_in hobj.flags {
+            from := &beatmap.hitobjects[prev]
+            append(&beatmap.followpoint_connections, Followpoint_Connection{
+                from_index            = prev,
+                to_index              = i,
+                visible_start_time_ms = from.end_time_ms - FOLLOWPOINT_PREEMPT_MS,
+            })
+        }
+        prev = i
+    }
+}
+
+
+//////////////////////////////////////////////////////
+// note(isak): followpoint logic core
+
+FOLLOWPOINT_PREEMPT_MS    :: f64(800)
+FOLLOWPOINT_SPACING_OSUPX :: f32(32)  // distance between adjacent points along the line
+FOLLOWPOINT_FADE_MS       :: f64(300) // per-point fade in/out ramp
+FOLLOWPOINT_MOVE_MS       :: FOLLOWPOINT_PREEMPT_MS * 0.5 // lead-in travel/scale window
+FOLLOWPOINT_LEAD_FRACTION :: f32(0.0) // each point eases in from this fraction behind its slot
+
+followpoint_from_pos :: proc(hobj: ^Hitobject) -> vec2 {
+    return hitobject_tail_pos(hobj) if hobj.type == .SLIDER else hitobject_pos(hobj)
+}
+
+followpoint_first_active :: proc(beatmap: ^Beatmap, map_time: f64) -> int {
+    conns := beatmap.followpoint_connections
+    for beatmap.followpoint_cursor < len(conns) &&
+        beatmap.hitobjects[conns[beatmap.followpoint_cursor].to_index].start_time_ms + FOLLOWPOINT_FADE_MS < map_time {
+        beatmap.followpoint_cursor += 1
+    }
+    return beatmap.followpoint_cursor
+}
+
+// note(isak): immediate-mode draw of one connection at the current time
+followpoint_emit :: proc(beatmap: ^Beatmap, conn: ^Followpoint_Connection, map_time: f64) {
+    from := &beatmap.hitobjects[conn.from_index]
+    to   := &beatmap.hitobjects[conn.to_index]
+
+    if map_time < conn.visible_start_time_ms || map_time > to.start_time_ms + FOLLOWPOINT_FADE_MS do return
+    if .HIDDEN_BY_SCRIPT in from.flags || .HIDDEN_BY_SCRIPT in to.flags do return
+    if .NO_FOLLOWPOINT_OUT in from.flags || .NO_FOLLOWPOINT_IN in to.flags do return
+
+    metrics := game.active_skin.elements[.FOLLOWPOINT].metrics
+    if metrics.x <= 0 do return // note(isak): no followpoint texture
+
+    start_pos := followpoint_from_pos(from)
+    end_pos   := hitobject_pos(to)
+    delta     := end_pos - start_pos
+    distance  := math.sqrt(delta.x*delta.x + delta.y*delta.y)
+    if distance < FOLLOWPOINT_SPACING_OSUPX * 2 do return // note(isak): objects are basically stacked
+
+    start_time := from.end_time_ms
+    duration   := to.start_time_ms - start_time
+    if duration <= 0 do return
+
+    for d := FOLLOWPOINT_SPACING_OSUPX * 1.49; d < distance - FOLLOWPOINT_SPACING_OSUPX; d += FOLLOWPOINT_SPACING_OSUPX {
+        fraction      := d / distance
+        fade_out_time := start_time + f64(fraction) * duration
+        fade_in_time  := fade_out_time - FOLLOWPOINT_PREEMPT_MS
+        if map_time < fade_in_time || map_time > fade_out_time + FOLLOWPOINT_FADE_MS do continue
+
+        fade_in  := clamp((map_time - fade_in_time) / FOLLOWPOINT_FADE_MS, 0, 1)
+        fade_out := clamp((fade_out_time + FOLLOWPOINT_FADE_MS - map_time) / FOLLOWPOINT_FADE_MS, 0, 1)
+        alpha    := f32(min(fade_in, fade_out))
+
+        // note(isak): lead-in - each point slides up to its slot and shrinks from 1.5x, easing out
+        move_t := tween_apply(.QUAD_OUT, f32(clamp((map_time - fade_in_time) / FOLLOWPOINT_MOVE_MS, 0, 1)))
+        slot   := fraction + FOLLOWPOINT_LEAD_FRACTION * 1 //(move_t - 1)
+        scale  := f32(0.58)
+
+        point := Drawable{
+            flags         = {.ACTIVE},
+            element       = builtin_element_slot(.FOLLOWPOINT),
+            layer         = .HITOBJECTS,
+            pos           = start_pos + delta * slot,
+            size          = metrics * scale,
+            angle_rad     = math.atan2(delta.y, delta.x),
+            anchor        = .CENTER,
+            color         = with_alpha(color_white, alpha),
+            start_time_ms = map_time,
+            end_time_ms   = map_time + 1, // note(isak): don't expire
+        }
+        render_drawable(&point, map_time)
     }
 }
 
@@ -299,7 +396,7 @@ build_deferred_activations :: proc(beatmap: ^Beatmap) {
 
 SLIDER_FOLLOW_CIRCLE_DEFAULT_RADIUS_MULT :: 2.4
 SLIDER_FOLLOW_CIRCLE_POP_MS :: 200
-SLIDER_TICK_POP_MS :: 150 // note(isak): how long an individual tick's scale/fade pop-in plays once its staggered turn arrives
+SLIDER_TICK_POP_MS :: 150 // note(isak): how long an individual tick's scale/fade pop-in plays once its turn arrives
 SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS :: 3 // note(isak) don't make ticks within n ms of the sliderend
 SLIDER_END_LENIENCY_MS :: 36
 

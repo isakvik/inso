@@ -49,7 +49,9 @@ Beatmap :: struct {
     playfield_rotation_anchor_osupx: vec2,
 
     deferred_activations: [dynamic]Deferred_Activation,
-    
+    followpoint_connections: [dynamic]Followpoint_Connection,
+    followpoint_cursor: int, // note(isak): forward-only; first connection not yet expired. reset on backward seek
+
     phase_transitions: sb.Swap_Buffer(Phase_Transition),
 
     // -- gfx data fields
@@ -58,7 +60,7 @@ Beatmap :: struct {
 
     gameplay_expiring_gfx: sb.Swap_Buffer(Drawable_Handle),
     map_expiring_gfx: sb.Swap_Buffer(Drawable_Handle),
-    
+
     drawables: slotmap.Slotmap(Drawable),
     next_drawable_id: int, // note(isak): rolling drawable id sequence
     
@@ -82,6 +84,8 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
             game.input.mouse_keys_enabled = true
             notify_warn("mouse keys enabled" if game.input.mouse_keys_enabled else "mouse keys disabled")
         }
+    } else if game.user_config.raw_input_enabled && !app.disable_raw_input {
+        mouse_enable_raw_input_mode()
     } else {
         mouse_disable_raw_input_mode()
     }
@@ -136,8 +140,12 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     }
 
     // note(isak): deferred activation list for objects with custom preempt (set by lua at init time).
-    // these bypass the normal visible set iterator since per-object preempt breaks visibility ordering
+    // we exclude these from the visible set iterator since per-object preempt breaks monotonic ordering
+    allocate_deferred_activations(beatmap)
     build_deferred_activations(beatmap)
+
+    beatmap.followpoint_connections = make([dynamic]Followpoint_Connection, 0, len(beatmap.hitobjects), memory.allocators[.MAPSET])
+    build_followpoint_connections(beatmap)
 }
 
 beatmap_on_update :: proc(beatmap: ^Beatmap) {
@@ -188,6 +196,7 @@ beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
     }
     
     delete(beatmap.deferred_activations)
+    delete(beatmap.followpoint_connections)
     sb.destroy(&beatmap.phase_transitions)
     sb.destroy(&beatmap.map_expiring_gfx)
     sb.destroy(&beatmap.gameplay_expiring_gfx)
@@ -279,6 +288,10 @@ beatmap_reset_object_state :: proc(beatmap: ^Beatmap) {
         slotmap.remove(&beatmap.drawables, handle)
     }
     sb.reset(&beatmap.gameplay_expiring_gfx)
+
+    // note(isak): followpoints are immediate-mode (no drawables to rewind), but the forward-only cursor
+    // must rewind to the start so it can re-scan toward the seek target
+    beatmap.followpoint_cursor = 0
 
     for &hobj in beatmap.hitobjects {
         if hobj.phase != .NONE || hobj.flags & {.VISIBLE, .HIT, .EXPIRED} != {} {
@@ -381,6 +394,28 @@ beatmap_get_visible_hitobjects :: proc(beatmap: ^Beatmap, map_time: f64) -> (res
         result = hitobjects[state.earliest_i:min(state.latest_i, len(hitobjects))]
     }
     return result
+}
+
+// note(isak): the cached visible range widened to cover the endpoints of every currently-active followpoint
+// connection. read-only - it never advances the visibility cursor, so it can't disturb phase transitions or
+// hittesting. the active connections form a contiguous index band (they link consecutive, time-ordered
+// objects), so the union stays a single [lo, hi) range. it extends both directions: a far-spaced
+// connection's source can have faded from the normal range while its outgoing line is still drawn.
+// todo(isak): @speed - scans every connection each call, same as the followpoint render pass.
+beatmap_visible_incl_followpoints_bounds :: proc(beatmap: ^Beatmap, map_time: f64) -> (lo, hi: int) {
+    state := beatmap.visible_hitobject_state
+    lo, hi = state.earliest_i, state.latest_i
+
+    for i in followpoint_first_active(beatmap, map_time)..<len(beatmap.followpoint_connections) {
+        conn := beatmap.followpoint_connections[i]
+        if conn.visible_start_time_ms > map_time do break
+        lo = min(lo, conn.from_index)
+        hi = max(hi, conn.to_index + 1)
+    }
+
+    lo = max(lo, 0)
+    hi = min(hi, len(beatmap.hitobjects))
+    return
 }
 
 beatmap_play :: proc(beatmap: ^Beatmap, keep_position: bool) {

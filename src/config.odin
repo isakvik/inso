@@ -11,16 +11,24 @@ import sdl "vendor:sdl3"
 // note(isak): user config is saved to a .ini file, just like osu
 User_Configuration :: struct {
     universal_offset_ms: int,
+    
     master_volume: f32,
     music_volume: f32,
     hitsound_volume: f32,
+    
     vsync_enabled: bool,
+    
     skin_path: string,
+    
     primary_mouse_hwid: string,
     secondary_mouse_hwid: string,
     cursor_size_multiplier: f32,
     cursor_sensitivity: f32,
+    raw_input_enabled: bool,
+    
     bg_dim: f32, // note(isak): 0 = background fully visible, 1 = fully black
+    playfield_border_opacity: f32,
+    
     keys: [Rebindable_Input_Key]sdl.Scancode,
 }
 
@@ -67,8 +75,14 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         if v, ok := get(gen, "cursor_sensitivity"); ok {
             if f, ok2 := strconv.parse_f32(v); ok2 do result.cursor_sensitivity = f
         }
+        if v, ok := get(gen, "raw_input_enabled"); ok {
+            result.raw_input_enabled = v == "true"
+        }
         if v, ok := get(gen, "bg_dim"); ok {
             if f, ok2 := strconv.parse_f32(v); ok2 do result.bg_dim = f
+        }
+        if v, ok := get(gen, "playfield_border_opacity"); ok {
+            if f, ok2 := strconv.parse_f32(v); ok2 do result.playfield_border_opacity = f
         }
         for key in Rebindable_Input_Key {
             if key == .NONE do continue
@@ -84,17 +98,19 @@ config_save :: proc(path: string) {
     sb := strings.builder_make(context.temp_allocator)
     w  := strings.to_writer(&sb)
 
-    ini.write_pair(w, "universal_offset_ms",    game.user_config.universal_offset_ms)
-    ini.write_pair(w, "vsync_enabled",          game.user_config.vsync_enabled)
-    ini.write_pair(w, "master_volume",          game.user_config.master_volume)
-    ini.write_pair(w, "music_volume",           game.user_config.music_volume)
-    ini.write_pair(w, "hitsound_volume",        game.user_config.hitsound_volume)
-    ini.write_pair(w, "skin_path",              game.user_config.skin_path)
-    ini.write_pair(w, "primary_mouse_hwid",     game.user_config.primary_mouse_hwid)
-    ini.write_pair(w, "secondary_mouse_hwid",   game.user_config.secondary_mouse_hwid)
-    ini.write_pair(w, "cursor_size_multiplier", game.user_config.cursor_size_multiplier)
-    ini.write_pair(w, "cursor_sensitivity",     game.user_config.cursor_sensitivity)
-    ini.write_pair(w, "bg_dim",                 game.user_config.bg_dim)
+    ini.write_pair(w, "universal_offset_ms",      game.user_config.universal_offset_ms)
+    ini.write_pair(w, "vsync_enabled",            game.user_config.vsync_enabled)
+    ini.write_pair(w, "master_volume",            game.user_config.master_volume)
+    ini.write_pair(w, "music_volume",             game.user_config.music_volume)
+    ini.write_pair(w, "hitsound_volume",          game.user_config.hitsound_volume)
+    ini.write_pair(w, "skin_path",                game.user_config.skin_path)
+    ini.write_pair(w, "primary_mouse_hwid",       game.user_config.primary_mouse_hwid)
+    ini.write_pair(w, "secondary_mouse_hwid",     game.user_config.secondary_mouse_hwid)
+    ini.write_pair(w, "cursor_size_multiplier",   game.user_config.cursor_size_multiplier)
+    ini.write_pair(w, "cursor_sensitivity",       game.user_config.cursor_sensitivity)
+    ini.write_pair(w, "raw_input_enabled",        game.user_config.raw_input_enabled)
+    ini.write_pair(w, "bg_dim",                   game.user_config.bg_dim)
+    ini.write_pair(w, "playfield_border_opacity", game.user_config.playfield_border_opacity)
     for key in Rebindable_Input_Key {
         if key == .NONE do continue
         ini.write_pair(w, rebindable_input_key_names[key], int(game.user_config.keys[key]))
@@ -115,14 +131,15 @@ config_save :: proc(path: string) {
 
 config_supply_default :: proc() -> (result: User_Configuration) {
     result = {
-        universal_offset_ms    = -28,
-        vsync_enabled          = false,
-        master_volume          = 0.5,
-        music_volume           = 0.5,
-        hitsound_volume        = 0.8,
-        skin_path              = "skins/gn/",
-        cursor_size_multiplier = 1.0,
-        cursor_sensitivity     = 1.0,
+        universal_offset_ms      = -28,
+        vsync_enabled            = false,
+        master_volume            = 0.5,
+        music_volume             = 0.5,
+        hitsound_volume          = 0.8,
+        skin_path                = "skins/gn/",
+        cursor_size_multiplier   = 1.0,
+        cursor_sensitivity       = 1.0,
+        playfield_border_opacity = 0.0,
     }
     result.keys[.K1] = .Z
     result.keys[.K2] = .X

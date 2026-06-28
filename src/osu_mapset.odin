@@ -100,8 +100,18 @@ mapset_texture :: proc(name: string) -> (result: ^Texture, found: bool) {
     return result, found
 }
 
+SKIN_TEXTURE_PREFIX :: "skin:"
+
 mapset_texture_slot :: proc(name: string) -> (result: u32, found: bool) {
     assert(game.active_mapset != nil)
+
+    // note(isak): "skin:" is a reserved namespace that resolves to the loaded skin's elements
+    // (e.g. "skin:cursor", "skin:hitcircle") instead of a mapset texture.
+    if strings.has_prefix(name, SKIN_TEXTURE_PREFIX) {
+        skin_el := skin_element_by_name(name[len(SKIN_TEXTURE_PREFIX):]) or_return
+        return skin_texture(skin_el), true
+    }
+
     index: u32
     index, found = game.active_mapset.texture_slot_by_name[name]
     if found {

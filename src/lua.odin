@@ -2,7 +2,6 @@ package notosu
 
 import "base:runtime"
 import c "core:c"
-import "core:fmt"
 import "core:log"
 import os "core:os"
 import "core:slice"
@@ -19,7 +18,7 @@ import sdl "vendor:sdl3"
 // note(isak): implementation detail: we're using luajit, which in practice seems to be some kind of
 // wrapper of lua 5.1 that adds some extra stuff from 5.2 or so
 
-// note(isak): API versioning/compat policy
+// note(isak): API versioning/compat policy (after initial release)
 // maps declare a target API version in their .notosu header. when making breaking changes:
 //   - prefer add-only (rename new, keep old) until a clean break is necessary
 //   - on a breaking change: write compat/vN.lua (loaded before the map script for old versions)
@@ -31,7 +30,6 @@ import sdl "vendor:sdl3"
 
 // @beta
 // todo(isak): expose scoring state to lua (combo, score, accuracy)
-// todo(isak): UV sub-rect support on Element for sprite sheet / atlas workflows
 // todo(isak): z-index within a layer (currently insertion-order only)
 // todo(isak): animation list relocation is a silent footgun - ordering constraint should be enforced or surfaced clearly
 
@@ -43,6 +41,8 @@ lua_beatmap: struct {
     scheduled_events: [dynamic]Scheduled_Event,
 
     last_callback: cstring, // last event name dispatched, for crash diagnostics
+
+    hide_skin_cursor: bool, // note(isak): set by set_cursor_visible(false) so a script can draw its own cursor
 }
 
 Lua_Beatmap_Event_Type :: enum {
@@ -165,6 +165,9 @@ luaapi_global_funcs := []Lua_Function {
   { "get_cursor_pos", luaapi_get_cursor_pos,
     "(float x, float y) get_cursor_pos( void )",
     "the cursor position in playfield (osupx) space." },
+  { "set_cursor_visible", luaapi_set_cursor_visible,
+    "void set_cursor_visible( bool visible )",
+    "shows or hides the built-in skin cursor. hide it to draw your own from a Drawable." },
   { "controller_is_down", luaapi_controller_is_down,
     "bool controller_is_down( string key )",
     "true if the named gameplay key is held. key is one of \"k1\", \"k2\", \"m1\", \"m2\"." },
@@ -655,6 +658,12 @@ luaapi_get_cursor_pos :: proc "c" (L: ^lua.State) -> i32 {
     return 2
 }
 
+luaapi_set_cursor_visible :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua_beatmap.hide_skin_cursor = !lua_boolean(1)
+    return 0
+}
+
 luaapi_controller_is_down :: proc "c" (L: ^lua.State) -> i32 {
     key_name := lua.L_checkstring(L, 1)
     result: bool
@@ -921,6 +930,9 @@ luaapi_hitobject_static_funcs := []Lua_Function {
   { "get_visible", luaapi_hitobject_get_visible,
     "Hitobject[] Hitobject.get_visible( void )",
     "all hitobjects currently within their visible time window." },
+  { "get_visible_incl_followpoints", luaapi_hitobject_get_visible_incl_followpoints,
+    "Hitobject[] Hitobject.get_visible_incl_followpoints( void )",
+    "like get_visible(), but also includes objects whose followpoint line is currently drawn (which can lead or trail their own approach window). use this set when positioning objects so their followpoints track the intended position before the object itself appears." },
   { "get_with_all_bits", luaapi_hitobject_get_with_all_bits,
     "Hitobject[] Hitobject.get_with_all_bits( int mask )",
     "all hitobjects with every extra-bit in mask set. a zero mask returns nothing." },
@@ -946,6 +958,24 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
   { "unhide_combo_numbers", luaapi_hitobject_unhide_combo_numbers,
     "self hitobject:unhide_combo_numbers( void )",
     "undoes hide_combo_numbers()." },
+  { "hide_followpoints", luaapi_hitobject_hide_followpoints,
+    "self hitobject:hide_followpoints( void )",
+    "suppresses the followpoints both leaving and arriving at this object." },
+  { "unhide_followpoints", luaapi_hitobject_unhide_followpoints,
+    "self hitobject:unhide_followpoints( void )",
+    "undoes hide_followpoints()." },
+  { "hide_followpoint_in", luaapi_hitobject_hide_followpoint_in,
+    "self hitobject:hide_followpoint_in( void )",
+    "suppresses only the followpoint arriving at this object from the previous one." },
+  { "unhide_followpoint_in", luaapi_hitobject_unhide_followpoint_in,
+    "self hitobject:unhide_followpoint_in( void )",
+    "undoes hide_followpoint_in()." },
+  { "hide_followpoint_out", luaapi_hitobject_hide_followpoint_out,
+    "self hitobject:hide_followpoint_out( void )",
+    "suppresses only the followpoint leaving this object toward the next one." },
+  { "unhide_followpoint_out", luaapi_hitobject_unhide_followpoint_out,
+    "self hitobject:unhide_followpoint_out( void )",
+    "undoes hide_followpoint_out()." },
   { "get_index", luaapi_hitobject_get_index,
     "int hitobject:get_index( void )",
     "the object's index into the beatmap's hitobject list." },
@@ -1113,6 +1143,21 @@ luaapi_hitobject_get_visible :: proc "c" (L: ^lua.State) -> (result: i32) {
     return 1
 }
 
+luaapi_hitobject_get_visible_incl_followpoints :: proc "c" (L: ^lua.State) -> (result: i32) {
+    context = lua_beatmap.odin_context
+    lo, hi := beatmap_visible_incl_followpoints_bounds(&game.beatmap, beatmap_music_time_ms(&game.beatmap))
+
+    lua.createtable(L, max(i32(hi - lo), 0), 0)
+
+    table_i: i32 = 1
+    for i in lo..<hi {
+        lua_create_userdata(L, i, lua_classes[.HITOBJECT].name)
+        lua.rawseti(L, -2, table_i)
+        table_i += 1
+    }
+    return 1
+}
+
 // note(isak): collect handles for every hitobject matching the extra-bits mask. require_all means every bit
 // in the mask must be set (bits & mask == mask); otherwise any shared bit is enough (bits & mask != 0). a zero
 // mask returns an empty list - no criterion was given - rather than matching everything.
@@ -1172,6 +1217,48 @@ luaapi_hitobject_hide_combo_numbers :: proc "c" (L: ^lua.State) -> (result: i32)
 luaapi_hitobject_unhide_combo_numbers :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         hobj.flags &~= {.HIDE_COMBO_NUMBERS}
+        return 0
+    })
+}
+
+luaapi_hitobject_hide_followpoints :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        hobj.flags |= {.NO_FOLLOWPOINT_IN, .NO_FOLLOWPOINT_OUT}
+        return 0
+    })
+}
+
+luaapi_hitobject_unhide_followpoints :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        hobj.flags &~= {.NO_FOLLOWPOINT_IN, .NO_FOLLOWPOINT_OUT}
+        return 0
+    })
+}
+
+luaapi_hitobject_hide_followpoint_in :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        hobj.flags |= {.NO_FOLLOWPOINT_IN}
+        return 0
+    })
+}
+
+luaapi_hitobject_unhide_followpoint_in :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        hobj.flags &~= {.NO_FOLLOWPOINT_IN}
+        return 0
+    })
+}
+
+luaapi_hitobject_hide_followpoint_out :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        hobj.flags |= {.NO_FOLLOWPOINT_OUT}
+        return 0
+    })
+}
+
+luaapi_hitobject_unhide_followpoint_out :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        hobj.flags &~= {.NO_FOLLOWPOINT_OUT}
         return 0
     })
 }
@@ -1483,7 +1570,7 @@ luaapi_hitobject_set_slider_follow_circle_radius :: proc "c" (L: ^lua.State) -> 
 luaapi_drawable_static_funcs := []Lua_Function {
   { "new", luaapi_drawable_new,
     "Drawable Drawable.new( string|Element source, float start_ms = 0, float end_ms = 0, Layer layer = Layer.BACKGROUND )",
-    "creates a drawable from a texture name or an Element, on the current render layer." },
+    "creates a drawable from a texture name or an Element, on the current render layer. a texture name may be a mapset texture or a skin element via \"skin:<name>\" (e.g. \"skin:cursor\")." },
 }
 
 luaapi_drawable_instance_funcs := []Lua_Function {
@@ -1509,6 +1596,9 @@ luaapi_drawable_instance_funcs := []Lua_Function {
   { "set_layer", luaapi_drawable_set_layer,
     "self drawable:set_layer( Layer layer )",
     "moves the drawable to the given render layer." },
+  { "set_uv", luaapi_drawable_set_uv,
+    "self drawable:set_uv( float x, float y, float w, float h )",
+    "sets the uv sub-rect in [0,1] space, picking a region of the texture." },
   { "get_pos", luaapi_drawable_get_pos,
     "(float x, float y) drawable:get_pos( void )",
     "the drawable's position." },
@@ -1772,6 +1862,18 @@ luaapi_drawable_set_time :: proc "c" (L: ^lua.State) -> (result: i32) {
         return 0
     })
 }
+
+luaapi_drawable_set_uv :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        x := f32(lua_number(2))
+        y := f32(lua_number(3))
+        w := f32(lua_number(4))
+        h := f32(lua_number(5))
+        d.uv = {x, y, w, h}
+        return 0
+    })
+}
+
 luaapi_drawable_get_pos :: proc "c" (L: ^lua.State) -> i32 {
     return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         lua.pushnumber(L, lua.Number(d.pos.x))
@@ -1932,8 +2034,8 @@ luaapi_drawable_destroy :: proc "c" (L: ^lua.State) -> (result: i32) {
 
 luaapi_element_static_funcs := []Lua_Function {
   { "new", luaapi_element_new,
-    "Element Element.new( void )",
-    "creates a blank white quad element using the default shader." },
+    "Element Element.new( string texture_name = nil )",
+    "creates a quad element using the default shader. with a texture name (a mapset texture, or a skin element via \"skin:<name>\") it sets that texture, otherwise a blank white quad." },
 }
 
 luaapi_element_instance_funcs := []Lua_Function {
@@ -1946,7 +2048,7 @@ luaapi_element_instance_funcs := []Lua_Function {
     "registers callback to run when name is triggered for this element; it receives (self, ...)." },
   { "set_tex", luaapi_element_set_tex,
     "self element:set_tex( string texture_name )",
-    "sets the element's texture by mapset texture name." },
+    "sets the element's texture by name: a mapset texture, or a skin element via \"skin:<name>\" (e.g. \"skin:hitcircle\")." },
   { "set_uv", luaapi_element_set_uv,
     "self element:set_uv( float x, float y, float w, float h )",
     "sets the uv sub-rect in [0,1] space, picking a region of the texture." },
@@ -1980,13 +2082,25 @@ luaapi_element_gc :: proc "c" (L: ^lua.State) -> (result: i32) {
 
 luaapi_element_new :: proc "c" (L: ^lua.State) -> (result: i32) {
     context = lua_beatmap.odin_context
-    
+
+    tex := builtin_texture(.WHITE)
+    if lua.type(L, 1) == lua.TSTRING {
+        tex_name := lua_string(1)
+        tex_id, found := mapset_texture_slot(tex_name)
+        if !found {
+            log.error("User error - texture not found:", tex_name)
+            notify_error("lua: Element.new texture not found '%s'", tex_name)
+            return 0
+        }
+        tex = tex_id
+    }
+
     data := cast(^Element_ID)lua.newuserdata(L, size_of(Element_ID))
     data^ = element_new({
         shader = builtin_pipeline_slot(.QUAD),
-        tex = builtin_texture(.WHITE),
+        tex = tex,
     })
-    
+
     lua.L_getmetatable(L, lua_classes[.ELEMENT].name)
     lua.setmetatable(L, -2)
     return 1

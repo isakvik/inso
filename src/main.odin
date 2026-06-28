@@ -151,12 +151,12 @@ main :: proc() {
     imgui_init()
     defer imgui_cleanup()
     
+    game.user_config = config_load("user.ini")
+    defer config_save("user.ini")
+    
     text_init()
     keyboard_init()
     mouse_init()
-    
-    game.user_config = config_load("user.ini")
-    defer config_save("user.ini")
     
     window_apply_vsync(game.user_config.vsync_enabled)
     audio_set_volume(game.user_config.master_volume)
@@ -620,10 +620,15 @@ imgui_update :: proc() {
     
     imgui_dropdown_draw(&app.map_dropdown)
     if imgui.SmallButton("open external") {
+        temp_fullscreen := window.fullscreen
+        if window.fullscreen do window_toggle_fullscreen()
+        
         external_map_path, ok := platform_file_dialog_open_osu(memory.allocators[.GLOBAL])
         if ok {
             open_external_map(external_map_path)
         }
+
+        if temp_fullscreen do window_toggle_fullscreen()
     }
     imgui.Separator()
 
@@ -671,12 +676,16 @@ imgui_update :: proc() {
     imgui.Text("Sound pos: %f ms", f32(sound_get_position_ms(&game.beatmap.music)))
     
     imgui.Separator()
+    if imgui.CollapsingHeader("Game") {
+        imgui.SliderFloat("Playfield border opacity##vol", &game.user_config.playfield_border_opacity, 0, 1)
+        
+        if imgui.SliderFloat("Background dim##bgdim", &game.user_config.bg_dim, 0, 1) {
+            bg_dim_apply(game.user_config.bg_dim)
+        }
+    }
     if imgui.CollapsingHeader("Display") {
         if imgui.Checkbox("VSync", &game.user_config.vsync_enabled) {
             window_apply_vsync(game.user_config.vsync_enabled)
-        }
-        if imgui.SliderFloat("Background dim##bgdim", &game.user_config.bg_dim, 0, 1) {
-            bg_dim_apply(game.user_config.bg_dim)
         }
     }
     if imgui.CollapsingHeader("Audio") {
@@ -694,14 +703,19 @@ imgui_update :: proc() {
         if imgui.Button("x##sensitivity_reset") do game.user_config.cursor_sensitivity = 1.0
         imgui.SameLine()
         imgui.SliderFloat("Cursor sensitivity##mouse", &game.user_config.cursor_sensitivity, 0.1, 5.0)
-            
-        raw_input := app.mouse_input_mode == .RAW_SINGLE_MOUSE_INPUT
-        if imgui.Checkbox("Raw input", &raw_input) {
-            if raw_input {
-                mouse_enable_raw_input_mode()
-            } else {
-                mouse_disable_raw_input_mode()
+
+        if !app.disable_raw_input {
+            raw_input := app.mouse_input_mode == .RAW_SINGLE_MOUSE_INPUT
+            if imgui.Checkbox("Raw input", &raw_input) {
+                if raw_input {
+                    mouse_enable_raw_input_mode()
+                } else {
+                    mouse_disable_raw_input_mode()
+                }
+                game.user_config.raw_input_enabled = raw_input
             }
+        } else {
+            imgui.Text("Raw input disabled")
         }
         
         imgui.Text("\nKey bindings (click to rebind)")
@@ -830,7 +844,7 @@ process_builtin_shader_changes :: proc(watch: ^Directory_Watch) {
         // note(isak): mapset custom shaders may share a builtin VS, so reinit them too
         mapset_reinit_custom_shaders(game.active_mapset)
 
-        fmt.println("reloaded mapset shaders")
+        notify_info("reloaded mapset shaders")
 
         pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.QUAD)], quad_pipeline_desc())
         pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.QUAD_PREMULTIPLIED)], quad_pipeline_desc(.PREMULTIPLIED))

@@ -14,7 +14,7 @@ import "core:slice"
 // note(isak): texture id lookup table for skin elements
 skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
     .HIT_CIRCLE         = .HITCIRCLE,
-    .HIT_CIRCLE_OVERLAY = .HITCIRCLEOVERLAY,
+    .HIT_CIRCLE_OVERLAY = .HITCIRCLE_OVERLAY,
     .APPROACH_CIRCLE    = .APPROACHCIRCLE,
     .COMBO_NUMBER       = .COMBO_1,
     .LIGHTING           = .LIGHTING,
@@ -26,13 +26,15 @@ skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
     .SLIDER_END           = .SLIDER_END,
     .SLIDER_END_OVERLAY   = .SLIDER_END_OVERLAY,
 
+    .FOLLOWPOINT          = .FOLLOWPOINT,
+
     .JUDGEMENT_MISS      = .HIT0,
     .JUDGEMENT_OK        = .HIT50,
     .JUDGEMENT_GOOD      = .HIT100,
     .JUDGEMENT_MARVELOUS = .HIT300,
 
     .CLICKED_HIT_CIRCLE = .HITCIRCLE,
-    .CLICKED_HIT_CIRCLE_OVERLAY = .HITCIRCLEOVERLAY,
+    .CLICKED_HIT_CIRCLE_OVERLAY = .HITCIRCLE_OVERLAY,
     .FINISHED_SLIDER_END_CIRCLE = .SLIDER_END,
     .FINISHED_SLIDER_END_CIRCLE_OVERLAY = .SLIDER_END_OVERLAY,
 }
@@ -179,6 +181,8 @@ Element_Type :: enum {
     SLIDER_END,
     SLIDER_END_OVERLAY,
 
+    FOLLOWPOINT,
+
     CLICKED_HIT_CIRCLE,
     CLICKED_HIT_CIRCLE_OVERLAY,
     FINISHED_SLIDER_END_CIRCLE,
@@ -280,7 +284,6 @@ Drawable :: struct {
     color: Color,
     animation_rate: f64,
     
-    // todo(isak): these are kinda intuitively made... not integrated into lua yet
     vel: vec2,
     accel: vec2,
     angle_vel: f32,
@@ -291,6 +294,8 @@ Drawable :: struct {
     // element template's, so a single drawable can carry a custom animation without a throwaway element.
     // points into game.beatmap.animations (same immutable storage as element.animations); never owned.
     animations: []Animation,
+    
+    uv: Rect, // note(isak): UV sub-rect in [0,1] space; {0,0,1,1} = full texture. overrides element
 
     // note(isak): index+1 into game.beatmap.hitobjects. 0 = no associated hitobject.
     // when set, d.size is stored in radius units and multiplied by hitobject_radius_osupx at render time.
@@ -324,7 +329,8 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
     
     for el_type in Element_Type {
         elements.data[el_type].type = el_type
-        elements.data[el_type].tex = skin_texture(skin_render_element(skin_element_for_type_table[el_type]))
+        elements.data[el_type].tex = 
+            skin_texture(skin_render_element(game.active_skin, skin_element_for_type_table[el_type]))
     }
 
     for digit in 0..<10 {
@@ -790,9 +796,12 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
     } else {
         r_bind_tbo(&window.quad_store, .VERTEX_BUFFER)
 
-        uv_rect := element.uv
-        if uv_rect.w == 0 || uv_rect.h == 0 {
-            uv_rect = {0, 0, 1, 1}
+        uv_rect := d.uv
+        if uv_rect.w == 0 && uv_rect.h == 0 {
+            uv_rect = element.uv
+            if uv_rect.w == 0 && uv_rect.h == 0 {
+                uv_rect = {0, 0, 1, 1}
+            }
         }
         r_draw_rect_with_uv(&window.renderer.quad_geometry,
             rect_translate_by_anchor(rect, d.anchor),
@@ -1038,10 +1047,11 @@ slider_drawable_update :: proc(d: ^Drawable, active: bool, pos: vec2, angle: f32
     d.angle_rad = angle
 }
 
-slider_handle_update :: proc(h: Drawable_Handle, active: bool, pos: vec2, angle: f32 = 0) {
+slider_handle_update :: proc(h: Drawable_Handle, active: bool, pos: vec2, angle: f32 = 0, fade_start_ms: f64 = -1) {
     d, ok := slotmap.get(&game.beatmap.drawables, h)
     if !ok do return
     slider_drawable_update(d, active, pos, angle)
+    if active && fade_start_ms >= 0 do d.start_time_ms = fade_start_ms
 }
 
 slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
@@ -1074,8 +1084,9 @@ slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
 
     has_sliderend_at_end := slider.path_travel_count % 2 == 1 || current_span < last_span
     end_on := has_sliderend_at_end && snake_full
-    slider_handle_update(gfx.end_circle,  end_on, end_pos)
-    slider_handle_update(gfx.end_overlay, end_on, end_pos)
+    snake_done_ms := hobj.start_time_ms - hitobject_preempt_ms(hobj) * (2.0/3.0)
+    slider_handle_update(gfx.end_circle,  end_on, end_pos, fade_start_ms = snake_done_ms)
+    slider_handle_update(gfx.end_overlay, end_on, end_pos, fade_start_ms = snake_done_ms)
 
     has_sliderend_at_head := slider.path_travel_count > 1 &&
         (slider.path_travel_count % 2 == 0 || current_span < last_span)
@@ -1129,6 +1140,8 @@ slider_render_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
 }
 
 
+COMBO_NUMBER_SCALE :: f32(0.8)
+
 // note(isak): extracts up to 4 decimal digits of n into buf (most-significant first), returns count
 write_combo_digits :: proc(buf: ^[4]int, n: int) -> (count: int) {
     v := max(n, 1)
@@ -1143,8 +1156,6 @@ write_combo_digits :: proc(buf: ^[4]int, n: int) -> (count: int) {
     }
     return count
 }
-
-COMBO_NUMBER_SCALE :: f32(0.9)
 
 bg_dim_apply :: proc(dim: f32) {
     d, ok := slotmap.get(&game.beatmap.drawables, game.beatmap.bg_handle)

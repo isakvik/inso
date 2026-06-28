@@ -303,3 +303,7 @@ fullscreen_transform :: Transform {
     0, 0, 1,
     0, 0, 0,
 }
+
+f64_within :: proc(a, b, within: f64) -> bool {
+    return abs(b - a) < within
+}

@@ -13,7 +13,7 @@ win32_hook_odin_context:  runtime.Context
 
 Mouse_Handle :: windows.HANDLE
 
-// note(isak): you CANNOT disable this once it has been enabled
+// note(isak): you CANNOT disable getting raw input messages once it has been enabled
 raw_input_enable :: proc() {
     rid: [1]windows.RAWINPUTDEVICE
 
@@ -37,7 +37,7 @@ raw_input_register_sdl_hook :: proc() {
 
 // note(isak): raw input device handles are NOT stable across unplug/replug or sleep/resume - windows
 // hands the same physical device a fresh handle. re-enumerate the hwid->handle map and re-resolve each
-// bound mouse from its persisted hwid so the hot path keeps matching the right device.
+// bound mouse from its persisted hwid
 input_refresh_mouse_devices :: proc() {
     app.input_device_hwids, app.input_device_handles = input_enumerate_mouse_devices(memory.allocators[.GLOBAL])
 
@@ -59,11 +59,14 @@ _win32_message_hook :: proc(userdata: rawptr, msg: ^windows.MSG) -> bool {
     hook_call_count += 1
     if msg.message == windows.WM_INPUT do wm_input_count += 1
 
+    /* 
+    // note(isak): we get a bunch of garbage input device change messages on startup, so commented this out for now
     if msg.message == windows.WM_INPUT_DEVICE_CHANGE {
         context = win32_hook_odin_context
         input_refresh_mouse_devices()
         return true
     }
+    */
 
     if msg.message != windows.WM_INPUT do return true
 
@@ -93,7 +96,7 @@ _win32_message_hook :: proc(userdata: rawptr, msg: ^windows.MSG) -> bool {
         apply_raw_mouse_update(target, m)
 
     case .RAW_SINGLE_MOUSE_INPUT:
-        // note(isak): any physical mouse drives the primary cursor, so no handle filtering here
+        // note(isak): any physical mouse will move the primary cursor, so no handle filtering here
         apply_raw_mouse_update(&mouse, m)
 
     case .REBINDING_MOUSE_PRIMARY:

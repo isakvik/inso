@@ -147,6 +147,7 @@ Texture :: struct {
     format, internal_format: u32,
     tex_id: u32, // note(isak): gl assigned texture id
     tex_handle: Texture_Handle, // note(isak): bindless handle
+    wrap: Texture_Wrap, // note(isak): preserved across reinit
 }
 
 Layout_Anchor :: enum {
@@ -253,7 +254,7 @@ renderer_init :: proc() {
     window.white_texture = texture_from_data(1, 1, raw_data(white_pixel))
 
     profiler_pixels := new([profiler_w * profiler_h]u32)
-    window.profiler_texture = texture_from_data(profiler_w, profiler_h, raw_data(profiler_pixels))
+    window.profiler_texture = texture_from_data(profiler_w, profiler_h, raw_data(profiler_pixels), wrap = .REPEAT)
 
     //
 

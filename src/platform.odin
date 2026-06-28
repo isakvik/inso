@@ -22,12 +22,12 @@ app: struct {
 
     disable_raw_input: bool,
 
-    debug_display_frame_profiler:  bool,
-    debug_display_memory_profiler: bool,
-    debug_display_fontatlas:       bool, // todo(isak): never written to
-    debug_display_slider_bounds:   bool,
-    debug_display_textures:        bool,
-    debug_display_playfield_cursor:     bool,
+    debug_display_frame_profiler:   bool,
+    debug_display_memory_profiler:  bool,
+    debug_display_fontatlas:        bool, // todo(isak): never written to
+    debug_display_slider_bounds:    bool,
+    debug_display_textures:         bool,
+    debug_display_playfield_cursor: bool,
 
     debug_log_lua_gc: bool,
 
@@ -121,6 +121,10 @@ mouse_init :: proc() {
         if !app.disable_raw_input {
             raw_input_enable()
             raw_input_register_sdl_hook()
+            
+            if game.user_config.raw_input_enabled {
+                mouse_enable_raw_input_mode()
+            }
     
             app.input_device_hwids, app.input_device_handles = input_enumerate_mouse_devices(memory.allocators[.GLOBAL])
         }

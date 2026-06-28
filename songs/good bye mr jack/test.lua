@@ -33,7 +33,7 @@ function on_init()
 end
 
 function on_update(time_ms)
-    for ii, hobj in ipairs(Hitobject.get_visible()) do
+    for ii, hobj in ipairs(Hitobject.get_visible_incl_followpoints()) do
         i = hobj:get_index()
         
         x, y = hobj:get_base_pos()

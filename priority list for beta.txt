@@ -1,14 +1,16 @@
 priority list for beta
 
 bugs
-    slider tracking doesnt play sound if head is ignored
-    refresh while external map is loaded crashes game
+    ui scaling is bad on 4k
 
 old features
     reverse arrow animation
     combobreak sound
     cursor ripple
+    
+    cursortrail (mcosu uses a custom shader here)
     note stacking
+    object dimming
 
 extra features
     slider snaking out
@@ -29,12 +31,6 @@ gameplay
     non-scalar playfield scale
     score system
     replays
-    
-    phase 2 visuals
-        cursortrail (mcosu uses a custom shader here)
-        followpoints
-        note stacking
-        object dimming
 
 lua
     particle system

@@ -42,7 +42,7 @@ Memory_Arena_Type :: enum {
     // cleared on skin unload
     SKIN,
 
-    // note(isak): active sound channels (Sound_Channel slotmap). freed and reinited on game_clear_sounds
+    // note(isak): active sound channels (Sound_Channel slotmap). freed and reinited on game_sounds_clear
     SOUND,
 
     // note(isak): per-hitobject custom drawables assigned by lua scripts. cleared on mapset reload and lua hot-reload

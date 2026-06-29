@@ -373,6 +373,9 @@ skin_load_hitsounds :: proc(skin: ^Skin) {
 }
 
 skin_unload :: proc(skin: ^Skin) {
+    // todo(isak): quite destructive, but most sounds in the game should be skinnable
+    game_sounds_clear()
+    
     for &set in skin.hitsounds {
         for &hitsound in set {
             if hitsound.handle != 0 {
@@ -398,7 +401,6 @@ skin_reload :: proc(skin: ^Skin) {
     // note(isak): reload is called midframe, so we need to make all our handles nonresident to free GPU memory
     // todo(isak): @speed: should be able to free only skin textures
     cleanup_textures_for_rendering()
-    game_sounds_clear()
 
     skin_unload(skin)
     game.active_skin = skin_load(temp_path)

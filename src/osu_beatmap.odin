@@ -71,8 +71,6 @@ Beatmap :: struct {
 }
 
 beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
-    game_sounds_clear()
-
     beatmap^ = { map_reference = map_reference }
     beatmap_load(beatmap)
 

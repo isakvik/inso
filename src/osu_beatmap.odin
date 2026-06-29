@@ -84,10 +84,6 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
             game.input.mouse_keys_enabled = true
             notify_warn("mouse keys enabled" if game.input.mouse_keys_enabled else "mouse keys disabled")
         }
-    } else if game.user_config.raw_input_enabled && !app.disable_raw_input {
-        mouse_enable_raw_input_mode()
-    } else {
-        mouse_disable_raw_input_mode()
     }
     
     // map logic init

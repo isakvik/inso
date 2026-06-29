@@ -297,6 +297,10 @@ Drawable :: struct {
     
     uv: Rect, // note(isak): UV sub-rect in [0,1] space; {0,0,1,1} = full texture. overrides element
 
+    // note(isak): when nonzero, samples this texture slot instead of the element's. lets an immediate-mode
+    // drawable pick an animation frame per emit without a throwaway per-frame element. see followpoint_emit.
+    tex_override: u32,
+
     // note(isak): index+1 into game.beatmap.hitobjects. 0 = no associated hitobject.
     // when set, d.size is stored in radius units and multiplied by hitobject_radius_osupx at render time.
     hobj_index: int,
@@ -674,7 +678,7 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
     relative_time_at := at_time - d.start_time_ms
 
     element := &game.beatmap.elements.data[d.element]
-    tex := element.tex
+    tex := d.tex_override if d.tex_override != 0 else element.tex
     uv_layer: f32
 
     current_radius: f32 = 1
@@ -1105,6 +1109,14 @@ slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
     ball_active := hobj.start_time_ms <= map_time && map_time < hobj.end_time_ms
     ball_pos := slider_path_pos_at(hobj, map_time) if ball_active else vec2{}
     slider_handle_update(gfx.ball,   ball_active, ball_pos, ball_active ? slider_ball_angle_at(hobj, map_time) : 0)
+
+    ball_frame_count := game.active_skin.elements[.SLIDER_BALL].frame_count
+    if ball_frame_count > 1 {
+        if d_ball, ok := slotmap.get(&game.beatmap.drawables, gfx.ball); ok {
+            frame := int(map_time / SLIDER_BALL_ANIMATION_LOOP_MS * f64(ball_frame_count)) %% ball_frame_count
+            d_ball.tex_override = skin_frame_texture(.SLIDER_BALL, frame)
+        }
+    }
     
     if d_follow, ok := slotmap.get(&game.beatmap.drawables, gfx.follow); ok {
         slider_drawable_update(d_follow, ball_active && .TRACKING in slider.flags, ball_pos)

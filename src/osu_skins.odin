@@ -69,6 +69,16 @@ Skin_Element :: struct {
     texture: u32,
     is_high_resolution: bool,
     metrics: vec2,
+
+    // note(isak): frame 0 lives in this element's own slot; frames 1..frame_count-1 are contiguous in
+    // window.skin_frame_textures from frame_slot_base. frame_count == 1 means static. see skin_frame_texture.
+    frame_slot_base: u32,
+    frame_count: int,
+}
+
+skin_element_animatable := #partial [Skin_Element_Type]bool {
+    .FOLLOWPOINT = true,
+    .SLIDER_BALL = true,
 }
 
 skin_element_names := [Skin_Element_Type]string {
@@ -175,6 +185,8 @@ skin_load :: proc(skin_path: string) -> (result: ^Skin) {
     load_start := time_s_since_beginning_of_program()
     result = new(Skin)
     result.path, _ = strings.clone(skin_path)
+    
+    window.skin_frame_textures = make([dynamic]Texture, 0, 16)
 
     os.change_directory(result.path)
     defer os.change_directory(app.base_dir)
@@ -236,53 +248,81 @@ skin_handle_ini :: proc(skin: ^Skin) {
     }
 }
 
+skin_try_load_texture :: proc(stem: string, tex_store: ^Texture) -> (is_high_res: bool, ok: bool) {
+    for extension in supported_image_extensions {
+        tex, err := texture_from_file(strings.concatenate({stem, "@2x", extension}, context.temp_allocator))
+        if err == os.General_Error.None {
+            tex_store^ = tex
+            return true, true
+        }
+        tex, err = texture_from_file(strings.concatenate({stem, extension}, context.temp_allocator))
+        if err == os.General_Error.None {
+            tex_store^ = tex
+            return false, true
+        }
+    }
+    return false, false
+}
+
+// note(isak): loads -1, -2, ... into the shared frame block until one is missing. frame 0 already lives
+// in window.skin_elements, so frame_count is the total including it.
+skin_load_animation_frames :: proc(skin: ^Skin, element: Skin_Element_Type) {
+    stem := skin.element_paths[element]
+    frame_slot_base := u32(len(window.skin_frame_textures))
+
+    for frame := 1; ; frame += 1 {
+        tex: Texture
+        _, ok := skin_try_load_texture(fmt.tprintf("%s-%d", stem, frame), &tex)
+        if !ok {
+            _, ok = skin_try_load_texture(fmt.tprintf("%s%d", stem, frame), &tex)
+            if !ok do break
+        }
+        append(&window.skin_frame_textures, tex)
+    }
+
+    frame_count := 1 + (int(len(window.skin_frame_textures)) - int(frame_slot_base))
+    if frame_count > 1 {
+        skin.elements[element].frame_slot_base = frame_slot_base
+        skin.elements[element].frame_count = frame_count
+    }
+}
+
 skin_load_elements :: proc(skin: ^Skin) {
     for element in Skin_Element_Type {
         tex_store := &window.skin_textures[element]
-        tex_err: os.Error
+        skin.elements[element].frame_count = 1
 
-        for extension in supported_image_extensions {
-            element_path := strings.concatenate({skin.element_paths[element], "@2x", extension})
-            tex_store^, tex_err = texture_from_file(element_path)
-            if tex_err == os.General_Error.None {
-                skin.elements[element].is_high_resolution = true
-                break
-            }
-
-            if tex_err == os.General_Error.Not_Exist {
-                element_path = strings.concatenate({skin.element_paths[element], extension})
-                tex_store^, tex_err = texture_from_file(element_path)
-            }
-            
-            if tex_err == os.General_Error.Not_Exist {
-                element_path = strings.concatenate({skin.element_paths[element], "0", extension})
-                tex_store^, tex_err = texture_from_file(element_path)
-            }
-
-            if tex_err == os.General_Error.None {
-                skin.elements[element].texture = tex_store.tex_id
-                break
-            }
+        is_high_res, ok := skin_try_load_texture(skin.element_paths[element], tex_store)
+        if !ok && skin_element_animatable[element] {
+            // note(isak): handle first frame of animated elements
+            is_high_res, ok = skin_try_load_texture(fmt.tprintf("%s-0", skin.element_paths[element]), tex_store)
+        }
+        if !ok {
+            is_high_res, ok = skin_try_load_texture(fmt.tprintf("%s0", skin.element_paths[element]), tex_store)
         }
 
         // todo(isak): we handle as much as we handle here, but can supply a default skin like osu here
-        if tex_err != os.General_Error.None {
-            log.debugf("skin warning: attempted searching for {}, but got error: {}", 
-                fmt.enum_value_to_string(element), tex_err)
+        if !ok {
+            log.debugf("skin warning: no texture found for {}", fmt.enum_value_to_string(element))
         }
 
+        skin.elements[element].texture = tex_store.tex_id
+        skin.elements[element].is_high_resolution = is_high_res
+
         // note(isak): natural display size. @2x textures are double-resolution for the same visual size
-        display_scale: f32 = skin.elements[element].is_high_resolution ? 0.5 : 1.0
+        display_scale: f32 = is_high_res ? 0.5 : 1.0
         skin.elements[element].metrics = {f32(tex_store.w) * display_scale, f32(tex_store.h) * display_scale}
+
+        if ok && skin_element_animatable[element] {
+            skin_load_animation_frames(skin, element)
+        }
     }
 
     if skin.elements[.SLIDER_END].texture > 0 {
         skin.has_sliderend = true
     }
     
-    // note(isak): fallbacks. copies the metadata (metrics) so anything reading the slider-end
-    // element's size sees the hitcircle's. the texture itself is redirected separately at element
-    // creation via skin_render_element - see the note there.
+    // note(isak): fallbacks. copies the metrics so they're read correctly by skin_render_element
     for element in Skin_Element_Type {
         if window.skin_textures[element].tex_id == 0 {
             #partial switch element {
@@ -341,12 +381,16 @@ skin_unload :: proc(skin: ^Skin) {
         }
     }
 
-    texture_ids: [len(Skin_Element_Type)]u32
+    // note(isak): the GL textures are GPU resources, not arena memory, so free them explicitly before
+    // arena_free_all reclaims the frame slice backing below
     for element in Skin_Element_Type {
-        texture_ids[element] = window.skin_textures[element].tex_id
+        texture_cleanup(&window.skin_textures[element])
     }
-    texture_free(texture_ids[:])
+    for &frame in window.skin_frame_textures {
+        texture_cleanup(&frame)
+    }
 
+    window.skin_textures = {}
     virtual.arena_free_all(&memory.arenas[.SKIN])
 }
 

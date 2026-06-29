@@ -84,8 +84,15 @@ texture_free :: proc(textures: []u32) {
 }
 
 texture_cleanup :: proc(texture: ^Texture) {
+    // note(isak): a resident bindless handle keeps its texture's storage alive even after DeleteTextures,
+    // so it must go non-resident first or the GPU memory leaks. teardown can run mid-frame while the
+    // handle is still resident from prepare_textures_for_rendering.
+    if window.bindless_supported && texture.tex_handle != 0 {
+        gl.MakeTextureHandleNonResidentARB(texture.tex_handle)
+    }
     texture_free({texture.tex_id})
     texture.tex_id = 0
+    texture.tex_handle = 0
 }
 
 

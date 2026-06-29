@@ -415,9 +415,9 @@ mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
             mapset.osu_map = mapset_parse_osu(mapset, filedata)
         }
         case ".png", ".jpg": {
-            if mapset.textures.len >= MAX_USER_TEXTURES {
-                log.errorf("mapset: texture limit ({}) reached, skipping '{}'", MAX_USER_TEXTURES, file.name)
-                notify_error("mapset: texture limit (%d) reached, skipping '%s'", MAX_USER_TEXTURES, file.name)
+            if int(mapset.textures.len) >= max_user_textures() {
+                log.errorf("mapset: texture limit ({}) reached, skipping '{}'", max_user_textures(), file.name)
+                notify_error("mapset: texture limit (%d) reached, skipping '%s'", max_user_textures(), file.name)
                 break
             }
             tex_key := strings.clone(file.name, memory.allocators[.MAPSET])

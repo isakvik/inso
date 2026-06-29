@@ -359,6 +359,8 @@ followpoint_emit :: proc(beatmap: ^Beatmap, conn: ^Followpoint_Connection, map_t
     duration   := to.start_time_ms - start_time
     if duration <= 0 do return
 
+    frame_count := game.active_skin.elements[.FOLLOWPOINT].frame_count
+
     for d := FOLLOWPOINT_SPACING_OSUPX * 1.49; d < distance - FOLLOWPOINT_SPACING_OSUPX; d += FOLLOWPOINT_SPACING_OSUPX {
         fraction      := d / distance
         fade_out_time := start_time + f64(fraction) * duration
@@ -374,6 +376,15 @@ followpoint_emit :: proc(beatmap: ^Beatmap, conn: ^Followpoint_Connection, map_t
         slot   := fraction + FOLLOWPOINT_LEAD_FRACTION * 1 //(move_t - 1)
         scale  := f32(0.58)
 
+        // note(isak): the frame animation plays once across the point's preempt window, so a 10-frame
+        // followpoint with the default 800ms preempt spends 80ms per frame - skinners pace it by frame count
+        tex_override: u32
+        if frame_count > 1 {
+            progress := (map_time - fade_in_time) / FOLLOWPOINT_PREEMPT_MS
+            frame    := clamp(int(progress * f64(frame_count)), 0, frame_count - 1)
+            tex_override = skin_frame_texture(.FOLLOWPOINT, frame)
+        }
+
         point := Drawable{
             flags         = {.ACTIVE},
             element       = builtin_element_slot(.FOLLOWPOINT),
@@ -383,6 +394,7 @@ followpoint_emit :: proc(beatmap: ^Beatmap, conn: ^Followpoint_Connection, map_t
             angle_rad     = math.atan2(delta.y, delta.x),
             anchor        = .CENTER,
             color         = with_alpha(color_white, alpha),
+            tex_override  = tex_override,
             start_time_ms = map_time,
             end_time_ms   = map_time + 1, // note(isak): don't expire
         }
@@ -399,6 +411,10 @@ SLIDER_FOLLOW_CIRCLE_POP_MS :: 200
 SLIDER_TICK_POP_MS :: 150 // note(isak): how long an individual tick's scale/fade pop-in plays once its turn arrives
 SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS :: 3 // note(isak) don't make ticks within n ms of the sliderend
 SLIDER_END_LENIENCY_MS :: 36
+
+// note(isak): osu's default sliderball framerate (no AnimationFramerate in skin.ini) is the frame count,
+// so the animation loops once per second regardless of how many frames the skin ships
+SLIDER_BALL_ANIMATION_LOOP_MS :: f64(1000)
 
 // note(isak): the looping slide sound is attenuated below the section volume so it doesn't drown out hits
 SLIDER_SLIDE_VOLUME :: f32(0.5)

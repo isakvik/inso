@@ -169,6 +169,12 @@ mouse_rebind :: proc(id: Mouse_ID, handle: Mouse_Handle) {
 }
 
 mouse_enable_double_mouse_mode :: proc() -> bool {
+    if app.disable_raw_input {
+        notify_error("raw input disabled for this program run - cannot enable special mouse mode!")
+    }
+    
+    mouse_enable_raw_input_mode()
+    
     if mice[.PRIMARY].device_handle == {} {
         notify_error("device handle for primary mouse does not exist - cannot enable special mouse mode!")
         return false

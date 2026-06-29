@@ -62,6 +62,7 @@ game: struct {
     playfield_dirty_transform: bool,
 
     paused: bool,
+    paused_for_modal_loop: bool,
     time_rate: f32,
     
     // note(isak): map game view fields
@@ -434,6 +435,7 @@ Notosu_Map :: struct {
     lua_entry_point: string,
     bg_pipeline_name: string,
     double_mouse: bool,
+    fixed_update_rate_hz: f64, // note(isak): on_fixed_update / scheduled-event tick rate; <= 0 means the default
 
     shaders: []Shader,
 
@@ -490,11 +492,30 @@ osu_on_init :: proc() {
     ui_init_timeline(&game.ui_timeline)
 
     game.input.keys = game.user_config.keys
+
+    window.on_modal_loop_change = osu_on_window_modal_loop
+}
+
+// note(isak): runs synchronously from inside the win32 modal move/resize loop, so restore our context
+// before touching anything that allocates or calls into lua. we pause around the freeze and only resume
+// playback if we were the ones to pause it.
+osu_on_window_modal_loop :: proc "c" (active: bool) {
+    context = lua_beatmap.odin_context
+
+    if active {
+        game.paused_for_modal_loop = !game.paused
+        beatmap_pause(&game.beatmap, true)
+    } else if game.paused_for_modal_loop {
+        game.paused_for_modal_loop = false
+        beatmap_pause(&game.beatmap, false)
+    }
 }
 
 
 osu_on_update :: proc(dt: f64) {
     game.dt = dt
+
+    window_set_resizable(game.mode != .PLAY)
 
     if game.mode != .PLAY {
         updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)

@@ -21,6 +21,12 @@ window: struct {
     mouse_inside: bool,
     minimized: bool,
     fullscreen: bool,
+    resizable: bool,
+
+    // note(isak): windows freezes our loop inside a modal move/resize loop. the platform layer flips this
+    // and fires the callback synchronously so game code can pause/resume around the freeze.
+    in_modal_loop: bool,
+    on_modal_loop_change: proc "c" (active: bool),
     bindless_supported: bool,
     intel_gpu: bool,
     transparent: bool,
@@ -114,6 +120,9 @@ window_init :: proc(rect: Rect) {
     window.cursor_hidden = sdl.HideCursor()
     window.focused = true
     window.mouse_inside = true
+    window.resizable = true
+
+    _platform_install_modal_loop_guard()
 
     max_vs_ssbo, max_combined_ssbo, max_fs_ssbo: i32
     gl.GetIntegerv(gl.MAX_VERTEX_SHADER_STORAGE_BLOCKS, &max_vs_ssbo)
@@ -154,6 +163,22 @@ window_toggle_fullscreen :: proc() {
 
 window_apply_vsync :: proc(enabled: bool) {
     sdl.GL_SetSwapInterval(1 if enabled else 0)
+}
+
+window_set_resizable :: proc(enabled: bool) {
+    if window.resizable == enabled do return
+    window.resizable = enabled
+    sdl.SetWindowResizable(window.handle, enabled)
+}
+
+// note(isak): called by the platform layer from inside the win32 modal loop, so keep it allocation- and
+// context-free. the registered callback is where game policy (pause/resume) lives.
+window_notify_modal_loop :: proc "c" (active: bool) {
+    if window.in_modal_loop == active do return
+    window.in_modal_loop = active
+    if window.on_modal_loop_change != nil {
+        window.on_modal_loop_change(active)
+    }
 }
 
 window_cleanup :: proc() {

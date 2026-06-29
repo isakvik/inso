@@ -21,6 +21,7 @@ lua_beatmap: struct {
     registered_events: bit_set[Lua_Beatmap_Event_Type],
     event_registrations: [dynamic]Lua_Event_Registration,
     scheduled_events: [dynamic]Scheduled_Event,
+    in_init: bool, // true only while on_init runs; events scheduled now become replayable timeline events
 
     last_callback: cstring, // last event name dispatched, for crash diagnostics
 
@@ -57,6 +58,11 @@ Scheduled_Event :: struct {
     callback_ref: lua.Ref,
     event_name:   string,  // borrows the name_ref'd Lua string's bytes; valid while name_ref is held
     name_ref:     lua.Ref, // luaL_ref pinning the name string against GC; released when the event fires
+    // persistent events were scheduled during on_init: they stay in the list (refs held until reload)
+    // and re-arm on backward seek so the map's timeline replays without a reload. transient events
+    // (scheduled from any callback) fire once and are consumed.
+    persistent:   bool,
+    fired:        bool, // persistent only: already dispatched at the current playhead, awaiting a rewind
 }
 
 
@@ -333,29 +339,38 @@ _schedule_callback :: proc "c" (L: ^lua.State, fire_at_ms: f64) -> i32 {
         fire_at_ms   = fire_at_ms,
         callback_ref = callback_ref,
         name_ref     = lua.NOREF,
+        persistent   = lua_beatmap.in_init,
     })
     return 0
 }
 
 
 // note(isak): called each frame from beatmap_on_update. fires any scheduled events whose
-// fire_at_ms has passed. uses unordered_remove so callbacks may safely append new entries
+// fire_at_ms has passed. transient events are unordered_removed; persistent ones are flagged fired
+// and kept so a backward seek can re-arm them. callbacks may safely append new entries either way.
 lua_drain_scheduled_events :: proc(time_ms: f64) {
     L := lua_beatmap.state
     if L == nil do return
     i := 0
     for i < len(lua_beatmap.scheduled_events) {
         ev := lua_beatmap.scheduled_events[i]
-        if ev.fire_at_ms > time_ms {
+        if ev.fired || ev.fire_at_ms > time_ms {
             i += 1
             continue
         }
-        unordered_remove(&lua_beatmap.scheduled_events, i)
+
+        // flag/remove before dispatch so a re-entrant schedule from the callback can't refire this one
+        if ev.persistent {
+            lua_beatmap.scheduled_events[i].fired = true
+            i += 1
+        } else {
+            unordered_remove(&lua_beatmap.scheduled_events, i)
+        }
 
         if ev.callback_ref != lua.NOREF {
             lua.rawgeti(L, lua.REGISTRYINDEX, lua.Integer(ev.callback_ref))
             lua_pcall_with_watchdog(L, 0, 0, "schedule_at error:")
-            lua.L_unref(L, lua.REGISTRYINDEX, c.int(ev.callback_ref))
+            if !ev.persistent do lua.L_unref(L, lua.REGISTRYINDEX, c.int(ev.callback_ref))
         } else {
             for reg in lua_beatmap.event_registrations {
                 if reg.name != ev.event_name do continue
@@ -366,8 +381,31 @@ lua_drain_scheduled_events :: proc(time_ms: f64) {
                 n_args := i32(0) if reg.is_global else i32(1)
                 lua_pcall_with_watchdog(L, n_args, 0, "schedule_event error:")
             }
+            if !ev.persistent do lua.L_unref(L, lua.REGISTRYINDEX, c.int(ev.name_ref))
+        }
+    }
+}
+
+// note(isak): on a backward seek, re-arm persistent (on_init-scheduled) events whose fire time is now
+// ahead of the playhead so they replay on the next forward pass. transient events belong to the
+// abandoned forward timeline, so we drop them; replaying a persistent event re-creates them exactly once.
+lua_rearm_scheduled_events :: proc(time_ms: f64) {
+    L := lua_beatmap.state
+    if L == nil do return
+    i := 0
+    for i < len(lua_beatmap.scheduled_events) {
+        ev := &lua_beatmap.scheduled_events[i]
+        if ev.persistent {
+            if ev.fire_at_ms > time_ms do ev.fired = false
+            i += 1
+            continue
+        }
+        if ev.callback_ref != lua.NOREF {
+            lua.L_unref(L, lua.REGISTRYINDEX, c.int(ev.callback_ref))
+        } else {
             lua.L_unref(L, lua.REGISTRYINDEX, c.int(ev.name_ref))
         }
+        unordered_remove(&lua_beatmap.scheduled_events, i)
     }
 }
 

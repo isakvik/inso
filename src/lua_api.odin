@@ -130,13 +130,13 @@ luaapi_global_funcs := []Lua_Function {
     "fires every callback registered under name. object callbacks get (self, ...), globals get (...)." },
   { "schedule_event", luaapi_schedule_event,
     "void schedule_event( string name, float delay_ms = 0 )",
-    "fires trigger_event(name) after delay_ms of music time. safe to call again from within a callback." },
+    "fires trigger_event(name) after delay_ms of music time. scheduled from on_init it replays on backward seek; scheduled from a callback it fires once. safe to call again from within a callback." },
   { "schedule_at", luaapi_schedule_at,
     "void schedule_at( float time_ms, fn callback )",
-    "runs callback on the first frame at or after music time time_ms. safe to call again from within a callback." },
+    "runs callback on the first frame at or after music time time_ms. scheduled from on_init it replays on backward seek; scheduled from a callback it fires once. safe to call again from within a callback." },
   { "schedule_after", luaapi_schedule_after,
     "void schedule_after( float delay_ms, fn callback )",
-    "runs callback on the first frame at least delay_ms of music time from now. safe to call again from within a callback." },
+    "runs callback on the first frame at least delay_ms of music time from now. scheduled from on_init it replays on backward seek; scheduled from a callback it fires once. safe to call again from within a callback." },
   { "register_global_event", luaapi_register_global_event,
     "void register_global_event( string name, fn callback )",
     "registers a callback not tied to any object; it receives only the extra args from trigger_event." },
@@ -194,6 +194,7 @@ luaapi_schedule_event :: proc "c" (L: ^lua.State) -> i32 {
         name_ref     = name_ref,
         callback_ref = lua.NOREF,
         fire_at_ms   = beatmap_music_time_ms(&game.beatmap) + delay_ms,
+        persistent   = lua_beatmap.in_init,
     })
     return 0
 }
@@ -2094,8 +2095,8 @@ luaapi_beatmap_static_funcs := []Lua_Function {
   { "capture_layers", luaapi_beatmap_capture_layers,
     "void Beatmap.capture_layers( string render_target_name, table layers )",
     "redirects every drawable in the given layers into the named render target." },
-  { "stop_capturing_layers", luaapi_beatmap_stop_capturing_layers,
-    "void Beatmap.stop_capturing_layers( table layers )",
+  { "free_layers", luaapi_beatmap_free_layers,
+    "void Beatmap.free_layers( table layers )",
     "stops redirecting the given layers into a render target." },
   { "add_post_pass", luaapi_beatmap_add_post_pass,
     "void Beatmap.add_post_pass{ shader=, src=, dst=, Layer after }",
@@ -2174,7 +2175,7 @@ luaapi_beatmap_capture_layers :: proc "c" (L: ^lua.State) -> i32 {
     return 0
 }
 
-luaapi_beatmap_stop_capturing_layers :: proc "c" (L: ^lua.State) -> i32 {
+luaapi_beatmap_free_layers :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     lua.L_checktype(L, 1, lua.TTABLE)
     count := int(lua.objlen(L, 1))

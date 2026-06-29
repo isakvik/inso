@@ -8,7 +8,8 @@ import sdl "vendor:sdl3"
 Lua_Beatmap_Event_Type :: enum {
     ON_INIT,
     ON_UPDATE,
-    ON_BEAT, 
+    ON_FIXED_UPDATE,
+    ON_BEAT,
     ON_TIMING_CHANGE,
     ON_PAUSE_CHANGE,
     ON_CONTROLLER_PRESSED,
@@ -22,6 +23,7 @@ Lua_Beatmap_Event_Type :: enum {
 lua_beatmap_event_names := [Lua_Beatmap_Event_Type]cstring {
     .ON_INIT = "on_init",
     .ON_UPDATE = "on_update",
+    .ON_FIXED_UPDATE = "on_fixed_update",
     .ON_BEAT = "on_beat",
     .ON_TIMING_CHANGE = "on_timing_change",
     .ON_PAUSE_CHANGE = "on_pause_change",
@@ -39,6 +41,15 @@ lua_beatmap_event_names := [Lua_Beatmap_Event_Type]cstring {
 
 lua_beatmap_on_update :: proc(time_ms: f64) {
     lua_call_beatmap_func(lua_beatmap_event_names[.ON_UPDATE], time_ms,
+        proc(time_ms: f64) -> i32 {
+            lua.pushnumber(lua_beatmap.state, lua.Number(time_ms))
+            return 1
+        }
+    )
+}
+
+lua_beatmap_on_fixed_update :: proc(time_ms: f64) {
+    lua_call_beatmap_func(lua_beatmap_event_names[.ON_FIXED_UPDATE], time_ms,
         proc(time_ms: f64) -> i32 {
             lua.pushnumber(lua_beatmap.state, lua.Number(time_ms))
             return 1

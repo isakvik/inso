@@ -46,7 +46,9 @@ editor_scrub_steps :: proc(beatmap: ^Beatmap, steps: int) {
 }
 
 editor_seek :: proc(beatmap: ^Beatmap, target: f64) {
-    // note(isak): backward seeks must re-show expired objects
-    if target < beatmap.music_time_ms do beatmap_reset_object_state(beatmap)
+    // note(isak): backward seeks must re-show expired objects and rewind the scheduled/fixed-update timeline
+    seeking_backward := target < beatmap.music_time_ms
+    if seeking_backward do beatmap_reset_object_state(beatmap)
     beatmap_seek(beatmap, target)
+    if seeking_backward do beatmap_rewind_timeline(beatmap)
 }

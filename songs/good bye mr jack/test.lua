@@ -8,7 +8,7 @@ function on_init()
     -- then additively composite the glow back over the (still crisp) screen
     --Beatmap.capture_layers("scene", { Layer.BACKGROUND, Layer.HITOBJECTS, Layer.UI })
 
-    Beatmap.capture_layers("scene", { Layer.HITOBJECTS, Layer.CURSOR })
+    Beatmap.capture_layers("scene", { Layer.HITOBJECTS, Layer.UI, Layer.CURSOR })
 
     el_scene = Element.new()
         :set_tex("scene")

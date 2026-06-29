@@ -334,6 +334,11 @@ main :: proc() {
             time_last_frame = time_current_frame
             time_current_frame = current_time_s()
 
+            max_frame_time_s :: 1.0
+            if time_current_frame - time_last_frame > max_frame_time_s {
+                // todo(isak): lagspike integrity check goes here
+            }
+
             io := imgui.GetIO()
             io.DisplaySize = {window.rect.w, window.rect.h}
             io.DeltaTime = f32(time_current_frame - time_last_frame)

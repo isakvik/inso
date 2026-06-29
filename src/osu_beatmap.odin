@@ -26,6 +26,11 @@ Beatmap :: struct {
     last_music_position_interpolation_check_time: f64,
     last_accurate_music_position_set_time: f64,
 
+    // note(isak): on_fixed_update + scheduled events step on this, decoupled from render framerate,
+    // so forward catch-up and backward replay are deterministic
+    fixed_update_dt_ms: f64,
+    last_fixed_tick_ms: f64,
+
     // note(isak): editor auto-hit tracks the previous frame's playhead so it only hits objects whose start
     // crossed during continuous playback; seeks snap it to the landing time so jumped-over objects are skipped.
     auto_last_hit_time_ms: f64,
@@ -34,7 +39,7 @@ Beatmap :: struct {
     slider_paths: []Slider_Path,
     
     judgements: queue.Queue(Judgement),
-    expiring_hitobjects: sb.Swap_Buffer(int), // note(isak): keeps track of objects that have been visible at some point
+    expiring_hitobjects: sb.Swap_Buffer(int), // note(isak): keeps track of visible objects until their expiry
     
     timing_windows: Timing_Window,
     
@@ -50,7 +55,7 @@ Beatmap :: struct {
 
     deferred_activations: [dynamic]Deferred_Activation,
     followpoint_connections: [dynamic]Followpoint_Connection,
-    followpoint_cursor: int, // note(isak): forward-only; first connection not yet expired. reset on backward seek
+    followpoint_cursor: int, // note(isak): first connection not yet expired, reset on seeking backwards
 
     phase_transitions: sb.Swap_Buffer(Phase_Transition),
 
@@ -94,6 +99,11 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     beatmap.start_time_ms = min(beatmap_game_time_to_music_time(beatmap, -beatmap.preempt_ms), -500)
     beatmap.music_time_ms = beatmap.start_time_ms
     beatmap.auto_last_hit_time_ms = beatmap_music_time_ms(beatmap)
+
+    fixed_update_rate_hz := game.active_notosu_map.fixed_update_rate_hz
+    if fixed_update_rate_hz <= 0 do fixed_update_rate_hz = 120
+    beatmap.fixed_update_dt_ms = 1000.0 / fixed_update_rate_hz
+    beatmap.last_fixed_tick_ms = beatmap_music_time_ms(beatmap)
     
     beatmap.hitobjects = game.active_map.hitobjects
     beatmap.slider_paths = game.active_map.slider_paths
@@ -130,7 +140,9 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     bg_dim_apply(game.user_config.bg_dim)
 
     if lua_cares_about_event(.ON_INIT) {
-        lua_call_beatmap_func("on_init")
+        lua_beatmap.in_init = true
+        lua_call_beatmap_func(lua_beatmap_event_names[.ON_INIT])
+        lua_beatmap.in_init = false
     }
 
     // note(isak): deferred activation list for objects with custom preempt (set by lua at init time).
@@ -165,8 +177,15 @@ beatmap_on_update :: proc(beatmap: ^Beatmap) {
     }
     
     has_new_timing_point := beatmap_update_current_timing_section(beatmap)
+
+    if lua_cares_about_event(.ON_FIXED_UPDATE) {
+        // note(isak): we only use the fixed clock update simulation if the lua script calls for it
+        beatmap_advance_fixed_clock(beatmap)
+    } else {
+        // if not, we call scheduled events at full resolution
+        lua_drain_scheduled_events(beatmap.last_fixed_tick_ms)
+    }
     
-    lua_drain_scheduled_events(beatmap_music_time_ms(beatmap))
     if lua_cares_about_event(.ON_UPDATE) {
         lua_beatmap_on_update(beatmap_music_time_ms(beatmap))
     }
@@ -179,6 +198,48 @@ beatmap_on_update :: proc(beatmap: ^Beatmap) {
     if lua_cares_about_event(.ON_KIAI_CHANGE) {
         beatmap_check_kiai_change(beatmap)
     }
+}
+
+// note(isak): steps the fixed-rate simulation clock up to the current playhead, dispatching on_fixed_update and
+// draining scheduled events on each whole tick rather than once per render frame
+beatmap_advance_fixed_clock :: proc(beatmap: ^Beatmap) {
+    dt := beatmap.fixed_update_dt_ms
+    if dt <= 0 do return
+
+    render_music_time_ms := beatmap.music_time_ms
+    
+    target_ms := beatmap_music_time_ms(beatmap)
+    cares := lua_cares_about_event(.ON_FIXED_UPDATE)
+    if !cares && len(lua_beatmap.scheduled_events) == 0 {
+        beatmap.last_fixed_tick_ms = max(beatmap.last_fixed_tick_ms, target_ms)
+        return
+    }
+    
+    defer beatmap.music_time_ms = render_music_time_ms
+
+    offset_ms := f64(game.user_config.universal_offset_ms)
+    // note(isak): guard against freezing
+    remaining_ticks := 1 << 20
+    for beatmap.last_fixed_tick_ms + dt <= target_ms {
+        beatmap.last_fixed_tick_ms += dt
+
+        // note(isak): we overwrite music time for any lua side calls that read it
+        beatmap.music_time_ms = beatmap.last_fixed_tick_ms - offset_ms
+        lua_drain_scheduled_events(beatmap.last_fixed_tick_ms)
+        if cares do lua_beatmap_on_fixed_update(beatmap.last_fixed_tick_ms)
+
+        remaining_ticks -= 1
+        if remaining_ticks == 0 {
+            beatmap.last_fixed_tick_ms = target_ms
+            break
+        }
+    }
+}
+
+beatmap_rewind_timeline :: proc(beatmap: ^Beatmap) {
+    now_ms := beatmap_music_time_ms(beatmap)
+    lua_rearm_scheduled_events(now_ms)
+    beatmap.last_fixed_tick_ms = now_ms
 }
 
 beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
@@ -269,9 +330,9 @@ beatmap_seek :: proc(beatmap: ^Beatmap, pos: f64) {
     beatmap.auto_last_hit_time_ms = beatmap_music_time_ms(beatmap)
 }
 
-// note(isak): rewinds the time-based visibility/expiry state. useful for scrolling 
+// note(isak): rewinds the time-based visibility/expiry state. useful for seeking.
 // the visible-set window, the expiring lists and pending phase transitions are dropped, gameplay effect gfx
-// are freed, and every touched object has its transient state reset. baked map/geometry data is untouched.
+// are freed, and every touched object has its transient state reset.
 //
 // @leak slider_create_gfx / hitobject_create_phase_drawables both allocate drawables which are not cleared or reused
 beatmap_reset_object_state :: proc(beatmap: ^Beatmap) {

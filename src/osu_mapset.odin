@@ -490,6 +490,9 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
                     case "DoubleMouse":
                         val, ok := strconv.parse_u64(value); assert(ok)
                         result.double_mouse = val > 0
+                    case "FixedUpdateRate":
+                        val, ok := strconv.parse_f64(value); assert(ok)
+                        result.fixed_update_rate_hz = val
                 }
             }
         case .SHADERS:

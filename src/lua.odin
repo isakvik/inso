@@ -15,21 +15,6 @@ import sdl "vendor:sdl3"
 // note(isak): implementation detail: we're using luajit, which in practice seems to be some kind of
 // wrapper of lua 5.1 that adds some extra stuff from 5.2 or so
 
-// note(isak): API versioning/compat policy (after initial release)
-// maps declare a target API version in their .notosu header. when making breaking changes:
-//   - prefer add-only (rename new, keep old) until a clean break is necessary
-//   - on a breaking change: write compat/vN.lua (loaded before the map script for old versions)
-//   - shims can patch static methods directly (Hitobject.old = Hitobject.new) and instance
-//     methods via get_class_meta("ClassName") -- see luaapi_get_class_meta
-//   - things shims can't fix: event arg order changes, removed enum values the engine no
-//     longer handles, structural drawable/hitobject relationship changes -- those need an
-//     odin-side version check at the call site
-
-// @beta
-// todo(isak): expose scoring state to lua (combo, score, accuracy)
-// todo(isak): z-index within a layer (currently insertion-order only)
-// todo(isak): animation list relocation is a silent footgun - ordering constraint should be enforced or surfaced clearly
-
 lua_beatmap: struct {
     state: ^lua.State,
     odin_context: runtime.Context,
@@ -42,9 +27,6 @@ lua_beatmap: struct {
     hide_skin_cursor: bool, // note(isak): set by set_cursor_visible(false) so a script can draw its own cursor
 }
 
-// note(isak): our own registration entry, a superset of lua.L_Reg that also carries the doc signature and
-// description inline so lua_docs.odin can generate the API reference straight from these tables - the docs
-// can never drift from what's actually registered. registration synthesizes the lua calls from name/func.
 Lua_Function :: struct {
     name:        cstring,
     func:        lua.CFunction,

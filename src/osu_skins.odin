@@ -381,8 +381,6 @@ skin_unload :: proc(skin: ^Skin) {
         }
     }
 
-    // note(isak): the GL textures are GPU resources, not arena memory, so free them explicitly before
-    // arena_free_all reclaims the frame slice backing below
     for element in Skin_Element_Type {
         texture_cleanup(&window.skin_textures[element])
     }
@@ -396,8 +394,13 @@ skin_unload :: proc(skin: ^Skin) {
 
 skin_reload :: proc(skin: ^Skin) {
     temp_path := strings.clone(skin.path, context.temp_allocator)
+
+    // note(isak): reload is called midframe, so we need to make all our handles nonresident to free GPU memory
+    // todo(isak): @speed: should be able to free only skin textures
+    cleanup_textures_for_rendering()
     skin_unload(skin)
-    skin_load(temp_path)
+    game.active_skin = skin_load(temp_path)
+    prepare_textures_for_rendering()
 }
 
 // note(isak): register every skin directory found in skins_dir

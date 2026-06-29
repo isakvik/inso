@@ -80,15 +80,13 @@ Shader_Globals :: struct {
     resolution: [2]f32,
 }
 
-// note(isak): commands execute in layer order from per-layer queues, but they get recorded in
-// arbitrary emission order (a drawable can be emitted into a later layer's queue from another
-// layer's recording context). so dedup can't trust an emission-order global "current" value: at
-// execution time a layer's queue inherits whatever GL state the previously-executed layer left,
-// which capture redirects make genuinely vary. instead each layer tracks what it has actually
-// emitted into its own queue this frame; the `emitted` set is cleared at frame start so the first
-// touch of each layer always (re)establishes its state, then same-value binds dedup as usual.
 Layer_State_Field :: enum { FRAMEBUFFER, PIPELINE, TRANSFORM, SCISSOR }
 
+/*
+    note(isak): layers are processed sequentially via the command buffer system (for transparency blending purposes). 
+    this means that if render procedures/scripts are run without matching this order, we might have state issues
+    since the bound state at the end of a layer might not match what one would expect from reading the code
+*/
 Layer_Render_State :: struct {
     framebuffer: Command_Bind_Framebuffer,
     pipeline:    Command_Bind_Pipeline,
@@ -669,24 +667,21 @@ _r_framebuffer_resolve :: proc(id: Framebuffer_ID) -> (^GL_Framebuffer, bool) {
     return nil, false
 }
 
-// note(isak): each of these dedups against what this layer has already emitted this frame, so a
-// same-value re-bind is free and won't break the current draw batch. the first touch of a layer
-// each frame always emits (the `emitted` set was cleared in batch_begin).
 r_bind_framebuffer :: proc(cmd: Command_Bind_Framebuffer) {
-    ls := &window.renderer.layer_state[window.renderer.current_layer]
-    if .FRAMEBUFFER in ls.emitted && cmd == ls.framebuffer do return
-    ls.framebuffer = cmd
-    ls.emitted += {.FRAMEBUFFER}
+    layer_state := &window.renderer.layer_state[window.renderer.current_layer]
+    if .FRAMEBUFFER in layer_state.emitted && cmd == layer_state.framebuffer do return
+    layer_state.framebuffer = cmd
+    layer_state.emitted += {.FRAMEBUFFER}
     window.renderer.current_framebuffer = cmd
     window.renderer.new_draw_on_next_push = true
     command_push_bind_framebuffer(cmd)
 }
 
 r_bind_pipeline :: proc(cmd: Command_Bind_Pipeline) {
-    ls := &window.renderer.layer_state[window.renderer.current_layer]
-    if .PIPELINE in ls.emitted && cmd == ls.pipeline do return
-    ls.pipeline = cmd
-    ls.emitted += {.PIPELINE}
+    layer_state := &window.renderer.layer_state[window.renderer.current_layer]
+    if .PIPELINE in layer_state.emitted && cmd == layer_state.pipeline do return
+    layer_state.pipeline = cmd
+    layer_state.emitted += {.PIPELINE}
     window.renderer.current_pipeline = cmd
     window.renderer.new_draw_on_next_push = true
     command_push_bind_pipeline(cmd)
@@ -702,10 +697,11 @@ _r_get_ssbo_cmd_from_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_slot: Shader_S
 
 _r_push_ssbo :: proc(cmd: Command_Bind_SSBO) {
     if cmd.slot == .NONE do return
-    ls := &window.renderer.layer_state[window.renderer.current_layer]
-    if cmd.slot in ls.ssbo_emitted && cmd == ls.ssbo[cmd.slot] do return
-    ls.ssbo[cmd.slot] = cmd
-    ls.ssbo_emitted += {cmd.slot}
+    
+    layer_state := &window.renderer.layer_state[window.renderer.current_layer]
+    if cmd.slot in layer_state.ssbo_emitted && cmd == layer_state.ssbo[cmd.slot] do return
+    layer_state.ssbo[cmd.slot] = cmd
+    layer_state.ssbo_emitted += {cmd.slot}
     window.renderer.current_ssbo_binds[cmd.slot] = cmd
     window.renderer.new_draw_on_next_push = true
     command_push_bind_ssbo(cmd)
@@ -749,10 +745,10 @@ r_post_pass :: proc(pass: Command_Post_Pass, after: Layer) {
     screen transform, such that w=1, h=1 corresponds to one pixel.
 */
 r_push_transform :: proc(transform: Transform) {
-    ls := &window.renderer.layer_state[window.renderer.current_layer]
-    if .TRANSFORM in ls.emitted && transform == ls.transform do return
-    ls.transform = transform
-    ls.emitted += {.TRANSFORM}
+    layer_state := &window.renderer.layer_state[window.renderer.current_layer]
+    if .TRANSFORM in layer_state.emitted && transform == layer_state.transform do return
+    layer_state.transform = transform
+    layer_state.emitted += {.TRANSFORM}
     window.renderer.current_global_data.transform = transform
     window.renderer.new_draw_on_next_push = true
     command_push_push_transform({transform})
@@ -763,10 +759,10 @@ r_pop_transform :: proc() {
 }
 
 _r_push_scissor :: proc(cmd: Command_Scissor_Mode) {
-    ls := &window.renderer.layer_state[window.renderer.current_layer]
-    if .SCISSOR in ls.emitted && cmd == ls.scissor do return
-    ls.scissor = cmd
-    ls.emitted += {.SCISSOR}
+    layer_state := &window.renderer.layer_state[window.renderer.current_layer]
+    if .SCISSOR in layer_state.emitted && cmd == layer_state.scissor do return
+    layer_state.scissor = cmd
+    layer_state.emitted += {.SCISSOR}
     window.renderer.current_scissor = cmd
     window.renderer.new_draw_on_next_push = true
     command_push_scissor_mode(cmd)
@@ -790,11 +786,6 @@ r_reset_scissor_mode :: proc() {
     window.renderer.new_draw_on_next_push = true
 }
 
-/*
-    note(isak): layers are processed sequentially via the command buffer system (for transparency blending purposes). 
-    this means that if render procedures/scripts are run without matching this order, we might have state issues
-    since the bound state at the end of a layer might not match what one would expect from reading the code
-*/
 r_bind_layer :: proc(layer: Layer) {
     window.renderer.current_layer = layer
     window.renderer.new_draw_on_next_push = true
@@ -868,9 +859,6 @@ commit_transform :: proc(transform: Transform) {
 }
 
 batch_begin :: proc(renderer: ^Renderer) {
-    // note(isak): clear per-layer emission flags so the first state touch of every layer this
-    // frame re-emits, never inheriting another layer's leftover GL state. values persist across
-    // frames so out-of-band drawables can re-establish a layer's last-known state by themselves.
     for &ls in renderer.layer_state {
         ls.emitted      = {}
         ls.ssbo_emitted = {}

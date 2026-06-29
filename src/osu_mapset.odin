@@ -36,7 +36,7 @@ todo(isak): missing functionality:
 */
 Mapset_Buffer :: distinct GL_Buffer(u8)
 
-// note(isak): scale > 0 means the target tracks the window size; fbo is reinit'd on resize.
+// note(isak): scale > 0 means the target tracks the window size, fbo is reinitialized on resize.
 // scale == 0 means a fixed pixel size that survives resizes untouched.
 Render_Target :: struct {
     fbo:               GL_Framebuffer,
@@ -44,7 +44,7 @@ Render_Target :: struct {
     clear_every_frame: bool,
 }
 
-// note(isak): a fullscreen shader pass. emitted into the `after` layer's command queue each
+// note(isak): a fullscreen shader pass. emitted into the "after" layer's command queue each
 // frame, so it runs after that layer's content but before the next layer draws.
 Post_Pass :: struct {
     pipeline:  Pipeline_ID,

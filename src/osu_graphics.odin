@@ -259,8 +259,7 @@ Drawable_Flag :: enum u32 {
     // still nudges it in osupx. handy for compositing a screen-sized capture without size math.
     FULLSCREEN,
 
-    // note(isak): skips drawing without reaping. ACTIVE means "still alive, keep me" (the expiring-gfx
-    // reaper drops anything non-active), so a visibility toggle has to live on its own flag.
+    // note(isak): visibility flag
     HIDDEN,
 }
 
@@ -290,16 +289,9 @@ Drawable :: struct {
     
     start_time_ms, end_time_ms: f64,
 
-    // note(isak): per-instance animation override. when non-empty, render uses this slice instead of the
-    // element template's, so a single drawable can carry a custom animation without a throwaway element.
-    // points into game.beatmap.animations (same immutable storage as element.animations); never owned.
-    animations: []Animation,
-    
-    uv: Rect, // note(isak): UV sub-rect in [0,1] space; {0,0,1,1} = full texture. overrides element
-
-    // note(isak): when nonzero, samples this texture slot instead of the element's. lets an immediate-mode
-    // drawable pick an animation frame per emit without a throwaway per-frame element. see followpoint_emit.
-    tex_override: u32,
+    animations: []Animation, // note(isak): animation override
+    uv: Rect, // note(isak): element override. UV sub-rect in [0,1] space; {0,0,1,1} = full texture
+    tex: u32, // note(isak): element override
 
     // note(isak): index+1 into game.beatmap.hitobjects. 0 = no associated hitobject.
     // when set, d.size is stored in radius units and multiplied by hitobject_radius_osupx at render time.
@@ -678,7 +670,7 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
     relative_time_at := at_time - d.start_time_ms
 
     element := &game.beatmap.elements.data[d.element]
-    tex := d.tex_override if d.tex_override != 0 else element.tex
+    tex := d.tex if d.tex != 0 else element.tex
     uv_layer: f32
 
     current_radius: f32 = 1
@@ -824,7 +816,7 @@ process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Dr
             sb.append_next(expiring_gfx_refs, handle)
         } else {
             slotmap.remove(&game.beatmap.drawables, handle)
-            _unregister_events_for_handle(.DRAWABLE, transmute(u64)handle)
+            lua_unregister_events_for_handle(.DRAWABLE, transmute(u64)handle)
         }
     }
     sb.swap(expiring_gfx_refs)
@@ -1114,7 +1106,7 @@ slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
     if ball_frame_count > 1 {
         if d_ball, ok := slotmap.get(&game.beatmap.drawables, gfx.ball); ok {
             frame := int(map_time / SLIDER_BALL_ANIMATION_LOOP_MS * f64(ball_frame_count)) %% ball_frame_count
-            d_ball.tex_override = skin_frame_texture(.SLIDER_BALL, frame)
+            d_ball.tex = skin_frame_texture(.SLIDER_BALL, frame)
         }
     }
     

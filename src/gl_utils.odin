@@ -329,6 +329,7 @@ fbo_reinit :: proc(fb: ^GL_Framebuffer, new_w, new_h: i32) {
 }
 
 fbo_cleanup :: proc(fb: ^GL_Framebuffer) {
+    assert(!window.textures_resident, "fbo_cleanup: free a framebuffer inside a cleanup/prepare_textures_for_rendering bracket")
     gl.DeleteFramebuffers(1, &fb.id)
     gl.DeleteTextures(i32(fb.color_texture_count), raw_data(fb.color_textures[:]))
     gl.DeleteTextures(i32(fb.depth_texture_count), &fb.depth_texture)

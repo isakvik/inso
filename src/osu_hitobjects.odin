@@ -394,7 +394,7 @@ followpoint_emit :: proc(beatmap: ^Beatmap, conn: ^Followpoint_Connection, map_t
             angle_rad     = math.atan2(delta.y, delta.x),
             anchor        = .CENTER,
             color         = with_alpha(color_white, alpha),
-            tex_override  = tex_override,
+            tex           = tex_override,
             start_time_ms = map_time,
             end_time_ms   = map_time + 1, // note(isak): don't expire
         }
@@ -672,7 +672,6 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
             if is_tracking && .HEAD_CHECKED in slider.flags  {
                 judgement_new(hobj, .SLIDER_LARGE_SCOREPOINT, 0)
                 slider.hit_judgement_count += 1
-                // note(isak): the repeat just reached is edge `checked_repeats_count` (post-increment)
                 slider_play_edge_hitsound(hobj, slider.checked_repeats_count, timing_point, volume)
             } else if .HEAD_CONTINGENCY_WINDOW_PASSED not_in slider.flags {
                 if slider.contingency_window_scorepoint_count >= 64 {

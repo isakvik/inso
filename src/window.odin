@@ -61,6 +61,8 @@ window: struct {
     // note(isak): non-bindless fallback
     tex_id_lookup: [MAX_TEXTURE_HANDLES]u32,
 
+    textures_resident: bool,
+
     white_texture: Texture,
     profiler_texture: Texture,
     font_atlas_texture: Texture,

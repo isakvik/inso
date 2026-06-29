@@ -322,6 +322,7 @@ prepare_textures_for_rendering :: proc() {
                 gl.MakeTextureHandleResidentARB(textures[i])
             }
         }
+        window.textures_resident = true
     } else {
         ids := &window.tex_id_lookup
         ids[Builtin_Texture_Slot.WHITE] = window.white_texture.tex_id
@@ -362,6 +363,7 @@ cleanup_textures_for_rendering :: proc() {
             gl.MakeTextureHandleNonResidentARB(textures[i])
         }
     }
+    window.textures_resident = false
 }
 
 

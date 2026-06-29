@@ -955,4 +955,6 @@ game_sounds_clear :: proc() {
     vmem.arena_free_all(&memory.arenas[.SOUND])
     slotmap.init(&game.sounds, allocator = memory.allocators[.SOUND], capacity = 128)
     null_sound_handle := slotmap.insert(&game.sounds, null_sound)
+
+    slider_sounds_clear_loop_handles()
 }

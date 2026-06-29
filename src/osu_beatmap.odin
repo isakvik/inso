@@ -185,6 +185,7 @@ beatmap_on_update :: proc(beatmap: ^Beatmap) {
 
 beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
     lua_cleanup()
+    game_sounds_clear()
     sound_destroy(&beatmap.music)
     
     for &hobj in beatmap.hitobjects {

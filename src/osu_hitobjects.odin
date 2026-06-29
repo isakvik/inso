@@ -775,3 +775,12 @@ slider_stop_slide_sounds :: proc(slider: ^Slider_State) {
     game_sound_stop(slider.whistle_sound)
     slider.whistle_sound = {}
 }
+
+slider_sounds_clear_loop_handles :: proc() {
+    for &hobj in game.beatmap.hitobjects {
+        if hobj.type == .SLIDER {
+            hobj.slider_state.slide_sound = {}
+            hobj.slider_state.whistle_sound = {}
+        }
+    }
+}

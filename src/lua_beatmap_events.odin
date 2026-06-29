@@ -36,6 +36,65 @@ lua_beatmap_event_names := [Lua_Beatmap_Event_Type]cstring {
     .ON_KIAI_CHANGE = "on_kiai_change",
 }
 
+Lua_Beatmap_Event_Doc :: struct {
+    signature:   string,
+    description: string,
+}
+lua_beatmap_event_docs := [Lua_Beatmap_Event_Type]Lua_Beatmap_Event_Doc {
+    .ON_INIT = {
+        "void on_init( void )",
+        "called once after the beatmap loads, before play. events scheduled in on_init replay when seeking backwards.",
+    },
+    .ON_UPDATE = {
+        "void on_update( float music_time_ms )",
+        "called once per rendered frame. framerate-dependent and is not re-run when seeking.",
+    },
+    .ON_FIXED_UPDATE = {
+        "void on_fixed_update( float music_time_ms )",
+        "called at a fixed rate in music time, decoupled from framerate. useful for simulation logic as it catches up in a loop on forward seek and replays deterministically. the rate is customizable by setting FixedUpdateRate in the notosu file.",
+    },
+    .ON_BEAT = {
+        "void on_beat( int beat )",
+        "called when the music time crosses a beat of the active uninherited timing point.",
+    },
+    .ON_TIMING_CHANGE = {
+        "void on_timing_change( int beat, float bpm )",
+        "called when a new uninherited timing point becomes active.",
+    },
+    .ON_PAUSE_CHANGE = {
+        "void on_pause_change( bool paused )",
+        "called when playback is paused or resumed.",
+    },
+    .ON_CONTROLLER_PRESSED = {
+        "void on_controller_pressed( string key )",
+        "called when a gameplay key goes down. key is one of \"k1\", \"k2\", \"m1\", \"m2\".",
+    },
+    .ON_CONTROLLER_RELEASED = {
+        "void on_controller_released( string key )",
+        "called when a gameplay key goes up. key is one of \"k1\", \"k2\", \"m1\", \"m2\".",
+    },
+    .ON_KEY_DOWN = {
+        "void on_key_pressed( string key )",
+        "called when a keyboard key goes down. key is the SDL3 scancode name.",
+    },
+    .ON_KEY_UP = {
+        "void on_key_released( string key )",
+        "called when a keyboard key goes up. key is the SDL3 scancode name.",
+    },
+    .ON_CURSOR_MOVED = {
+        "void on_cursor_moved( float x, float y )",
+        "called when the cursor moves, with the new position in screen pixels.",
+    },
+    .ON_JUDGEMENT = {
+        "void on_judgement( Hitobject hitobject, Judgement judgement, float timing_error_ms )",
+        "called when an object is judged. judgement is a Judgement enum value; timing_error_ms is signed (hit time minus perfect time).",
+    },
+    .ON_KIAI_CHANGE = {
+        "void on_kiai_change( bool kiai )",
+        "called when the kiai state is set or unset.",
+    },
+}
+
 //////////////////////////////////////////////////////
 // note(isak): beatmap event API
 

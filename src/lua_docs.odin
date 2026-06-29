@@ -26,6 +26,7 @@ lua_generate_docs :: proc() {
 
     // table of contents
     w(&sb, "<nav class=\"toc\">")
+    w(&sb, "<a href=\"#events\">Events</a>")
     w(&sb, "<a href=\"#globals\">Globals</a>")
     for class_type in Lua_Class_Type {
         class := lua_classes[class_type]
@@ -34,6 +35,21 @@ lua_generate_docs :: proc() {
     }
     w(&sb, "<a href=\"#enums\">Enums</a>")
     w(&sb, "</nav>")
+
+    // events (engine -> script callbacks)
+    lua_docs_write_heading(&sb, "events", "Events")
+    w(&sb, "<p class=\"note\">Callbacks the engine invokes on your script. Define the ones you need as global functions; undefined ones are skipped.</p>")
+    lua_docs_write_table_open(&sb)
+    for event in Lua_Beatmap_Event_Type {
+        doc := lua_beatmap_event_docs[event]
+        reg := Lua_Function{
+            name        = lua_beatmap_event_names[event],
+            signature   = doc.signature,
+            description = doc.description,
+        }
+        lua_docs_write_row(&sb, reg, string(lua_beatmap_event_names[event]))
+    }
+    lua_docs_write_table_close(&sb)
 
     // globals
     lua_docs_write_heading(&sb, "globals", "Globals")

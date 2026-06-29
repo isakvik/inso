@@ -686,14 +686,10 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
         }
     }
     
-    if .HEAD_CHECKED in slider.flags && slider.slide_sound == {} && is_tracking && !was_tracking {
+    should_slide := .HEAD_CHECKED in slider.flags && is_tracking && !game.paused
+    if should_slide && slider.slide_sound == {} {
         slider_start_slide_sounds(hobj, timing_point)
-    } else if !is_tracking && (slider.slide_sound != {} || slider.whistle_sound != {}) {
-        slider_stop_slide_sounds(slider)
-    }
-
-    // todo(isak): the slider slide sound doesn't restart on unpause. very minor though...
-    if game.paused {
+    } else if !should_slide && (slider.slide_sound != {} || slider.whistle_sound != {}) {
         slider_stop_slide_sounds(slider)
     }
 }

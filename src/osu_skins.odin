@@ -398,6 +398,14 @@ skin_reload :: proc(skin: ^Skin) {
     // note(isak): reload is called midframe, so we need to make all our handles nonresident to free GPU memory
     // todo(isak): @speed: should be able to free only skin textures
     cleanup_textures_for_rendering()
+    game_sounds_clear()
+    for &hobj in game.beatmap.hitobjects {
+        if hobj.type == .SLIDER {
+            hobj.slider_state.slide_sound = {}
+            hobj.slider_state.whistle_sound = {}
+        }
+    }
+
     skin_unload(skin)
     game.active_skin = skin_load(temp_path)
     prepare_textures_for_rendering()

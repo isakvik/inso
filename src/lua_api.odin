@@ -2100,7 +2100,7 @@ luaapi_beatmap_static_funcs := []Lua_Function {
     "stops redirecting the given layers into a render target." },
   { "add_post_pass", luaapi_beatmap_add_post_pass,
     "void Beatmap.add_post_pass{ shader=, src=, dst=, Layer after }",
-    "queues a fullscreen shader pass sampling src (string or table) into dst ('screen' or a target name), running after the 'after' layer (default HITOBJECTS)." },
+    "queues a fullscreen shader pass sampling src (string or table) into dst, running after the 'after' layer (default HITOBJECTS). src/dst names may be a render target, 'screen' (the window), or 'backbuffer' (the whole-frame capture; requires [General] Backbuffer: 1)." },
   { "get_timing_windows", luaapi_beatmap_get_timing_windows,
     "(float marvelous, float good, float ok, float miss) Beatmap.get_timing_windows( void )",
     "the current hit window half-widths in ms." },
@@ -2213,7 +2213,9 @@ luaapi_beatmap_add_post_pass :: proc "c" (L: ^lua.State) -> i32 {
     dst_name := string(lua.tostring(L, -1))
     lua.pop(L, 1)
     dst: Framebuffer_ID
-    if dst_name != "screen" {
+    if dst_name == BACKBUFFER_TEXTURE_NAME {
+        dst = builtin_framebuffer(.BACKBUFFER)
+    } else if dst_name != "screen" {
         dfb, dst_found := mapset_render_target_fb(dst_name)
         if !dst_found {
             notify_error("lua: Beatmap.add_post_pass dst render target not found '%s'", dst_name)

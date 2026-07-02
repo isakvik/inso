@@ -183,7 +183,7 @@ beatmap_on_update :: proc(beatmap: ^Beatmap) {
         beatmap_advance_fixed_clock(beatmap)
     } else {
         // if not, we call scheduled events at full resolution
-        lua_drain_scheduled_events(beatmap.last_fixed_tick_ms)
+        lua_drain_scheduled_events(beatmap_music_time_ms(beatmap))
     }
     
     if lua_cares_about_event(.ON_UPDATE) {

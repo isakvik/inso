@@ -144,6 +144,7 @@ window_on_resize :: proc(new_w, new_h: i32) {
     game.playfield_dirty_transform = false
     
     fbo_reinit(&window.framebuffers[.SLIDERS], new_w, new_h)
+    fbo_reinit(&window.framebuffers[.BACKBUFFER], new_w, new_h)
 
     if game.active_mapset != nil {
         for &rt in game.active_mapset.render_targets.data {

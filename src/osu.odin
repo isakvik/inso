@@ -70,10 +70,11 @@ game: struct {
     ui_timeline: UI_Timeline,
     hit_error_bar: Hit_Error_Bar,
 
-    // note(isak): managed sounds to be used with the game_sound_* api. we create BASS streams 
-    // from samples, and then BASS handles the rest - not quite sure if we can further reuse sound data 
+    // note(isak): managed sounds to be used with the game_sound_* api. we create BASS streams
+    // from samples, and then BASS handles the rest - not quite sure if we can further reuse sound data
     // instead of creating multiple BASS handles, but i think it's fine.
     sounds: slotmap.Slotmap(Sound),
+    expiring_sounds: sb.Swap_Buffer(slotmap.Handle),
 }
 
 // note(isak): we reserve the first slot for safety reasons, and we crash on modification for debug reasons
@@ -395,7 +396,7 @@ Layer :: enum {
     UI,
     CURSOR,
     TOP,
-    DEBUG
+    PLATFORM, // note(isak): engine/debug overlays; always composited onto the real screen, on top of any post-processing
 }
 
 
@@ -435,6 +436,7 @@ Notosu_Map :: struct {
     lua_entry_point: string,
     bg_pipeline_name: string,
     double_mouse: bool,
+    use_backbuffer: bool, // note(isak): route the whole frame into the "backbuffer" render target so a post pass can sample it
     fixed_update_rate_hz: f64, // note(isak): on_fixed_update / scheduled-event tick rate; <= 0 means the default
 
     shaders: []Shader,
@@ -579,6 +581,7 @@ osu_on_update :: proc(dt: f64) {
     process_expiring_hitobjects(&game.beatmap.expiring_hitobjects)
     process_hitobject_hittesting(visible_hobjs, map_time)
     process_hitobject_phase_transitions()
+    game_sounds_process_expiry()
 
     // game render
     
@@ -665,7 +668,7 @@ osu_on_update :: proc(dt: f64) {
     }
 
     if game.input.rebinding_key != .NONE {
-        r_check_and_bind_layer(.DEBUG)        
+        r_check_and_bind_layer(.PLATFORM)
         r_push_transform(fullscreen_transform)
         r_draw_quad(&window.renderer.quad_geometry,
             vec2{0,0}, vec2{1,1},
@@ -934,9 +937,11 @@ handle_universal_input_events :: proc() {
 //////////////////////////////////////////////////////
 // note(isak): managed game sound API
 
-game_sound_play :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0, category: Sound_Category = .HITSOUND) -> (result: slotmap.Handle) {
+game_sound_play :: proc(
+    s: ^Sample, loop: bool = false, volume: f32 = 1.0, category: Sound_Category = .HITSOUND, expires_at: f64 = math.F64_MAX
+) -> (result: slotmap.Handle) {
     if s.handle == 0 do return
-    
+
     sound: Sound
     ok: bool
     if loop {
@@ -947,12 +952,18 @@ game_sound_play :: proc(s: ^Sample, loop: bool = false, volume: f32 = 1.0, categ
     if !ok do return
 
     handle := slotmap.insert(&game.sounds, sound)
-    snd := slotmap.get(&game.sounds, handle) or_else {}
-    sound_play(snd, loop = loop, volume = volume, category = category)
+    sound_play(&sound, loop = loop, volume = volume, category = category)
+
+    if expires_at != math.F64_MAX {
+        base := cast(^Base_Sound)&sound
+        base.expires_at_ms = beatmap_music_time_ms(&game.beatmap) + expires_at
+        sb.append(&game.expiring_sounds, handle)
+    } 
     return handle
 }
 
 game_sound_stop :: proc(handle: slotmap.Handle) {
+    if handle == {} do return
     sound, ok := slotmap.get(&game.sounds, handle)
     if ok {
         sound_destroy(sound)
@@ -968,6 +979,32 @@ game_sound_is_playing :: proc(handle: slotmap.Handle) -> (result: bool) {
     return result
 }
 
+game_sound_renew_expiry :: proc(handle: slotmap.Handle, expires_at_ms: f64) {
+    if handle == {} do return
+    sound, ok := slotmap.get(&game.sounds, handle)
+    if ok {
+        base := cast(^Base_Sound)sound
+        base.expires_at_ms = expires_at_ms
+    }
+}
+
+game_sounds_process_expiry :: proc() {
+    music_time := beatmap_music_time_ms(&game.beatmap)
+    for handle in game.expiring_sounds.current {
+        sound, ok := slotmap.get(&game.sounds, handle)
+        if !ok do continue
+
+        base := cast(^Base_Sound)sound
+        expired := base.expires_at_ms != 0 && music_time > base.expires_at_ms
+        if expired || sound_is_finished(sound) {
+            game_sound_stop(handle)
+            continue
+        }
+        sb.append_next(&game.expiring_sounds, handle)
+    }
+    sb.swap(&game.expiring_sounds)
+}
+
 game_sounds_clear :: proc() {
     for &s in game.sounds.values {
         sound_destroy(&s)
@@ -976,6 +1013,8 @@ game_sounds_clear :: proc() {
     vmem.arena_free_all(&memory.arenas[.SOUND])
     slotmap.init(&game.sounds, allocator = memory.allocators[.SOUND], capacity = 128)
     null_sound_handle := slotmap.insert(&game.sounds, null_sound)
+
+    sb.init(&game.expiring_sounds, capacity = 64, allocator = memory.allocators[.SOUND])
 
     slider_sounds_clear_loop_handles()
 }

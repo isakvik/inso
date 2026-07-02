@@ -3,6 +3,7 @@ notosu file format v1
 [General]
 LuaEntryPoint: test.lua
 DoubleMouse: 0
+Backbuffer: 1
 
 [Shaders]
 [[wave]]
@@ -24,6 +25,11 @@ BlendMode: None
 VertexShader: builtin.quad
 FragmentShader: composite.fs.glsl
 BlendMode: Additive
+
+[[crt]]
+VertexShader: builtin.quad
+FragmentShader: crt_lottes.fs.glsl
+BlendMode: None
 
 [Buffers]
 [[my_model]]

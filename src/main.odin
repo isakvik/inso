@@ -66,7 +66,7 @@ memory_arena_names := [?]string {
     "Command buffer[HITOBJECT]",
     "Command buffer[OVERLAY]",
     "Command buffer[UI]",
-    "Command buffer[DEBUG]",
+    "Command buffer[PLATFORM]",
 }
 
 memory: struct {
@@ -367,7 +367,7 @@ main :: proc() {
             osu_on_update(dt_ms)
 
             if app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY {
-                r_check_and_bind_layer(.DEBUG)        
+                r_check_and_bind_layer(.PLATFORM)        
                 r_push_transform(fullscreen_transform)
                 r_draw_quad(&renderer.quad_geometry,
                     vec2{0,0}, vec2{1,1},
@@ -382,7 +382,7 @@ main :: proc() {
                     align_v = .Middle)
                 
             } else if app.mouse_input_mode == .REBINDING_MOUSE_SECONDARY {
-                r_check_and_bind_layer(.DEBUG)
+                r_check_and_bind_layer(.PLATFORM)
                 r_push_transform(fullscreen_transform)
                 r_draw_quad(&renderer.quad_geometry,
                     vec2{0,0}, vec2{1,1},
@@ -408,7 +408,7 @@ main :: proc() {
             */
             profiler_block_begin(.GAME_DRAW); defer profiler_block_end()
             
-            r_bind_layer_and_push_current_state(.DEBUG, transform = window.screenspace_transform)
+            r_bind_layer_and_push_current_state(.PLATFORM, transform = window.screenspace_transform)
 
             if app.debug_display_fontatlas {
                 r_draw_rect(&renderer.quad_geometry,
@@ -542,7 +542,15 @@ begin_frame :: proc(renderer: ^Renderer) {
         }
     }
 
-    r_bind_framebuffer({read = builtin_framebuffer(.DEFAULT), write = builtin_framebuffer(.DEFAULT)})
+    // note(isak): the swapchain is cleared by the sokol pass, but the offscreen backbuffer isn't,
+    // so clear it here (color + depth) before the frame's layers draw into it.
+    if render_to_backbuffer_active() {
+        r_bind_framebuffer({ write = builtin_framebuffer(.BACKBUFFER) })
+        r_clear(with_alpha(color_black, 0.0))
+    }
+
+    main_framebuffer := builtin_framebuffer(.BACKBUFFER) if render_to_backbuffer_active() else builtin_framebuffer(.DEFAULT)
+    r_bind_framebuffer({read = main_framebuffer, write = main_framebuffer})
     r_push_transform(identity_transform)
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
     r_reset_scissor_mode()
@@ -565,8 +573,10 @@ end_frame :: proc(renderer: ^Renderer) {
 
     if !window.transparent {
         // note(isak): windows window with transparency captures the alpha of the last drawn pixels and uses that for
-        // the window's opacity value. when we don't want transparency, clear alpha of every pixel to 1.0
-        r_bind_layer(.DEBUG)
+        // the window's opacity value. when we don't want transparency, clear alpha of every pixel to 1.0.
+        // this must stay unconditional: platform-layer draws land on the screen after any post-processing
+        // present, so they reintroduce sub-1 alpha the present didn't cover.
+        r_bind_layer(.PLATFORM)
         r_bind_pipeline({ pipeline = builtin_pipeline_slot(.QUAD) })
         r_push_transform(window.screenspace_transform)
         r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)

@@ -687,9 +687,12 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
     }
     
     should_slide := .HEAD_CHECKED in slider.flags && is_tracking && !game.paused
-    if should_slide && slider.slide_sound == {} {
-        slider_start_slide_sounds(hobj, timing_point)
-    } else if !should_slide && (slider.slide_sound != {} || slider.whistle_sound != {}) {
+    if should_slide {
+        if slider.slide_sound == {} {
+            slider_start_slide_sounds(hobj, timing_point)
+        } 
+        slider_renew_slide_sounds(slider, map_time)
+    } else if slider.slide_sound != {} || slider.whistle_sound != {} {
         slider_stop_slide_sounds(slider)
     }
 }
@@ -760,13 +763,20 @@ slider_start_slide_sounds :: proc(hobj: ^Hitobject, timing_point: ^Timing_Point)
     volume := timing_point_volume(timing_point) * SLIDER_SLIDE_VOLUME
 
     if slider.slide_sound == {} {
-        slider.slide_sound =
-            game_sound_play(&game.active_skin.hitsounds[sample_set][.SLIDERSLIDE], loop = true, volume = volume)
+        slider.slide_sound = game_sound_play(&game.active_skin.hitsounds[sample_set][.SLIDERSLIDE],
+            loop = true, volume = volume, expires_at = hobj.end_time_ms)
     }
     if slider.whistle_sound == {} && hobj.hitsound_flags & 2 != 0 {
-        slider.whistle_sound =
-            game_sound_play(&game.active_skin.hitsounds[sample_set][.SLIDERWHISTLE], loop = true, volume = volume)
+        slider.whistle_sound = game_sound_play(&game.active_skin.hitsounds[sample_set][.SLIDERWHISTLE],
+            loop = true, volume = volume, expires_at = hobj.end_time_ms)
     }
+    slider_renew_slide_sounds(slider, beatmap_music_time_ms(&game.beatmap))
+}
+
+slider_renew_slide_sounds :: proc(slider: ^Slider_State, map_time: f64) {
+    expiry_at := map_time + 1000
+    game_sound_renew_expiry(slider.slide_sound, expiry_at)
+    game_sound_renew_expiry(slider.whistle_sound, expiry_at)
 }
 
 slider_stop_slide_sounds :: proc(slider: ^Slider_State) {

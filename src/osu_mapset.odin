@@ -101,9 +101,22 @@ mapset_texture :: proc(name: string) -> (result: ^Texture, found: bool) {
 }
 
 SKIN_TEXTURE_PREFIX :: "skin:"
+BACKBUFFER_TEXTURE_NAME :: "backbuffer"
+
+// note(isak): true when the active map opted into full-frame capture ([General] Backbuffer: 1),
+// in which case every uncaptured layer draws into the backbuffer target instead of the screen.
+render_to_backbuffer_active :: proc() -> bool {
+    return game.active_mapset != nil && game.active_mapset.notosu_map.use_backbuffer
+}
 
 mapset_texture_slot :: proc(name: string) -> (result: u32, found: bool) {
     assert(game.active_mapset != nil)
+
+    // note(isak): "backbuffer" is a reserved name for the full-frame capture target (see
+    // [General] Backbuffer), letting a post pass sample the whole rendered frame.
+    if name == BACKBUFFER_TEXTURE_NAME {
+        return builtin_texture(.BACKBUFFER), true
+    }
 
     // note(isak): "skin:" is a reserved namespace that resolves to the loaded skin's elements
     // (e.g. "skin:cursor", "skin:hitcircle") instead of a mapset texture.
@@ -490,6 +503,9 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
                     case "DoubleMouse":
                         val, ok := strconv.parse_u64(value); assert(ok)
                         result.double_mouse = val > 0
+                    case "Backbuffer":
+                        val, ok := strconv.parse_u64(value); assert(ok)
+                        result.use_backbuffer = val > 0
                     case "FixedUpdateRate":
                         val, ok := strconv.parse_f64(value); assert(ok)
                         result.fixed_update_rate_hz = val

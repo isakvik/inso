@@ -216,6 +216,7 @@ renderer_init :: proc() {
     }
 
     window.framebuffers[.SLIDERS] = fbo_init(1, 1, i32(window.rect.w), i32(window.rect.h), gl.RGBA8)
+    window.framebuffers[.BACKBUFFER] = fbo_init(1, 1, i32(window.rect.w), i32(window.rect.h), gl.RGBA8)
     
 
     window.quad_store = tbo_init(Quad, MAX_BATCH_VERTICES)
@@ -802,7 +803,15 @@ r_check_and_bind_layer :: proc(layer: Layer) {
 // upstream captured layer from dragging later layers (ui, cursor) into its target.
 r_layer_framebuffer :: proc(layer: Layer) -> Command_Bind_Framebuffer {
     if game.active_mapset != nil {
-        return { write = game.active_mapset.layer_capture[layer] }
+        fb := game.active_mapset.layer_capture[layer]
+        // note(isak): an uncaptured layer targets DEFAULT; when the map opted into full-frame
+        // capture, redirect that to the backbuffer so a post pass can sample the whole frame.
+        // the PLATFORM layer is exempt: it always composites onto the real screen, on top of any
+        // post-processing.
+        if fb == builtin_framebuffer(.DEFAULT) && layer != .PLATFORM && render_to_backbuffer_active() {
+            fb = builtin_framebuffer(.BACKBUFFER)
+        }
+        return { write = fb }
     }
     return {}
 }
@@ -926,6 +935,15 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
 
         if command_queue.len > 0 {
             if (trace) { fmt.println(layer) }
+
+            // note(isak): the platform layer always composites onto the real screen, on top of any
+            // post-processing. its overlays sometimes inherit gl state instead of binding their own
+            // target, so pin the default framebuffer (and straight-alpha pipeline) before replaying.
+            if layer == .PLATFORM {
+                fbo_bind(0, 0)
+                write_offscreen = false
+                sg.apply_pipeline(window.pipelines.data[_r_effective_pipeline(bound_pipeline, write_offscreen)])
+            }
         }
 
         for command_queue.len > 0 {

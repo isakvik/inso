@@ -26,7 +26,11 @@
       "Bash(odin version *)",
       "Bash(./build.sh)",
       "Bash(echo \"EXIT: $?\")",
-      "Bash(awk -F: '$2 < 700 {print}')"
+      "Bash(awk -F: '$2 < 700 {print}')",
+      "Bash(timeout 400 cmd.exe /c '\"F:\\\\Program Files\\\\odin\\\\odin.exe\" check src -target:windows_amd64 -define:SOKOL_USE_GL=true -define:VERSION=check')",
+      "Bash(timeout 400 cmd.exe /c 'cd /d F:\\\\Code\\\\odin\\\\notosu && \"F:\\\\Program Files\\\\odin\\\\odin.exe\" check src -target:windows_amd64 -define:SOKOL_USE_GL=true -define:VERSION=check')",
+      "Bash(cmd.exe /c \"cd /d F:\\\\Code\\\\odin\\\\notosu && build.bat\")",
+      "Bash(cmd.exe /c \"cd /d F:\\\\Code\\\\odin\\\\notosu && type build.bat\")"
     ]
   }
 }

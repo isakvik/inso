@@ -35,6 +35,7 @@ Base_Sound :: struct {
     volume: f32, // note(isak): 0.0 - 1.0 range
     pan: f32,
     time_at: f64,
+    expires_at_ms: f64, // note(isak): 0 = no expiry
 }
 
 Sound :: union {

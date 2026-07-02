@@ -38,7 +38,7 @@ lua_generate_docs :: proc() {
 
     // events (engine -> script callbacks)
     lua_docs_write_heading(&sb, "events", "Events")
-    w(&sb, "<p class=\"note\">Callbacks the engine invokes on your script. Define the ones you need as global functions; undefined ones are skipped.</p>")
+    w(&sb, "<p class=\"note\">Callbacks the engine invokes on your script.</p>")
     lua_docs_write_table_open(&sb)
     for event in Lua_Beatmap_Event_Type {
         doc := lua_beatmap_event_docs[event]

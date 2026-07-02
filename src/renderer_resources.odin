@@ -61,6 +61,7 @@ Framebuffer_ID :: u32
 Builtin_Framebuffer_Slot :: enum u32 {
     DEFAULT,
     SLIDERS,
+    BACKBUFFER, // note(isak): full-frame capture target for [General] Backbuffer maps
 }
 
 builtin_framebuffer :: proc(s: Builtin_Framebuffer_Slot) -> Framebuffer_ID { return Framebuffer_ID(s) }
@@ -115,7 +116,8 @@ Builtin_Texture_Slot :: enum u32 {
     WHITE,
     PROFILER,
     FONT_ATLAS,
-    SLIDER_FRAMEBUFFER
+    SLIDER_FRAMEBUFFER,
+    BACKBUFFER,
 }
 
 
@@ -296,6 +298,7 @@ prepare_textures_for_rendering :: proc() {
         textures[Builtin_Texture_Slot.PROFILER] = window.profiler_texture.tex_handle
         textures[Builtin_Texture_Slot.FONT_ATLAS] = window.font_atlas_texture.tex_handle
         textures[Builtin_Texture_Slot.SLIDER_FRAMEBUFFER] = window.framebuffers[.SLIDERS].color_texture_handles[0]
+        textures[Builtin_Texture_Slot.BACKBUFFER] = window.framebuffers[.BACKBUFFER].color_texture_handles[0]
 
         for skin_el in Skin_Element_Type {
             textures[num_elements] = window.skin_textures[skin_el].tex_handle
@@ -329,6 +332,7 @@ prepare_textures_for_rendering :: proc() {
         ids[Builtin_Texture_Slot.PROFILER] = window.profiler_texture.tex_id
         ids[Builtin_Texture_Slot.FONT_ATLAS] = window.font_atlas_texture.tex_id
         ids[Builtin_Texture_Slot.SLIDER_FRAMEBUFFER] = window.framebuffers[.SLIDERS].color_textures[0]
+        ids[Builtin_Texture_Slot.BACKBUFFER] = window.framebuffers[.BACKBUFFER].color_textures[0]
 
         for skin_el in Skin_Element_Type {
             ids[num_elements] = window.skin_textures[skin_el].tex_id

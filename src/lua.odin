@@ -52,17 +52,15 @@ Lua_Event_Registration :: struct {
 }
 
 Scheduled_Event :: struct {
-    fire_at_ms:   f64,
-    // exactly one path is active. callback_ref != lua.NOREF -> run that closure directly.
-    // otherwise fall through to the named trigger_event fan-out below.
-    callback_ref: lua.Ref,
-    event_name:   string,  // borrows the name_ref'd Lua string's bytes; valid while name_ref is held
-    name_ref:     lua.Ref, // luaL_ref pinning the name string against GC; released when the event fires
-    // persistent events were scheduled during on_init: they stay in the list (refs held until reload)
-    // and re-arm on backward seek so the map's timeline replays without a reload. transient events
-    // (scheduled from any callback) fire once and are consumed.
-    persistent:   bool,
-    fired:        bool, // persistent only: already dispatched at the current playhead, awaiting a rewind
+    fire_at_ms:       f64,
+
+    // note(isak): if callback_ref is set, call directly, or if unset, use event_name
+    callback_ref:     lua.Ref,
+    event_name:       string,  // borrows the name_ref'd Lua string's bytes; valid while name_ref is held
+    name_ref:         lua.Ref, // luaL_ref pinning the name string against GC; released when the event fires
+    
+    persistent:       bool,
+    persistent_fired: bool,
 }
 
 
@@ -109,7 +107,7 @@ lua_create_beatmap_script_context :: proc(script_path: string) {
         lua_register_enum(L, e.t, e.name)
     }
     
-    if lua.L_dofile(L, strings.clone_to_cstring(script_path)) == lua.OK {
+    if lua.L_dofile(L, strings.clone_to_cstring(script_path, context.temp_allocator)) == lua.OK {
         lua_check_registered_events(L)
     } else {
         lua_log_error("Lua initialization error:")
@@ -241,9 +239,8 @@ lua_return_self :: proc "c" () -> i32 {
     return 1
 }
 
-// note(isak): pins the string at the given stack index in the registry so its TString never gets
-// collected, keeping the returned borrowed view valid until L_unref is called. 
-// used for event names we save across calls.
+// note(isak): pins the string at the given stack index in the registry so its TString never gets GCed.
+// valid until L_unref is called. used for event names we save across calls.
 lua_pin_string :: proc "c" (at: i32) -> (borrowed: string, ref: lua.Ref) {
     L := lua_beatmap.state
     borrowed = lua_string(at)
@@ -261,11 +258,11 @@ lua_log_error :: proc "c" (log_str: string = "Lua error:", location := #caller_l
     lua.pop(L, 1)
     
     log.error(log_str, "\n", from_lua, sep = "", location = location)
-    notify_error("%s\n%s", log_str, from_lua)
+    notify_error("%s - %s", log_str, from_lua)
     //intrinsics.debug_trap()
 }
 
-// note(isak): pushes a handle and associates it with the given name. to lua, the handle is opaque
+// note(isak): pushes a handle and associates it with the given name
 lua_create_userdata :: proc "c" (L: ^lua.State, handle: $T, name: cstring) {
     data := cast(^T)lua.newuserdata(L, size_of(T))
     data^ = handle
@@ -310,7 +307,7 @@ lua_unregister_events_for_handle :: proc(class: Lua_Class_Type, handle_key: u64)
 }
 
 // note(isak): shared implementation for all three :register_event instance methods.
-// called after context is set and the class/handle_key are extracted from the userdata.
+// called after the class/handle_key are extracted from the userdata.
 _register_event :: proc(L: ^lua.State, class: Lua_Class_Type, handle_key: u64) -> i32 {
     if !lua.isfunction(L, 3) {
         return lua.L_error(L, "register_event: argument 3 must be a function")
@@ -346,22 +343,21 @@ _schedule_callback :: proc "c" (L: ^lua.State, fire_at_ms: f64) -> i32 {
 
 
 // note(isak): called each frame from beatmap_on_update. fires any scheduled events whose
-// fire_at_ms has passed. transient events are unordered_removed; persistent ones are flagged fired
-// and kept so a backward seek can re-arm them. callbacks may safely append new entries either way.
+// fire_at_ms has passed
 lua_drain_scheduled_events :: proc(time_ms: f64) {
     L := lua_beatmap.state
     if L == nil do return
     i := 0
     for i < len(lua_beatmap.scheduled_events) {
         ev := lua_beatmap.scheduled_events[i]
-        if ev.fired || ev.fire_at_ms > time_ms {
+        if ev.persistent_fired || ev.fire_at_ms > time_ms {
             i += 1
             continue
         }
 
         // flag/remove before dispatch so a re-entrant schedule from the callback can't refire this one
         if ev.persistent {
-            lua_beatmap.scheduled_events[i].fired = true
+            lua_beatmap.scheduled_events[i].persistent_fired = true
             i += 1
         } else {
             unordered_remove(&lua_beatmap.scheduled_events, i)
@@ -386,9 +382,6 @@ lua_drain_scheduled_events :: proc(time_ms: f64) {
     }
 }
 
-// note(isak): on a backward seek, re-arm persistent (on_init-scheduled) events whose fire time is now
-// ahead of the playhead so they replay on the next forward pass. transient events belong to the
-// abandoned forward timeline, so we drop them; replaying a persistent event re-creates them exactly once.
 lua_rearm_scheduled_events :: proc(time_ms: f64) {
     L := lua_beatmap.state
     if L == nil do return
@@ -396,7 +389,7 @@ lua_rearm_scheduled_events :: proc(time_ms: f64) {
     for i < len(lua_beatmap.scheduled_events) {
         ev := &lua_beatmap.scheduled_events[i]
         if ev.persistent {
-            if ev.fire_at_ms > time_ms do ev.fired = false
+            if ev.fire_at_ms > time_ms do ev.persistent_fired = false
             i += 1
             continue
         }
@@ -409,7 +402,7 @@ lua_rearm_scheduled_events :: proc(time_ms: f64) {
     }
 }
 
-// note(isak): _lua_op appends self for chainable setters, _lua_get doesn't.
+// note(isak): this appends self for chainable setters, _lua_get doesn't
 _lua_op :: proc "c" (
     L: ^lua.State,
     resolve: proc "c" (L: ^lua.State) -> (^$T, bool),

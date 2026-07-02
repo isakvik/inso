@@ -3,12 +3,14 @@ local rand = load_file("rand.lua")
 
 
 function on_init()
-    -- render target bloom demo:
-    -- capture the hitobjects into "scene", prefilter+blur it through two half-res targets,
-    -- then additively composite the glow back over the (still crisp) screen
-    --Beatmap.capture_layers("scene", { Layer.BACKGROUND, Layer.HITOBJECTS, Layer.UI })
-
-    Beatmap.capture_layers("scene", { Layer.HITOBJECTS, Layer.UI, Layer.CURSOR })
+    -- bloom + CRT post chain:
+    -- the map declares [General] Backbuffer: 1, so every uncaptured layer already lands in the
+    -- "backbuffer" target automatically. we only carve out hitobjects/ui/cursor into "scene" for
+    -- the bloom source; that gets blurred into "bloom_b", additively composited back into the
+    -- backbuffer, then the whole backbuffer gets the CRT treatment on its way to the screen.
+    -- the CRT must be the last pass, so the chain lives here; bloom fades in via its strength
+    -- param (slot 0, ramped in on_update).
+    Beatmap.capture_layers("scene", { Layer.BACKGROUND, Layer.HITOBJECTS, Layer.UI, Layer.CURSOR })
 
     el_scene = Element.new()
         :set_tex("scene")
@@ -16,7 +18,7 @@ function on_init()
     el_scenecopy = el_scene:clone()
         :set_premultiplied(false)
 
-    target = Drawable.new(el_scene, -9999, 999999, Layer.DEBUG)
+    target = Drawable.new(el_scene, -9999, 999999, Layer.TOP)
         :set_fullscreen(true)
         --:set_pos(-20, 0)
 
@@ -25,11 +27,24 @@ function on_init()
         :set_angle(math.pi)
         :set_color(Color.rgba(255,255,255,128))
 
-    schedule_at(30000, function () 
-        Beatmap.add_post_pass{ shader = "blur_h",    src = "scene",                dst = "bloom_a", after = Layer.DEBUG }
-        Beatmap.add_post_pass{ shader = "blur_v",    src = "bloom_a",              dst = "bloom_b", after = Layer.DEBUG }
-        Beatmap.add_post_pass{ shader = "composite", src = { "scene", "bloom_b" }, dst = "screen",  after = Layer.DEBUG }
-    end)
+    Beatmap.add_post_pass{ shader = "blur_h",    src = "scene",                dst = "bloom_a",    after = Layer.TOP }
+    Beatmap.add_post_pass{ shader = "blur_v",    src = "bloom_a",              dst = "bloom_b",    after = Layer.TOP }
+    Beatmap.add_post_pass{ shader = "composite", src = { "scene", "bloom_b" }, dst = "backbuffer", after = Layer.TOP }
+    Beatmap.add_post_pass{ shader = "crt",       src = "backbuffer",           dst = "screen",     after = Layer.TOP }
+
+    -- bloom strength (composite reads slot 0); starts off, on_update ramps it after ~31s
+    Shader.set_param(0, 0)
+
+    -- CRT tunables, slots 4..12 (see crt_lottes.fs.glsl)
+    Shader.set_param(4,  1.0)  -- MASK: 1 = aperture grille
+    Shader.set_param(5,  0.5)  -- MASK_INTENSITY
+    Shader.set_param(6,  0.5)  -- SCANLINE_THINNESS
+    Shader.set_param(7,  2.5)  -- SCAN_BLUR
+    Shader.set_param(8,  0.02) -- CURVATURE
+    Shader.set_param(9,  0.0)  -- TRINITRON_CURVE (0 = curved)
+    Shader.set_param(10, 3.0)  -- CORNER rounding
+    Shader.set_param(11, 2.4)  -- CRT_GAMMA
+    Shader.set_param(12, 0.5) -- INPUT_SCALE: virtual res ~1/3 of output -> chunky scanlines
 end
 
 function on_update(time_ms)

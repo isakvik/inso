@@ -132,7 +132,10 @@ main :: proc() {
         log.panic("SDL video init error:", sdl.GetError())
     }
 
-    window_init({w = 1280, h = 720})
+    game.user_config = config_load("user.ini")
+    defer config_save("user.ini")
+
+    window_init({w = game.user_config.window_width, h = game.user_config.window_height}, mode = game.user_config.window_mode)
     app.ui_enabled = true
     defer window_cleanup()
     
@@ -150,9 +153,6 @@ main :: proc() {
 
     imgui_init()
     defer imgui_cleanup()
-    
-    game.user_config = config_load("user.ini")
-    defer config_save("user.ini")
     
     text_init()
     keyboard_init()
@@ -271,7 +271,7 @@ main :: proc() {
                 case sdl.EventType.KEY_DOWN:
                     imgui.IO_AddKeyEvent(imgui.GetIO(), sdl_scancode_to_imgui(event.key.scancode), true)
                     if event.key.scancode == .RETURN && (event.key.mod & sdl.KMOD_ALT) != {} {
-                        window_toggle_fullscreen()
+                        window_cycle_mode(window.mode)
                     }
                     
                     if game.input.rebinding_key != .NONE {
@@ -625,15 +625,19 @@ imgui_update :: proc() {
     
     imgui_dropdown_draw(&app.map_dropdown)
     if imgui.SmallButton("open external") {
-        temp_fullscreen := window.fullscreen
-        if window.fullscreen do window_toggle_fullscreen()
+        temp_mode := window.mode
+        if window.mode != .WINDOWED {
+            window_set_mode(.WINDOWED)
+        }
         
         external_map_path, ok := platform_file_dialog_open_osu(memory.allocators[.GLOBAL])
         if ok {
             open_external_map(external_map_path)
         }
 
-        if temp_fullscreen do window_toggle_fullscreen()
+        if temp_mode != .WINDOWED {
+            window_set_mode(temp_mode)
+        }
     }
     imgui.Separator()
 

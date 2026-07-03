@@ -3,12 +3,36 @@ package notosu
 import q "core:container/queue"
 import "core:fmt"
 import "core:log"
+import "core:strings"
 
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
 import stbi "vendor:stb/image"
 
+Window_Mode :: enum {
+    FULLSCREEN,
+    BORDERLESS_FULLSCREEN,
+    WINDOWED,
+}
+
+window_mode_to_string :: proc(mode: Window_Mode) -> string {
+    switch mode {
+    case .FULLSCREEN: return "fullscreen"
+    case .BORDERLESS_FULLSCREEN: return "borderless_fullscreen"
+    case .WINDOWED: return "windowed"
+    }
+    return "windowed"
+}
+
+window_mode_from_string :: proc(value: string) -> Window_Mode {
+    switch strings.to_lower(strings.trim_space(value)) {
+    case "fullscreen": return .FULLSCREEN
+    case "borderless_fullscreen": return .BORDERLESS_FULLSCREEN
+    case "windowed": return .WINDOWED
+    }
+    return .WINDOWED
+}
 
 window: struct {
     rect: Rect,
@@ -20,7 +44,7 @@ window: struct {
     focused: bool,
     mouse_inside: bool,
     minimized: bool,
-    fullscreen: bool,
+    mode: Window_Mode,
     resizable: bool,
 
     // note(isak): windows freezes our loop inside a modal move/resize loop. the platform layer flips this
@@ -80,7 +104,7 @@ window: struct {
     is_high_resolution: [Skin_Element_Type]bool
 }
 
-window_init :: proc(rect: Rect) {
+window_init :: proc(rect: Rect, mode: Window_Mode) {
     _platform_dpi_init()
 
     window.rect = rect
@@ -122,6 +146,8 @@ window_init :: proc(rect: Rect) {
     window.mouse_inside = true
     window.resizable = true
 
+    window_set_mode(mode)
+
     _platform_install_modal_loop_guard()
 
     max_vs_ssbo, max_combined_ssbo, max_fs_ssbo: i32
@@ -135,6 +161,11 @@ window_init :: proc(rect: Rect) {
 window_on_resize :: proc(new_w, new_h: i32) {
     window.rect.w = f32(new_w)
     window.rect.h = f32(new_h)
+    if window.mode == .WINDOWED {
+        game.user_config.window_width = f32(new_w)
+        game.user_config.window_height = f32(new_h)
+    }
+    
     window.swapchain.width = new_w
     window.swapchain.height = new_h
     window.aspect_ratio = window.rect.h / window.rect.w
@@ -157,9 +188,61 @@ window_on_resize :: proc(new_w, new_h: i32) {
 
 clipspace_transform := transform_from_bounds({0, 0, 1, 1}, 1)
 
-window_toggle_fullscreen :: proc() {
-    window.fullscreen = !window.fullscreen
-    sdl.SetWindowFullscreen(window.handle, window.fullscreen)
+window_set_mode :: proc(mode: Window_Mode) {
+    window.mode = mode
+
+    switch mode {
+    case .FULLSCREEN:
+        sdl.SetWindowFullscreen(window.handle, true)
+        sdl.SetWindowBordered(window.handle, true)
+    case .BORDERLESS_FULLSCREEN:
+        sdl.SetWindowFullscreen(window.handle, false)
+        sdl.SetWindowBordered(window.handle, true)
+
+        display := sdl.GetDisplayForWindow(window.handle)
+
+        bounds: sdl.Rect
+        if sdl.GetDisplayBounds(display, &bounds) {
+            sdl.SetWindowSize(window.handle, bounds.w, bounds.h)
+            sdl.SetWindowPosition(window.handle, bounds.x, bounds.y)
+        }
+    case .WINDOWED:
+        sdl.SetWindowFullscreen(window.handle, false)
+        sdl.SetWindowBordered(window.handle, true)
+
+        sdl.SetWindowSize(window.handle, i32(game.user_config.window_width), i32(game.user_config.window_height))
+
+        display := sdl.GetDisplayForWindow(window.handle)
+
+        bounds: sdl.Rect
+        if sdl.GetDisplayBounds(display, &bounds) {
+            w, h: i32
+            sdl.GetWindowSize(window.handle, &w, &h)
+
+            x := bounds.x + (bounds.w - w) / 2
+            y := bounds.y + (bounds.h - h) / 2
+
+            sdl.SetWindowPosition(window.handle, x, y)
+        }
+    }
+
+    game.user_config.window_mode = mode
+}
+
+window_cycle_mode :: proc(current_mode: Window_Mode) {
+    switch current_mode {
+    case .WINDOWED:
+        window.mode = .BORDERLESS_FULLSCREEN
+        window_set_mode(.BORDERLESS_FULLSCREEN)
+    case .BORDERLESS_FULLSCREEN:
+        window.mode = .FULLSCREEN
+        window_set_mode(.FULLSCREEN)
+    case .FULLSCREEN:
+        window.mode = .WINDOWED
+        window_set_mode(.WINDOWED)
+    }
+
+    game.user_config.window_mode = window.mode
 }
 
 window_apply_vsync :: proc(enabled: bool) {

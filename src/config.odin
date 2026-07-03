@@ -19,6 +19,10 @@ User_Configuration :: struct {
     vsync_enabled: bool,
     
     skin_path: string,
+
+    window_width: f32,
+    window_height: f32,
+    window_mode: Window_Mode,
     
     primary_mouse_hwid: string,
     secondary_mouse_hwid: string,
@@ -63,6 +67,15 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         if v, ok := get(gen, "skin_path"); ok {
             result.skin_path = strings.clone(v)
         }
+        if v, ok := get(gen, "window_width"); ok {
+            if f, ok2 := strconv.parse_f32(v); ok2 do result.window_width = f
+        }
+        if v, ok := get(gen, "window_height"); ok {
+            if f, ok2 := strconv.parse_f32(v); ok2 do result.window_height = f
+        }
+        if v, ok := get(gen, "window_mode"); ok {
+            result.window_mode = window_mode_from_string(v)
+        }
         if v, ok := get(gen, "primary_mouse_hwid"); ok {
             result.primary_mouse_hwid = strings.clone(v)
         }
@@ -104,6 +117,9 @@ config_save :: proc(path: string) {
     ini.write_pair(w, "music_volume",             game.user_config.music_volume)
     ini.write_pair(w, "hitsound_volume",          game.user_config.hitsound_volume)
     ini.write_pair(w, "skin_path",                game.user_config.skin_path)
+    ini.write_pair(w, "window_width",             game.user_config.window_width)
+    ini.write_pair(w, "window_height",            game.user_config.window_height)
+    ini.write_pair(w, "window_mode",              window_mode_to_string(game.user_config.window_mode))
     ini.write_pair(w, "primary_mouse_hwid",       game.user_config.primary_mouse_hwid)
     ini.write_pair(w, "secondary_mouse_hwid",     game.user_config.secondary_mouse_hwid)
     ini.write_pair(w, "cursor_size_multiplier",   game.user_config.cursor_size_multiplier)
@@ -137,6 +153,9 @@ config_supply_default :: proc() -> (result: User_Configuration) {
         music_volume             = 0.5,
         hitsound_volume          = 0.8,
         skin_path                = "skins/gn/",
+        window_width             = 1280,
+        window_height            = 720,
+        window_mode              = .WINDOWED,
         cursor_size_multiplier   = 1.0,
         cursor_sensitivity       = 1.0,
         playfield_border_opacity = 0.0,

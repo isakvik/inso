@@ -16,20 +16,21 @@ Window_Mode :: enum {
     WINDOWED,
 }
 
-window_mode_to_string :: proc(mode: Window_Mode) -> string {
-    switch mode {
-    case .FULLSCREEN: return "fullscreen"
-    case .BORDERLESS_FULLSCREEN: return "borderless_fullscreen"
-    case .WINDOWED: return "windowed"
-    }
-    return "windowed"
+window_mode_keys := [Window_Mode]string {
+    .FULLSCREEN = "fullscreen",
+    .BORDERLESS_FULLSCREEN = "borderless_fullscreen",
+    .WINDOWED = "windowed",
+}
+
+window_mode_display_names := [Window_Mode]cstring {
+    .FULLSCREEN = "Fullscreen",
+    .BORDERLESS_FULLSCREEN = "Borderless",
+    .WINDOWED = "Windowed",
 }
 
 window_mode_from_string :: proc(value: string) -> Window_Mode {
-    switch strings.to_lower(strings.trim_space(value)) {
-    case "fullscreen": return .FULLSCREEN
-    case "borderless_fullscreen": return .BORDERLESS_FULLSCREEN
-    case "windowed": return .WINDOWED
+    for key, i in window_mode_keys {
+        if key == value do return Window_Mode(i)
     }
     return .WINDOWED
 }
@@ -46,11 +47,8 @@ window: struct {
     minimized: bool,
     mode: Window_Mode,
     resizable: bool,
+    resized: bool,
 
-    // note(isak): windows freezes our loop inside a modal move/resize loop. the platform layer flips this
-    // and fires the callback synchronously so game code can pause/resume around the freeze.
-    in_modal_loop: bool,
-    on_modal_loop_change: proc "c" (active: bool),
     bindless_supported: bool,
     intel_gpu: bool,
     transparent: bool,
@@ -148,8 +146,6 @@ window_init :: proc(rect: Rect, mode: Window_Mode) {
 
     window_set_mode(mode)
 
-    _platform_install_modal_loop_guard()
-
     max_vs_ssbo, max_combined_ssbo, max_fs_ssbo: i32
     gl.GetIntegerv(gl.MAX_VERTEX_SHADER_STORAGE_BLOCKS, &max_vs_ssbo)
     gl.GetIntegerv(gl.MAX_FRAGMENT_SHADER_STORAGE_BLOCKS, &max_fs_ssbo)
@@ -161,7 +157,8 @@ window_init :: proc(rect: Rect, mode: Window_Mode) {
 window_on_resize :: proc(new_w, new_h: i32) {
     window.rect.w = f32(new_w)
     window.rect.h = f32(new_h)
-    if window.mode == .WINDOWED {
+    maximized := .MAXIMIZED in sdl.GetWindowFlags(window.handle)
+    if window.mode == .WINDOWED && !maximized {
         game.user_config.window_width = f32(new_w)
         game.user_config.window_height = f32(new_h)
     }
@@ -198,6 +195,7 @@ window_set_mode :: proc(mode: Window_Mode) {
     case .BORDERLESS_FULLSCREEN:
         sdl.SetWindowFullscreen(window.handle, false)
         sdl.SetWindowBordered(window.handle, true)
+        sdl.RestoreWindow(window.handle)
 
         display := sdl.GetDisplayForWindow(window.handle)
 
@@ -209,6 +207,7 @@ window_set_mode :: proc(mode: Window_Mode) {
     case .WINDOWED:
         sdl.SetWindowFullscreen(window.handle, false)
         sdl.SetWindowBordered(window.handle, true)
+        sdl.RestoreWindow(window.handle)
 
         sdl.SetWindowSize(window.handle, i32(game.user_config.window_width), i32(game.user_config.window_height))
 
@@ -253,16 +252,6 @@ window_set_resizable :: proc(enabled: bool) {
     if window.resizable == enabled do return
     window.resizable = enabled
     sdl.SetWindowResizable(window.handle, enabled)
-}
-
-// note(isak): called by the platform layer from inside the win32 modal loop, so keep it allocation- and
-// context-free. the registered callback is where game policy (pause/resume) lives.
-window_notify_modal_loop :: proc "c" (active: bool) {
-    if window.in_modal_loop == active do return
-    window.in_modal_loop = active
-    if window.on_modal_loop_change != nil {
-        window.on_modal_loop_change(active)
-    }
 }
 
 window_cleanup :: proc() {

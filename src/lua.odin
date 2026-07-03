@@ -43,7 +43,7 @@ Lua_Class :: struct {
 
 
 Lua_Event_Registration :: struct {
-    name:         string,   // borrows the name_ref'd Lua string's bytes; valid while name_ref is held
+    name:         string,
     name_ref:     lua.Ref,  // luaL_ref pinning the name string against GC so name stays valid
     callback_ref: lua.Ref,  // luaL_ref into LUA_REGISTRYINDEX
     class:        Lua_Class_Type,
@@ -137,7 +137,7 @@ lua_register_instruction_count_hook :: proc() {
     lua.sethook(L, lua_watchdog_instruction_count_hook, i32(lua.MASKCOUNT), LUA_WATCHDOG_INSTRUCTION_COUNT)
 }
 
-// note(isak): reset count hook before each protected call so the watchdog counter is per callback dispatch, 
+// note(isak): reset count hook before each protected call so the watchdog counter counts per callback dispatch, 
 // not cumulative across frames
 lua_pcall_with_watchdog :: proc(L: ^lua.State, nargs, nresults: i32, error_prefix: string = "Lua error:") -> bool {
     lua_register_instruction_count_hook()
@@ -239,16 +239,15 @@ lua_return_self :: proc "c" () -> i32 {
     return 1
 }
 
-// note(isak): pins the string at the given stack index in the registry so its TString never gets GCed.
-// valid until L_unref is called. used for event names we save across calls.
-lua_pin_string :: proc "c" (at: i32) -> (borrowed: string, ref: lua.Ref) {
+// note(isak): creates a reference to the string at the given stack index in the registry so its
+// TString never gets GCed. valid until L_unref is called. used for event names we save across calls
+lua_create_string_ref :: proc "c" (at: i32) -> (borrowed: string, ref: lua.Ref) {
     L := lua_beatmap.state
     borrowed = lua_string(at)
     lua.pushvalue(L, lua.Index(at))
     ref = lua.L_ref(L, lua.REGISTRYINDEX)
     return
 }
-
 
 lua_log_error :: proc "c" (log_str: string = "Lua error:", location := #caller_location) {
     L:= lua_beatmap.state
@@ -290,7 +289,7 @@ _log_lua_gc :: proc(class: Lua_Class_Type, handle_key: u64) {
     log.infof("lua gc: collected %s handle %v", lua_classes[class].name, handle_key)
 }
 
-// note(isak): releases an object's registered event callback refs back to the Lua registry
+// note(isak): releases an object's registered callback and name refs back to the Lua registry
 lua_unregister_events_for_handle :: proc(class: Lua_Class_Type, handle_key: u64) {
     L := lua_beatmap.state
     i := 0
@@ -306,13 +305,12 @@ lua_unregister_events_for_handle :: proc(class: Lua_Class_Type, handle_key: u64)
     }
 }
 
-// note(isak): shared implementation for all three :register_event instance methods.
-// called after the class/handle_key are extracted from the userdata.
+// note(isak): shared implementation for all three :register_event instance methods
 _register_event :: proc(L: ^lua.State, class: Lua_Class_Type, handle_key: u64) -> i32 {
     if !lua.isfunction(L, 3) {
         return lua.L_error(L, "register_event: argument 3 must be a function")
     }
-    event_name, name_ref := lua_pin_string(2)
+    event_name, name_ref := lua_create_string_ref(2)
     lua.pushvalue(L, 3)
     callback_ref := lua.L_ref(L, lua.REGISTRYINDEX)
     append(&lua_beatmap.event_registrations, Lua_Event_Registration{

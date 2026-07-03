@@ -347,6 +347,13 @@ main :: proc() {
                 imgui.GetIO().WantCaptureMouse = false
             }
             app.ui_enabled = game.mode == .EDITOR
+
+            if window.resized && game.mode == .EDITOR {
+                // todo(isak): @hack
+                cleanup_textures_for_rendering()
+                beatmap_open(game.beatmap.map_reference, true)
+                prepare_textures_for_rendering()
+            }
             
             // prepare drawing
             begin_frame(renderer)
@@ -703,6 +710,16 @@ imgui_update :: proc() {
         }
     }
     if imgui.CollapsingHeader("Display") {
+        if imgui.BeginCombo("Window mode", window_mode_display_names[window.mode]) {
+            for mode in Window_Mode {
+                is_selected := mode == window.mode
+                if imgui.Selectable(window_mode_display_names[mode], is_selected) && !is_selected {
+                    window_set_mode(mode)
+                }
+                if is_selected do imgui.SetItemDefaultFocus()
+            }
+            imgui.EndCombo()
+        }
         if imgui.Checkbox("VSync", &game.user_config.vsync_enabled) {
             window_apply_vsync(game.user_config.vsync_enabled)
         }

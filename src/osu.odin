@@ -60,9 +60,9 @@ game: struct {
     beatmap_active: bool,
     playfield_transform: Transform,
     playfield_dirty_transform: bool,
+    window_resized: bool,
 
     paused: bool,
-    paused_for_modal_loop: bool,
     time_rate: f32,
     
     // note(isak): map game view fields
@@ -494,25 +494,7 @@ osu_on_init :: proc() {
     ui_init_timeline(&game.ui_timeline)
 
     game.input.keys = game.user_config.keys
-
-    window.on_modal_loop_change = osu_on_window_modal_loop
 }
-
-// note(isak): runs synchronously from inside the win32 modal move/resize loop, so restore our context
-// before touching anything that allocates or calls into lua. we pause around the freeze and only resume
-// playback if we were the ones to pause it.
-osu_on_window_modal_loop :: proc "c" (active: bool) {
-    context = lua_beatmap.odin_context
-
-    if active {
-        game.paused_for_modal_loop = !game.paused
-        beatmap_pause(&game.beatmap, true)
-    } else if game.paused_for_modal_loop {
-        game.paused_for_modal_loop = false
-        beatmap_pause(&game.beatmap, false)
-    }
-}
-
 
 osu_on_update :: proc(dt: f64) {
     game.dt = dt
@@ -735,9 +717,6 @@ playfield_build_transform :: proc "contextless" () -> Transform {
     return mat3_to_transform(ndc_from_px * rotate_about_anchor * px_from_osupx)
 }
 
-// note(isak): converts a screen-space pixel position (origin top-left, in window pixels) into playfield
-// osupx space, the coordinate space hitobjects and playfield drawables live in. the inverse of the
-// playfield transform, so it tracks any lua playfield translate/scale/rotate automatically.
 screenspace_to_playfield_osupx :: proc(pos: vec2) -> vec2 {
     return transform_point_space(pos,
         transform_to_mat3(window.screenspace_transform),
@@ -745,7 +724,6 @@ screenspace_to_playfield_osupx :: proc(pos: vec2) -> vec2 {
     )
 }
 
-// note(isak): the forward direction, osupx -> screen-space pixels. inverse of the above.
 playfield_osupx_to_screenspace :: proc(pos: vec2) -> vec2 {
     return transform_point_space(pos,
         transform_to_mat3(game.playfield_transform),
@@ -757,10 +735,6 @@ playfield_osupx_to_screenspace :: proc(pos: vec2) -> vec2 {
 // for converting sizes/extents between the two spaces; positions should round-trip the full transform.
 playfield_px_per_osupx :: proc "contextless" () -> f32 {
     return playfield_base_scale * game.beatmap.playfield_scale * window.rect.h / PLAYFIELD_SIZE_OSUPX
-}
-
-transform_mouse_pos :: proc(pos: vec2) -> vec2 {
-    return screenspace_to_playfield_osupx(pos)
 }
 
 //////////////////////////////////////////////////////
@@ -816,14 +790,14 @@ handle_play_input_events :: proc() {
     }
     
     old_mouse_pos := game.input.mouse_pos
-    game.input.mouse_pos = transform_mouse_pos(vec2{mouse.pos.x, mouse.pos.y})
+    game.input.mouse_pos = screenspace_to_playfield_osupx(vec2{mouse.pos.x, mouse.pos.y})
     
     if lua_cares_about_event(.ON_CURSOR_MOVED) && game.input.mouse_pos != old_mouse_pos {
         lua_beatmap_on_cursor_moved(game.input.mouse_pos)
     }
 
     if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {
-        game.input.mouse_secondary_pos = transform_mouse_pos(vec2{mouse_secondary.pos.x, mouse_secondary.pos.y})
+        game.input.mouse_secondary_pos = screenspace_to_playfield_osupx(vec2{mouse_secondary.pos.x, mouse_secondary.pos.y})
         game.input.ms1 = mouse_secondary.buttons[.LEFT]
         game.input.ms2 = mouse_secondary.buttons[.RIGHT]
     }
@@ -914,7 +888,7 @@ handle_editor_input_events :: proc() {
         if steps != 0 do editor_scrub_steps(&game.beatmap, steps)
     }
     
-    game.input.mouse_pos = transform_mouse_pos(vec2{mouse.pos.x, mouse.pos.y})
+    game.input.mouse_pos = screenspace_to_playfield_osupx(vec2{mouse.pos.x, mouse.pos.y})
 }
 
 handle_menu_input_events :: proc() {

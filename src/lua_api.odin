@@ -172,7 +172,7 @@ luaapi_register_global_event :: proc "c" (L: ^lua.State) -> i32 {
     if !lua.isfunction(L, 2) {
         return lua.L_error(L, "register_global_event: argument 2 must be a function")
     }
-    event_name, name_ref := lua_pin_string(1)
+    event_name, name_ref := lua_create_string_ref(1)
     lua.pushvalue(L, 2)
     callback_ref := lua.L_ref(L, lua.REGISTRYINDEX)
     append(&lua_beatmap.event_registrations, Lua_Event_Registration{
@@ -188,7 +188,7 @@ luaapi_register_global_event :: proc "c" (L: ^lua.State) -> i32 {
 luaapi_schedule_event :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     delay_ms             := f64(lua.L_checknumber(L, 2))
-    event_name, name_ref := lua_pin_string(1)
+    event_name, name_ref := lua_create_string_ref(1)
     append(&lua_beatmap.scheduled_events, Scheduled_Event{
         event_name   = event_name,
         name_ref     = name_ref,

@@ -119,7 +119,7 @@ config_save :: proc(path: string) {
     ini.write_pair(w, "skin_path",                game.user_config.skin_path)
     ini.write_pair(w, "window_width",             game.user_config.window_width)
     ini.write_pair(w, "window_height",            game.user_config.window_height)
-    ini.write_pair(w, "window_mode",              window_mode_to_string(game.user_config.window_mode))
+    ini.write_pair(w, "window_mode",              window_mode_keys[game.user_config.window_mode])
     ini.write_pair(w, "primary_mouse_hwid",       game.user_config.primary_mouse_hwid)
     ini.write_pair(w, "secondary_mouse_hwid",     game.user_config.secondary_mouse_hwid)
     ini.write_pair(w, "cursor_size_multiplier",   game.user_config.cursor_size_multiplier)

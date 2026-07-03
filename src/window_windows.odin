@@ -10,24 +10,6 @@ _platform_dpi_init :: proc() {
     windows.SetProcessDPIAware()
 }
 
-// note(isak): windows runs a blocking modal loop while the user drags or resizes the window, which starves
-// our frame loop. we can't unblock it, but we can hook WM_ENTER/EXITSIZEMOVE to pause/resume around it.
-// the message pump runs on the main thread, so window_notify_modal_loop fires synchronously.
-_platform_install_modal_loop_guard :: proc() {
-    sdl.SetWindowsMessageHook(_modal_loop_message_hook, nil)
-}
-
-@(private="file")
-_modal_loop_message_hook :: proc(userdata: rawptr, msg: ^windows.MSG) -> bool {
-    switch msg.message {
-    case windows.WM_ENTERSIZEMOVE:
-        window_notify_modal_loop(true)
-    case windows.WM_EXITSIZEMOVE:
-        window_notify_modal_loop(false)
-    }
-    return true
-}
-
 platform_file_dialog_open_osu :: proc(alloc: runtime.Allocator) -> (result: string, success: bool) {
     filepath_buffer: [windows.MAX_PATH]u16 
 

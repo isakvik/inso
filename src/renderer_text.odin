@@ -117,8 +117,8 @@ text_update_callback :: proc(ctx: rawptr, dirty_rect: [4]f32, texture_data: rawp
     }
 }
 
-// todo(isak): this is actually pretty slow since it has to push a bunch of stuff for every call.
-// string and state caching would help, but that might not be so useful during play mode?
+// todo(isak): this is actually pretty slow since it has to generate a bunch of stuff for every call.
+// glyph caching would help, but that might not be so useful during play mode?
 push_text :: proc(
     renderer: ^Renderer,
     text: string,

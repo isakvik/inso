@@ -56,6 +56,21 @@ user_pipeline_slot :: proc(s: u32) -> u32 {
     return len(Builtin_Pipeline_Slot) + s
 }
 
+// note(isak): the CLEAR handler forces the depth mask on, then restores it to whatever the bound
+// pipeline wants - only the slider pipeline and mesh shaders (DepthWrite) actually write depth.
+pipeline_writes_depth :: proc(id: Pipeline_ID) -> bool {
+    if int(id) < len(Builtin_Pipeline_Slot) {
+        return Builtin_Pipeline_Slot(id) == .SLIDER
+    }
+    if game.active_mapset != nil {
+        user_idx := int(id) - len(Builtin_Pipeline_Slot)
+        if user_idx >= 0 && user_idx < len(game.active_mapset.shader_depth_writes) {
+            return game.active_mapset.shader_depth_writes[user_idx]
+        }
+    }
+    return false
+}
+
 Framebuffer_ID :: u32
 
 Builtin_Framebuffer_Slot :: enum u32 {
@@ -102,7 +117,7 @@ Post_Pass_Params :: struct #align(16) {
     src: [4]u32,
 }
 
-// note(isak): per-draw slider params, uploaded before each DRAW_SLIDER command
+// note(isak): per-draw slider params, one slot per DRAW_SLIDER command
 Slider_Params :: struct {
     border_color:       vec4,
     body_color:         vec4,
@@ -110,6 +125,14 @@ Slider_Params :: struct {
     base_instance:      u32,   // replaces gl_BaseInstance for intel compat
     radius_osupx:       f32,   // per-object radius, used in VS instead of global circleSizeOsupx
 }
+
+// note(isak): every frame's slider params live in one persistently-mapped ring buffer, one slot
+// per draw, bound via BindBufferRange. #align(256) pads each slot to the max UBO offset alignment
+// so any slot offset is a legal BindBufferRange offset with no per-slot alignment math.
+Slider_Params_Slot :: struct #align(256) {
+    params: Slider_Params,
+}
+#assert(size_of(Slider_Params_Slot) % 256 == 0) // every slot offset must be a legal UBO range offset
 
 
 Builtin_Texture_Slot :: enum u32 {
@@ -235,7 +258,10 @@ blend_state_for_mode :: proc(mode: Blend_Mode) -> (blend: sg.Blend_State) {
 //////////////////////////////////////////////////////
 // note(isak): pipeline definitions
 
-quad_pipeline_desc :: proc(blend: Blend_Mode = .ALPHA) -> sg.Pipeline_Desc {
+// note(isak): flat quads all sit at z=0, so writing depth every fragment is pure bandwidth with no
+// painter's-order benefit - default off. mesh shaders reuse this desc and DO need a real z-buffer,
+// so they opt back in via depth_write (see the [Shader] DepthWrite key).
+quad_pipeline_desc :: proc(blend: Blend_Mode = .ALPHA, depth_write := false) -> sg.Pipeline_Desc {
     return {
         label = "builtin.quad",
         shader = window.shaders.data[builtin_shader_slot(.QUAD)].shader,
@@ -245,7 +271,7 @@ quad_pipeline_desc :: proc(blend: Blend_Mode = .ALPHA) -> sg.Pipeline_Desc {
         colors = {
             0 = { blend = blend_state_for_mode(blend) }
         },
-        depth = {compare = .LESS_EQUAL, write_enabled = true},
+        depth = {compare = .LESS_EQUAL, write_enabled = depth_write},
     },
 }
 
@@ -256,7 +282,7 @@ slider_pipeline_desc :: proc() -> sg.Pipeline_Desc {
         //index_type = .UINT16,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 0.0}, // note(isak): clears to 0 alpha so black transparency works
-        depth = {compare = .LESS_EQUAL, write_enabled = true},
+        depth = {compare = .LESS_EQUAL, write_enabled = true}, // note(isak): slider geometry uses depth
     }
 }
 

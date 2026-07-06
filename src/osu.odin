@@ -152,6 +152,7 @@ Hitobject :: struct {
 
     timing_point_index_uninherited: int,
     timing_point_index_inherited: int,
+    hitsound_timing_point_index: int, // note(isak): resolved with hitsound leniency at start_time_ms
     hitsound_flags: byte,
     extra_bits: u64, // note(isak): from the notosu file
     combo_index: int, // note(isak): 1-indexed combo within the current map
@@ -172,7 +173,9 @@ Hitobject :: struct {
     custom_hit_animation_len_ms: f64,
 
     judgement_index: int,
+
     gfx_handles: []Drawable_Handle,
+    gfx_handles_backing: []Drawable_Handle, // note(isak): kept across clears so respawns after a seek reuse it
 }
 
 Slider_Flags :: distinct bit_set[Slider_Flag]
@@ -206,6 +209,7 @@ Slider_Edge_Hitsound :: struct {
     hitsound:     u8, // osu bitmask: whistle (2), finish (4), clap (8)
     normal_set:   u8,
     addition_set: u8,
+    timing_point_index: int, // note(isak): resolved with hitsound leniency at the edge's nominal time
 }
 
 Slider_State :: struct {
@@ -224,6 +228,9 @@ Slider_State :: struct {
     tracked_timestamp_at: f64,
 
     tick_hits: []bool, // note(isak): cleared on repeat. allocated with the mapset allocator
+    // note(isak): hitsound timing point per tick, traversal-major in temporal order
+    // (traversal * tick_count + ordinal). allocated with the mapset allocator
+    tick_timing_point_indices: []int,
 
     contingency_window_scorepoint_count: int,
     contingency_window_scorepoints: bit_set[0..<64; u64], // note(isak): ticks are 0, repeats are 1
@@ -345,6 +352,7 @@ Timing_Point :: struct {
     beat_length: f64,
     meter: u8,
     sample_set: u8,
+    sample_index: u32,
     volume: f64,
     type: Timing_Point_Type,
     kiai: bool,

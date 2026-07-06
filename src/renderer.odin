@@ -18,6 +18,7 @@ import slog "vendor:sokol/log"
 
 MAX_BATCH_VERTICES :: 64*1024
 MAX_SLIDER_INSTANCES :: 16 * 1024 * 1024
+MAX_SLIDER_DRAWS :: 4096
 MAX_TEXTURE_HANDLES :: 1024
 MAX_TEXTURE_UNITS :: 16
 
@@ -25,7 +26,7 @@ MAX_DRAW_CALLS_PER_LAYER :: 4096
 
 MAX_POST_PASSES :: 64
 
-UNIT_CIRCLE_VERTEX_COUNT :: 48
+UNIT_CIRCLE_VERTEX_COUNT :: 36
 
 UNMAPPED_UNIT :: 0xFF
 
@@ -101,6 +102,7 @@ Layer_Render_State :: struct {
 Renderer :: struct {
     quad_geometry: Buffer(Quad),
     slider_instances: Buffer(vec2),
+    slider_params: Buffer(Slider_Params_Slot),
 
     text_geometry: Buffer(Glyph_Quad),
 
@@ -229,7 +231,7 @@ renderer_init :: proc() {
     window.texture_buffer = sbo_init(u64, MAX_TEXTURE_HANDLES)
 
     window.shader_global_buffer = ubo_init(Shader_Globals, 1)
-    window.slider_param_buffer  = ubo_init(Slider_Params, 1)
+    window.slider_param_store   = tbo_init(Slider_Params_Slot, MAX_SLIDER_DRAWS)
     window.user_param_buffer    = ubo_init(User_Shader_Params, 1)
     window.post_param_buffer    = ubo_init(Post_Pass_Params, 1)
 
@@ -282,6 +284,7 @@ renderer_init :: proc() {
     gl.NamedBufferSubData(window.shader_global_buffer.id, 0, size_of(Shader_Globals), &renderer.current_global_data)
 
     renderer.slider_instances = buffer_init(MAX_SLIDER_INSTANCES, window.slider_instance_store.data)
+    renderer.slider_params.size = MAX_SLIDER_DRAWS
 
     for layer in Layer {
         alloc_err: runtime.Allocator_Error
@@ -293,7 +296,7 @@ renderer_init :: proc() {
 renderer_cleanup :: proc() {
     tbo_cleanup(&window.quad_store)
     tbo_cleanup(&window.text_store)
-    ubo_cleanup(&window.slider_param_buffer)
+    tbo_cleanup(&window.slider_param_store)
     ubo_cleanup(&window.user_param_buffer)
     ubo_cleanup(&window.post_param_buffer)
 
@@ -532,12 +535,8 @@ Command_Draw :: struct {
 }
 
 Command_Draw_Slider :: struct {
-    base_instance:      u32,
-    instance_count:     i32,
-    border_color:       Color,
-    body_color:         Color,
-    script_translation: vec2,
-    radius_osupx:       f32,
+    instance_count: i32,
+    param_index:    u32, // slot into the frame's slider_param_store ring
 }
 
 Command_Bind_Pipeline :: struct {
@@ -730,6 +729,15 @@ r_push_draw_mesh :: proc(vertex_count: i32, instance_count: i32 = 1) {
     command_push_draw_mesh({ vertex_count = vertex_count, instance_count = instance_count })
 }
 
+r_push_draw_slider :: proc(params: Slider_Params, instance_count: i32) {
+    renderer := &window.renderer
+    idx := renderer.slider_params.count
+    assert(idx < renderer.slider_params.size, "slider param ring overrun")
+    renderer.slider_params.data[idx].params = params
+    renderer.slider_params.count += 1
+    command_push_draw_slider({ instance_count = instance_count, param_index = u32(idx) })
+}
+
 // note(isak): clipspace transform maps the fullscreen_store quad ([0,1]) across the entire target
 r_post_pass :: proc(pass: Command_Post_Pass, after: Layer) {
     r_bind_layer(after)
@@ -881,6 +889,9 @@ batch_begin :: proc(renderer: ^Renderer) {
     renderer.text_geometry.data = tbo_advance_and_get(&window.text_store)
     renderer.text_geometry.count = 0
 
+    renderer.slider_params.data = tbo_advance_and_get(&window.slider_param_store)
+    renderer.slider_params.count = 0
+
     if !window.bindless_supported {
         texture_unit_map_reset(&renderer.texture_unit_map)
         renderer.current_draw_tex_units = nil
@@ -892,6 +903,7 @@ batch_begin :: proc(renderer: ^Renderer) {
 batch_end :: proc(renderer: ^Renderer) {
     tbo_lock(&window.quad_store)
     tbo_lock(&window.text_store)
+    tbo_lock(&window.slider_param_store)
 
     if window.bindless_supported {
         sbo_bind(&window.texture_buffer, u32(Shader_SSBO_Bind_Slot.TEXTURES))
@@ -958,6 +970,10 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                     cmd := _command_consume(&command_queue, Command_Clear)
                     color := color_to_vec(cmd.color)
 
+                    // note(isak): glClear obeys the depth write mask, and flat pipelines now leave it
+                    // off - which would silently skip the depth clear and leave stale depth for meshes
+                    // to fail against. force it on for the clear, then restore the bound pipeline's mask.
+                    gl.DepthMask(true)
                     if cmd.depth_only {
                         gl.ClearDepth(f64(color.a))
                         gl.Clear(gl.DEPTH_BUFFER_BIT)
@@ -966,6 +982,7 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                         gl.ClearDepth(1.0)
                         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
                     }
+                    gl.DepthMask(pipeline_writes_depth(_r_effective_pipeline(bound_pipeline, write_offscreen)))
 
                     if (trace) { 
                         fmt.println("  clear depth" if cmd.depth_only else "  clear") 
@@ -1016,23 +1033,22 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 case .DRAW_SLIDER: {
                     cmd := _command_consume(&command_queue, Command_Draw_Slider)
 
-                    slider_globals := Slider_Params{
-                        border_color       = color_to_vec(cmd.border_color),
-                        body_color         = color_to_vec(cmd.body_color),
-                        script_translation = cmd.script_translation,
-                        base_instance      = cmd.base_instance,
-                        radius_osupx       = cmd.radius_osupx,
-                    }
-                    gl.NamedBufferSubData(window.slider_param_buffer.id, 0, size_of(Slider_Params), &slider_globals)
-                    ubo_bind(&window.slider_param_buffer, u32(Shader_SSBO_Bind_Slot.SLIDER_PARAMS))
-                    
+                    store := &window.slider_param_store
+                    slot_offset := store.buffers[store.current_index].offset + int(cmd.param_index) * size_of(Slider_Params_Slot)
+                    gl.BindBufferRange(
+                        gl.UNIFORM_BUFFER,
+                        u32(Shader_SSBO_Bind_Slot.SLIDER_PARAMS),
+                        store.id,
+                        slot_offset,
+                        size_of(Slider_Params))
+
                     gl.DrawArraysInstanced(
                         gl.TRIANGLE_FAN,
                         0,
                         renderer.circle_geometry.count,
                         cmd.instance_count)
 
-                    if (trace) { fmt.println("  drawslider", cmd.instance_count, cmd.base_instance) }
+                    if (trace) { fmt.println("  drawslider", cmd.instance_count, cmd.param_index) }
                 }
                 case .BIND_PIPELINE: {
                     cmd := _command_consume(&command_queue, Command_Bind_Pipeline)

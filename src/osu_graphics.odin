@@ -473,7 +473,10 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
 
     if total_handles == 0 do return
 
-    hobj.gfx_handles = make([]Drawable_Handle, total_handles, memory.allocators[.DRAWABLES])
+    if len(hobj.gfx_handles_backing) < total_handles {
+        hobj.gfx_handles_backing = make([]Drawable_Handle, total_handles, memory.allocators[.DRAWABLES])
+    }
+    hobj.gfx_handles = hobj.gfx_handles_backing[:total_handles]
 
     if num_custom > 0 {
         // note(isak): maps animation time over the natural duration of each phase
@@ -906,14 +909,13 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     border_rgb := game.active_skin.slider_border.a != 0 ? game.active_skin.slider_border : color_white
     body_rgb   := game.active_skin.slider_track_override.a != 0 ? game.active_skin.slider_track_override : color_white
 
-    command_push_draw_slider(Command_Draw_Slider{
-        base_instance      = u32(slider.first_instance_at),
-        instance_count     = slider_snake_instances,
-        border_color       = with_alpha(border_rgb, 0.9),
-        body_color         = with_alpha(body_rgb, 0.7),
+    r_push_draw_slider(Slider_Params{
+        border_color       = color_to_vec(with_alpha(border_rgb, 0.9)),
+        body_color         = color_to_vec(with_alpha(body_rgb, 0.7)),
         script_translation = translation,
+        base_instance      = u32(slider.first_instance_at),
         radius_osupx       = r,
-    })
+    }, slider_snake_instances)
     
     // note(isak): the body composite bypasses render_drawable, so it resolves the HITOBJECTS target
     // by hand through r_layer_framebuffer to match the rest of the layer: a capture target when
@@ -1000,7 +1002,9 @@ slider_create_gfx :: proc(hobj: ^Hitobject) {
     gfx.follow       = slider_drawable_new(hobj, .FOLLOW_CIRCLE, follow_size, color_white)
     gfx.ball         = slider_drawable_new(hobj, .BALL,          ball_size,   combo)
 
-    gfx.ticks = make([]Drawable_Handle, slider.tick_count, memory.allocators[.DRAWABLES])
+    if len(gfx.ticks) != slider.tick_count {
+        gfx.ticks = make([]Drawable_Handle, slider.tick_count, memory.allocators[.DRAWABLES])
+    }
     for i in 0..<slider.tick_count {
         gfx.ticks[i] = slider_drawable_new(hobj, .TICK, tick_size, color_white)
     }
@@ -1034,10 +1038,13 @@ slider_clear_handles :: proc(hobj: ^Hitobject) {
     for h in handles   {
         if h != {} do slotmap.remove(&game.beatmap.drawables, h)
     }
-    for h in gfx.ticks {
-        if h != {} do slotmap.remove(&game.beatmap.drawables, h)  
-    } 
+    for &h in gfx.ticks {
+        if h != {} do slotmap.remove(&game.beatmap.drawables, h)
+        h = {}
+    }
+    ticks := gfx.ticks
     gfx^ = {}
+    gfx.ticks = ticks
 }
 
 

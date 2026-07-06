@@ -35,6 +35,7 @@ BlendMode: None
 VertexShader: mesh.vs.glsl
 FragmentShader: mesh.fs.glsl
 BlendMode: Alpha
+DepthWrite: 1
 
 [Buffers]
 [[my_model]]

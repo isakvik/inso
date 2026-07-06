@@ -24,14 +24,12 @@ import sg "vendor:sokol/gfx"
 /*
 mapset definition:
 - .osu (core, lets you interface with existing editors)
-- .notosu (additional interface, lua scripting capabilities)
-- .lua files (for import utilities)
-- .glsl (shaders, either merged glsl or .vs.glsl/.fs.glsl)
+- .notosu (additional interface, resource setup)
+- .lua files (event callbacks, calls game API)
+- .glsl (shaders, .vs.glsl/.fs.glsl)
 
 todo(isak): missing functionality:
     - mapset index; should enable quick lookup for song select stuff
-
-    - notosu definition and script running
 
 */
 Mapset_Buffer :: distinct GL_Buffer(u8)
@@ -64,6 +62,7 @@ Mapset :: struct {
 
     num_shaders: int,
     shader_blend_modes: [dynamic]Blend_Mode,
+    shader_depth_writes: [dynamic]bool,
     textures: queue.Queue(Texture),
     texture_slot_by_name:  map[string]u32,
     pipeline_slot_by_name: map[string]u32,
@@ -103,8 +102,7 @@ mapset_texture :: proc(name: string) -> (result: ^Texture, found: bool) {
 SKIN_TEXTURE_PREFIX :: "skin:"
 BACKBUFFER_TEXTURE_NAME :: "backbuffer"
 
-// note(isak): true when the active map opted into full-frame capture ([General] Backbuffer: 1),
-// in which case every uncaptured layer draws into the backbuffer target instead of the screen.
+// note(isak): every uncaptured layer draws into the backbuffer target instead of the screen
 render_to_backbuffer_active :: proc() -> bool {
     return game.active_mapset != nil && game.active_mapset.notosu_map.use_backbuffer
 }
@@ -303,6 +301,7 @@ mapset_open_for_editing :: proc(path: string, osu_filename: string = "") -> (^Ma
     mapset.sample_slot_by_name   = make(map[string]u32, 16)
     mapset.hitobject_index_by_ms = make(map[int]int, 128)
     mapset.shader_blend_modes    = make([dynamic]Blend_Mode, 0, 8)
+    mapset.shader_depth_writes   = make([dynamic]bool, 0, 8)
     
     mapset_walk_directory(mapset, path)
     mapset_apply_hitobject_extra_bits(mapset)
@@ -533,18 +532,21 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
                 name: string,
                 vs_path, fs_path: string,
                 blend_mode: Blend_Mode,
+                depth_write: bool,
             }
 
             for i in 1..<len(lines) {
                 line := lines[i]
                 if line[0:2] == "[[" && line[len(line)-2:] == "]]" {
-                    mapset_load_shader_entry(mapset, shader_params.name, shader_params.vs_path, shader_params.fs_path, shader_params.blend_mode)
+                    mapset_load_shader_entry(mapset, shader_params.name, shader_params.vs_path, shader_params.fs_path, shader_params.blend_mode, shader_params.depth_write)
+                    shader_params = {}
                     shader_params.name = line[2:len(line)-2]
                 } else {
                     key, value := get_key_value(line)
                     switch key {
                     case "VertexShader":   shader_params.vs_path = resolve_vs(value)
                     case "FragmentShader": shader_params.fs_path = resolve_fs(value)
+                    case "DepthWrite":     shader_params.depth_write = value != "0"
                     case "BlendMode":
                         switch value {
                         case "Alpha":         shader_params.blend_mode = .ALPHA
@@ -562,7 +564,7 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
                     }
                 }
             }
-            mapset_load_shader_entry(mapset, shader_params.name, shader_params.vs_path, shader_params.fs_path, shader_params.blend_mode)
+            mapset_load_shader_entry(mapset, shader_params.name, shader_params.vs_path, shader_params.fs_path, shader_params.blend_mode, shader_params.depth_write)
 
         case .BUFFERS:
             buf_params: struct {
@@ -718,10 +720,8 @@ mapset_reinit_custom_shaders :: proc(mapset: ^Mapset) {
         err := shader_reinit(&window.shaders.data[shader_base + i])
         if err != .NONE do continue
 
-        blend_mode := mapset.shader_blend_modes[i]
-        desc := quad_pipeline_desc()
+        desc := quad_pipeline_desc(mapset.shader_blend_modes[i], mapset.shader_depth_writes[i])
         desc.shader = window.shaders.data[shader_base + i].shader
-        desc.colors[0].blend = blend_state_for_mode(blend_mode)
         pipeline_reinit(&window.pipelines.data[pipeline_base + i], desc)
     }
     log.info("reloaded mapset custom shaders")
@@ -862,7 +862,8 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                                     case 3: timing_point.sample_set = u8(Osu_Map_Sample_Set.DRUM)
                                     case: timing_point.sample_set = u8(result.sample_set)
                                 }
-                            case 4: // sample index
+                            case 4: sample_index, ok := strconv.parse_u64(value); assert(ok)
+                                timing_point.sample_index = u32(sample_index)
                             case 5: timing_point.volume, ok = strconv.parse_f64(value); assert(ok)
                             case 6: timing_point.type = value == "1" ? .UNINHERITED : .INHERITED
                             case 7: effects, ok := strconv.parse_int(value); assert(ok)
@@ -1001,7 +1002,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
     return result
 }
 
-mapset_load_shader_entry :: proc(mapset: ^Mapset, name, vs, fs: string, blend_mode: Blend_Mode) {
+mapset_load_shader_entry :: proc(mapset: ^Mapset, name, vs, fs: string, blend_mode: Blend_Mode, depth_write: bool) {
     if name == "" do return
     if vs == "" || fs == "" {
         log.errorf("mapset shader '{}': missing VertexShader or FragmentShader, skipping", name)
@@ -1022,13 +1023,13 @@ mapset_load_shader_entry :: proc(mapset: ^Mapset, name, vs, fs: string, blend_mo
     name_key := strings.clone(name)
     mapset.pipeline_slot_by_name[name_key] = u32(mapset.num_shaders)
     append(&mapset.shader_blend_modes, blend_mode)
-    
-    desc := quad_pipeline_desc()
+    append(&mapset.shader_depth_writes, depth_write)
+
+    desc := quad_pipeline_desc(blend_mode, depth_write)
     desc.shader = shader.shader
-    desc.colors[0].blend = blend_state_for_mode(blend_mode)
     queue.push(&window.pipelines, sg.make_pipeline(desc))
-    
-    log.infof("mapset shader '{}' loaded (blend: {})", name, blend_mode)
+
+    log.infof("mapset shader '{}' loaded (blend: {}, depth_write: {})", name, blend_mode, depth_write)
     mapset.num_shaders += 1
 }
 
@@ -1086,8 +1087,27 @@ mapset_load_render_target_entry :: proc(mapset: ^Mapset, name: string, format: u
     log.infof("mapset render target '{}' loaded ({}x{}, clear: {})", name, w, h, clear_every_frame)
 }
 
+// note(isak): osu applies timing point hitsound settings (sample set/index, volume) up to 5ms ahead of the
+// section's start, catching notes unsnapped slightly before the section they belong to. slider velocity gets
+// no such leniency, which is why hitsound timing point indices are baked separately from the playback ones.
+HITSOUND_TIMING_POINT_LENIENCY_MS :: 5.0
+
+hitsound_timing_point_index_at :: proc(timing_points: []Timing_Point, event_time_ms: f64) -> int {
+    lenient_time := event_time_ms + HITSOUND_TIMING_POINT_LENIENCY_MS
+    lo, hi := 0, len(timing_points)
+    for lo < hi {
+        mid := (lo + hi) / 2
+        if timing_points[mid].time <= lenient_time {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    return max(lo - 1, 0)
+}
+
 map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
-    
+
     sort.quick_sort_proc(osu_map.hitobjects, proc(a, b: Hitobject) -> int {
         return int(a.start_time_ms) - int(b.start_time_ms)
     })
@@ -1140,7 +1160,8 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
         
         hobj.timing_point_index_uninherited = current_timing_point_index_uninherited
         hobj.timing_point_index_inherited = current_timing_point_index_inherited
-        
+        hobj.hitsound_timing_point_index = hitsound_timing_point_index_at(osu_map.timing_points, hobj.start_time_ms)
+
         // note(isak): slider timing state
         if hobj.type == .SLIDER {
             slider := &hobj.slider_state
@@ -1166,11 +1187,31 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
             slider.duration_ms = slider.distance / (slider.velocity * 100 * osu_map.diff_slider_velocity) * uninherited_tp.beat_length
             hobj.end_time_ms = hobj.start_time_ms + (slider.duration_ms * f64(slider.path_travel_count))
             
-            slider.tick_interval_ms = 0 if disable_ticks else 
+            slider.tick_interval_ms = 0 if disable_ticks else
                 uninherited_tp.beat_length / osu_map.diff_slider_tickrate
             slider.tick_count = 0 if disable_ticks else
                 int((slider.duration_ms - SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS) / slider.tick_interval_ms)
             slider.tick_hits = make([]bool, slider.tick_count, context.allocator)
+
+            // note(isak): bake the lenient hitsound timing point for every edge and tick now that the
+            // slider's duration is known. tick times mirror the judgement schedule in slider_update:
+            // odd traversals run their ticks back-to-front, shifting the first tick's offset
+            for &edge, k in hobj.slider_edge_hitsounds {
+                edge.timing_point_index = hitsound_timing_point_index_at(osu_map.timing_points,
+                    hobj.start_time_ms + f64(k) * slider.duration_ms)
+            }
+
+            slider.tick_timing_point_indices = make([]int, slider.tick_count * slider.path_travel_count, context.allocator)
+            for traversal in 0..<slider.path_travel_count {
+                first_tick_time := slider.tick_interval_ms if traversal % 2 == 0 else
+                    slider.duration_ms - slider.tick_interval_ms * f64(slider.tick_count)
+                traversal_start := hobj.start_time_ms + f64(traversal) * slider.duration_ms
+                for tick in 0..<slider.tick_count {
+                    slider.tick_timing_point_indices[traversal * slider.tick_count + tick] =
+                        hitsound_timing_point_index_at(osu_map.timing_points,
+                            traversal_start + first_tick_time + f64(tick) * slider.tick_interval_ms)
+                }
+            }
         }
         
         // note(isak): combo colors and number.

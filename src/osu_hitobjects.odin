@@ -3,6 +3,7 @@ package notosu
 import "core:time"
 import "core:log"
 import "core:container/queue"
+import "core:fmt"
 import "core:math"
 
 import sb "swap_buffer"
@@ -86,6 +87,26 @@ osu_sample_set_to_skin :: proc(osu_set: u8, timing_point: ^Timing_Point) -> Skin
     }
 }
 
+// note(isak): osu resolves hitsounds beatmap-first - a map shipping "soft-hitclap.wav" overrides the
+// skin's for that map. the timing point's sample_index selects the bank: 0 means skin hitsounds only,
+// 1 the map's bare filename, >= 2 a suffixed custom bank ("soft-hitnormal2.wav"). missing map files
+// fall back to the skin.
+resolve_hitsound :: proc(sample_set: Skin_Sample_Set, hitsound_type: Skin_Hitsound_Type, sample_index: u32) -> ^Sample {
+    skin_hitsound := &game.active_skin.hitsounds[sample_set][hitsound_type]
+    if game.active_mapset == nil || sample_index == 0 do return skin_hitsound
+
+    index_suffix := sample_index == 1 ? "" : fmt.tprintf("{}", sample_index)
+    for extension in supported_audio_extensions {
+        name := fmt.tprintf("{}-{}{}{}",
+            skin_sample_set_name[sample_set], skin_hitsound_type_name[hitsound_type],
+            index_suffix, extension)
+        if map_hitsound, found := mapset_sample(name); found {
+            return map_hitsound
+        }
+    }
+    return skin_hitsound
+}
+
 hitobject_on_click :: proc(hobj: ^Hitobject, click_time: f64) -> (result: Judgement_Type) {
     time_error_ms: f64
     
@@ -116,25 +137,24 @@ hitobject_on_click :: proc(hobj: ^Hitobject, click_time: f64) -> (result: Judgem
         }
 
         if result != .MISS {
-            timing_point := &game.active_map.timing_points[game.beatmap.current_timing_point_index_inherited]
-            volume := timing_point_volume(timing_point)
-    
             if hobj.type == .SLIDER {
                 // note(isak): the head is edge 0 - its sound and sample sets come from edgeSounds/edgeSets
-                slider_play_edge_hitsound(hobj, 0, timing_point, volume)
+                slider_play_edge_hitsound(hobj, 0)
             } else {
                 // todo(isak): circles don't yet honor the per-object hitSample addition set, only the timing point
+                timing_point := &game.active_map.timing_points[hobj.hitsound_timing_point_index]
+                volume := timing_point_volume(timing_point)
                 sample_set := Skin_Sample_Set(timing_point.sample_set)
-                sample_play(&game.active_skin.hitsounds[sample_set][.HITNORMAL], volume)
-    
+                sample_play(resolve_hitsound(sample_set, .HITNORMAL, timing_point.sample_index), volume)
+
                 if .WHISTLE in hobj.flags {
-                    sample_play(&game.active_skin.hitsounds[sample_set][.HITWHISTLE], volume)
+                    sample_play(resolve_hitsound(sample_set, .HITWHISTLE, timing_point.sample_index), volume)
                 }
                 if .CLAP in hobj.flags {
-                    sample_play(&game.active_skin.hitsounds[sample_set][.HITCLAP], volume)
+                    sample_play(resolve_hitsound(sample_set, .HITCLAP, timing_point.sample_index), volume)
                 }
                 if .FINISH in hobj.flags {
-                    sample_play(&game.active_skin.hitsounds[sample_set][.HITFINISH], volume)
+                    sample_play(resolve_hitsound(sample_set, .HITFINISH, timing_point.sample_index), volume)
                 }
             }
         }
@@ -498,8 +518,7 @@ slider_on_click :: proc(hobj: ^Hitobject, result: Judgement_Type, timing_error_m
 
     if result != .MISS {
         slider.flags |= {.HEAD_HIT, .HEAD_CHECKED}
-        timing_point := &game.active_map.timing_points[game.beatmap.current_timing_point_index_inherited]
-        slider_start_slide_sounds(hobj, timing_point)
+        slider_start_slide_sounds(hobj, &game.active_map.timing_points[hobj.hitsound_timing_point_index])
     } else {
         slider.flags |= {.HEAD_CHECKED}
     }
@@ -576,10 +595,6 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
         slider.flags |= {.END_TRACKED}
     }
 
-    timing_point := &game.active_map.timing_points[game.beatmap.current_timing_point_index_inherited]
-    sample_set := Skin_Sample_Set(timing_point.sample_set)
-    volume := timing_point_volume(timing_point)
-
     // note(isak): "contingency" check in the case of a late hit where ticks/repeats have passed before the
     // end of the timing window. we store them and process them in order once the timing window has passed.
     if .HEAD_CONTINGENCY_WINDOW_PASSED in slider.flags && slider.contingency_window_scorepoint_count > 0 {
@@ -591,14 +606,16 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
                 if is_repeat {
                     judgement_new(hobj, .SLIDER_LARGE_SCOREPOINT, 0)
                     slider.hit_judgement_count += 1
-                    slider_play_edge_hitsound(hobj, contingency_repeat_edge, timing_point, volume)
+                    slider_play_edge_hitsound(hobj, contingency_repeat_edge)
                     contingency_repeat_edge += 1
                 } else {
                     judgement_new(hobj, .SLIDER_SMALL_SCOREPOINT, 0)
                     slider.hit_judgement_count += 1
                     slider.tick_hits[contingency_tick_index - 1] = true
+                    // note(isak): contingency ticks fit inside the head timing window, so they're all
+                    // on the first (forward) traversal
+                    slider_play_tick_hitsound(hobj, 0, contingency_tick_index)
                     contingency_tick_index += 1
-                    slider_play_tick_hitsound(hobj, sample_set, volume)
                 }
             }
         } else {
@@ -650,7 +667,7 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
                 slider.hit_judgement_count += 1
                 tick_geometric := heading_back ? slider.tick_count + 1 - slider.checked_path_ticks_count : slider.checked_path_ticks_count
                 slider.tick_hits[tick_geometric - 1] = true
-                slider_play_tick_hitsound(hobj, sample_set, volume)
+                slider_play_tick_hitsound(hobj, slider.checked_repeats_count, slider.checked_path_ticks_count)
             } else if .HEAD_CONTINGENCY_WINDOW_PASSED not_in slider.flags {
                 if slider.contingency_window_scorepoint_count >= 64 {
                     notify_warn("contingency window included more than 64 scorepoints: %d", slider.contingency_window_scorepoint_count)
@@ -670,7 +687,7 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
             if is_tracking && .HEAD_CHECKED in slider.flags  {
                 judgement_new(hobj, .SLIDER_LARGE_SCOREPOINT, 0)
                 slider.hit_judgement_count += 1
-                slider_play_edge_hitsound(hobj, slider.checked_repeats_count, timing_point, volume)
+                slider_play_edge_hitsound(hobj, slider.checked_repeats_count)
             } else if .HEAD_CONTINGENCY_WINDOW_PASSED not_in slider.flags {
                 if slider.contingency_window_scorepoint_count >= 64 {
                     log.warn("contingency window included more than 64 scorepoints!", slider.contingency_window_scorepoint_count)
@@ -687,8 +704,10 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
     should_slide := .HEAD_CHECKED in slider.flags && is_tracking && !game.paused
     if should_slide {
         if slider.slide_sound == {} {
-            slider_start_slide_sounds(hobj, timing_point)
-        } 
+            // note(isak): re-tracking mid-slider isn't a beat-snapped event, so the live timing point
+            // is the right one - no hitsound leniency involved
+            slider_start_slide_sounds(hobj, &game.active_map.timing_points[game.beatmap.current_timing_point_index_inherited])
+        }
         slider_renew_slide_sounds(slider, map_time)
     } else if slider.slide_sound != {} || slider.whistle_sound != {} {
         slider_stop_slide_sounds(slider)
@@ -700,8 +719,7 @@ slider_finalize :: proc(hobj: ^Hitobject) {
 
     if .END_TRACKED in slider.flags {
         // note(isak): the tail is the last edge, index path_travel_count
-        timing_point := &game.active_map.timing_points[game.beatmap.current_timing_point_index_inherited]
-        slider_play_edge_hitsound(hobj, slider.path_travel_count, timing_point, timing_point_volume(timing_point))
+        slider_play_edge_hitsound(hobj, slider.path_travel_count)
         judgement_new(hobj, .SLIDER_LARGE_SCOREPOINT, 0)
         slider.hit_judgement_count += 1
     }
@@ -728,31 +746,40 @@ slider_finalize :: proc(hobj: ^Hitobject) {
     slider.flags |= {.FINALIZED}
 }
 
-slider_play_tick_hitsound :: proc(hobj: ^Hitobject, sample_set: Skin_Sample_Set, volume: f32) {
+// note(isak): tick_ordinal is 1-based in temporal order within the traversal
+slider_play_tick_hitsound :: proc(hobj: ^Hitobject, traversal: int, tick_ordinal: int) {
     if game.paused || game.ui_timeline.dragging || game.ui_timeline.released do return
 
-    sample_play(&game.active_skin.hitsounds[sample_set][.SLIDERTICK], volume)
+    slider := &hobj.slider_state
+    tp_index := slider.tick_timing_point_indices[traversal * slider.tick_count + tick_ordinal - 1]
+    timing_point := &game.active_map.timing_points[tp_index]
+    sample_set := Skin_Sample_Set(timing_point.sample_set)
+    sample_play(resolve_hitsound(sample_set, .SLIDERTICK, timing_point.sample_index), timing_point_volume(timing_point))
 }
 
 // note(isak): play the hitsound for one slider edge (head/repeat/tail). normal hit comes from the edge's
 // normal set, the whistle/finish/clap additions from its addition set. falls back to a plain hit from the
 // timing point set if the slider has no parsed edge data.
-slider_play_edge_hitsound :: proc(hobj: ^Hitobject, edge_index: int, timing_point: ^Timing_Point, volume: f32) {
+slider_play_edge_hitsound :: proc(hobj: ^Hitobject, edge_index: int) {
     if game.paused || game.ui_timeline.dragging || game.ui_timeline.released do return
-    
+
     if edge_index < 0 || edge_index >= len(hobj.slider_edge_hitsounds) {
-        sample_play(&game.active_skin.hitsounds[Skin_Sample_Set(timing_point.sample_set)][.HITNORMAL], volume)
+        timing_point := &game.active_map.timing_points[hobj.hitsound_timing_point_index]
+        sample_play(resolve_hitsound(Skin_Sample_Set(timing_point.sample_set), .HITNORMAL, timing_point.sample_index),
+            timing_point_volume(timing_point))
         return
     }
 
     edge := hobj.slider_edge_hitsounds[edge_index]
+    timing_point := &game.active_map.timing_points[edge.timing_point_index]
+    volume := timing_point_volume(timing_point)
     normal_set   := osu_sample_set_to_skin(edge.normal_set, timing_point)
     addition_set := osu_sample_set_to_skin(edge.addition_set, timing_point)
 
-    sample_play(&game.active_skin.hitsounds[normal_set][.HITNORMAL], volume)
-    if edge.hitsound & 2 != 0 do sample_play(&game.active_skin.hitsounds[addition_set][.HITWHISTLE], volume)
-    if edge.hitsound & 4 != 0 do sample_play(&game.active_skin.hitsounds[addition_set][.HITFINISH], volume)
-    if edge.hitsound & 8 != 0 do sample_play(&game.active_skin.hitsounds[addition_set][.HITCLAP], volume)
+    sample_play(resolve_hitsound(normal_set, .HITNORMAL, timing_point.sample_index), volume)
+    if edge.hitsound & 2 != 0 do sample_play(resolve_hitsound(addition_set, .HITWHISTLE, timing_point.sample_index), volume)
+    if edge.hitsound & 4 != 0 do sample_play(resolve_hitsound(addition_set, .HITFINISH, timing_point.sample_index), volume)
+    if edge.hitsound & 8 != 0 do sample_play(resolve_hitsound(addition_set, .HITCLAP, timing_point.sample_index), volume)
 }
 
 slider_start_slide_sounds :: proc(hobj: ^Hitobject, timing_point: ^Timing_Point) {
@@ -761,11 +788,11 @@ slider_start_slide_sounds :: proc(hobj: ^Hitobject, timing_point: ^Timing_Point)
     volume := timing_point_volume(timing_point) * SLIDER_SLIDE_VOLUME
 
     if slider.slide_sound == {} {
-        slider.slide_sound = game_sound_play(&game.active_skin.hitsounds[sample_set][.SLIDERSLIDE],
+        slider.slide_sound = game_sound_play(resolve_hitsound(sample_set, .SLIDERSLIDE, timing_point.sample_index),
             loop = true, volume = volume, expires_at = hobj.end_time_ms)
     }
     if slider.whistle_sound == {} && hobj.hitsound_flags & 2 != 0 {
-        slider.whistle_sound = game_sound_play(&game.active_skin.hitsounds[sample_set][.SLIDERWHISTLE],
+        slider.whistle_sound = game_sound_play(resolve_hitsound(sample_set, .SLIDERWHISTLE, timing_point.sample_index),
             loop = true, volume = volume, expires_at = hobj.end_time_ms)
     }
     slider_renew_slide_sounds(slider, beatmap_music_time_ms(&game.beatmap))

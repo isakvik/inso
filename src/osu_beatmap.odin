@@ -90,10 +90,6 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     }
     
     // map logic init
-
-    game.active_map.diff_circle_size *= 0.5
-    game.active_map.diff_approach_rate *= 0.5
-    game.active_map.diff_overall_difficulty *= 0.5
     
     beatmap.circle_radius_osupx = convert_circle_size_to_radius_osupx(game.active_map.diff_circle_size)
     beatmap.preempt_ms = convert_approach_rate_to_preempt_ms(game.active_map.diff_approach_rate)
@@ -253,6 +249,8 @@ beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
     
     for &hobj in beatmap.hitobjects {
         hobj.gfx_handles = {}
+        hobj.gfx_handles_backing = {}
+        hobj.slider_state.gfx.ticks = {}
     }
     
     delete(beatmap.deferred_activations)
@@ -337,8 +335,6 @@ beatmap_seek :: proc(beatmap: ^Beatmap, pos: f64) {
 // note(isak): rewinds the time-based visibility/expiry state. useful for seeking.
 // the visible-set window, the expiring lists and pending phase transitions are dropped, gameplay effect gfx
 // are freed, and every touched object has its transient state reset.
-//
-// @leak slider_create_gfx / hitobject_create_phase_drawables both allocate drawables which are not cleared or reused
 beatmap_reset_object_state :: proc(beatmap: ^Beatmap) {
     beatmap.visible_hitobject_state = {}
     sb.reset(&beatmap.expiring_hitobjects)

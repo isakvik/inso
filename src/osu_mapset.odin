@@ -72,6 +72,7 @@ Mapset :: struct {
     buffers: queue.Queue(Mapset_Buffer),
     samples: queue.Queue(Sample),
     sample_slot_by_name: map[string]u32,
+    hitsound_slot_by_key: map[Hitsound_Key]u32,
 
     render_targets:        queue.Queue(Render_Target),
     render_target_by_name: map[string]u32,
@@ -221,13 +222,6 @@ osu_section_headers := []string{
     "[HitObjects]",
 }
 
-Osu_Map_Sample_Set :: enum {
-    NORMAL,
-    SOFT,
-    DRUM
-}
-
-
 mapset_free :: proc(mapset: ^Mapset) -> string {
     directory_watch_close(&mapset.watch)
 
@@ -299,6 +293,7 @@ mapset_open_for_editing :: proc(path: string, osu_filename: string = "") -> (^Ma
     mapset.pipeline_slot_by_name = make(map[string]u32, 16)
     mapset.buffer_slot_by_name   = make(map[string]u32, 16)
     mapset.sample_slot_by_name   = make(map[string]u32, 16)
+    mapset.hitsound_slot_by_key  = make(map[Hitsound_Key]u32, 16)
     mapset.hitobject_index_by_ms = make(map[int]int, 128)
     mapset.shader_blend_modes    = make([dynamic]Blend_Mode, 0, 8)
     mapset.shader_depth_writes   = make([dynamic]bool, 0, 8)
@@ -445,9 +440,18 @@ mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
             sample, ok := sample_load_file(file.name)
             if ok {
                 sample_key := strings.clone(file.name, memory.allocators[.MAPSET])
-                mapset.sample_slot_by_name[sample_key] = u32(mapset.samples.len)
+                slot := u32(mapset.samples.len)
+                mapset.sample_slot_by_name[sample_key] = slot
                 sample.filepath = sample_key
                 queue.push_back(&mapset.samples, sample)
+
+                if key, is_hitsound := hitsound_key_from_filename(sample_key); is_hitsound {
+                    existing_slot, taken := mapset.hitsound_slot_by_key[key]
+                    if !taken || audio_extension_rank(sample_key) <
+                        audio_extension_rank(queue.get_ptr(&mapset.samples, existing_slot).filepath) {
+                        mapset.hitsound_slot_by_key[key] = slot
+                    }
+                }
             } else {
                 log.errorf("mapset: failed to load sample '{}'", file.name)
                 notify_error("mapset: failed to load sample '%s'", file.name)
@@ -856,11 +860,10 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                                 timing_point.meter = u8(meter)
                             case 3: sample_set, ok := strconv.parse_u64(value); assert(ok)
                                 switch sample_set {
-                                    case 0: timing_point.sample_set = u8(result.sample_set)
-                                    case 1: timing_point.sample_set = u8(Osu_Map_Sample_Set.NORMAL)
-                                    case 2: timing_point.sample_set = u8(Osu_Map_Sample_Set.SOFT)
-                                    case 3: timing_point.sample_set = u8(Osu_Map_Sample_Set.DRUM)
-                                    case: timing_point.sample_set = u8(result.sample_set)
+                                    case 1: timing_point.sample_set = .NORMAL
+                                    case 2: timing_point.sample_set = .SOFT
+                                    case 3: timing_point.sample_set = .DRUM
+                                    case:   timing_point.sample_set = result.sample_set
                                 }
                             case 4: sample_index, ok := strconv.parse_u64(value); assert(ok)
                                 timing_point.sample_index = u32(sample_index)
@@ -952,10 +955,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                                 hobj.combo_color_skip_offset = u8((type_flags >> 4) & 0b111)
                             case 4:
                                 hitsound, _ := strconv.parse_int(value)
-                                hobj.hitsound_flags = byte(hitsound)
-                                if hitsound & 2 != 0 { hobj.flags |= {.WHISTLE} }
-                                if hitsound & 4 != 0 { hobj.flags |= {.FINISH}  }
-                                if hitsound & 8 != 0 { hobj.flags |= {.CLAP}    }
+                                hobj.hitsound_flags = transmute(Hitsound_Flags)u8(hitsound)
                             case 5:
                                 hobj_extra_params = lines[i][from_i:]
                                 break
@@ -1281,7 +1281,7 @@ mapset_parse_osu_slider_params :: proc(hobj: ^Hitobject, slider: ^Slider_Path, p
                     edge_n = strings.index_byte(value[edge_from:], '|')
                     token := edge_n >= 0 ? value[edge_from:edge_from + edge_n] : value[edge_from:]
                     hs, _ := strconv.parse_int(strings.trim_space(token))
-                    hobj.slider_edge_hitsounds[edge_i].hitsound = u8(hs)
+                    hobj.slider_edge_hitsounds[edge_i].hitsound = transmute(Hitsound_Flags)u8(hs)
                     edge_i += 1
                     if edge_n < 0 do break
                     edge_from += edge_n + 1

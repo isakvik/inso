@@ -186,7 +186,7 @@ renderer_init :: proc() {
     sg.setup({
         environment = {
             defaults = {
-                sample_count = 4,
+                sample_count = 1,
                 color_format = sg.Pixel_Format.RGBA8,
                 depth_format = sg.Pixel_Format.DEPTH_STENCIL,
             },
@@ -245,7 +245,7 @@ renderer_init :: proc() {
     window.swapchain = sg.Swapchain{
         width =  i32(window.rect.w),
         height = i32(window.rect.h),
-        sample_count = 4,
+        sample_count = 1,
         color_format = .RGBA8,
         //depth_format = .DEPTH_STENCIL,
         gl = {0} // default framebuffer
@@ -291,6 +291,8 @@ renderer_init :: proc() {
         alloc_err = queue.init(&renderer.layer_command_queues[layer], kilobytes(1), memory.command_buffer_allocators[layer])
         assert(alloc_err == .None, "command queue alloc error")
     }
+
+    profiler_gpu_init()
 }
 
 renderer_cleanup :: proc() {
@@ -950,6 +952,7 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
         command_queue := renderer.layer_command_queues[layer]
 
         if command_queue.len > 0 {
+            profiler_gpu_scope_begin(layer)
             if (trace) { fmt.println(layer) }
 
             // note(isak): the platform layer always composites onto the real screen, on top of any
@@ -1132,6 +1135,7 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 }
             }
         }
+        profiler_gpu_scope_end()
     }
     renderer.trace_frame = false
 }

@@ -444,6 +444,10 @@ _CRASH_HANDLER_ARENA_NAMES := [CRASH_STATS_ARENAS]string{
     "global", "mapset", "drawables", "judgements", "skin", "sound", "script elements", "frame",
 }
 
+_CRASH_HANDLER_LAYER_NAMES := [CRASH_STATS_LAYERS]string{
+    "background", "foreground", "hitobjects", "overlay", "ui", "cursor", "top", "platform",
+}
+
 _CRASH_HANDLER_MODE_NAMES := [4]string{
     "uninitialized", "main_menu", "play", "editor",
 }
@@ -502,6 +506,24 @@ crash_handler_append_stats :: proc(b: ^strings.Builder, child_pid: win.DWORD) {
         fmt.sbprintf(b, "gpu vram: %d MB free\n", s.gpu_vram_free_mb)
     } else {
         fmt.sbprint(b, "gpu vram: unavailable\n")
+    }
+
+    total_gpu_ns: u64
+    for layer_time_ns in s.gpu_layer_time_ns {
+        total_gpu_ns += layer_time_ns
+    }
+    if total_gpu_ns > 0 {
+        fmt.sbprint(b, "\ngpu per layer (time / fragments shaded):\n")
+        for layer_name, i in _CRASH_HANDLER_LAYER_NAMES {
+            if s.gpu_layer_time_ns[i] == 0 && s.gpu_layer_frag_invocations[i] == 0 do continue
+            fmt.sbprintf(b, "  %-12s  %8.3f ms / %7.2f M\n",
+                layer_name,
+                f64(s.gpu_layer_time_ns[i]) / 1_000_000,
+                f64(s.gpu_layer_frag_invocations[i]) / 1_000_000)
+        }
+        fmt.sbprintf(b, "  %-12s  %8.3f ms\n", "total", f64(total_gpu_ns) / 1_000_000)
+    } else {
+        fmt.sbprint(b, "gpu per layer: unavailable (profiler disabled or no data)\n")
     }
 
     fmt.sbprint(b, "\narena memory (current / peak):\n")

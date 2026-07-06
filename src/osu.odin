@@ -105,17 +105,24 @@ Hitobject_Flag :: enum {
     HIT, // note(isak): has result
     EXPIRED,
     LAST_IN_COMBO,
-    
+
     NEW_COMBO,
-    WHISTLE,
-    FINISH,
-    CLAP,
 
     HIDE_COMBO_NUMBERS,
     HIDDEN_BY_SCRIPT,
 
     NO_FOLLOWPOINT_IN,  // note(isak): suppress the followpoint arriving at this object
     NO_FOLLOWPOINT_OUT, // note(isak): suppress the followpoint leaving this object
+}
+
+// note(isak): the osu hitSound bitmask, transmutable from the parsed byte. the format sets NORMAL
+// but a normal hit always plays regardless; whistle/finish/clap are additions on top
+Hitsound_Flags :: distinct bit_set[Hitsound_Flag; u8]
+Hitsound_Flag :: enum u8 {
+    NORMAL,
+    WHISTLE,
+    FINISH,
+    CLAP,
 }
 
 Hitobject_Phase :: enum u8 {
@@ -153,7 +160,7 @@ Hitobject :: struct {
     timing_point_index_uninherited: int,
     timing_point_index_inherited: int,
     hitsound_timing_point_index: int, // note(isak): resolved with hitsound leniency at start_time_ms
-    hitsound_flags: byte,
+    hitsound_flags: Hitsound_Flags,
     extra_bits: u64, // note(isak): from the notosu file
     combo_index: int, // note(isak): 1-indexed combo within the current map
     combo_number: u16,
@@ -206,7 +213,7 @@ Slider_Part :: enum u8 {
 }
 
 Slider_Edge_Hitsound :: struct {
-    hitsound:     u8, // osu bitmask: whistle (2), finish (4), clap (8)
+    hitsound:     Hitsound_Flags,
     normal_set:   u8,
     addition_set: u8,
     timing_point_index: int, // note(isak): resolved with hitsound leniency at the edge's nominal time
@@ -351,7 +358,7 @@ Timing_Point :: struct {
     time: f64,
     beat_length: f64,
     meter: u8,
-    sample_set: u8,
+    sample_set: Skin_Sample_Set,
     sample_index: u32,
     volume: f64,
     type: Timing_Point_Type,
@@ -465,7 +472,7 @@ Osu_Map :: struct {
         audio_filename: string,
         audio_lead_in: f64,
         preview_time_ms: f64,
-        sample_set: Osu_Map_Sample_Set,
+        sample_set: Skin_Sample_Set,
     
         title: string,
         title_unicode: string,

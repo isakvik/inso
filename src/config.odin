@@ -17,7 +17,10 @@ User_Configuration :: struct {
     hitsound_volume: f32,
     
     vsync_enabled: bool,
-    
+
+    // note(isak): escape hatch for drivers that mishandle GL query objects; costs ~µs when on
+    gpu_profiler_enabled: bool,
+
     skin_path: string,
 
     window_width: f32,
@@ -64,6 +67,9 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         }
         if v, ok := get(gen, "vsync_enabled"); ok {
             result.vsync_enabled = v == "true"
+        }
+        if v, ok := get(gen, "gpu_profiler_enabled"); ok {
+            result.gpu_profiler_enabled = v == "true"
         }
         if v, ok := get(gen, "skin_path"); ok {
             result.skin_path = strings.clone(v)
@@ -117,6 +123,7 @@ config_save :: proc(path: string) {
 
     ini.write_pair(w, "universal_offset_ms",      game.user_config.universal_offset_ms)
     ini.write_pair(w, "vsync_enabled",            game.user_config.vsync_enabled)
+    ini.write_pair(w, "gpu_profiler_enabled",     game.user_config.gpu_profiler_enabled)
     ini.write_pair(w, "master_volume",            game.user_config.master_volume)
     ini.write_pair(w, "music_volume",             game.user_config.music_volume)
     ini.write_pair(w, "hitsound_volume",          game.user_config.hitsound_volume)
@@ -154,6 +161,7 @@ config_supply_default :: proc() -> (result: User_Configuration) {
     result = {
         universal_offset_ms      = -28,
         vsync_enabled            = false,
+        gpu_profiler_enabled     = true,
         master_volume            = 0.5,
         music_volume             = 0.5,
         hitsound_volume          = 0.8,

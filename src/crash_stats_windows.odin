@@ -6,6 +6,8 @@ import "core:fmt"
 import gl "vendor:OpenGL"
 
 CRASH_STATS_ARENAS :: 8 // must match len(Memory_Arena_Type)
+CRASH_STATS_LAYERS :: 8
+#assert(CRASH_STATS_LAYERS == len(Layer))
 
 // vendor-specific GL enums for VRAM queries. not in the standard gl package
 // since they're extensions, but glGetIntegerv with an unsupported enum just
@@ -55,6 +57,10 @@ Crash_Stats :: struct {
     // gpu
     gpu_vram_free_mb:  i32,
     gpu_vram_total_mb: i32, // nvidia only; 0 on amd/unknown
+
+    // gpu profiler results, ~3 frames latent; all zero when disabled via gpu_profiler_enabled
+    gpu_layer_time_ns:          [CRASH_STATS_LAYERS]u64,
+    gpu_layer_frag_invocations: [CRASH_STATS_LAYERS]u64,
 }
 
 _crash_stats_mapping: win.HANDLE
@@ -150,6 +156,11 @@ crash_stats_write :: proc(frame_count: u64, dt_ms: f64) {
             }
             for gl.GetError() != gl.NO_ERROR {}
         }
+    }
+
+    for layer in Layer {
+        s.gpu_layer_time_ns[int(layer)]          = gpu_profiler.layer_time_ns[layer]
+        s.gpu_layer_frag_invocations[int(layer)] = gpu_profiler.layer_frag_invocations[layer]
     }
 
     switch _gpu_vendor {

@@ -176,6 +176,57 @@ skin_hitsound_type_name := [Skin_Hitsound_Type]string {
     .SLIDERTICK    = "slidertick",
 }
 
+Hitsound_Key :: struct {
+    sample_set: Skin_Sample_Set,
+    type:       Skin_Hitsound_Type,
+    index:      u32,
+}
+
+// note(isak): parses "soft-hitclap2.wav" into {SOFT, HITCLAP, 2}; a bare "soft-hitclap.wav" is bank 1
+hitsound_key_from_filename :: proc(filename: string) -> (key: Hitsound_Key, is_hitsound: bool) {
+    stem := filename
+    if dot := strings.last_index_byte(stem, '.'); dot >= 0 do stem = stem[:dot]
+
+    dash := strings.index_byte(stem, '-')
+    if dash < 0 do return {}, false
+
+    set_matched := false
+    for set_name, set in skin_sample_set_name {
+        if stem[:dash] == set_name {
+            key.sample_set = set
+            set_matched = true
+            break
+        }
+    }
+    if !set_matched do return {}, false
+
+    rest := stem[dash + 1:]
+    for type_name, type in skin_hitsound_type_name {
+        if !strings.has_prefix(rest, type_name) do continue
+        key.type = type
+
+        index_suffix := rest[len(type_name):]
+        if index_suffix == "" {
+            key.index = 1
+            return key, true
+        }
+        index, index_ok := strconv.parse_uint(index_suffix, 10)
+        if index_ok {
+            key.index = u32(index)
+            return key, true
+        }
+    }
+    return {}, false
+}
+
+// note(isak): resolve_hitsound priority order - a .wav bank beats an .ogg of the same name
+audio_extension_rank :: proc(filename: string) -> int {
+    for extension, rank in supported_audio_extensions {
+        if strings.has_suffix(filename, extension) do return rank
+    }
+    return len(supported_audio_extensions)
+}
+
 Hitsound :: Sample
 
 

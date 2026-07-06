@@ -430,6 +430,7 @@ main :: proc() {
 
             if app.debug_display_frame_profiler {
                 profiler_push_blocks_as_text(renderer, frame_count)
+                profiler_push_gpu_blocks_as_text(renderer)
                 profiler_push_quad(&renderer.quad_geometry, frame_count)
             }
             if app.debug_display_memory_profiler {
@@ -528,6 +529,8 @@ main :: proc() {
 }
 
 begin_frame :: proc(renderer: ^Renderer) {
+    profiler_gpu_new_frame()
+
     sg.begin_pass({ action = window.pass_action, swapchain = window.swapchain })
 
     batch_begin(renderer)

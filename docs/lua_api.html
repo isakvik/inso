@@ -40,7 +40,7 @@
 </head>
 <body>
 
-<h1>Lua API for inso v0.1.7-dev+d637a23</h1>
+<h1>Lua API for inso v0.1.8-dev+4e7501c</h1>
 <p class="note">Documentation automatically generated from the engine's registration tables</p>
 <p class="note">A method with return type <span class="sig s">self</span> returns its own object, so calls can be chained.</p>
 <nav class="toc">
@@ -60,7 +60,7 @@
 <a href="#enums">Enums</a>
 </nav>
 <h2 id="events"><a class="hlink" href="#events">Events <span class="htarget">#</span></a></h2>
-<p class="note">Callbacks the engine invokes on your script. Define the ones you need as global functions; undefined ones are skipped.</p>
+<p class="note">Callbacks the engine invokes on your script.</p>
 <table>
 <thead><tr><th>Method</th></tr></thead>
 <tbody>
@@ -212,7 +212,7 @@
 <tr><td><code class="sig"><span class="self">self</span> <span class="receiver">element</span><span class="punctuation">:</span><span class="function">set_premultiplied</span><span class="punctuation">(</span> <span class="type">bool</span> <span class="argument">enabled</span> <span class="punctuation">)</span></code><div class="desc">composites the element as an already-premultiplied source (e.g. a captured render target sampled back out) using premultiplied-over blend instead of straight alpha. builtin quad shader only.</div></td></tr>
 <tr><td><code class="sig"><span class="self">self</span> <span class="receiver">element</span><span class="punctuation">:</span><span class="function">set_render_target</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">render_target_name</span> <span class="punctuation">)</span></code><div class="desc">redirects this element's draws into the named render target instead of the screen.</div></td></tr>
 <tr><td><code class="sig"><span class="self">self</span> <span class="receiver">element</span><span class="punctuation">:</span><span class="function">set_animation</span><span class="punctuation">(</span> <span class="type">Animation</span> <span class="argument">animation</span> <span class="punctuation">)</span></code><div class="desc">attaches an animation list to the element.</div></td></tr>
-<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">element</span><span class="punctuation">:</span><span class="function">set_mesh</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">buffer_name</span><span class="punctuation">,</span> <span class="type">int</span> <span class="argument">vertex_count</span> <span class="punctuation">)</span></code><div class="desc">marks the element as mesh-drawn, sourcing geometry from the named SSBO instead of the quad batch.</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">element</span><span class="punctuation">:</span><span class="function">set_mesh</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">buffer_name</span><span class="punctuation">,</span> <span class="type">int</span> <span class="argument">vertex_count</span> <span class="punctuation">=</span> <span class="number">0</span> <span class="punctuation">)</span></code><div class="desc">marks the element as mesh-drawn, sourcing geometry from the named SSBO instead of the quad batch.</div></td></tr>
 <tr><td><code class="sig"><span class="self">self</span> <span class="receiver">element</span><span class="punctuation">:</span><span class="function">use_combo_color</span><span class="punctuation">(</span> <span class="type">bool</span> <span class="argument">enabled</span> <span class="punctuation">)</span></code><div class="desc">when enabled, the element tints with the hitobject's combo color.</div></td></tr>
 </tbody>
 </table>
@@ -271,7 +271,7 @@
 <tr><td><code class="sig"><span class="type">bool</span> <span class="receiver">Beatmap</span><span class="punctuation">.</span><span class="function">is_paused</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">true if playback is currently paused.</div></td></tr>
 <tr><td><code class="sig"><span class="type">void</span> <span class="receiver">Beatmap</span><span class="punctuation">.</span><span class="function">capture_layers</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">render_target_name</span><span class="punctuation">,</span> <span class="type">table</span> <span class="argument">layers</span> <span class="punctuation">)</span></code><div class="desc">redirects every drawable in the given layers into the named render target.</div></td></tr>
 <tr><td><code class="sig"><span class="type">void</span> <span class="receiver">Beatmap</span><span class="punctuation">.</span><span class="function">free_layers</span><span class="punctuation">(</span> <span class="type">table</span> <span class="argument">layers</span> <span class="punctuation">)</span></code><div class="desc">stops redirecting the given layers into a render target.</div></td></tr>
-<tr><td><code class="sig"><span class="type">void</span> <span class="receiver">Beatmap</span><span class="punctuation">.</span><span class="function">add_post_pass</span><span class="punctuation">{</span> <span class="argument">shader</span><span class="punctuation">=</span><span class="punctuation">,</span> <span class="argument">src</span><span class="punctuation">=</span><span class="punctuation">,</span> <span class="argument">dst</span><span class="punctuation">=</span><span class="punctuation">,</span> <span class="type">Layer</span> <span class="argument">after</span> <span class="punctuation">}</span></code><div class="desc">queues a fullscreen shader pass sampling src (string or table) into dst ('screen' or a target name), running after the 'after' layer (default HITOBJECTS).</div></td></tr>
+<tr><td><code class="sig"><span class="type">void</span> <span class="receiver">Beatmap</span><span class="punctuation">.</span><span class="function">add_post_pass</span><span class="punctuation">{</span> <span class="argument">shader</span><span class="punctuation">=</span><span class="punctuation">,</span> <span class="argument">src</span><span class="punctuation">=</span><span class="punctuation">,</span> <span class="argument">dst</span><span class="punctuation">=</span><span class="punctuation">,</span> <span class="type">Layer</span> <span class="argument">after</span> <span class="punctuation">}</span></code><div class="desc">queues a fullscreen shader pass sampling src (string or table) into dst, running after the 'after' layer (default HITOBJECTS). src/dst names may be a render target, 'screen' (the window), or 'backbuffer' (the whole-frame capture; requires [General] Backbuffer: 1).</div></td></tr>
 <tr><td><code class="sig"><span class="punctuation">(</span><span class="type">float</span> <span class="argument">marvelous</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">good</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">ok</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">miss</span><span class="punctuation">)</span> <span class="receiver">Beatmap</span><span class="punctuation">.</span><span class="function">get_timing_windows</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the current hit window half-widths in ms.</div></td></tr>
 <tr><td><code class="sig"><span class="type">void</span> <span class="receiver">Beatmap</span><span class="punctuation">.</span><span class="function">set_timing_windows</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">marvelous</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">good</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">ok</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">miss</span> <span class="punctuation">)</span></code><div class="desc">sets the hit window half-widths in ms; expects marvelous &lt;= good &lt;= ok &lt;= miss.</div></td></tr>
 </tbody>
@@ -326,7 +326,7 @@
 <tr><td><code>Layer.UI</code></td><td>4</td></tr>
 <tr><td><code>Layer.CURSOR</code></td><td>5</td></tr>
 <tr><td><code>Layer.TOP</code></td><td>6</td></tr>
-<tr><td><code>Layer.DEBUG</code></td><td>7</td></tr>
+<tr><td><code>Layer.PLATFORM</code></td><td>7</td></tr>
 </tbody>
 </table>
 

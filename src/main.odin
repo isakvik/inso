@@ -1,5 +1,6 @@
 package notosu
 
+import "core:sort"
 VERSION :: #config(VERSION, "dev (unversioned)")
 
 import "base:runtime"
@@ -54,6 +55,7 @@ Memory_Arena_Type :: enum {
 
 memory_arena_names := [?]string {
     "Global",
+    "Global2",
     "Mapset",
     "Drawables",
     "Judgements",
@@ -350,10 +352,9 @@ main :: proc() {
 
             if window.resized && game.mode == .EDITOR {
                 // todo(isak): @hack
-                cleanup_textures_for_rendering()
                 beatmap_open(game.beatmap.map_reference, true)
-                prepare_textures_for_rendering()
             }
+            window.resized = false
             
             // prepare drawing
             begin_frame(renderer)
@@ -607,6 +608,9 @@ end_frame :: proc(renderer: ^Renderer) {
 
     profiler_collect_command_buffer_memory_data()
     batch_end(renderer)
+
+    sg.end_pass()
+    sg.commit()
 }
 
 
@@ -722,6 +726,9 @@ imgui_update :: proc() {
         }
         if imgui.Checkbox("VSync", &game.user_config.vsync_enabled) {
             window_apply_vsync(game.user_config.vsync_enabled)
+        }
+        if imgui.SliderFloat("UI scale", &game.user_config.ui_scale, 0.5, 2.0) {
+            ui_scale_recompute()
         }
     }
     if imgui.CollapsingHeader("Audio") {
@@ -850,8 +857,18 @@ handle_debug_ui_events :: proc() {
         track := &memory.tracker[.GLOBAL]
         if len(track.alloc.allocation_map) > 0 {
             fmt.printf("=== global allocator - %v allocations not freed: ===\n", len(track.alloc.allocation_map))
+
+            allocs := make([]mem.Tracking_Allocator_Entry, len(track.alloc.allocation_map), memory.allocators[.FRAME])
+            i := 0
             for _, entry in track.alloc.allocation_map {
-                fmt.printf("- %v bytes @ %v\n", entry.size, entry.location)
+                allocs[i] = entry
+                i += 1
+            }
+            sort.quick_sort_proc(allocs, proc(a, b: mem.Tracking_Allocator_Entry) -> int {
+                return int(hash.fnv64a(transmute([]u8)a.location.file_path) - hash.fnv64a(transmute([]u8)b.location.file_path))
+            })
+            for entry in allocs {
+                fmt.printf("- %v :: %v bytes\n", entry.location, entry.size)
             }
         }
     }

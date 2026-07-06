@@ -126,7 +126,7 @@ mouse_init :: proc() {
                 mouse_enable_raw_input_mode()
             }
     
-            app.input_device_hwids, app.input_device_handles = input_enumerate_mouse_devices(memory.allocators[.GLOBAL])
+            //app.input_device_hwids, app.input_device_handles = input_enumerate_mouse_devices(memory.allocators[.GLOBAL])
         }
     }
 }

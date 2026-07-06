@@ -3,14 +3,27 @@ local rand = load_file("rand.lua")
 
 
 function on_init()
-    -- bloom + CRT post chain:
-    -- the map declares [General] Backbuffer: 1, so every uncaptured layer already lands in the
-    -- "backbuffer" target automatically. we only carve out hitobjects/ui/cursor into "scene" for
-    -- the bloom source; that gets blurred into "bloom_b", additively composited back into the
-    -- backbuffer, then the whole backbuffer gets the CRT treatment on its way to the screen.
-    -- the CRT must be the last pass, so the chain lives here; bloom fades in via its strength
-    -- param (slot 0, ramped in on_update).
-    Beatmap.capture_layers("scene", { Layer.BACKGROUND, Layer.HITOBJECTS, Layer.UI, Layer.CURSOR })
+    -- 3d mesh: render the crate into its own depth-cleared target ("mesh_scene", declared with
+    -- Depth: 1) so it self-occludes with real depth instead of fighting the flat 2d depth plane,
+    -- then composite that target back over the 2d layers as a fullscreen quad on OVERLAY. the
+    -- crate's own layer (FOREGROUND) only controls when it draws into the offscreen target.
+    crate = Element.new()
+        :set_shader("mesh")
+        :set_mesh("my_model")
+        :set_render_target("mesh_scene")
+    crate_drawable = Drawable.new(crate, 0, 1e12, Layer.FOREGROUND)
+
+    mesh_composite = Element.new()
+        :set_tex("mesh_scene")
+    mesh_composite_drawable = Drawable.new(mesh_composite, 0, 1e12, Layer.FOREGROUND)
+        :set_fullscreen(true)
+        :set_size(100, 100)
+
+    crt_init()
+end
+
+function crt_init()
+    Beatmap.capture_layers("scene", { Layer.BACKGROUND,Layer.FOREGROUND, Layer.HITOBJECTS, Layer.UI, Layer.CURSOR })
 
     el_scene = Element.new()
         :set_tex("scene")

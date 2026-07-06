@@ -1324,42 +1324,40 @@ load_model :: proc(path: string) -> ^GL_Buffer(Mesh_Vertex) {
         return nil
     }
 
-    vertex_count: int
-    for attrib in data.meshes[0].primitives[0].attributes {
-        if attrib.type == .position {
-            vertex_count = int(attrib.data.count)
-            break
+    primitive := data.meshes[0].primitives[0]
+
+    pos_accessor, norm_accessor, uv_accessor: ^cgltf.accessor
+    for &attrib in primitive.attributes {
+        #partial switch attrib.type {
+        case .position: pos_accessor  = attrib.data
+        case .normal:   norm_accessor = attrib.data
+        case .texcoord: uv_accessor   = attrib.data
         }
     }
-    if vertex_count == 0 {
+    if pos_accessor == nil {
         log.errorf("load_model '{}': no position attribute found", path)
         notify_error("load_model '%s': no position attribute found", path)
         return nil
     }
 
-    store := r_create_static_store(Mesh_Vertex, vertex_count, memory.allocators[.MAPSET])
+    index_accessor := primitive.indices
+    output_count := int(index_accessor.count) if index_accessor != nil else int(pos_accessor.count)
 
-    for primitive in data.meshes[0].primitives[:] {
-        for attrib in primitive.attributes {
-            attr_bufview := attrib.data.buffer_view
-            #partial switch attrib.type {
-            case .position:
-                for pos, i in slice.from_ptr(cast(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
-                    store.data[i].pos = pos
-                }
-            case .normal:
-                for norm, i in slice.from_ptr(cast(^vec3)attr_bufview.buffer.data, int(attrib.data.count)) {
-                    store.data[i].norm = norm
-                }
-            case .texcoord:
-                for uv, i in slice.from_ptr(cast(^vec2)attr_bufview.buffer.data, int(attrib.data.count)) {
-                    store.data[i].uv = uv
-                }
-            }
+    store := r_create_static_store(Mesh_Vertex, output_count, memory.allocators[.MAPSET])
+
+    for out_i in 0..<output_count {
+        src_i := uint(out_i)
+        if index_accessor != nil {
+            src_i = cgltf.accessor_read_index(index_accessor, uint(out_i))
         }
+        v := &store.data[out_i]
+        _ = cgltf.accessor_read_float(pos_accessor, src_i, cast([^]f32)&v.pos[0], 3)
+        if norm_accessor != nil do _ = cgltf.accessor_read_float(norm_accessor, src_i, cast([^]f32)&v.norm[0], 3)
+        if uv_accessor   != nil do _ = cgltf.accessor_read_float(uv_accessor,   src_i, cast([^]f32)&v.uv[0],  2)
     }
 
-    log.infof("load_model '{}': {} vertices loaded", path, vertex_count)
+    log.infof("load_model '{}': {} vertices loaded ({} source verts, indexed: {})",
+        path, output_count, pos_accessor.count, index_accessor != nil)
     return store
 }
 

@@ -176,6 +176,8 @@ rect_at_pos :: proc(pos: vec2, size: vec2) -> Rect {
 // note(isak): core
 
 renderer_init :: proc() {
+    context.allocator = memory.allocators[.GLOBAL]
+    
     renderer := &window.renderer
     renderer.current_draw = &null_draw
 
@@ -904,6 +906,8 @@ batch_end :: proc(renderer: ^Renderer) {
     batch_process_command_buffer(renderer)
 }
 
+// note(isak): called on a quad-buffer overrun mid-frame. submits everything recorded so far and
+// advances to a fresh buffer, staying inside the render pass (owned by begin_frame/end_frame).
 batch_flush :: proc(renderer: ^Renderer) {
     batch_end(renderer)
     batch_begin(renderer)
@@ -1114,9 +1118,6 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
         }
     }
     renderer.trace_frame = false
-
-    sg.end_pass()
-    sg.commit()
 }
 
 

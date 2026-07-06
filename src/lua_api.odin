@@ -476,8 +476,8 @@ luaapi_hitobject_get_at_ms :: proc "c" (L: ^lua.State) -> (result: i32) {
         lua_create_userdata(L, hitobject_index, lua_classes[.HITOBJECT].name)
         result = 1
     } else {
-        log.error("User error - no hitobject at ms:", at_ms)
-        notify_error("lua: no hitobject at ms %v", at_ms)
+        log.warn("User error - no hitobject at ms:", at_ms)
+        notify_warn("lua: no hitobject at ms %v", at_ms)
     }
     return result
 }
@@ -1089,8 +1089,8 @@ luaapi_drawable_new :: proc "c" (L: ^lua.State) -> (result: i32) {
         tex_name := lua_string(1)
         tex_id, found := mapset_texture_slot(tex_name)
         if !found {
-            log.error("User error - texture not found:", tex_name)
-            notify_error("lua: Drawable.new texture not found '%s'", tex_name)
+            log.warn("User error - texture not found:", tex_name)
+            notify_warn("lua: Drawable.new texture not found '%s'", tex_name)
             return 0
         }
         element_id = element_new({ shader = builtin_pipeline_slot(.QUAD), tex = tex_id })
@@ -1440,7 +1440,7 @@ luaapi_element_instance_funcs := []Lua_Function {
     "self element:set_animation( Animation animation )",
     "attaches an animation list to the element." },
   { "set_mesh", luaapi_element_set_mesh,
-    "self element:set_mesh( string buffer_name, int vertex_count )",
+    "self element:set_mesh( string buffer_name, int vertex_count = 0 )",
     "marks the element as mesh-drawn, sourcing geometry from the named SSBO instead of the quad batch." },
   { "use_combo_color", luaapi_element_use_combo_color,
     "self element:use_combo_color( bool enabled )",
@@ -1463,8 +1463,8 @@ luaapi_element_new :: proc "c" (L: ^lua.State) -> (result: i32) {
         tex_name := lua_string(1)
         tex_id, found := mapset_texture_slot(tex_name)
         if !found {
-            log.error("User error - texture not found:", tex_name)
-            notify_error("lua: Element.new texture not found '%s'", tex_name)
+            log.warn("User error - texture not found:", tex_name)
+            notify_warn("lua: Element.new texture not found '%s'", tex_name)
             return 0
         }
         tex = tex_id
@@ -1521,8 +1521,8 @@ luaapi_element_set_tex :: proc "c" (L: ^lua.State) -> (result: i32) {
             el.tex = tex_id
         }
     } else {
-        log.error("User error - texture not found:", tex_name)
-        notify_error("lua: Element:set_tex texture not found '%s'", tex_name)
+        log.warn("User error - texture not found:", tex_name)
+        notify_warn("lua: Element:set_tex texture not found '%s'", tex_name)
     }
     return lua_return_self()
 }
@@ -1556,8 +1556,8 @@ luaapi_element_set_shader :: proc "c" (L: ^lua.State) -> (result: i32) {
             el.shader = shader_id
         }
     } else {
-        log.error("User error - pipeline not found:", shader_name)
-        notify_error("lua: Element:set_shader pipeline not found '%s'", shader_name)
+        log.warn("User error - pipeline not found:", shader_name)
+        notify_warn("lua: Element:set_shader pipeline not found '%s'", shader_name)
     }
     return lua_return_self()
 }
@@ -1586,8 +1586,8 @@ luaapi_element_set_render_target :: proc "c" (L: ^lua.State) -> (result: i32) {
             el.render_target = fb
         }
     } else {
-        log.error("User error - render target not found:", name)
-        notify_error("lua: Element:set_render_target render target not found '%s'", name)
+        log.warn("User error - render target not found:", name)
+        notify_warn("lua: Element:set_render_target render target not found '%s'", name)
     }
     return lua_return_self()
 }
@@ -1613,13 +1613,18 @@ luaapi_element_set_mesh :: proc "c" (L: ^lua.State) -> (result: i32) {
     handle := cast(^Element_ID)lua.L_checkudata(L, 1, lua_classes[.ELEMENT].name)
     el_id := uint(handle^)
     buffer_name  := lua_string(2)
-    vertex_count := int(lua_int(3))
+    vertex_count := int(lua.L_optinteger(L, 3, 0))
 
     buf, found := mapset_buffer(buffer_name)
     if !found {
-        log.error("User error - buffer not found:", buffer_name)
-        notify_error("lua: Element:set_mesh buffer not found '%s'", buffer_name)
+        log.warn("User error - buffer not found:", buffer_name)
+        notify_warn("lua: Element:set_mesh buffer not found '%s'", buffer_name)
         return lua_return_self()
+    }
+    // note(isak): mesh buffers loaded from a model are packed Mesh_Vertex, so a caller that
+    // omits the count (or passes <= 0) gets the whole buffer's worth of vertices.
+    if vertex_count <= 0 {
+        vertex_count = buf.size / size_of(Mesh_Vertex)
     }
     if el_id < game.beatmap.elements.len {
         el := q.get_ptr(&game.beatmap.elements, el_id)
@@ -1816,8 +1821,8 @@ luaapi_animation_texture :: proc "c" (L: ^lua.State) -> i32 {
     layer := f32(lua.L_optnumber(L, 5, 0))
     tex_id, found := mapset_texture_slot(tex_name)
     if !found {
-        log.error("User error - texture not found:", tex_name)
-        notify_error("lua: Animation:texture texture not found '%s'", tex_name)
+        log.warn("User error - texture not found:", tex_name)
+        notify_warn("lua: Animation:texture texture not found '%s'", tex_name)
         tex_id = builtin_texture(.WHITE)
     }
 
@@ -1846,8 +1851,8 @@ luaapi_animation_frames :: proc "c" (L: ^lua.State) -> i32 {
 
     tex_slot, found := game.active_mapset.texture_slot_by_name[tex_name]
     if !found {
-        log.error("User error - texture not found:", tex_name)
-        notify_error("lua: Animation:frames texture not found '%s'", tex_name)
+        log.warn("User error - texture not found:", tex_name)
+        notify_warn("lua: Animation:frames texture not found '%s'", tex_name)
         return lua_return_self()
     }
 
@@ -1901,8 +1906,8 @@ luaapi_buffer_get :: proc "c" (L: ^lua.State) -> i32 {
     name := lua_string(1)
     _, found := mapset_buffer(name)
     if !found {
-        log.error("User error - buffer not found:", name)
-        notify_error("lua: Buffer.get buffer not found '%s'", name)
+        log.warn("User error - buffer not found:", name)
+        notify_warn("lua: Buffer.get buffer not found '%s'", name)
         lua.pushnil(L)
         return 1
     }
@@ -2022,8 +2027,8 @@ luaapi_sound_play :: proc "c" (L: ^lua.State) -> i32 {
 
     sample, found := mapset_sample(name)
     if !found {
-        log.error("User error - sound not found:", name)
-        notify_error("lua: Sound.play sound not found '%s'", name)
+        log.warn("User error - sound not found:", name)
+        notify_warn("lua: Sound.play sound not found '%s'", name)
         return 0
     }
     sample_play(sample, volume, pan)
@@ -2038,8 +2043,8 @@ luaapi_sound_play_loop :: proc "c" (L: ^lua.State) -> i32 {
 
     sample, found := mapset_sample(name)
     if !found {
-        log.error("User error - sound not found:", name)
-        notify_error("lua: Sound.play_loop sound not found '%s'", name)
+        log.warn("User error - sound not found:", name)
+        notify_warn("lua: Sound.play_loop sound not found '%s'", name)
         return 0
     }
     handle := game_sound_play(sample, loop = true, volume = volume)
@@ -2158,7 +2163,7 @@ luaapi_beatmap_capture_layers :: proc "c" (L: ^lua.State) -> i32 {
     name := lua_string(1)
     fb, found := mapset_render_target_fb(name)
     if !found {
-        notify_error("lua: Beatmap.capture_layers render target not found '%s'", name)
+        notify_warn("lua: Beatmap.capture_layers render target not found '%s'", name)
         return 0
     }
 
@@ -2196,7 +2201,7 @@ luaapi_beatmap_add_post_pass :: proc "c" (L: ^lua.State) -> i32 {
     mapset := game.active_mapset
 
     if len(mapset.post_passes) >= MAX_POST_PASSES {
-        notify_error("lua: Beatmap.add_post_pass exceeded MAX_POST_PASSES (%d)", MAX_POST_PASSES)
+        notify_warn("lua: Beatmap.add_post_pass exceeded MAX_POST_PASSES (%d)", MAX_POST_PASSES)
         return 0
     }
 
@@ -2205,7 +2210,7 @@ luaapi_beatmap_add_post_pass :: proc "c" (L: ^lua.State) -> i32 {
     pipeline, shader_found := mapset_pipeline_slot(shader_name)
     lua.pop(L, 1)
     if !shader_found {
-        notify_error("lua: Beatmap.add_post_pass shader not found '%s'", shader_name)
+        notify_warn("lua: Beatmap.add_post_pass shader not found '%s'", shader_name)
         return 0
     }
 
@@ -2218,7 +2223,7 @@ luaapi_beatmap_add_post_pass :: proc "c" (L: ^lua.State) -> i32 {
     } else if dst_name != "screen" {
         dfb, dst_found := mapset_render_target_fb(dst_name)
         if !dst_found {
-            notify_error("lua: Beatmap.add_post_pass dst render target not found '%s'", dst_name)
+            notify_warn("lua: Beatmap.add_post_pass dst render target not found '%s'", dst_name)
             return 0
         }
         dst = dfb
@@ -2246,7 +2251,7 @@ luaapi_beatmap_add_post_pass :: proc "c" (L: ^lua.State) -> i32 {
             pass.src[pass.src_count] = slot
             pass.src_count += 1
         } else {
-            notify_error("lua: Beatmap.add_post_pass src not found '%s'", name)
+            notify_warn("lua: Beatmap.add_post_pass src not found '%s'", name)
         }
     }
 

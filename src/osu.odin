@@ -69,6 +69,7 @@ game: struct {
     
     ui_timeline: UI_Timeline,
     hit_error_bar: Hit_Error_Bar,
+    ui_scale: f32,
 
     // note(isak): managed sounds to be used with the game_sound_* api. we create BASS streams
     // from samples, and then BASS handles the rest - not quite sure if we can further reuse sound data
@@ -629,8 +630,8 @@ osu_on_update :: proc(dt: f64) {
         render_timeline_clipspace(&game.ui_timeline)
 
         push_text(&window.renderer, "Edit mode",
-            pos     = {window.rect.w / 2, 30},
-            size    = 24,
+            pos     = {window.rect.w / 2, uisc(30)},
+            size    = uisc(24),
             color   = {255, 255, 255, 150},
             align_h = .Center,
             align_v = .Bottom)
@@ -659,14 +660,14 @@ osu_on_update :: proc(dt: f64) {
             
         prompt := strings.concatenate({"Rebinding: ", rebindable_input_key_names[game.input.rebinding_key]}, context.temp_allocator)
         push_text(&window.renderer, prompt,
-            pos = {window.rect.w / 2, window.rect.h / 2 - 12},
-            size = 16,
+            pos = {window.rect.w / 2, window.rect.h / 2 - uisc(12)},
+            size = uisc(16),
             color = {255, 255, 255, 150},
             align_h = .Center,
             align_v = .Middle)
         push_text(&window.renderer, "Press any key...",
-            pos = {window.rect.w / 2, window.rect.h / 2 + 12},
-            size = 16,
+            pos = {window.rect.w / 2, window.rect.h / 2 + uisc(12)},
+            size = uisc(16),
             color = {255, 255, 255, 150},
             align_h = .Center,
             align_v = .Middle)

@@ -25,6 +25,11 @@ VertexShader: builtin.quad
 FragmentShader: composite.fs.glsl
 BlendMode: Additive
 
+[[mesh]]
+VertexShader: mesh.vs.glsl
+FragmentShader: mesh.fs.glsl
+BlendMode: Alpha
+
 [Buffers]
 [[my_model]]
 Source: Crate1.gltf
@@ -35,6 +40,9 @@ Size: 4096
 [RenderTargets]
 [[scene]]
 Format: rgba16f
+Depth: 1
+
+[[mesh_scene]]
 Depth: 1
 
 [[bloom_a]]

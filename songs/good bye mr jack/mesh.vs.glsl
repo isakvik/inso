@@ -4,17 +4,17 @@
 #extension GL_NV_gpu_shader5 : enable
 #endif
 
+// note: matches the tightly-packed Odin Mesh_Vertex (pos/norm/uv, 32 bytes). declaring vec3
+// members here would pad to std430 16-byte alignment and desync from the cpu layout, so we
+// spell the fields out as scalar floats.
 struct Vertex {
-    vec3 pos;
-    vec3 norm;
-    vec2 uv;
+    float px, py, pz;
+    float nx, ny, nz;
+    float u, v;
 };
 
 layout(binding = 1, std430) readonly buffer vertexData {
     Vertex vertices[];
-};
-layout(binding = 2, std430) readonly buffer indexData {
-    uint indices[];
 };
 layout (binding = 3, std140) uniform globalData {
     mat3 t;
@@ -23,35 +23,42 @@ layout (binding = 3, std140) uniform globalData {
     float circleSizeOsupx;
     vec2 cursorPos;
     vec2 resolution;
-    mat4 mvp;
 };
 
 out vec3 norm;
 out vec2 uv;
-out vec4 color;
-flat out uint texIndex;
+
+mat3 rotateY(float a) {
+    float c = cos(a), s = sin(a);
+    return mat3(c, 0, -s, 0, 1, 0, s, 0, c);
+}
+mat3 rotateX(float a) {
+    float c = cos(a), s = sin(a);
+    return mat3(1, 0, 0, 0, c, s, 0, -s, c);
+}
 
 void main() {
-    Quad q = vertices[gl_VertexID / 6];
+    Vertex vert = vertices[gl_VertexID];
+    vec3 pos = vec3(vert.px, vert.py, vert.pz);
+    vec3 nrm = vec3(vert.nx, vert.ny, vert.nz);
 
-    uint i = instanceToIndex[gl_VertexID % 6];
-    uint right =  (i & 1);
-    uint bottom = ((i >> 1) & 1);
+    mat3 model = rotateY(time * 0.0011) * rotateX(time * 0.0007);
+    vec3 world = model * pos;
+    world.z -= 4.0; // push the unit cube in front of the camera at the origin
 
-    vec2 q_pos[2] = {q.pos_min, q.pos_max};
-    vec2 q_uvs[2] = {q.uv_min, q.uv_max};
+    norm = model * nrm;
+    uv = vec2(vert.u, vert.v);
 
-    vec2 localPos = vec2(q_pos[right].x, q_pos[bottom].y);
-    vec2 center = (q.pos_min + q.pos_max) * 0.5;
-    float c = cos(radians(q.angle));
-    float s = sin(radians(q.angle));
-    mat2 rot = mat2(c, s, -s, c);
-    vec2 rotatedPos = center + rot * (localPos - center);
+    float aspect = resolution.x / resolution.y;
+    float f = 1.0 / tan(radians(45.0) * 0.5);
+    // note: keep near/far tight around the model so depth precision isn't wasted on empty space.
+    // the mesh renders into its own depth-cleared target, so it only ever competes with itself.
+    float near = 1.0, far = 20.0;
 
-    uv = vec2(q_uvs[right].x, q_uvs[bottom].y);
-    color = unpackUnorm4x8(q.color);
-    texIndex = q.texIndex;
-
-    vec3 pos = t * vec3(rotatedPos, 1.0);
-    gl_Position = vec4(pos.xy, 0.0, 1.0);
+    // right-handed perspective, looking down -z
+    gl_Position = vec4(
+        world.x * f / aspect,
+        world.y * f,
+        world.z * (far + near) / (near - far) + (2.0 * far * near) / (near - far),
+        -world.z);
 }

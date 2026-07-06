@@ -26,6 +26,21 @@ local rand = load_file("rand.lua")
 
 
 function on_init()
+    -- 3d mesh: render the crate into its own depth-cleared target ("mesh_scene", declared with
+    -- Depth: 1) so it self-occludes with real depth instead of fighting the flat 2d depth plane,
+    -- then composite that target back over the 2d layers as a fullscreen quad on OVERLAY. the
+    -- crate's own layer (FOREGROUND) only controls when it draws into the offscreen target.
+    crate = Element.new()
+        :set_shader("mesh")
+        :set_mesh("my_model")
+        :set_render_target("mesh_scene")
+    crate_drawable = Drawable.new(crate, 0, 1e12, Layer.FOREGROUND)
+
+    mesh_composite = Element.new()
+        :set_tex("mesh_scene")
+    mesh_composite_drawable = Drawable.new(mesh_composite, 0, 1e12, Layer.OVERLAY)
+        :set_fullscreen(true)
+
     a = Animation.new()
         :scale(0, 1, 1,1, 8,8, Tween.CUBIC_OUT)
         :color(0, 1, Color.rgba(255,0,0,255), Color.rgba(0,0,0,0))

@@ -155,8 +155,10 @@ window_init :: proc(rect: Rect, mode: Window_Mode) {
 }
 
 window_on_resize :: proc(new_w, new_h: i32) {
+    window.resized = true
     window.rect.w = f32(new_w)
     window.rect.h = f32(new_h)
+    
     maximized := .MAXIMIZED in sdl.GetWindowFlags(window.handle)
     if window.mode == .WINDOWED && !maximized {
         game.user_config.window_width = f32(new_w)
@@ -167,7 +169,8 @@ window_on_resize :: proc(new_w, new_h: i32) {
     window.swapchain.height = new_h
     window.aspect_ratio = window.rect.h / window.rect.w
     window.screenspace_transform = transform_from_bounds({0, 0, window.rect.w, window.rect.h}, 1)
-    
+    ui_scale_recompute()
+
     game.playfield_transform = playfield_build_transform()
     game.playfield_dirty_transform = false
     

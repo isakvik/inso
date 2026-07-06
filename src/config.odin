@@ -32,6 +32,7 @@ User_Configuration :: struct {
     
     bg_dim: f32, // note(isak): 0 = background fully visible, 1 = fully black
     playfield_border_opacity: f32,
+    ui_scale: f32,
     
     keys: [Rebindable_Input_Key]sdl.Scancode,
 }
@@ -97,6 +98,9 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         if v, ok := get(gen, "playfield_border_opacity"); ok {
             if f, ok2 := strconv.parse_f32(v); ok2 do result.playfield_border_opacity = f
         }
+        if v, ok := get(gen, "ui_scale"); ok {
+            if f, ok2 := strconv.parse_f32(v); ok2 do result.ui_scale = f
+        }
         for key in Rebindable_Input_Key {
             if key == .NONE do continue
             if v, ok := get(gen, rebindable_input_key_names[key]); ok {
@@ -127,6 +131,7 @@ config_save :: proc(path: string) {
     ini.write_pair(w, "raw_input_enabled",        game.user_config.raw_input_enabled)
     ini.write_pair(w, "bg_dim",                   game.user_config.bg_dim)
     ini.write_pair(w, "playfield_border_opacity", game.user_config.playfield_border_opacity)
+    ini.write_pair(w, "ui_scale",                 game.user_config.ui_scale)
     for key in Rebindable_Input_Key {
         if key == .NONE do continue
         ini.write_pair(w, rebindable_input_key_names[key], int(game.user_config.keys[key]))
@@ -159,6 +164,7 @@ config_supply_default :: proc() -> (result: User_Configuration) {
         cursor_size_multiplier   = 1.0,
         cursor_sensitivity       = 1.0,
         playfield_border_opacity = 0.0,
+        ui_scale                 = 1.0,
     }
     result.keys[.K1] = .Z
     result.keys[.K2] = .X

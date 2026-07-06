@@ -780,7 +780,11 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
 
     target := element.render_target
     if target == 0 {
-        target = game.active_mapset.layer_capture[d.layer]
+        // note(isak): resolve through r_layer_framebuffer so a drawable lands in the same target as
+        // the rest of its layer, including the DEFAULT->BACKBUFFER redirect for full-frame-capture
+        // maps. binding layer_capture directly punched drawables straight to the screen, bypassing
+        // the backbuffer everything else on the layer draws into.
+        target = r_layer_framebuffer(d.layer).write
     }
     r_bind_framebuffer({ write = target })
 
@@ -911,9 +915,10 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
         radius_osupx       = r,
     })
     
-    // note(isak): the body composite bypasses render_drawable, so it has to opt into the
-    // HITOBJECTS capture target by hand; 0 (no capture) leaves it writing to the screen.
-    slider_write_target := game.active_mapset.layer_capture[.HITOBJECTS]
+    // note(isak): the body composite bypasses render_drawable, so it resolves the HITOBJECTS target
+    // by hand through r_layer_framebuffer to match the rest of the layer: a capture target when
+    // captured, the backbuffer for full-frame-capture maps, else the screen.
+    slider_write_target := r_layer_framebuffer(.HITOBJECTS).write
     r_bind_framebuffer({ read = builtin_framebuffer(.SLIDERS), write = slider_write_target })
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
     r_bind_pipeline({ pipeline = builtin_pipeline_slot(.QUAD) })

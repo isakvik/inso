@@ -188,8 +188,6 @@ process_hitobject_hittesting :: proc(visible_hobjs: []Hitobject, map_time: f64) 
     }
 }
 
-// note(isak): editor auto-play. hits each object exactly at its start time (perfect timing) the frame its
-// start crosses the playhead, reusing the normal judgement/hitsound path
 editor_auto_hit :: proc(visible_hobjs: []Hitobject, map_time: f64) {
     last_time := game.beatmap.auto_last_hit_time_ms
     for &hobj in visible_hobjs {
@@ -353,7 +351,8 @@ followpoint_emit :: proc(beatmap: ^Beatmap, conn: ^Followpoint_Connection, map_t
     end_pos   := hitobject_pos(to)
     delta     := end_pos - start_pos
     distance  := math.sqrt(delta.x*delta.x + delta.y*delta.y)
-    if distance < FOLLOWPOINT_SPACING_OSUPX * 2 do return // note(isak): objects are basically stacked
+    if distance < FOLLOWPOINT_SPACING_OSUPX * 2 do return
+    if distance > FOLLOWPOINT_SPACING_OSUPX * 512 do return // note(isak): too long distance
 
     start_time := from.end_time_ms
     duration   := to.start_time_ms - start_time
@@ -371,13 +370,12 @@ followpoint_emit :: proc(beatmap: ^Beatmap, conn: ^Followpoint_Connection, map_t
         fade_out := clamp((fade_out_time + FOLLOWPOINT_FADE_MS - map_time) / FOLLOWPOINT_FADE_MS, 0, 1)
         alpha    := f32(min(fade_in, fade_out))
 
-        // note(isak): lead-in - each point slides up to its slot and shrinks from 1.5x, easing out
+        // todo(isak): unused leadin animation (like the osu default skin. not sure if this is versioned...)
         move_t := tween_apply(.QUAD_OUT, f32(clamp((map_time - fade_in_time) / FOLLOWPOINT_MOVE_MS, 0, 1)))
         slot   := fraction + FOLLOWPOINT_LEAD_FRACTION * 1 //(move_t - 1)
         scale  := f32(0.58)
 
-        // note(isak): the frame animation plays once across the point's preempt window, so a 10-frame
-        // followpoint with the default 800ms preempt spends 80ms per frame - skinners pace it by frame count
+        // note(isak): handle animation frames
         tex_override: u32
         if frame_count > 1 {
             progress := (map_time - fade_in_time) / FOLLOWPOINT_PREEMPT_MS

@@ -54,6 +54,7 @@ window: struct {
     slider_instance_store: GL_Buffer(vec2),
 
     text_store: GL_Triple_Buffer(Glyph_Quad),
+    transform_store: GL_Triple_Buffer(Transform),
 
     shader_global_buffer: GL_Uniform_Buffer(Shader_Globals),
     slider_param_store: GL_Triple_Buffer(Slider_Params_Slot),

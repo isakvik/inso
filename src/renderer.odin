@@ -19,6 +19,13 @@ import slog "vendor:sokol/log"
 MAX_BATCH_VERTICES :: 64*1024
 MAX_SLIDER_INSTANCES :: 16 * 1024 * 1024
 MAX_SLIDER_DRAWS :: 4096
+MAX_TRANSFORMS_PER_FRAME :: 4096
+
+// note(isak): fixed slots at the start of every frame's transform ring. clipspace serves the
+// static fullscreen quads (post passes bake index 0 at creation), screenspace serves all text.
+TRANSFORM_SLOT_CLIPSPACE :: 0
+TRANSFORM_SLOT_SCREENSPACE :: 1
+TRANSFORM_RESERVED_SLOTS :: 2
 MAX_TEXTURE_HANDLES :: 1024
 MAX_TEXTURE_UNITS :: 16
 
@@ -45,7 +52,9 @@ Quad :: struct {
     tex_layer: f32,
     color:     u32,
     tex_index: u32,
-    angle:     f32
+    angle:     f32,
+    transform_index: u32, // slot in the frame's transform ring (TRANSFORMS bind slot)
+    __padding: u32, // note(isak): std430 rounds the struct to vec2 alignment (56 bytes)
 }
 
 Slider_Vertex :: struct {
@@ -81,7 +90,7 @@ Shader_Globals :: struct {
     resolution: [2]f32,
 }
 
-Layer_State_Field :: enum { FRAMEBUFFER, PIPELINE, TRANSFORM, SCISSOR }
+Layer_State_Field :: enum { FRAMEBUFFER, PIPELINE, SCISSOR }
 
 /*
     note(isak): layers are processed sequentially via the command buffer system (for transparency blending purposes). 
@@ -91,7 +100,6 @@ Layer_State_Field :: enum { FRAMEBUFFER, PIPELINE, TRANSFORM, SCISSOR }
 Layer_Render_State :: struct {
     framebuffer: Command_Bind_Framebuffer,
     pipeline:    Command_Bind_Pipeline,
-    transform:   Transform,
     scissor:     Command_Scissor_Mode,
     ssbo:        [Shader_SSBO_Bind_Slot]Command_Bind_SSBO,
 
@@ -108,7 +116,10 @@ Renderer :: struct {
 
     circle_geometry: Buffer(Slider_Vertex),
 
-    transform_queue: queue.Queue(Transform),
+    // note(isak): per-frame transform ring; quads and glyphs reference slots by index, so
+    // changing transforms never splits a draw or touches a buffer the GPU is reading
+    transforms: Buffer(Transform),
+    current_transform_index: u32,
 
     layer_command_queues: [Layer]queue.Queue(u8),
 
@@ -225,6 +236,7 @@ renderer_init :: proc() {
 
     window.quad_store = tbo_init(Quad, MAX_BATCH_VERTICES)
     window.text_store = tbo_init(Glyph_Quad, MAX_BATCH_VERTICES)
+    window.transform_store = tbo_init(Transform, MAX_TRANSFORMS_PER_FRAME)
 
     window.slider_instance_store = sbo_init(vec2, MAX_SLIDER_INSTANCES)
     window.fullscreen_store = sbo_init(Quad, MAX_POST_PASSES)
@@ -285,6 +297,7 @@ renderer_init :: proc() {
 
     renderer.slider_instances = buffer_init(MAX_SLIDER_INSTANCES, window.slider_instance_store.data)
     renderer.slider_params.size = MAX_SLIDER_DRAWS
+    renderer.transforms.size = MAX_TRANSFORMS_PER_FRAME
 
     for layer in Layer {
         alloc_err: runtime.Allocator_Error
@@ -298,6 +311,7 @@ renderer_init :: proc() {
 renderer_cleanup :: proc() {
     tbo_cleanup(&window.quad_store)
     tbo_cleanup(&window.text_store)
+    tbo_cleanup(&window.transform_store)
     tbo_cleanup(&window.slider_param_store)
     ubo_cleanup(&window.user_param_buffer)
     ubo_cleanup(&window.post_param_buffer)
@@ -500,8 +514,6 @@ pipeline_reinit :: proc(pipeline: ^sg.Pipeline, pipeline_desc: sg.Pipeline_Desc)
 Command_Type :: enum(u8) {
     CLEAR,
     COLOR_MASK,
-    PUSH_TRANSFORM,
-    POP_TRANSFORM,
     DRAW,
     DRAW_SLIDER,
     DRAW_MESH,
@@ -523,10 +535,6 @@ Command_Clear :: struct {
 
 Command_Color_Mask :: struct {
     r, g, b, a: bool
-}
-
-Command_Push_Transform :: struct {
-    transform: Transform
 }
 
 Command_Draw :: struct {
@@ -582,8 +590,6 @@ Draw_Texture_Units :: struct {
 
 command_push_clear             :: proc(cmd: Command_Clear) -> bool { return _command_push(cmd, .CLEAR) }
 command_push_color_mask        :: proc(cmd: Command_Color_Mask) -> bool { return _command_push(cmd, .COLOR_MASK) }
-command_push_push_transform    :: proc(cmd: Command_Push_Transform) -> bool { return _command_push(cmd, .PUSH_TRANSFORM) }
-command_push_pop_transform     :: proc() -> bool { return _command_push_header(.POP_TRANSFORM) }
 command_push_draw              :: proc(cmd: Command_Draw) -> bool { return _command_push(cmd, .DRAW) }
 command_push_draw_slider       :: proc(cmd: Command_Draw_Slider) -> bool { return _command_push(cmd, .DRAW_SLIDER) }
 command_push_draw_mesh         :: proc(cmd: Command_Draw_Mesh) -> bool { return _command_push(cmd, .DRAW_MESH) }
@@ -740,35 +746,47 @@ r_push_draw_slider :: proc(params: Slider_Params, instance_count: i32) {
     command_push_draw_slider({ instance_count = instance_count, param_index = u32(idx) })
 }
 
-// note(isak): clipspace transform maps the fullscreen_store quad ([0,1]) across the entire target
+// note(isak): the fullscreen_store quads ([0,1]) bake TRANSFORM_SLOT_CLIPSPACE at creation,
+// so they span the entire target without any transform state here
 r_post_pass :: proc(pass: Command_Post_Pass, after: Layer) {
     r_bind_layer(after)
-    r_push_transform(clipspace_transform)
     command_push_post_pass(pass)
 }
 
 /*
     note(isak): 2D transforms are tricky - we use them to define the coordinate system that spans the
-    window without distortion. we do these calculations on the GPU using the bounds rect and the 
-    aspect ratio of the window, which are uploaded using commit_transform.
+    window without distortion. we do these calculations on the GPU using the bounds rect and the
+    aspect ratio of the window.
 
     a rect of [0,0,1,1] means the points (0,0) and (1,1) would touch opposite corners of a square area
-    placed in the middle of the window (note: only when the aspect ratio <= 1). a rect of 
+    placed in the middle of the window (note: only when the aspect ratio <= 1). a rect of
     [0, 0, window_width, window_height ] is used with an aspect_ratio of 1 to create a pixel-perfect
     screen transform, such that w=1, h=1 corresponds to one pixel.
-*/
-r_push_transform :: proc(transform: Transform) {
-    layer_state := &window.renderer.layer_state[window.renderer.current_layer]
-    if .TRANSFORM in layer_state.emitted && transform == layer_state.transform do return
-    layer_state.transform = transform
-    layer_state.emitted += {.TRANSFORM}
-    window.renderer.current_global_data.transform = transform
-    window.renderer.new_draw_on_next_push = true
-    command_push_push_transform({transform})
-}
 
-r_pop_transform :: proc() {
-    // todo(isak) implement
+    transforms live in a per-frame ring buffer, and each quad carries the index of its slot, so
+    "pushing" one just selects the space subsequent quads are recorded in - no command is emitted,
+    no draw is split, and no GPU-visible buffer is written mid-frame. the lookback dedups the
+    handful of canonical spaces (playfield/screenspace/...) the frame alternates between.
+*/
+TRANSFORM_DEDUP_LOOKBACK :: 8
+
+r_push_transform :: proc(transform: Transform) {
+    renderer := &window.renderer
+    renderer.current_global_data.transform = transform
+
+    lookback := min(renderer.transforms.count, TRANSFORM_DEDUP_LOOKBACK)
+    for i in 1..=lookback {
+        slot := renderer.transforms.count - i
+        if renderer.transforms.data[slot] == transform {
+            renderer.current_transform_index = u32(slot)
+            return
+        }
+    }
+
+    assert(renderer.transforms.count < renderer.transforms.size, "transform ring overrun")
+    renderer.transforms.data[renderer.transforms.count] = transform
+    renderer.current_transform_index = u32(renderer.transforms.count)
+    renderer.transforms.count += 1
 }
 
 _r_push_scissor :: proc(cmd: Command_Scissor_Mode) {
@@ -874,11 +892,6 @@ r_set_circle_size_osupx :: proc(circle_size_osupx: f32) {
                           int(offset_of_by_string(Shader_Globals, "circle_size_osupx")), size_of(f32), &val)
 }
 
-commit_transform :: proc(transform: Transform) {
-    transform := transform
-    gl.NamedBufferSubData(window.shader_global_buffer.id, 0, size_of(transform), &transform)
-}
-
 batch_begin :: proc(renderer: ^Renderer) {
     for &ls in renderer.layer_state {
         ls.emitted      = {}
@@ -894,6 +907,12 @@ batch_begin :: proc(renderer: ^Renderer) {
     renderer.slider_params.data = tbo_advance_and_get(&window.slider_param_store)
     renderer.slider_params.count = 0
 
+    renderer.transforms.data = tbo_advance_and_get(&window.transform_store)
+    renderer.transforms.data[TRANSFORM_SLOT_CLIPSPACE] = clipspace_transform
+    renderer.transforms.data[TRANSFORM_SLOT_SCREENSPACE] = window.screenspace_transform
+    renderer.transforms.count = TRANSFORM_RESERVED_SLOTS
+    r_push_transform(renderer.current_global_data.transform)
+
     if !window.bindless_supported {
         texture_unit_map_reset(&renderer.texture_unit_map)
         renderer.current_draw_tex_units = nil
@@ -906,6 +925,7 @@ batch_end :: proc(renderer: ^Renderer) {
     tbo_lock(&window.quad_store)
     tbo_lock(&window.text_store)
     tbo_lock(&window.slider_param_store)
+    tbo_lock(&window.transform_store)
 
     if window.bindless_supported {
         sbo_bind(&window.texture_buffer, u32(Shader_SSBO_Bind_Slot.TEXTURES))
@@ -916,6 +936,7 @@ batch_end :: proc(renderer: ^Renderer) {
     ubo_bind(&window.shader_global_buffer, u32(Shader_SSBO_Bind_Slot.TRANSFORM))
     sbo_bind(&window.slider_instance_store, u32(Shader_SSBO_Bind_Slot.INSTANCE_BUFFER))
     ubo_bind(&window.user_param_buffer, u32(Shader_SSBO_Bind_Slot.USER_PARAMS))
+    tbo_bind(&window.transform_store, u32(Shader_SSBO_Bind_Slot.TRANSFORMS))
 
     batch_process_command_buffer(renderer)
 }
@@ -994,23 +1015,6 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 case .COLOR_MASK: {
                     cmd := _command_consume(&command_queue, Command_Color_Mask)
                     gl.ColorMask(cmd.r, cmd.g, cmd.b, cmd.a)
-                }
-                case .PUSH_TRANSFORM: {
-                    cmd := _command_consume(&command_queue, Command_Push_Transform)
-                    commit_transform(cmd.transform)
-                    
-                    if (trace) { 
-                        fmt.println("  push xform", cmd.transform) 
-                    }
-                }
-                case .POP_TRANSFORM: {
-                    assert(false)
-
-                    // todo(isak) implement
-                    
-                    if (trace) { 
-                        fmt.println("  pop xform")
-                    }
                 }
                 case .DRAW: {
                     cmd := _command_consume(&command_queue, Command_Draw)
@@ -1190,7 +1194,8 @@ r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, u
             tex_layer = layer,
             color = transmute(u32)color,
             tex_index = resolved_tex_index,
-            angle = angle
+            angle = angle,
+            transform_index = window.renderer.current_transform_index,
         }
 
         geometry.count += 1

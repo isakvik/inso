@@ -22,6 +22,7 @@ app: struct {
 
     disable_raw_input: bool,
 
+    debug_display_frame_graph:      bool,
     debug_display_frame_profiler:   bool,
     debug_display_memory_profiler:  bool,
     debug_display_fontatlas:        bool, // todo(isak): never written to

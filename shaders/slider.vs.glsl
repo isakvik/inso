@@ -14,16 +14,8 @@ layout(binding = 1, std430) readonly buffer sliderVertexData {
 layout(binding = 5, std430) readonly buffer sliderInstanceData {
     vec2 points[];
 };
-layout (binding = 3, std140) uniform globalData {
-    mat3 t;
-    mat3 playfieldTransform;
-    float time;
-    float circleSizeOsupx;
-    vec2 cursorPos;
-    vec2 resolution;
-};
-
 layout (binding = 6, std140) uniform sliderParams {
+    mat3 transform;
     vec4 border_color;
     vec4 body_color;
     vec2 script_translation_osupx;
@@ -36,7 +28,7 @@ out float color;
 void main() {
     Vertex v = vertices[gl_VertexID];
     vec2 ppos = vec2(v.pos.x, v.pos.y) + (points[baseInstance + gl_InstanceID] + script_translation_osupx) / radiusOsupx;
-    vec3 pos = t * vec3(ppos, 1.0);
+    vec3 pos = transform * vec3(ppos, 1.0);
 
     color = 1.0 - length(v.pos.xy); // true radial distance: 0 at edge, 1 at center
     gl_Position = vec4(pos.x, pos.y, 1.0 - v.pos.z, 1.0);

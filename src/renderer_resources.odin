@@ -100,6 +100,7 @@ Shader_SSBO_Bind_Slot :: enum u32 {
     USER_6,
     USER_7,
     POST_PARAMS,   // post-pass src texture slots UBO; binding 16
+    TRANSFORMS,    // per-frame transform ring SSBO, indexed by Quad/Glyph_Quad transform_index; binding 17
 }
 
 // note(isak): always-bound UBO for Lua-accessible shader params (Shader.set_param / set_vec4).
@@ -119,6 +120,7 @@ Post_Pass_Params :: struct #align(16) {
 
 // note(isak): per-draw slider params, one slot per DRAW_SLIDER command
 Slider_Params :: struct {
+    transform:          Transform, // slider-space -> ndc; sliders don't use the frame transform ring
     border_color:       vec4,
     body_color:         vec4,
     script_translation: vec2,  // osupx, applied in VS before coord normalization

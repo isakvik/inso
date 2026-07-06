@@ -115,8 +115,6 @@ Hitobject_Flag :: enum {
     NO_FOLLOWPOINT_OUT, // note(isak): suppress the followpoint leaving this object
 }
 
-// note(isak): the osu hitSound bitmask, transmutable from the parsed byte. the format sets NORMAL
-// but a normal hit always plays regardless; whistle/finish/clap are additions on top
 Hitsound_Flags :: distinct bit_set[Hitsound_Flag; u8]
 Hitsound_Flag :: enum u8 {
     NORMAL,

@@ -2278,6 +2278,7 @@ luaapi_beatmap_add_post_pass :: proc "c" (L: ^lua.State) -> i32 {
         uv_max    = {1, 1},
         color     = transmute(u32)color_white,
         tex_index = quad_tex_index,
+        transform_index = TRANSFORM_SLOT_CLIPSPACE,
     }
 
     append(&mapset.post_passes, pass)

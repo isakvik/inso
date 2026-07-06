@@ -17,6 +17,8 @@ struct Quad {
     uint color;
     uint texIndex;
     float angle;
+    uint transformIndex;
+    uint _pad;
 };
 
 layout(binding = 1, std430) readonly buffer vertexData {
@@ -25,13 +27,8 @@ layout(binding = 1, std430) readonly buffer vertexData {
 layout(binding = 2, std430) readonly buffer indexData {
     uint indices[];
 };
-layout (binding = 3, std140) uniform globalData {
-    mat3 t;
-    mat3 playfieldTransform;
-    float time;
-    float circleSizeOsupx;
-    vec2 cursorPos;
-    vec2 resolution;
+layout(binding = 17, std430) readonly buffer transformData {
+    mat3 transforms[];
 };
 
 out vec4 color;
@@ -61,6 +58,6 @@ void main() {
     color = unpackUnorm4x8(q.color);
     texIndex = q.texIndex;
 
-    vec3 pos = t * vec3(rotatedPos, 1.0);
+    vec3 pos = transforms[q.transformIndex] * vec3(rotatedPos, 1.0);
     gl_Position = vec4(pos.xy, 0.0, 1.0);
 }

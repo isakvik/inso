@@ -43,7 +43,8 @@ Glyph_Quad :: struct {
     uv_min:  [2]f32,
     uv_max:  [2]f32,
     color:   [4]u8,
-    __padding: [3]u32
+    transform_index: u32, // always TRANSFORM_SLOT_SCREENSPACE: push_text takes screen pixels
+    __padding: [2]u32
 }
 
 // note(isak) @release: arial unicode ships with some microsoft products and contains pretty much everything, but
@@ -160,7 +161,8 @@ push_text :: proc(
             pos_max = {quad.x1, quad.y1},
             uv_min  = {quad.s0, quad.t0},
             uv_max  = {quad.s1, quad.t1},
-            color   = color
+            color   = color,
+            transform_index = TRANSFORM_SLOT_SCREENSPACE,
         })
     }
     

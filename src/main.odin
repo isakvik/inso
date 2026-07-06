@@ -431,6 +431,8 @@ main :: proc() {
             if app.debug_display_frame_profiler {
                 profiler_push_blocks_as_text(renderer, frame_count)
                 profiler_push_gpu_blocks_as_text(renderer)
+            }
+            if app.debug_display_frame_graph || app.debug_display_frame_profiler {
                 profiler_push_quad(&renderer.quad_geometry, frame_count)
             }
             if app.debug_display_memory_profiler {
@@ -512,7 +514,7 @@ main :: proc() {
             process_builtin_shader_changes(&shaders_watch)
             process_skins_watch(&skins_watch)
 
-            if app.debug_display_frame_profiler {
+            if app.debug_display_frame_graph || app.debug_display_frame_profiler {
                 profiler_write_texture_column(frame_count, window.profiler_texture)
             }
             
@@ -572,8 +574,6 @@ begin_frame :: proc(renderer: ^Renderer) {
     for &layer_state in window.renderer.layer_state {
         layer_state.scissor = Command_Scissor_Mode{0, 0, i32(window.rect.w), i32(window.rect.h)}
     }
-
-    renderer.transform_queue.len = 0
 
     if app.ui_enabled {
         imgui_gl3.NewFrame()
@@ -843,8 +843,9 @@ handle_debug_ui_events :: proc() {
         window.renderer.trace_frame = !window.renderer.trace_frame
     }
     if key_is_pressed(.F2) {
-        app.debug_display_slider_bounds = !app.debug_display_slider_bounds
-        app.debug_display_playfield_cursor = app.debug_display_slider_bounds
+        app.debug_display_frame_graph = !app.debug_display_frame_graph
+        //app.debug_display_slider_bounds = !app.debug_display_slider_bounds
+        //app.debug_display_playfield_cursor = app.debug_display_slider_bounds
     }
     if key_is_pressed(.F3) {
         app.debug_display_frame_profiler = !app.debug_display_frame_profiler

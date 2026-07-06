@@ -877,7 +877,6 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
         slider_rect.h / window.rect.h,
     }
 
-    r_push_transform(slider_pf_transform)
     r_bind_pipeline({ pipeline = builtin_pipeline_slot(.SLIDER) })
     r_bind_framebuffer({ write = builtin_framebuffer(.SLIDERS) })
     r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
@@ -910,6 +909,7 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     body_rgb   := game.active_skin.slider_track_override.a != 0 ? game.active_skin.slider_track_override : color_white
 
     r_push_draw_slider(Slider_Params{
+        transform          = slider_pf_transform,
         border_color       = color_to_vec(with_alpha(border_rgb, 0.9)),
         body_color         = color_to_vec(with_alpha(body_rgb, 0.7)),
         script_translation = translation,

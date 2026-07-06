@@ -42,7 +42,9 @@
       "Bash(cmd.exe /c \"odin check src -define:SOKOL_USE_GL=true -no-entry-point\")",
       "Bash(cmd.exe /c \"odin version\")",
       "Bash(cmd.exe *)",
-      "Bash(command xargs command grep -l \"package slotmap\")"
+      "Bash(command xargs command grep -l \"package slotmap\")",
+      "Bash(echo \"--- stragglers: $?\")",
+      "Bash(echo \"--- fs quad decls: $?\")"
     ]
   }
 }

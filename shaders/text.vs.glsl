@@ -10,6 +10,7 @@ struct GlyphQuad {
     vec2 uv_min;
     vec2 uv_max;
     uint color;
+    uint transformIndex;
 };
 
 struct Vertex {
@@ -21,13 +22,8 @@ layout(binding = 1, std140) readonly buffer vertexData {
     GlyphQuad vertices[];
 };
 
-layout (binding = 3, std140) uniform globalData {
-    mat3 t;
-    mat3 playfieldTransform;
-    float time;
-    float circleSizeOsupx;
-    vec2 cursorPos;
-    vec2 resolution;
+layout(binding = 17, std430) readonly buffer transformData {
+    mat3 transforms[];
 };
 
 out vec4 color;
@@ -58,5 +54,5 @@ void main() {
     texIndex = 0; // local unit; font atlas bound to unit 0 for text draws
 #endif
 
-    gl_Position = vec4(t * vec3(v.pos, 1.0), 1.0);
+    gl_Position = vec4(transforms[q.transformIndex] * vec3(v.pos, 1.0), 1.0);
 }

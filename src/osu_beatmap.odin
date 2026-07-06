@@ -90,6 +90,10 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     }
     
     // map logic init
+
+    game.active_map.diff_circle_size *= 0.5
+    game.active_map.diff_approach_rate *= 0.5
+    game.active_map.diff_overall_difficulty *= 0.5
     
     beatmap.circle_radius_osupx = convert_circle_size_to_radius_osupx(game.active_map.diff_circle_size)
     beatmap.preempt_ms = convert_approach_rate_to_preempt_ms(game.active_map.diff_approach_rate)

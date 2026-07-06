@@ -293,6 +293,9 @@ main :: proc() {
                     window_on_resize(max(event.window.data1, 1), max(event.window.data2, 1))
                     prepare_textures_for_rendering()
 
+                case sdl.EventType.WINDOW_PIXEL_SIZE_CHANGED:
+                    window.pixel_density = sdl.GetWindowPixelDensity(window.handle)
+
                 case sdl.EventType.WINDOW_FOCUS_GAINED:
                     window.focused = true
                     imgui.IO_AddFocusEvent(imgui.GetIO(), true)
@@ -473,7 +476,7 @@ main :: proc() {
                     f32(time_s_since_beginning_of_program()))
             }
 
-            notifications_draw(renderer)
+            notify_draw(renderer)
 
             push_text(renderer, VERSION,
                 pos     = {window.rect.w / 2, window.rect.h - 8},

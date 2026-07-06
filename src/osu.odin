@@ -987,7 +987,7 @@ game_sounds_clear :: proc() {
     slotmap.destroy(&game.sounds)
     vmem.arena_free_all(&memory.arenas[.SOUND])
     slotmap.init(&game.sounds, allocator = memory.allocators[.SOUND], capacity = 128)
-    null_sound_handle := slotmap.insert(&game.sounds, null_sound)
+    _ = slotmap.insert(&game.sounds, null_sound)
 
     sb.init(&game.expiring_sounds, capacity = 64, allocator = memory.allocators[.SOUND])
 

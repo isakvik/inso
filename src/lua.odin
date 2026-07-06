@@ -230,7 +230,7 @@ lua_number :: proc "c" (at: i32) -> lua.Number { return lua.L_checknumber(lua_be
 lua_boolean :: proc "c" (at: i32) -> b32 { return lua.toboolean(lua_beatmap.state, lua.Index(at)) }
 lua_string :: proc "c" (at: i32) -> string {
     len: uint
-    ptr := transmute(^u8)lua.L_checklstring(lua_beatmap.state, at, &len)
+    ptr := cast(^u8)lua.L_checklstring(lua_beatmap.state, at, &len)
     return string(slice.from_ptr(ptr, int(len)))
 }
 

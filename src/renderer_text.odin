@@ -135,7 +135,7 @@ push_text :: proc(
 ) {
     state := fs.__getState(&text_engine.ctx)
     state^ = {
-        size    = size * sdl.GetWindowPixelDensity(window.handle),
+        size    = size * window.pixel_density,
         blur    = blur,
         spacing = spacing,
         font    = int(font),

@@ -133,7 +133,7 @@ mouse_init :: proc() {
 
 mouse_get_position_relative_to_window :: proc() -> (result: vec2) {
     xi, yi: i32
-    mouse_flags := sdl.GetGlobalMouseState(&result.x, &result.y)
+    _ = sdl.GetGlobalMouseState(&result.x, &result.y)
     sdl.GetWindowPosition(window.handle, &xi, &yi)
 
     return {result.x - f32(xi), result.y - f32(yi)}

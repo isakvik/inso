@@ -455,12 +455,13 @@ sample_load_file :: proc(path: string, max_simultaneous: int = 8) -> (result: Sa
     result.handle = bass.SampleLoad(0, rawptr(path_cstr), 0, 0, u32(max_simultaneous),
         bass.SAMPLE_FLOAT | bass.SAMPLE_OVER_POS)
     if result.handle == 0 {
-        err := bass.ErrorGetCode()        
+        err := bass.ErrorGetCode()
+        // note(isak): 0kb / silent files are how osu maps mute a sound; treat them as a valid
+        // silent sample (zero handle). every play path already no-ops on handle 0.
         if err == bass.ERROR_EMPTY {
-            log.warn("BASS sample load warning: no samples in file", path)
-        } else {
-            log.error("BASS sample load error:", bass.ErrorGetCode(), "::", path)
+            return result, true
         }
+        log.error("BASS sample load error:", err, "::", path)
         return result, false
     }
     return result, true

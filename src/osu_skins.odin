@@ -27,7 +27,7 @@ Skin :: struct {
 }
 
 supported_image_extensions :: []string{".png", ".jpg"}
-supported_audio_extensions :: []string{".wav", ".ogg"}
+supported_audio_extensions :: []string{".wav", ".ogg", ".mp3"}
 
 
 // -- skin image elements

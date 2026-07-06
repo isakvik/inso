@@ -3,41 +3,17 @@ package notosu
 import q "core:container/queue"
 import "core:fmt"
 import "core:log"
-import "core:strings"
 
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
 import stbi "vendor:stb/image"
 
-Window_Mode :: enum {
-    FULLSCREEN,
-    BORDERLESS_FULLSCREEN,
-    WINDOWED,
-}
-
-window_mode_keys := [Window_Mode]string {
-    .FULLSCREEN = "fullscreen",
-    .BORDERLESS_FULLSCREEN = "borderless_fullscreen",
-    .WINDOWED = "windowed",
-}
-
-window_mode_display_names := [Window_Mode]cstring {
-    .FULLSCREEN = "Fullscreen",
-    .BORDERLESS_FULLSCREEN = "Borderless",
-    .WINDOWED = "Windowed",
-}
-
-window_mode_from_string :: proc(value: string) -> Window_Mode {
-    for key, i in window_mode_keys {
-        if key == value do return Window_Mode(i)
-    }
-    return .WINDOWED
-}
 
 window: struct {
     rect: Rect,
     aspect_ratio: f32, // note(isak): height over width
+    pixel_density: f32, // note(isak): cached SDL pixel density; refreshed on resize / dpi change
     screenspace_transform: Transform,
     renderer: Renderer,
 
@@ -102,14 +78,44 @@ window: struct {
     is_high_resolution: [Skin_Element_Type]bool
 }
 
+clipspace_transform := transform_from_bounds({0, 0, 1, 1}, 1)
+
+
+Window_Mode :: enum {
+    FULLSCREEN,
+    BORDERLESS_FULLSCREEN,
+    WINDOWED,
+}
+
+window_mode_keys := [Window_Mode]string {
+    .FULLSCREEN = "fullscreen",
+    .BORDERLESS_FULLSCREEN = "borderless_fullscreen",
+    .WINDOWED = "windowed",
+}
+
+window_mode_display_names := [Window_Mode]cstring {
+    .FULLSCREEN = "Fullscreen",
+    .BORDERLESS_FULLSCREEN = "Borderless",
+    .WINDOWED = "Windowed",
+}
+
+window_mode_from_string :: proc(value: string) -> Window_Mode {
+    for key, i in window_mode_keys {
+        if key == value do return Window_Mode(i)
+    }
+    return .WINDOWED
+}
+
+
 window_init :: proc(rect: Rect, mode: Window_Mode) {
     _platform_dpi_init()
 
     window.rect = rect
     window.handle = sdl.CreateWindow(
-        fmt.ctprintf("notosu! - v%s", VERSION), 
+        fmt.ctprintf("notosu! - v%s", VERSION),
         i32(rect.w), i32(rect.h), sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE | sdl.WINDOW_TRANSPARENT)
     window.aspect_ratio = f32(rect.h) / f32(rect.w)
+    window.pixel_density = sdl.GetWindowPixelDensity(window.handle)
 
     stbi.set_flip_vertically_on_load_thread(true)
     sdl.GL_SetAttribute(sdl.GL_CONTEXT_MAJOR_VERSION, 4)
@@ -158,6 +164,7 @@ window_on_resize :: proc(new_w, new_h: i32) {
     window.resized = true
     window.rect.w = f32(new_w)
     window.rect.h = f32(new_h)
+    window.pixel_density = sdl.GetWindowPixelDensity(window.handle)
     
     maximized := .MAXIMIZED in sdl.GetWindowFlags(window.handle)
     if window.mode == .WINDOWED && !maximized {
@@ -186,8 +193,6 @@ window_on_resize :: proc(new_w, new_h: i32) {
     }
 }
 
-clipspace_transform := transform_from_bounds({0, 0, 1, 1}, 1)
-
 window_set_mode :: proc(mode: Window_Mode) {
     window.mode = mode
 
@@ -197,14 +202,16 @@ window_set_mode :: proc(mode: Window_Mode) {
         sdl.SetWindowBordered(window.handle, true)
     case .BORDERLESS_FULLSCREEN:
         sdl.SetWindowFullscreen(window.handle, false)
-        sdl.SetWindowBordered(window.handle, true)
+        sdl.SetWindowBordered(window.handle, false)
         sdl.RestoreWindow(window.handle)
 
         display := sdl.GetDisplayForWindow(window.handle)
 
         bounds: sdl.Rect
         if sdl.GetDisplayBounds(display, &bounds) {
-            sdl.SetWindowSize(window.handle, bounds.w, bounds.h)
+            // note(isak): extend one row past the bottom of the monitor so our rect never exactly
+            // matches the display. an exact match makes DWM promote us to exclusive fullscreen
+            sdl.SetWindowSize(window.handle, bounds.w, bounds.h + 1)
             sdl.SetWindowPosition(window.handle, bounds.x, bounds.y)
         }
     case .WINDOWED:

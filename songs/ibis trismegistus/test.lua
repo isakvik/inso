@@ -30,16 +30,6 @@ function on_init()
     -- Depth: 1) so it self-occludes with real depth instead of fighting the flat 2d depth plane,
     -- then composite that target back over the 2d layers as a fullscreen quad on OVERLAY. the
     -- crate's own layer (FOREGROUND) only controls when it draws into the offscreen target.
-    crate = Element.new()
-        :set_shader("mesh")
-        :set_mesh("my_model")
-        :set_render_target("mesh_scene")
-    crate_drawable = Drawable.new(crate, 0, 1e12, Layer.FOREGROUND)
-
-    mesh_composite = Element.new()
-        :set_tex("mesh_scene")
-    mesh_composite_drawable = Drawable.new(mesh_composite, 0, 1e12, Layer.OVERLAY)
-        :set_fullscreen(true)
 
     a = Animation.new()
         :scale(0, 1, 1,1, 8,8, Tween.CUBIC_OUT)
@@ -116,7 +106,7 @@ function on_init()
         --hobj:hide()
         t = hobj:get_start_time()
     
-        --hobj:set_ar(9-i/100)
+        hobj:set_ar(9-i/2)
 
         hobj:set_slider_element(SliderPart.BALL, ball)
 

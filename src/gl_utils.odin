@@ -3,6 +3,7 @@ package notosu
 import "core:slice"
 import "core:strings"
 import "core:fmt"
+import "core:time"
 
 import gl "vendor:OpenGL"
 
@@ -213,17 +214,21 @@ tbo_init :: proc($T: typeid, count: int) -> GL_Triple_Buffer(T) {
     return result
 }
 
-tbo_wait :: proc(buf: ^GL_Triple_Buffer($T)) {
-    if buf.buffers[buf.current_index].sync != nil {
-        for true {
-            waitReturn := gl.ClientWaitSync(buf.buffers[buf.current_index].sync, gl.SYNC_FLUSH_COMMANDS_BIT, 0)
-            if (waitReturn == gl.ALREADY_SIGNALED ||
-                waitReturn == gl.CONDITION_SATISFIED ||
-                waitReturn == gl.WAIT_FAILED) {
-                break
-            }
-        }
+tbo_wait :: proc(buf: ^GL_Triple_Buffer($T)) -> (waited_ns: u64) {
+    synced := &buf.buffers[buf.current_index]
+    if synced.sync == nil do return 0
+
+    // note(isak): fast path - with 3 buffers in flight the fence is usually long signaled
+    result := gl.ClientWaitSync(synced.sync, gl.SYNC_FLUSH_COMMANDS_BIT, 0)
+    if result != gl.TIMEOUT_EXPIRED do return 0
+
+    // note(isak): the GPU still owns this buffer; block in 1ms slices instead of spinning
+    start := time.tick_now()
+    for result == gl.TIMEOUT_EXPIRED {
+        result = gl.ClientWaitSync(synced.sync, 0, 1_000_000)
     }
+    synced.wait_count += 1
+    return u64(time.tick_since(start))
 }
 
 tbo_lock :: proc(buf: ^GL_Triple_Buffer($T)) {
@@ -251,10 +256,10 @@ tbo_advance :: proc(buf: ^GL_Triple_Buffer($T)) {
     buf.count = 0
 }
 
-tbo_advance_and_get :: proc(buf: ^GL_Triple_Buffer($T)) -> []T {
+tbo_advance_and_get :: proc(buf: ^GL_Triple_Buffer($T)) -> (data: []T, waited_ns: u64) {
     tbo_advance(buf)
-    tbo_wait(buf)
-    return tbo_get_current_data(buf)
+    waited_ns = tbo_wait(buf)
+    return tbo_get_current_data(buf), waited_ns
 }
 
 tbo_cleanup :: proc(buf: ^GL_Triple_Buffer($T)) {

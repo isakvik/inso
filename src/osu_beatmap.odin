@@ -53,7 +53,6 @@ Beatmap :: struct {
     playfield_rotation_rad: f32,
     playfield_rotation_anchor_osupx: vec2,
 
-    deferred_activations: [dynamic]Deferred_Activation,
     followpoint_connections: [dynamic]Followpoint_Connection,
     followpoint_cursor: int, // note(isak): first connection not yet expired, reset on seeking backwards
 
@@ -93,6 +92,8 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     
     beatmap.circle_radius_osupx = convert_circle_size_to_radius_osupx(game.active_map.diff_circle_size)
     beatmap.preempt_ms = convert_approach_rate_to_preempt_ms(game.active_map.diff_approach_rate)
+    // note(isak): hitobject_set_preempt (lua) raises this above the global as custom preempts come in
+    beatmap.max_preempt_ms = beatmap.preempt_ms
     beatmap.timing_windows = convert_overall_difficulty_to_timing_window(game.active_map.diff_overall_difficulty)
     
     beatmap.length_ms = sound_get_length_ms(&beatmap.music)
@@ -144,11 +145,6 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
         lua_call_beatmap_func(lua_beatmap_event_names[.ON_INIT])
         lua_beatmap.in_init = false
     }
-
-    // note(isak): deferred activation list for objects with custom preempt (set by lua at init time).
-    // we exclude these from the visible set iterator since per-object preempt breaks monotonic ordering
-    allocate_deferred_activations(beatmap)
-    build_deferred_activations(beatmap)
 
     beatmap.followpoint_connections = make([dynamic]Followpoint_Connection, 0, len(beatmap.hitobjects), memory.allocators[.MAPSET])
     build_followpoint_connections(beatmap)
@@ -253,7 +249,6 @@ beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
         hobj.slider_state.gfx.ticks = {}
     }
     
-    delete(beatmap.deferred_activations)
     delete(beatmap.followpoint_connections)
     sb.destroy(&beatmap.phase_transitions)
     sb.destroy(&beatmap.map_expiring_gfx)

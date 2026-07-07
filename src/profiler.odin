@@ -30,6 +30,13 @@ profiler: struct {
     pixels: [profiler_h]u32,
     frame_pixel_count: i32,
 
+    // note(isak): time the CPU spent blocked on triple-buffer fences (tbo_wait). zero means
+    // the CPU never waits on the GPU outside the swap - full pipelining
+    buffer_wait_ns:   u64,
+    buffer_wait_hits: u32,
+    prev_frame_buffer_wait_ns:   u64,
+    prev_frame_buffer_wait_hits: u32,
+
     current_open_block: Trace_Blocks
 }
 
@@ -69,6 +76,14 @@ Trace_Block_Timer :: struct {
 profiler_begin_frame :: proc() {
     profiler.trace_points = {}
     profiler.start_tsc = sdl.GetPerformanceCounter()
+    profiler.buffer_wait_ns = 0
+    profiler.buffer_wait_hits = 0
+}
+
+profiler_note_buffer_wait :: proc(waited_ns: u64) {
+    if waited_ns == 0 do return
+    profiler.buffer_wait_ns += waited_ns
+    profiler.buffer_wait_hits += 1
 }
 
 profiler_end_frame :: proc() {
@@ -81,6 +96,8 @@ profiler_end_frame :: proc() {
         profiler.prev_frame_blocks_elapsed[profiler_block] =
             profiler.trace_points[profiler_block].elapsed_tsc
     }
+    profiler.prev_frame_buffer_wait_ns   = profiler.buffer_wait_ns
+    profiler.prev_frame_buffer_wait_hits = profiler.buffer_wait_hits
 }
 
 profiler_block_begin :: proc(block: Trace_Blocks) {

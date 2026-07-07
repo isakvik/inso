@@ -137,11 +137,6 @@ Phase_Transition :: struct {
     from, to: Hitobject_Phase,
 }
 
-Deferred_Activation :: struct {
-    hitobject_index: int,
-    visible_start_time_ms: f64,
-}
-
 Followpoint_Connection :: struct {
     from_index, to_index:  int, // note(isak): into beatmap.hitobjects; positions resolved live at emit
     visible_start_time_ms: f64, // note(isak): from.end_time - preempt; a coarse lower bound for culling
@@ -172,7 +167,6 @@ Hitobject :: struct {
     notelock_shake_at_ms: f64,
     custom_preempt_ms: f64, // note(isak): per-object approach time override. 0 = use global
     custom_radius_osupx: f32, // note(isak): per-object circle size override. 0 = use global
-    deferred_activation_index: int, // note(isak): index+1 into beatmap.deferred_activations. 0 = not in list
     custom_elements: [Hitobject_Phase][]Element_ID,
     custom_element_nums: [Hitobject_Phase]int,
     custom_hit_animation_len_ms: f64,
@@ -299,6 +293,17 @@ hitobject_visible_start_time :: proc(hobj: ^Hitobject) -> (result: f64) {
     return start_time
 }
 
+// note(isak): exact time an object enters PREEMPT and becomes hittable. gates on the object's own
+// preempt, unlike the visible-window scan above which must widen by max_preempt_ms to stay monotonic.
+// the miss window floors it so low-preempt objects are still hittable through their full miss window.
+hitobject_activation_time :: proc(hobj: ^Hitobject) -> (result: f64) {
+    result = hobj.start_time_ms
+    #partial switch hobj.type {
+    case .CIRCLE, .SLIDER, .SPINNER: result -= max(hitobject_preempt_ms(hobj), game.beatmap.timing_windows.miss)
+    }
+    return result
+}
+
 hitobject_visible_end_time :: proc(hobj: ^Hitobject) -> (result: f64) {
     end_time := hobj.end_time_ms + game.beatmap.timing_windows.ok
     hit_anim_len := hobj.custom_hit_animation_len_ms != 0 ? hobj.custom_hit_animation_len_ms : OSU_HIT_ANIMATION_LENGTH
@@ -328,16 +333,8 @@ hitobject_combo_color :: proc(hobj: ^Hitobject) -> (result: Color) {
 
 hitobject_set_preempt :: proc(hobj: ^Hitobject, preempt: f64) {
     hobj.custom_preempt_ms = preempt
-    beatmap := &game.beatmap
-    visible_start := hobj.start_time_ms - preempt
-    if hobj.deferred_activation_index != 0 {
-        beatmap.deferred_activations[hobj.deferred_activation_index - 1].visible_start_time_ms = visible_start
-    } else {
-        append(&beatmap.deferred_activations, Deferred_Activation{hobj.index, visible_start})
-        hobj.deferred_activation_index = len(beatmap.deferred_activations)
-    }
-    if preempt > beatmap.max_preempt_ms {
-        beatmap.max_preempt_ms = preempt
+    if preempt > game.beatmap.max_preempt_ms {
+        game.beatmap.max_preempt_ms = preempt
     }
 }
 
@@ -547,25 +544,14 @@ osu_on_update :: proc(dt: f64) {
     
     // note(isak): handle hitobject phase changes
     for &hobj in visible_hobjs {
-        if hobj.phase == .NONE && hobj.custom_preempt_ms == 0 {
-            if hitobject_visible_start_time(&hobj) < map_time && map_time < hitobject_visible_end_time(&hobj) {
+        if hobj.phase == .NONE {
+            if hitobject_activation_time(&hobj) < map_time && map_time < hitobject_visible_end_time(&hobj) {
                 hitobject_emit_phase_transition(&hobj, .PREEMPT)
                 hobj.flags |= {.VISIBLE}
                 sb.append(&game.beatmap.expiring_hitobjects, hobj.index)
             }
         } else if hobj.phase == .PREEMPT && hobj.start_time_ms < map_time {
             hitobject_emit_phase_transition(&hobj, .POSTEMPT)
-        }
-    }
-
-    // note(isak): deferred activations for objects with per-object approach rate
-    for da in game.beatmap.deferred_activations {
-        if da.visible_start_time_ms > map_time do continue
-        hobj := &game.beatmap.hitobjects[da.hitobject_index]
-        if hobj.phase == .NONE {
-            hitobject_emit_phase_transition(hobj, .PREEMPT)
-            hobj.flags |= {.VISIBLE}
-            sb.append(&game.beatmap.expiring_hitobjects, hobj.index)
         }
     }
 
@@ -589,31 +575,56 @@ osu_on_update :: proc(dt: f64) {
         followpoint_emit(&game.beatmap, conn, map_time)
     }
 
-    #reverse for &hobj in visible_hobjs {
-        if .HIDDEN_BY_SCRIPT in hobj.flags do continue
-        r_check_and_bind_layer(.HITOBJECTS)
-        if hobj.start_time_ms - hitobject_preempt_ms(&hobj) <= map_time && map_time <= hobj.end_time_ms + OSU_HIT_ANIMATION_LENGTH {
+    r_check_and_bind_layer(.HITOBJECTS)
 
-            if hobj.type == .SLIDER {
+    // note(isak): objects overlapping in gameplay time ([start, end]) form clusters. visible_hobjs is
+    // start-sorted, so clusters are contiguous runs split where an object starts after the running max
+    // end time. within a cluster every object's gfx draws above every slider path (2B: heads landing
+    // during a slider sit on its body); whole clusters stack by time, so a slider that ends before an
+    // object begins keeps its path above that object. both strata draw earliest start on top, like osu.
+    // chained overlaps merge clusters, which can lift an object's gfx above the path of a slider that
+    // ended before it began - accepted approximation, the chain is concurrent through the middle object.
+    cluster_bounds := make([dynamic]int, 0, len(visible_hobjs) + 1, context.temp_allocator)
+    running_end_ms := math.inf_f64(-1)
+    for &hobj, i in visible_hobjs {
+        if hobj.start_time_ms > running_end_ms {
+            append(&cluster_bounds, i)
+        }
+        running_end_ms = max(running_end_ms, hobj.end_time_ms)
+    }
+    append(&cluster_bounds, len(visible_hobjs))
+
+    for ci := len(cluster_bounds) - 2; ci >= 0; ci -= 1 {
+        cluster := visible_hobjs[cluster_bounds[ci]:cluster_bounds[ci + 1]]
+
+        #reverse for &hobj in cluster {
+            if hobj.type != .SLIDER do continue
+            if .HIDDEN_BY_SCRIPT in hobj.flags do continue
+            if hobj.start_time_ms - hitobject_preempt_ms(&hobj) <= map_time &&
+               map_time <= hobj.end_time_ms + OSU_HIT_ANIMATION_LENGTH {
+                r_check_and_bind_layer(.HITOBJECTS)
                 path := &game.beatmap.slider_paths[hobj.slider_path_index]
                 slider_render_path(&window.renderer, &hobj, path, map_time)
+            }
+        }
 
+        #reverse for &hobj in cluster {
+            r_check_and_bind_layer(.HITOBJECTS)
+            if hobj.type == .SLIDER {
                 r_push_transform(game.playfield_transform)
                 slider_render_gfx(&hobj, map_time)
             }
-        }
-        
-        r_push_transform(game.playfield_transform)
-        r_bind_framebuffer({read = builtin_framebuffer(.DEFAULT), write = builtin_framebuffer(.DEFAULT)})
-        
-        shake_offset := hitobject_notelock_shake_offset(&hobj, map_time)
-        #reverse for handle in hobj.gfx_handles {
-            e := slotmap.get(&game.beatmap.drawables, handle) or_continue
-            if .ACTIVE in e.flags {
-                render_drawable(e, map_time, hitobject_pos(&hobj) + shake_offset)
+
+            shake_offset := hitobject_notelock_shake_offset(&hobj, map_time)
+            #reverse for handle in hobj.gfx_handles {
+                e := slotmap.get(&game.beatmap.drawables, handle) or_continue
+                if .ACTIVE in e.flags {
+                    render_drawable(e, map_time, hitobject_pos(&hobj) + shake_offset)
+                }
             }
         }
     }
+    
     
     process_and_draw_expiring_gfx_refs(&game.beatmap.gameplay_expiring_gfx)
     

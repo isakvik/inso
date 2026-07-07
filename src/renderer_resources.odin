@@ -129,8 +129,8 @@ Slider_Params :: struct {
 }
 
 // note(isak): every frame's slider params live in one persistently-mapped ring buffer, one slot
-// per draw, bound via BindBufferRange. #align(256) pads each slot to the max UBO offset alignment
-// so any slot offset is a legal BindBufferRange offset with no per-slot alignment math.
+// per draw. #align(256) pads each slot to the max UBO offset alignment so any slot offset is a
+// legal BindBufferRange offset with no per-slot alignment math.
 Slider_Params_Slot :: struct #align(256) {
     params: Slider_Params,
 }

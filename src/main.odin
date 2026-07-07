@@ -55,7 +55,6 @@ Memory_Arena_Type :: enum {
 
 memory_arena_names := [?]string {
     "Global",
-    "Global2",
     "Mapset",
     "Drawables",
     "Judgements",

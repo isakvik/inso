@@ -44,7 +44,10 @@
       "Bash(cmd.exe *)",
       "Bash(command xargs command grep -l \"package slotmap\")",
       "Bash(echo \"--- stragglers: $?\")",
-      "Bash(echo \"--- fs quad decls: $?\")"
+      "Bash(echo \"--- fs quad decls: $?\")",
+      "Bash(echo \"refs: $?\")",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/ppy/osu/master/osu.Game/Rulesets/UI/HitObjectContainer.cs\")"
     ]
   }
 }

@@ -40,9 +40,9 @@
 </head>
 <body>
 
-<h1>Lua API for inso v0.1.8-dev+4e7501c</h1>
-<p class="note">Documentation automatically generated from the engine's registration tables</p>
-<p class="note">A method with return type <span class="sig s">self</span> returns its own object, so calls can be chained.</p>
+<h1>Lua API for inso v0.1.8-dev+1c56944</h1>
+<p class="note">documentation automatically generated from the engine's API registration tables</p>
+<p class="note">a method with return type <span class="sig s">self</span> returns its own object, so calls can be chained.</p>
 <nav class="toc">
 <a href="#events">Events</a>
 <a href="#globals">Globals</a>
@@ -60,13 +60,13 @@
 <a href="#enums">Enums</a>
 </nav>
 <h2 id="events"><a class="hlink" href="#events">Events <span class="htarget">#</span></a></h2>
-<p class="note">Callbacks the engine invokes on your script.</p>
+<p class="note">if declared in your LuaEntryPoint file, the engine will invoke these.</p>
 <table>
 <thead><tr><th>Method</th></tr></thead>
 <tbody>
 <tr><td><code class="sig"><span class="type">void</span> <span class="function">on_init</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">called once after the beatmap loads, before play. events scheduled in on_init replay when seeking backwards.</div></td></tr>
 <tr><td><code class="sig"><span class="type">void</span> <span class="function">on_update</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">music_time_ms</span> <span class="punctuation">)</span></code><div class="desc">called once per rendered frame. framerate-dependent and is not re-run when seeking.</div></td></tr>
-<tr><td><code class="sig"><span class="type">void</span> <span class="function">on_fixed_update</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">music_time_ms</span> <span class="punctuation">)</span></code><div class="desc">called at a fixed rate in music time, decoupled from framerate. useful for simulation logic as it catches up in a loop on forward seek and replays deterministically. the rate is customizable by setting FixedUpdateRate in the notosu file.</div></td></tr>
+<tr><td><code class="sig"><span class="type">void</span> <span class="function">on_fixed_update</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">music_time_ms</span> <span class="punctuation">)</span></code><div class="desc">called at a fixed rate in music time, decoupled from framerate. useful for simulation logic as it catches up in a loop on forward seek and replays deterministically. the rate is customizable by setting FixedUpdateRate in the notosu file.note: if this is declared, the engine will call scheduled events using the fixed update timer for consistency.</div></td></tr>
 <tr><td><code class="sig"><span class="type">void</span> <span class="function">on_beat</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">beat</span> <span class="punctuation">)</span></code><div class="desc">called when the music time crosses a beat of the active uninherited timing point.</div></td></tr>
 <tr><td><code class="sig"><span class="type">void</span> <span class="function">on_timing_change</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">beat</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">bpm</span> <span class="punctuation">)</span></code><div class="desc">called when a new uninherited timing point becomes active.</div></td></tr>
 <tr><td><code class="sig"><span class="type">void</span> <span class="function">on_pause_change</span><span class="punctuation">(</span> <span class="type">bool</span> <span class="argument">paused</span> <span class="punctuation">)</span></code><div class="desc">called when playback is paused or resumed.</div></td></tr>
@@ -80,7 +80,7 @@
 </tbody>
 </table>
 <h2 id="globals"><a class="hlink" href="#globals">Globals <span class="htarget">#</span></a></h2>
-<p class="note">Free functions, called directly.</p>
+<p class="note">free functions, called directly.</p>
 <table>
 <thead><tr><th>Method</th></tr></thead>
 <tbody>

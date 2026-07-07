@@ -21,8 +21,8 @@ lua_generate_docs :: proc() {
 
     w(&sb, LUA_DOCS_HTML_HEAD)
     wf(&sb, "<h1>Lua API for inso v%s</h1>", VERSION)
-    wf(&sb, "<p class=\"note\">Documentation automatically generated from the engine's registration tables</p>")
-    wf(&sb, "<p class=\"note\">A method with return type <span class=\"sig s\">self</span> returns its own object, so calls can be chained.</p>")
+    wf(&sb, "<p class=\"note\">documentation automatically generated from the engine's API registration tables</p>")
+    wf(&sb, "<p class=\"note\">a method with return type <span class=\"sig s\">self</span> returns its own object, so calls can be chained.</p>")
 
     // table of contents
     w(&sb, "<nav class=\"toc\">")
@@ -38,7 +38,7 @@ lua_generate_docs :: proc() {
 
     // events (engine -> script callbacks)
     lua_docs_write_heading(&sb, "events", "Events")
-    w(&sb, "<p class=\"note\">Callbacks the engine invokes on your script.</p>")
+    w(&sb, "<p class=\"note\">if declared in your LuaEntryPoint file, the engine will invoke these.</p>")
     lua_docs_write_table_open(&sb)
     for event in Lua_Beatmap_Event_Type {
         doc := lua_beatmap_event_docs[event]
@@ -53,7 +53,7 @@ lua_generate_docs :: proc() {
 
     // globals
     lua_docs_write_heading(&sb, "globals", "Globals")
-    w(&sb, "<p class=\"note\">Free functions, called directly.</p>")
+    w(&sb, "<p class=\"note\">free functions, called directly.</p>")
     lua_docs_write_table_open(&sb)
     for reg in luaapi_global_funcs {
         lua_docs_write_row(&sb, reg, fmt.tprint(reg.name))

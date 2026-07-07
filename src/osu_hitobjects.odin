@@ -277,28 +277,6 @@ slider_reset_transient :: proc(hobj: ^Hitobject) {
     for &hit in slider.tick_hits do hit = false
 }
 
-allocate_deferred_activations :: proc(beatmap: ^Beatmap) {
-    max_preempt := beatmap.preempt_ms
-    count := 0
-    for &hobj in beatmap.hitobjects {
-        if hobj.custom_preempt_ms != 0 {
-            count += 1
-            if hobj.custom_preempt_ms > max_preempt do max_preempt = hobj.custom_preempt_ms
-        }
-    }
-    beatmap.max_preempt_ms = max_preempt
-    beatmap.deferred_activations = make([dynamic]Deferred_Activation, 0, count, memory.allocators[.MAPSET])
-}
-
-build_deferred_activations :: proc(beatmap: ^Beatmap) {
-    for &hobj in beatmap.hitobjects {
-        if hobj.custom_preempt_ms != 0 {
-            append(&beatmap.deferred_activations, Deferred_Activation{hobj.index, hobj.start_time_ms - hobj.custom_preempt_ms})
-            hobj.deferred_activation_index = len(beatmap.deferred_activations) // index+1
-        }
-    }
-}
-
 build_followpoint_connections :: proc(beatmap: ^Beatmap) {
     prev := -1
     for &hobj, i in beatmap.hitobjects {

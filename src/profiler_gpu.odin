@@ -111,14 +111,14 @@ profiler_push_gpu_blocks_as_text :: proc(renderer: ^Renderer) {
     if !gp.initialized do return
 
     y_inc: f32 = 24
-    row_count := len(Layer) + 1
+    row_count := len(Layer) + 2
     pos_top_left := vec2{ 400, f32(window.rect.h) - f32(row_count) * y_inc }
 
     row_label :: proc(row: int) -> string {
         if row < len(Layer) {
             return fmt.enum_value_to_string(Layer(row)) or_else unreachable()
         }
-        return "GPU TOTAL"
+        return "GPU TOTAL" if row == len(Layer) else "TBO WAITS"
     }
 
     x_inc: f32
@@ -142,6 +142,16 @@ profiler_push_gpu_blocks_as_text :: proc(renderer: ^Renderer) {
     time_col := pos_top_left.x + x_inc_max + 16
     frag_col := time_col + 110
     for row in 0..<row_count {
+        if row_label(row) == "TBO WAITS" {
+            push_text(renderer, fmt.tprintf("%.4f", f64(profiler.prev_frame_buffer_wait_ns) / 1_000_000),
+                      {time_col, pos_top_left.y + y_inc * f32(row)},
+                      size = y_inc)
+            push_text(renderer, fmt.tprintf("x %d", profiler.prev_frame_buffer_wait_hits),
+                      {frag_col, pos_top_left.y + y_inc * f32(row)},
+                      size = y_inc)
+            continue
+        }
+
         time_ns := gp.layer_time_ns[Layer(row)] if row < len(Layer) else total_time_ns
         push_text(renderer, fmt.tprintf("%.4f", f64(time_ns) / 1_000_000),
                   {time_col, pos_top_left.y + y_inc * f32(row)},

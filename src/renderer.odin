@@ -898,16 +898,21 @@ batch_begin :: proc(renderer: ^Renderer) {
         ls.ssbo_emitted = {}
     }
 
-    renderer.quad_geometry.data = tbo_advance_and_get(&window.quad_store)
+    wait_ns: u64
+    renderer.quad_geometry.data, wait_ns = tbo_advance_and_get(&window.quad_store)
+    profiler_note_buffer_wait(wait_ns)
     renderer.quad_geometry.count = 0
 
-    renderer.text_geometry.data = tbo_advance_and_get(&window.text_store)
+    renderer.text_geometry.data, wait_ns = tbo_advance_and_get(&window.text_store)
+    profiler_note_buffer_wait(wait_ns)
     renderer.text_geometry.count = 0
 
-    renderer.slider_params.data = tbo_advance_and_get(&window.slider_param_store)
+    renderer.slider_params.data, wait_ns = tbo_advance_and_get(&window.slider_param_store)
+    profiler_note_buffer_wait(wait_ns)
     renderer.slider_params.count = 0
 
-    renderer.transforms.data = tbo_advance_and_get(&window.transform_store)
+    renderer.transforms.data, wait_ns = tbo_advance_and_get(&window.transform_store)
+    profiler_note_buffer_wait(wait_ns)
     renderer.transforms.data[TRANSFORM_SLOT_CLIPSPACE] = clipspace_transform
     renderer.transforms.data[TRANSFORM_SLOT_SCREENSPACE] = window.screenspace_transform
     renderer.transforms.count = TRANSFORM_RESERVED_SLOTS
@@ -922,11 +927,6 @@ batch_begin :: proc(renderer: ^Renderer) {
 }
 
 batch_end :: proc(renderer: ^Renderer) {
-    tbo_lock(&window.quad_store)
-    tbo_lock(&window.text_store)
-    tbo_lock(&window.slider_param_store)
-    tbo_lock(&window.transform_store)
-
     if window.bindless_supported {
         sbo_bind(&window.texture_buffer, u32(Shader_SSBO_Bind_Slot.TEXTURES))
     } else {
@@ -939,6 +939,11 @@ batch_end :: proc(renderer: ^Renderer) {
     tbo_bind(&window.transform_store, u32(Shader_SSBO_Bind_Slot.TRANSFORMS))
 
     batch_process_command_buffer(renderer)
+
+    tbo_lock(&window.quad_store)
+    tbo_lock(&window.text_store)
+    tbo_lock(&window.slider_param_store)
+    tbo_lock(&window.transform_store)
 }
 
 // note(isak): called on a quad-buffer overrun mid-frame. submits everything recorded so far and

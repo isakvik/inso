@@ -556,8 +556,9 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
                         case "Alpha":         shader_params.blend_mode = .ALPHA
                         case "Additive":      shader_params.blend_mode = .ADDITIVE
                         case "Max":           shader_params.blend_mode = .MAX
-                        case "None":          shader_params.blend_mode = .NONE
-                        case "Premultiplied": shader_params.blend_mode = .PREMULTIPLIED
+                        case "None":              shader_params.blend_mode = .NONE
+                        case "Premultiplied":     shader_params.blend_mode = .PREMULTIPLIED
+                        case "PremultipliedOver": shader_params.blend_mode = .PREMULTIPLIED_OVER
                         case:
                             log.errorf("mapset shader '{}': unknown BlendMode '{}', defaulting to alpha", shader_params.name, value)
                             notify_warn("mapset shader '%s': unknown BlendMode '%s', defaulting to alpha", shader_params.name, value)

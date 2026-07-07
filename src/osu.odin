@@ -575,56 +575,9 @@ osu_on_update :: proc(dt: f64) {
         followpoint_emit(&game.beatmap, conn, map_time)
     }
 
+    // note(isak): hitobjects render through render_drawable, which pushes its own state if necessary
     r_check_and_bind_layer(.HITOBJECTS)
-
-    // note(isak): objects overlapping in gameplay time ([start, end]) form clusters. visible_hobjs is
-    // start-sorted, so clusters are contiguous runs split where an object starts after the running max
-    // end time. within a cluster every object's gfx draws above every slider path (2B: heads landing
-    // during a slider sit on its body); whole clusters stack by time, so a slider that ends before an
-    // object begins keeps its path above that object. both strata draw earliest start on top, like osu.
-    // chained overlaps merge clusters, which can lift an object's gfx above the path of a slider that
-    // ended before it began - accepted approximation, the chain is concurrent through the middle object.
-    cluster_bounds := make([dynamic]int, 0, len(visible_hobjs) + 1, context.temp_allocator)
-    running_end_ms := math.inf_f64(-1)
-    for &hobj, i in visible_hobjs {
-        if hobj.start_time_ms > running_end_ms {
-            append(&cluster_bounds, i)
-        }
-        running_end_ms = max(running_end_ms, hobj.end_time_ms)
-    }
-    append(&cluster_bounds, len(visible_hobjs))
-
-    for ci := len(cluster_bounds) - 2; ci >= 0; ci -= 1 {
-        cluster := visible_hobjs[cluster_bounds[ci]:cluster_bounds[ci + 1]]
-
-        #reverse for &hobj in cluster {
-            if hobj.type != .SLIDER do continue
-            if .HIDDEN_BY_SCRIPT in hobj.flags do continue
-            if hobj.start_time_ms - hitobject_preempt_ms(&hobj) <= map_time &&
-               map_time <= hobj.end_time_ms + OSU_HIT_ANIMATION_LENGTH {
-                r_check_and_bind_layer(.HITOBJECTS)
-                path := &game.beatmap.slider_paths[hobj.slider_path_index]
-                slider_render_path(&window.renderer, &hobj, path, map_time)
-            }
-        }
-
-        #reverse for &hobj in cluster {
-            r_check_and_bind_layer(.HITOBJECTS)
-            if hobj.type == .SLIDER {
-                r_push_transform(game.playfield_transform)
-                slider_render_gfx(&hobj, map_time)
-            }
-
-            shake_offset := hitobject_notelock_shake_offset(&hobj, map_time)
-            #reverse for handle in hobj.gfx_handles {
-                e := slotmap.get(&game.beatmap.drawables, handle) or_continue
-                if .ACTIVE in e.flags {
-                    render_drawable(e, map_time, hitobject_pos(&hobj) + shake_offset)
-                }
-            }
-        }
-    }
-    
+    hitobjects_draw(visible_hobjs, map_time)
     
     process_and_draw_expiring_gfx_refs(&game.beatmap.gameplay_expiring_gfx)
     
@@ -695,6 +648,56 @@ osu_on_update :: proc(dt: f64) {
             color = {255, 255, 255, 150},
             align_h = .Center,
             align_v = .Middle)
+    }
+}
+
+hitobjects_draw :: proc(visible_hobjs: []Hitobject, map_time: f64) {
+    // note(isak): objects overlapping in gameplay time ([start, end]) form clusters. visible_hobjs is
+    // start-sorted, so clusters are contiguous runs split where an object starts after the running max
+    // end time. within a cluster every object's gfx draws above every slider path (2B: heads landing
+    // during a slider sit on its body); whole clusters stack by time, so a slider that ends before an
+    // object begins keeps its path above that object. both strata draw earliest start on top, like osu.
+    // chained overlaps merge clusters, which can lift an object's gfx above the path of a slider that
+    // ended before it began - accepted approximation, the chain is concurrent through the middle object.
+    cluster_bounds := make([dynamic]int, 0, len(visible_hobjs) + 1, context.temp_allocator)
+    running_end_ms := math.inf_f64(-1)
+    for &hobj, i in visible_hobjs {
+        if hobj.start_time_ms > running_end_ms {
+            append(&cluster_bounds, i)
+        }
+        running_end_ms = max(running_end_ms, hobj.end_time_ms)
+    }
+    append(&cluster_bounds, len(visible_hobjs))
+
+    for ci := len(cluster_bounds) - 2; ci >= 0; ci -= 1 {
+        cluster := visible_hobjs[cluster_bounds[ci]:cluster_bounds[ci + 1]]
+
+        #reverse for &hobj in cluster {
+            if hobj.type != .SLIDER do continue
+            if .HIDDEN_BY_SCRIPT in hobj.flags do continue
+            if hobj.start_time_ms - hitobject_preempt_ms(&hobj) <= map_time &&
+               map_time <= hobj.end_time_ms + OSU_HIT_ANIMATION_LENGTH {
+                r_check_and_bind_layer(.HITOBJECTS)
+                path := &game.beatmap.slider_paths[hobj.slider_path_index]
+                slider_render_path(&window.renderer, &hobj, path, map_time)
+            }
+        }
+
+        #reverse for &hobj in cluster {
+            r_check_and_bind_layer(.HITOBJECTS)
+            if hobj.type == .SLIDER {
+                r_push_transform(game.playfield_transform)
+                slider_render_gfx(&hobj, map_time)
+            }
+
+            shake_offset := hitobject_notelock_shake_offset(&hobj, map_time)
+            #reverse for handle in hobj.gfx_handles {
+                e := slotmap.get(&game.beatmap.drawables, handle) or_continue
+                if .ACTIVE in e.flags {
+                    render_drawable(e, map_time, hitobject_pos(&hobj) + shake_offset)
+                }
+            }
+        }
     }
 }
 

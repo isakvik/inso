@@ -21,9 +21,19 @@ Skin :: struct {
     
         font_hit_circle_prefix: string,
         font_hit_circle_overlap: f32,
+
+        combo_colors: [8]Color,
+        num_combo_colors: int,
     },
 
     has_sliderend: bool,
+}
+
+DEFAULT_SKIN_COMBO_COLORS := [4]Color {
+    {255, 192, 0, 0xFF},
+    {0, 202, 0, 0xFF},
+    {18, 124, 255, 0xFF},
+    {242, 24, 57, 0xFF},
 }
 
 supported_image_extensions :: []string{".png", ".jpg"}
@@ -296,6 +306,34 @@ skin_handle_ini :: proc(skin: ^Skin) {
     }
     if v, ok := get(sections, "Colours", "SliderTrackOverride"); ok {
         if c, parsed := parse_osu_color(v); parsed do skin.slider_track_override = c
+    }
+
+    max_combo := 0
+
+    if colours, has_colours := sections["Colours"]; has_colours {
+        for key, val in colours {
+            if len(key) >= 5 && strings.equal_fold(key[:5], "Combo") {
+                suffix := key[5:]
+                if suffix == "" do continue
+                idx, ok := strconv.parse_int(suffix, 10)
+                if !ok do continue
+                if idx < 1 || idx > len(skin.ini_options.combo_colors) do continue
+
+                if c, parsed := parse_osu_color(val); parsed {
+                    skin.ini_options.combo_colors[idx - 1] = c
+                    if idx > max_combo {
+                        max_combo = idx
+                    }
+                }
+            }
+        }
+        skin.ini_options.num_combo_colors = max_combo
+    }
+    if max_combo == 0 {
+        for i in 0..<len(DEFAULT_SKIN_COMBO_COLORS) {
+            skin.ini_options.combo_colors[i] = DEFAULT_SKIN_COMBO_COLORS[i]
+        }
+        skin.ini_options.num_combo_colors = 4
     }
 }
 

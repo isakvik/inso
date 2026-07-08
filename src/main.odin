@@ -630,6 +630,10 @@ imgui_update :: proc() {
         if imgui.SliderFloat("Background dim##bgdim", &game.user_config.bg_dim, 0, 1) {
             bg_dim_apply(game.user_config.bg_dim)
         }
+
+        if imgui.Checkbox("Use beatmap skin", &game.user_config.use_beatmap_skin) {
+            
+        }
     }
     if imgui.CollapsingHeader("Display") {
         if imgui.BeginCombo("Window mode", window_mode_display_names[window.mode]) {

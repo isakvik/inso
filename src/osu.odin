@@ -321,14 +321,26 @@ DEFAULT_COMBO_COLORS := [4]Color {
 }
 
 hitobject_combo_color :: proc(hobj: ^Hitobject) -> (result: Color) {
-    if game.active_map.num_combo_colors > 0 {
-        color_index := hobj.combo_index % game.active_map.num_combo_colors    
-        result = game.active_map.combo_colors[color_index]
-    } else {
-        color_index := hobj.combo_index % len(DEFAULT_COMBO_COLORS)
-        result = DEFAULT_COMBO_COLORS[color_index]
+    if game.user_config.use_beatmap_skin {
+        if game.active_map.num_combo_colors > 0 {
+            color_index := hobj.combo_index % game.active_map.num_combo_colors    
+            result = game.active_map.combo_colors[color_index]
+        } else {
+            color_index := hobj.combo_index % len(DEFAULT_COMBO_COLORS)
+            result = DEFAULT_COMBO_COLORS[color_index]
+        }
+        return result
     }
-    return result
+    else {
+        if game.active_skin.num_combo_colors > 0 {
+            color_index := hobj.combo_index % game.active_skin.num_combo_colors    
+            result = game.active_skin.combo_colors[color_index]
+        } else {
+            color_index := hobj.combo_index % len(DEFAULT_COMBO_COLORS)
+            result = DEFAULT_COMBO_COLORS[color_index]
+        }
+        return result
+    }
 }
 
 hitobject_set_preempt :: proc(hobj: ^Hitobject, preempt: f64) {

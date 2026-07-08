@@ -84,6 +84,10 @@ with_alpha :: proc {
     with_alpha_f32
 }
 
+color_scale_rgb :: proc "contextless" (c: Color, factor: f32) -> Color {
+    return {u8(f32(c.r) * factor), u8(f32(c.g) * factor), u8(f32(c.b) * factor), c.a}
+}
+
 color_to_pixel_f32 :: proc "contextless" (v: vec4) -> u32 {
     result := u32(v.r * 0xFF)
     result |= u32(v.g * 0xFF) << 8

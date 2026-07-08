@@ -351,6 +351,12 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
   { "unhide_followpoint_out", luaapi_hitobject_unhide_followpoint_out,
     "self hitobject:unhide_followpoint_out( void )",
     "undoes hide_followpoint_out()." },
+  { "set_snake_in", luaapi_hitobject_set_snake_in,
+    "self hitobject:set_snake_in( bool enabled )",
+    "whether this slider's body snakes out of the head during the approach (default on). no-op on non-sliders; also gated by the user's snaking-in setting." },
+  { "set_snake_out", luaapi_hitobject_set_snake_out,
+    "self hitobject:set_snake_out( bool enabled )",
+    "whether this slider's body retracts behind the ball on its final span (default on). no-op on non-sliders; also gated by the user's snaking-out setting." },
   { "get_index", luaapi_hitobject_get_index,
     "int hitobject:get_index( void )",
     "the object's index into the beatmap's hitobject list." },
@@ -634,6 +640,28 @@ luaapi_hitobject_hide_followpoint_out :: proc "c" (L: ^lua.State) -> (result: i3
 luaapi_hitobject_unhide_followpoint_out :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         hobj.flags &~= {.NO_FOLLOWPOINT_OUT}
+        return 0
+    })
+}
+
+luaapi_hitobject_set_snake_in :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        if lua_boolean(2) {
+            hobj.flags |= {.SLIDER_SNAKE_IN}
+        } else {
+            hobj.flags &~= {.SLIDER_SNAKE_IN}
+        }
+        return 0
+    })
+}
+
+luaapi_hitobject_set_snake_out :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        if lua_boolean(2) {
+            hobj.flags |= {.SLIDER_SNAKE_OUT}
+        } else {
+            hobj.flags &~= {.SLIDER_SNAKE_OUT}
+        }
         return 0
     })
 }
@@ -1004,6 +1032,12 @@ luaapi_drawable_instance_funcs := []Lua_Function {
   { "set_fullscreen", luaapi_drawable_set_fullscreen,
     "self drawable:set_fullscreen( bool enabled )",
     "makes the drawable cover the whole render target (size derived each frame, tracks resizes); pos still nudges it in osupx and set_pos_px in pixels. handy for compositing a captured layer." },
+  { "set_beat_pulse", luaapi_drawable_set_beat_pulse,
+    "self drawable:set_beat_pulse( bool enabled )",
+    "pulses the drawable's size every beat: snaps up on the beat and eases back down before the next (the reverse arrow effect)." },
+  { "set_hitobject_dim", luaapi_drawable_set_hitobject_dim,
+    "self drawable:set_hitobject_dim( bool enabled )",
+    "dims the drawable until shortly before its associated hitobject's hit time (or its own end time if unattached), matching approaching hitobjects." },
   { "get_color", luaapi_drawable_get_color,
     "int drawable:get_color( void )",
     "the drawable's color as a packed rgba integer." },
@@ -1175,6 +1209,26 @@ luaapi_drawable_set_fullscreen :: proc "c" (L: ^lua.State) -> (result: i32) {
             d.flags += {.FULLSCREEN}
         } else {
             d.flags -= {.FULLSCREEN}
+        }
+        return 0
+    })
+}
+luaapi_drawable_set_beat_pulse :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        if lua_boolean(2) {
+            d.flags += {.BEAT_PULSE}
+        } else {
+            d.flags -= {.BEAT_PULSE}
+        }
+        return 0
+    })
+}
+luaapi_drawable_set_hitobject_dim :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        if lua_boolean(2) {
+            d.flags += {.HITOBJECT_DIM}
+        } else {
+            d.flags -= {.HITOBJECT_DIM}
         }
         return 0
     })
@@ -2088,6 +2142,9 @@ luaapi_beatmap_static_funcs := []Lua_Function {
   { "get_beat_length_ms", luaapi_beatmap_get_beat_length_ms,
     "float Beatmap.get_beat_length_ms( void )",
     "the beat length in ms at the current timing point." },
+  { "get_beat_proximity", luaapi_beatmap_get_beat_proximity,
+    "float Beatmap.get_beat_proximity( float at_time_ms = now )",
+    "1 exactly on the beat, easing off to 0 right before the next. drive your own pulse effects with this." },
   { "get_ar_ms", luaapi_beatmap_get_ar_ms,
     "float Beatmap.get_ar_ms( void )",
     "the map's approach (preempt) time in ms." },
@@ -2137,6 +2194,13 @@ luaapi_beatmap_get_beat_length_ms :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     tp := game.active_map.timing_points[game.beatmap.current_timing_point_index_uninherited]
     lua.pushnumber(L, lua.Number(tp.beat_length))
+    return 1
+}
+
+luaapi_beatmap_get_beat_proximity :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    at_time_ms := f64(lua.L_optnumber(L, 1, lua.Number(beatmap_music_time_ms(&game.beatmap))))
+    lua.pushnumber(L, lua.Number(beat_proximity_factor(at_time_ms)))
     return 1
 }
 

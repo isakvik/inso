@@ -178,6 +178,12 @@ main :: proc() {
     discover_maps("songs/")
     discover_skins("skins/")
 
+    // note(isak): the configured skin may live outside skins/ (e.g. an osu! skin folder), so
+    // register it as an external reference to keep it in the dropdown
+    if _, found := skin_reference_find(game.user_config.skin_path); !found && os.exists(game.user_config.skin_path) {
+        skin_reference_add_external(game.user_config.skin_path)
+    }
+
     game.active_skin = skin_load(game.user_config.skin_path)
     
     notosu_load_time := time_s_since_beginning_of_program()
@@ -570,6 +576,30 @@ open_external_map :: proc(external_map_path: string) -> (success: bool) {
     return true
 }
 
+open_external_skin :: proc(external_skin_path: string) -> (success: bool) {
+    folder_path := external_skin_path
+    if !strings.has_suffix(folder_path, "/") && !strings.has_suffix(folder_path, "\\") {
+        folder_path = strings.concatenate({folder_path, "/"}, memory.allocators[.GLOBAL])
+    }
+
+    if _, found := skin_reference_find(folder_path); !found {
+        skin_reference_add_external(folder_path)
+    }
+    skin_switch(folder_path)
+    return true
+}
+
+skin_switch :: proc(skin_path: string) {
+    cleanup_textures_for_rendering()
+    skin_unload(game.active_skin)
+
+    game.active_skin = skin_load(skin_path)
+    game.user_config.skin_path = skin_path
+    prepare_textures_for_rendering()
+
+    beatmap_open(game.beatmap.map_reference, true)
+}
+
 imgui_update :: proc() {
     imgui.Begin("Editor options")
     defer imgui.End()
@@ -598,7 +628,10 @@ imgui_update :: proc() {
     imgui.Separator()
     
     imgui_dropdown_draw(&app.skin_dropdown)
-    
+    if imgui.SmallButton("open external##skin") {
+        file_dialog_open_skin_folder()
+    }
+
     if imgui.Button("x##cursor_reset") do game.user_config.cursor_size_multiplier = 1.0
     imgui.SameLine()
     imgui.SliderFloat("Cursor size##mouse", &game.user_config.cursor_size_multiplier, 0.1, 2.0)
@@ -626,13 +659,25 @@ imgui_update :: proc() {
     imgui.Separator()
     if imgui.CollapsingHeader("Game") {
         imgui.SliderFloat("Playfield border opacity##vol", &game.user_config.playfield_border_opacity, 0, 1)
-        
+
         if imgui.SliderFloat("Background dim##bgdim", &game.user_config.bg_dim, 0, 1) {
             bg_dim_apply(game.user_config.bg_dim)
         }
 
-        if imgui.Checkbox("Use beatmap skin", &game.user_config.use_beatmap_skin) {
-            
+        imgui.Checkbox("Use beatmap skin", &game.user_config.use_beatmap_skin)
+        imgui.Checkbox("Snaking in sliders", &game.user_config.snaking_in_sliders_enabled)
+        imgui.Checkbox("Snaking out sliders", &game.user_config.snaking_out_sliders_enabled)
+
+        if game.active_map != nil {
+            ar_override := f32(game.active_map.diff_approach_rate)
+            if imgui.SliderFloat("Approach rate##ar", &ar_override, 0, 10) {
+                game.active_map.diff_approach_rate = f64(ar_override)
+                preempt := convert_approach_rate_to_preempt_ms(game.active_map.diff_approach_rate)
+                for &hobj in game.beatmap.hitobjects {
+                    hobj.custom_preempt_ms = preempt
+                }
+                game.beatmap.max_preempt_ms = preempt
+            }
         }
     }
     if imgui.CollapsingHeader("Display") {
@@ -744,15 +789,8 @@ handle_debug_ui_events :: proc() {
     
     skin_dropdown := &app.skin_dropdown
     if skin_dropdown.changed && skin_dropdown.selected < len(app.skin_references) {
-        cleanup_textures_for_rendering()
-        skin_unload(game.active_skin)
-        
         skin_ref := app.skin_references[skin_dropdown.selected]
-        game.active_skin = skin_load(skin_ref)
-        game.user_config.skin_path = skin_ref
-        prepare_textures_for_rendering()
-
-        beatmap_open(game.beatmap.map_reference, true)
+        skin_switch(skin_ref.folder_path)
     }
     
     if key_is_pressed(.F1) {

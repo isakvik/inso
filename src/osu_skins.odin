@@ -27,6 +27,7 @@ Skin :: struct {
     },
 
     has_sliderend: bool,
+    has_sliderstart: bool,
 }
 
 DEFAULT_SKIN_COMBO_COLORS := [4]Color {
@@ -73,6 +74,9 @@ Skin_Element_Type :: enum u32 {
     SLIDER_END_OVERLAY,
 
     FOLLOWPOINT,
+    CURSOR_TRAIL,
+    SLIDER_START_CIRCLE,
+    SLIDER_START_CIRCLE_OVERLAY,
 }
 
 Skin_Element :: struct {
@@ -122,6 +126,9 @@ skin_element_names := [Skin_Element_Type]string {
     .SLIDER_END_OVERLAY   = "sliderendcircleoverlay",
 
     .FOLLOWPOINT          = "followpoint",
+    .CURSOR_TRAIL         = "cursortrail",
+    .SLIDER_START_CIRCLE         = "sliderstartcircle",
+    .SLIDER_START_CIRCLE_OVERLAY = "sliderstartcircleoverlay",
 }
 
 // note(isak): resolves a "skin:" texture expression suffix (e.g. "cursor", "sliderb") to its element
@@ -262,7 +269,7 @@ skin_load :: proc(skin_path: string) -> (result: ^Skin) {
     
     // --@temp waiting on menu mode ui
     for r, i in app.skin_references {
-        if r == skin_path {
+        if r.folder_path == skin_path {
             app.skin_dropdown.selected = i
             break
         }
@@ -410,6 +417,9 @@ skin_load_elements :: proc(skin: ^Skin) {
     if skin.elements[.SLIDER_END].texture > 0 {
         skin.has_sliderend = true
     }
+    if skin.elements[.SLIDER_START_CIRCLE].texture > 0 {
+        skin.has_sliderstart = true
+    }
     
     // note(isak): fallbacks. copies the metrics so they're read correctly by skin_render_element
     for element in Skin_Element_Type {
@@ -426,7 +436,7 @@ skin_load_elements :: proc(skin: ^Skin) {
 
 // note(isak): resolves the skin slot an element should actually sample. we redirect to the fallback
 // slot (rather than copying the texture into the slider-end slot) so the same bindless handle
-// isn't duplicated across two slots - that would double-resident it and raise GL_INVALID_OPERATION.
+// isn't duplicated across two slots and marked resident twice
 skin_render_element :: proc(skin: ^Skin, el: Skin_Element_Type) -> Skin_Element_Type {
     if window.skin_textures[el].tex_id != 0 do return el
     #partial switch el {
@@ -505,6 +515,16 @@ discover_skins :: proc(skins_dir: string, alloc: runtime.Allocator = context.all
         return
     }
 
+    // note(isak): externally-opened skins don't live under skins_dir, so carry them across the
+    // rebuild instead of dropping them (and orphaning the active skin / dropdown selection)
+    preserved_refs  := make([dynamic]Skin_Reference, context.temp_allocator)
+    preserved_names := make([dynamic]cstring, context.temp_allocator)
+    for ref, i in app.skin_references {
+        if !ref.external do continue
+        append(&preserved_refs, ref)
+        append(&preserved_names, app.skin_reference_names[i])
+    }
+
     clear(&app.skin_references)
     clear(&app.skin_reference_names)
 
@@ -517,9 +537,41 @@ discover_skins :: proc(skins_dir: string, alloc: runtime.Allocator = context.all
         folder_path  := strings.concatenate({skins_dir, dir.name, "/"}, alloc)
         display_cstr := fmt.caprintf("%s", dir.name)
 
-        append(&app.skin_references, folder_path)
+        append(&app.skin_references, Skin_Reference{ folder_path = folder_path })
         append(&app.skin_reference_names, display_cstr)
         count += 1
     }
+    for ref, i in preserved_refs {
+        append(&app.skin_references, ref)
+        append(&app.skin_reference_names, preserved_names[i])
+    }
+
+    // note(isak): the rebuild shuffles indices, so re-point the dropdown at the active skin
+    app.skin_dropdown.selected = 0
+    for ref, i in app.skin_references {
+        if ref.folder_path == game.user_config.skin_path {
+            app.skin_dropdown.selected = i
+            break
+        }
+    }
+
     notify_info("discover_skins: found %v skins in '%s'", count, skins_dir)
+}
+
+skin_reference_find :: proc(folder_path: string) -> (index: int, found: bool) {
+    for ref, i in app.skin_references {
+        if ref.folder_path == folder_path do return i, true
+    }
+    return -1, false
+}
+
+// note(isak): folder_path must outlive the reference list (e.g. GLOBAL arena)
+skin_reference_add_external :: proc(folder_path: string) {
+    display_name := strings.trim_right(folder_path, "/\\")
+    if idx := strings.last_index_any(display_name, "/\\"); idx >= 0 {
+        display_name = display_name[idx + 1:]
+    }
+
+    append(&app.skin_references, Skin_Reference{ folder_path = folder_path, external = true })
+    append(&app.skin_reference_names, fmt.caprintf("%s", display_name))
 }

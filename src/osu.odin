@@ -17,6 +17,10 @@ PLAYFIELD_SIZE_OSUPX :: f32(512)
 OSU_SLIDER_CURVE_POINTS_SEPARATION :: f32(2.5)
 OSU_HIT_ANIMATION_LENGTH :: 250
 
+OSU_HITOBJECT_DIM_FACTOR :: f32(0.9)
+OSU_HITOBJECT_DIM_UNTIL_MS :: f64(300)
+OSU_HITOBJECT_DIM_FADE_MS :: f64(100)
+
 NOTELOCK_SHAKE_DURATION_MS :: f64(120)
 NOTELOCK_SHAKE_AMPLITUDE_OSUPX :: f32(8)
 NOTELOCK_SHAKE_OSCILLATIONS :: f64(3)
@@ -113,6 +117,9 @@ Hitobject_Flag :: enum {
 
     NO_FOLLOWPOINT_IN,  // note(isak): suppress the followpoint arriving at this object
     NO_FOLLOWPOINT_OUT, // note(isak): suppress the followpoint leaving this object
+
+    SLIDER_SNAKE_IN,
+    SLIDER_SNAKE_OUT,
 }
 
 Hitsound_Flags :: distinct bit_set[Hitsound_Flag; u8]
@@ -621,8 +628,10 @@ osu_on_update :: proc(dt: f64) {
     if !lua_beatmap.hide_skin_cursor {
         r_bind_layer_and_push_current_state(.CURSOR, transform = window.screenspace_transform)
 
+        cursor_trail_draw(&cursor_trails[0], mouse.pos)
         cursor_draw(mouse.pos, skin_texture(.CURSOR))
         if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {
+            cursor_trail_draw(&cursor_trails[1], mouse_secondary.pos)
             cursor_draw(mouse_secondary.pos, skin_texture(.CURSOR))
         }
     }
@@ -702,10 +711,78 @@ hitobjects_draw :: proc(visible_hobjs: []Hitobject, map_time: f64) {
 }
 
 cursor_draw :: proc(pos: vec2, tex_index: u32) {
-    cursor_size := 160 * (window.rect.h / 1440) * game.user_config.cursor_size_multiplier
+    cursor_size := cursor_size_px()
     cursor_rect: Rect = { f32(pos.x), f32(pos.y), cursor_size, cursor_size }
-    r_draw_layout_rect(&window.renderer.quad_geometry, cursor_rect, .CENTER, color_white, 
+    r_draw_layout_rect(&window.renderer.quad_geometry, cursor_rect, .CENTER, color_white,
         tex_index, f32(time_s_since_beginning_of_program()))
+}
+
+cursor_size_px :: proc() -> f32 {
+    return 160 * (window.rect.h / 1440) * game.user_config.cursor_size_multiplier
+}
+
+// note(isak): mcosu's non-smooth trail timing (osu_cursor_trail_length / _spacing); the smooth
+// interpolated variant for cursormiddle-less skins is not implemented yet
+CURSOR_TRAIL_LENGTH_S  :: 0.17
+CURSOR_TRAIL_SPACING_S :: 0.015
+CURSOR_TRAIL_MAX_PARTS :: 32
+
+Cursor_Trail_Part :: struct {
+    pos: vec2,
+    expires_at_s: f64,
+}
+
+Cursor_Trail :: struct {
+    parts: [CURSOR_TRAIL_MAX_PARTS]Cursor_Trail_Part,
+    head, count: int,
+}
+
+cursor_trails: [2]Cursor_Trail
+
+// note(isak): spawns at most one part per SPACING interval; an unmoved cursor refreshes the newest
+// part instead of stacking duplicates. parts fade linearly over LENGTH and are drawn oldest-first
+// so fresher parts blend on top, all behind the cursor itself.
+cursor_trail_draw :: proc(trail: ^Cursor_Trail, pos: vec2) {
+    if window.skin_textures[.CURSOR_TRAIL].tex_id == 0 do return
+    now := time_s_since_beginning_of_program()
+
+    newest := &trail.parts[(trail.head + trail.count - 1) %% CURSOR_TRAIL_MAX_PARTS]
+    spawned_at := newest.expires_at_s - CURSOR_TRAIL_LENGTH_S
+    if trail.count == 0 || now > spawned_at + CURSOR_TRAIL_SPACING_S {
+        if trail.count > 0 && newest.pos == pos {
+            newest.expires_at_s = now + CURSOR_TRAIL_LENGTH_S
+        } else {
+            if trail.count == CURSOR_TRAIL_MAX_PARTS {
+                trail.head = (trail.head + 1) %% CURSOR_TRAIL_MAX_PARTS
+                trail.count -= 1
+            }
+            trail.parts[(trail.head + trail.count) %% CURSOR_TRAIL_MAX_PARTS] = {pos, now + CURSOR_TRAIL_LENGTH_S}
+            trail.count += 1
+        }
+    }
+
+    for trail.count > 0 && trail.parts[trail.head].expires_at_s <= now {
+        trail.head = (trail.head + 1) %% CURSOR_TRAIL_MAX_PARTS
+        trail.count -= 1
+    }
+
+    // note(isak): the cursor is drawn as a fixed-size square, so the trail derives its size from the
+    // images' natural size ratio - a skin's small trail dot stays small relative to its cursor
+    cursor_metrics := game.active_skin.elements[.CURSOR].metrics
+    trail_metrics  := game.active_skin.elements[.CURSOR_TRAIL].metrics
+    size := vec2{cursor_size_px(), cursor_size_px()}
+    if cursor_metrics.x > 0 {
+        size = trail_metrics * (cursor_size_px() / cursor_metrics.x)
+    }
+
+    for i in 0..<trail.count {
+        part := trail.parts[(trail.head + i) %% CURSOR_TRAIL_MAX_PARTS]
+        alpha := f32(clamp((part.expires_at_s - now) / CURSOR_TRAIL_LENGTH_S, 0, 1))
+        if alpha <= 0 do continue
+        r_draw_layout_rect(&window.renderer.quad_geometry,
+            {part.pos.x, part.pos.y, size.x, size.y}, .CENTER,
+            with_alpha(color_white, alpha), skin_texture(.CURSOR_TRAIL))
+    }
 }
 
 

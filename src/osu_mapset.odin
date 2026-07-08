@@ -401,8 +401,8 @@ mapset_walk_directory :: proc(mapset: ^Mapset, path: string) {
 
 mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
     extension := filepath.ext(file.name)
-    switch extension {
-        case ".notosu": {
+    switch {
+        case extension == ".notosu": {
             filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
             if file_err != nil {
                 log.errorf("mapset: failed to read '{}': {}", file.name, file_err)
@@ -411,7 +411,7 @@ mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
             }
             mapset.notosu_map = mapset_parse_notosu(mapset, filedata)
         }
-        case ".osu": {
+        case extension == ".osu": {
             if mapset.osu_filename != "" && file.name != mapset.osu_filename do break
             filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
             if file_err != nil {
@@ -421,7 +421,7 @@ mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
             }
             mapset.osu_map = mapset_parse_osu(mapset, filedata)
         }
-        case ".png", ".jpg": {
+        case slice.contains(supported_image_extensions, extension): {
             if int(mapset.textures.len) >= max_user_textures() {
                 log.errorf("mapset: texture limit ({}) reached, skipping '{}'", max_user_textures(), file.name)
                 notify_error("mapset: texture limit (%d) reached, skipping '%s'", max_user_textures(), file.name)
@@ -436,7 +436,7 @@ mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
             mapset.texture_slot_by_name[tex_key] = u32(mapset.textures.len)
             queue.push_back(&mapset.textures, tex)
         }
-        case ".wav", ".ogg": {
+        case slice.contains(supported_audio_extensions, extension): {
             sample, ok := sample_load_file(file.name)
             if ok {
                 sample_key := strings.clone(file.name, memory.allocators[.MAPSET])
@@ -975,6 +975,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                         assert(ok)
                         
                     case .SLIDER:
+                        hobj.flags |= {.SLIDER_SNAKE_IN, .SLIDER_SNAKE_OUT}
                         slider: Slider_Path = {
                             bounds_min = {math.F32_MAX, math.F32_MAX},
                             bounds_max = {math.F32_MIN, math.F32_MIN},

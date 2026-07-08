@@ -1,5 +1,6 @@
 package notosu
 
+import "vendor:wasm/WebGL"
 import "base:runtime"
 import "base:intrinsics"
 import q "core:container/queue"
@@ -37,12 +38,29 @@ skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
     .CLICKED_HIT_CIRCLE_OVERLAY = .HITCIRCLE_OVERLAY,
     .FINISHED_SLIDER_END_CIRCLE = .SLIDER_END,
     .FINISHED_SLIDER_END_CIRCLE_OVERLAY = .SLIDER_END_OVERLAY,
+
+    .SLIDER_START_CIRCLE                 = .SLIDER_START_CIRCLE,
+    .SLIDER_START_CIRCLE_OVERLAY         = .SLIDER_START_CIRCLE_OVERLAY,
+    .CLICKED_SLIDER_START_CIRCLE         = .SLIDER_START_CIRCLE,
+    .CLICKED_SLIDER_START_CIRCLE_OVERLAY = .SLIDER_START_CIRCLE_OVERLAY,
+}
+
+// note(isak): osu draws skin images at their native size scaled by hitcircle_diameter/128 (combo
+// numbers use a /160 reference), so an off-reference image renders proportionally smaller or larger
+// instead of being stretched to the circle. metrics already account for @2x images
+SKIN_CIRCLE_REFERENCE_PX :: f32(128)
+SKIN_NUMBER_REFERENCE_PX :: f32(160)
+
+skin_element_size_radius_units :: proc(el_type: Element_Type) -> vec2 {
+    metrics := game.active_skin.elements[skin_element_for_type_table[el_type]].metrics
+    if metrics.x == 0 do return {2, 2}
+    return metrics * (2.0 / SKIN_CIRCLE_REFERENCE_PX)
 }
 
 //////////////////////////////////////////////////////
 // note(isak): core types
 
-// note(isak): this (mostly) mirrors ease.Ease, but it's fine in case we wanna expand this later
+// note(isak): this mirrors ease.Ease right now, but it's fine in case we wanna expand this later
 Tween :: enum {
     LINEAR,
     QUAD_IN,     QUAD_OUT,     QUAD_IN_OUT,
@@ -187,7 +205,13 @@ Element_Type :: enum {
     CLICKED_HIT_CIRCLE_OVERLAY,
     FINISHED_SLIDER_END_CIRCLE,
     FINISHED_SLIDER_END_CIRCLE_OVERLAY,
-    
+
+    // note(isak): skins with sliderstartcircle use it for slider heads instead of the hitcircle pair
+    SLIDER_START_CIRCLE,
+    SLIDER_START_CIRCLE_OVERLAY,
+    CLICKED_SLIDER_START_CIRCLE,
+    CLICKED_SLIDER_START_CIRCLE_OVERLAY,
+
     JUDGEMENT_MISS,
     JUDGEMENT_OK,
     JUDGEMENT_GOOD,
@@ -255,13 +279,22 @@ Drawable_Flag :: enum u32 {
     // note(isak): fades alpha from 1 to 0 over the last OSU_HIT_ANIMATION_LENGTH ms before end_time_ms.
     FADE_OUT,
 
+    // note(isak): visually dim the drawable before its start time
+    HITOBJECT_DIM,
+
     // note(isak): the quad covers the whole render target (size is derived each frame), while pos
     // still nudges it in osupx. handy for compositing a screen-sized capture without size math.
     FULLSCREEN,
 
     // note(isak): visibility flag
     HIDDEN,
+
+    // note(isak): scales size up to BEAT_PULSE_MAX_SCALE on every beat, easing back down before the
+    // next one (osu's reverse arrow pulse). syncs to the current uninherited timing point.
+    BEAT_PULSE,
 }
+
+BEAT_PULSE_MAX_SCALE :: f32(1.3)
 
 Drawable_Handle :: slotmap.Handle
 
@@ -338,16 +371,19 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
         tex = skin_texture(.HITCIRCLE),
         flags = {.USE_COMBO_COLOR}
     }
+
+    elements.data[builtin_element_slot(.SLIDER_START_CIRCLE)].flags = {.USE_COMBO_COLOR}
     
     elements.data[builtin_element_slot(.APPROACH_CIRCLE)] = {
         tex = skin_texture(.APPROACHCIRCLE),
         flags = {.USE_COMBO_COLOR},
 
+        // note(isak): osu parity - approachScale = 1 + 3 * (delta / preempt), reaching exactly 1 at hit time
         animations = animation_new(anims, Animation_Scale{
-            start_time = 0, 
+            start_time = 0,
             end_time = 1,
-            start_scale = {3, 3}, 
-            end_scale = {0.9, 0.9}
+            start_scale = {4, 4},
+            end_scale = {1, 1}
         })
     }
     
@@ -393,7 +429,8 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
     )
 
     clickables := [?]Element_Type{
-        .CLICKED_HIT_CIRCLE, .CLICKED_HIT_CIRCLE_OVERLAY, .FINISHED_SLIDER_END_CIRCLE, .FINISHED_SLIDER_END_CIRCLE_OVERLAY
+        .CLICKED_HIT_CIRCLE, .CLICKED_HIT_CIRCLE_OVERLAY, .FINISHED_SLIDER_END_CIRCLE, .FINISHED_SLIDER_END_CIRCLE_OVERLAY,
+        .CLICKED_SLIDER_START_CIRCLE, .CLICKED_SLIDER_START_CIRCLE_OVERLAY,
     }
     for el in clickables {
         elements.data[builtin_element_slot(el)].animations = anim_hit
@@ -468,7 +505,19 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
         num_digits = write_combo_digits(&digits, int(hobj.combo_number))
     }
     
-    num_base := num_custom if num_custom > 0 else (3 if in_visible_phase else 0)
+    // note(isak): skins shipping sliderstartcircle use it for slider heads; when its overlay is
+    // absent osu draws no overlay at all (no hitcircleoverlay fallback), hence the slice trim
+    base_els := [?]Element_Type{.HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
+    base := base_els[:]
+    if hobj.type == .SLIDER && game.active_skin.has_sliderstart {
+        base_els[0] = .SLIDER_START_CIRCLE_OVERLAY
+        base_els[1] = .SLIDER_START_CIRCLE
+        if window.skin_textures[.SLIDER_START_CIRCLE_OVERLAY].tex_id == 0 {
+            base = base_els[1:]
+        }
+    }
+
+    num_base := num_custom if num_custom > 0 else (len(base) if in_visible_phase else 0)
     total_handles := num_digits + num_base
 
     if total_handles == 0 do return
@@ -505,7 +554,7 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
 
             drawable_color := hitobject_combo_color(hobj) if .USE_COMBO_COLOR in el.flags else color_white
             drawable_flags := Drawable_Flags{.ACTIVE}
-            if in_visible_phase do drawable_flags |= {.FADE_IN}
+            if in_visible_phase do drawable_flags |= {.FADE_IN, .HITOBJECT_DIM}
             
             hobj.gfx_handles[num_digits + i] = drawable_new(Drawable{
                 flags         = drawable_flags,
@@ -521,20 +570,23 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
             })
         }
     } else {
-        base := [?]Element_Type{.HIT_CIRCLE_OVERLAY, .HIT_CIRCLE, .APPROACH_CIRCLE}
         for el_type, i in base {
             el_id := builtin_element_slot(el_type)
             el := q.get(&game.beatmap.elements, el_id)
-            
+
             drawable_color := hitobject_combo_color(hobj) if .USE_COMBO_COLOR in el.flags else color_white
-            
+
+            drawable_flags := Drawable_Flags{.ACTIVE, .FADE_IN}
+            if el_type != .APPROACH_CIRCLE do drawable_flags |= {.HITOBJECT_DIM}
+            else do drawable_color = with_alpha(drawable_color, 0.9) // note(isak): osu's approach circle alpha multiplier
+
             end_ms := hobj.start_time_ms + (game.beatmap.timing_windows.ok if el_type != .APPROACH_CIRCLE else 0)
             hobj.gfx_handles[num_digits + i] = drawable_new(Drawable{
-                flags         = {.ACTIVE, .FADE_IN},
+                flags         = drawable_flags,
                 element       = el_id,
                 layer         = .HITOBJECTS,
                 pos           = vec2{0, 0},
-                size          = {2, 2},
+                size          = skin_element_size_radius_units(el_type),
                 anchor        = .CENTER,
                 color         = drawable_color,
                 start_time_ms = hobj.start_time_ms - preempt,
@@ -547,8 +599,8 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
     if num_digits > 0 {
         // digit drawables
         // note(isak): size and pos are in radius units so they scale correctly with CS changes at runtime.
-        hc_size := game.active_skin.elements[.HITCIRCLE].metrics
-        number_scale_norm := 2 / max(hc_size.x, 1) * COMBO_NUMBER_SCALE
+        // digits scale against osu's fixed 160px reference, independent of the hitcircle image's size
+        number_scale_norm := 2.0 / SKIN_NUMBER_REFERENCE_PX
         // note(isak): HitCircleOverlap is a pixel count at the glyph's metric size, so it normalizes
         // through the same factor as the digit widths. it trims the gap between adjacent digits.
         overlap_norm := game.active_skin.font_hit_circle_overlap * number_scale_norm
@@ -566,7 +618,7 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
             digit_metrics := game.active_skin.elements[digit_el].metrics
             digit_size_norm := digit_metrics * number_scale_norm
             hobj.gfx_handles[di] = drawable_new(Drawable{
-                flags         = {.ACTIVE, .FADE_IN, .SCALE_POS_BY_RADIUS},
+                flags         = {.ACTIVE, .FADE_IN, .SCALE_POS_BY_RADIUS, .HITOBJECT_DIM},
                 element       = builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + digits[di])),
                 layer         = .HITOBJECTS,
                 pos           = {x_norm + digit_size_norm.x / 2, 0},
@@ -589,33 +641,43 @@ hitcircle_create_default_hit_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_
 
     el_overlay: Element_Type = sliderend ? .FINISHED_SLIDER_END_CIRCLE_OVERLAY : .CLICKED_HIT_CIRCLE_OVERLAY
     el_circle: Element_Type = sliderend ? .FINISHED_SLIDER_END_CIRCLE : .CLICKED_HIT_CIRCLE
-    
+    draw_overlay := true
+    if !sliderend && hobj.type == .SLIDER && game.active_skin.has_sliderstart {
+        el_circle  = .CLICKED_SLIDER_START_CIRCLE
+        el_overlay = .CLICKED_SLIDER_START_CIRCLE_OVERLAY
+        draw_overlay = window.skin_textures[.SLIDER_START_CIRCLE_OVERLAY].tex_id != 0
+    }
+
     combo_color := hitobject_combo_color(hobj)
 
-    drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
-        flags = {.ACTIVE},
-        element = builtin_element_slot(el_overlay),
-        layer = .HITOBJECTS,
-        pos = pos,
-        size = {2, 2},
-        anchor = .CENTER,
-        color = color_white,
-        start_time_ms = map_time,
-        end_time_ms = map_time + OSU_HIT_ANIMATION_LENGTH,
-        hobj_index = hobj.index + 1,
-    })
+    // note(isak): expiring gfx render in insertion order, so the circle goes first and the overlay
+    // draws on top of it - same stacking as the preempt drawables (which render #reverse'd)
     drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
         flags = {.ACTIVE},
         element = builtin_element_slot(el_circle),
         layer = .HITOBJECTS,
         pos = pos,
-        size = {2, 2},
+        size = skin_element_size_radius_units(el_circle),
         anchor = .CENTER,
         color = combo_color,
         start_time_ms = map_time,
         end_time_ms = map_time + OSU_HIT_ANIMATION_LENGTH,
         hobj_index = hobj.index + 1,
     })
+    if draw_overlay {
+        drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
+            flags = {.ACTIVE},
+            element = builtin_element_slot(el_overlay),
+            layer = .HITOBJECTS,
+            pos = pos,
+            size = skin_element_size_radius_units(el_overlay),
+            anchor = .CENTER,
+            color = color_white,
+            start_time_ms = map_time,
+            end_time_ms = map_time + OSU_HIT_ANIMATION_LENGTH,
+            hobj_index = hobj.index + 1,
+        })
+    }
 }
 
 // note(isak): processes phase transitions emitted by game logic, creating/replacing drawables
@@ -660,6 +722,23 @@ process_hitobject_phase_transitions :: proc() {
     sb.swap(&game.beatmap.phase_transitions)
 }
 
+// note(isak): 1 exactly on the beat, easing off to 0 right before the next. extrapolates the
+// current uninherited timing point in both directions, so it keeps pulsing before the first red line
+beat_proximity_factor :: proc(at_time_ms: f64, tween: Tween = .QUAD_OUT) -> f32 {
+    timing_point := &game.active_map.timing_points[game.beatmap.current_timing_point_index_uninherited]
+    beat_length := max(timing_point.beat_length, 1)
+    beat_progress := math.mod(at_time_ms - timing_point.time, beat_length) / beat_length
+    if beat_progress < 0 do beat_progress += 1
+    return 1 - tween_apply(tween, f32(beat_progress))
+}
+
+// note(isak): threshold is in map-time ms, doesn't adjust for beatmap rate (for osu parity)
+hitobject_dim_factor :: proc(hit_time_ms, at_time: f64) -> f32 {
+    undim_start := hit_time_ms - OSU_HITOBJECT_DIM_UNTIL_MS
+    t := f32(clamp((at_time - undim_start) / OSU_HITOBJECT_DIM_FADE_MS, 0, 1))
+    return math.lerp(OSU_HITOBJECT_DIM_FACTOR, 1, t)
+}
+
 render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) -> bool {
     if at_time < d.start_time_ms {
         return true
@@ -691,8 +770,6 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
     pos_y := d.pos.y * (current_radius if .SCALE_POS_BY_RADIUS in d.flags else 1)
     rect := Rect{pos_x + parent_pos.x + phys_x, pos_y + parent_pos.y + phys_y, d.size.x * current_radius, d.size.y * current_radius}
 
-    // note(isak): fullscreen derives its size each frame by inverse-mapping the screen corners into
-    // playfield osupx, so it covers the render target (resize-safe) while pos stays an osupx nudge.
     if .FULLSCREEN in d.flags {
         tl := screenspace_to_playfield_osupx({0, 0})
         br := screenspace_to_playfield_osupx({window.rect.w, window.rect.h})
@@ -761,6 +838,14 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
         seen_animation_of_type[animation_variant(animation)] = true
     }
 
+    if .BEAT_PULSE in d.flags {
+        pulse := math.lerp(f32(1), BEAT_PULSE_MAX_SCALE, beat_proximity_factor(at_time))
+        rect.w *= pulse
+        rect.h *= pulse
+    }
+    if .HITOBJECT_DIM in d.flags {
+        color = color_scale_rgb(color, hitobject_dim_factor(fade_ref_ms, at_time))
+    }
     if .FADE_IN in d.flags {
         fade_in_ms := min((fade_ref_ms - d.start_time_ms) * 0.4, 400.0)
         color.a = u8(f32(color.a) * f32(clamp(relative_time_at / fade_in_ms, 0, 1)))
@@ -862,6 +947,19 @@ slider_body_alpha :: proc(hobj: ^Hitobject, map_time: f64) -> f32 {
 }
 
 slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Path, map_time: f64) {
+    first_instance := i32(0)
+    last_instance  := max(1, i32(f64(slider.instance_count) * slider_snake_in_factor(hobj)))
+    retracted := i32(f64(slider.instance_count) * slider_snake_out_factor(hobj))
+    final_span_heads_back := hobj.slider_state.path_travel_count % 2 == 0
+    if final_span_heads_back {
+        last_instance = min(last_instance, slider.instance_count - retracted)
+    } else {
+        first_instance = retracted
+    }
+    if last_instance <= first_instance {
+        return
+    }
+
     // note(isak): slider geometry is in CS-normalized units (osupx / radius)
     r := hitobject_radius_osupx(hobj)
     cs_to_osupx := mat3{r, 0, 0, 0, r, 0, 0, 0, 1}
@@ -881,14 +979,8 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     r_bind_framebuffer({ write = builtin_framebuffer(.SLIDERS) })
     r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
 
-    // note(isak): on intel igpus, a scissored glClear fills the box in raw lower-left framebuffer
-    // space, ignoring ClipControl(UPPER_LEFT), while rasterized draws honor it. the SCISSOR_MODE
-    // handler's H-y-h flip is calibrated for draws, so the clear lands on the vertically mirrored
-    // half (top-of-screen slider clears the bottom), leaving the slider's rows uncleared. nvidia
-    // applies the flip to the clear consistently, so it's already correct there. on intel, pre-flip
-    // the clear's y so the handler's flip cancels and glClear hits the slider's actual rows, then
-    // restore the normal scissor for the body draw below.
     if window.intel_gpu {
+        // note(isak): on intel igpus, a scissored glClear ignores ClipControl(UPPER_LEFT)
         r_set_scissor_mode(
             i32(slider_rect.x),
             i32(window.rect.h - slider_rect.y - slider_rect.h),
@@ -901,25 +993,20 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
         r_clear(with_alpha(color_black, 0.0))
     }
 
-    slider_snake_instances := max(1, i32(f64(slider.instance_count) * slider_snake_out_factor(hobj)))
-
-    // note(isak): skin SliderBorder/SliderTrackOverride tint the rgb; alpha stays the render's own.
-    // unset skin colours (zero alpha) fall back to the default white.
     border_rgb := game.active_skin.slider_border.a != 0 ? game.active_skin.slider_border : color_white
     body_rgb   := game.active_skin.slider_track_override.a != 0 ? game.active_skin.slider_track_override : color_white
 
     r_push_draw_slider(Slider_Params{
         transform          = slider_pf_transform,
-        border_color       = color_to_vec(with_alpha(border_rgb, 0.9)),
+        border_color       = color_to_vec(with_alpha(border_rgb, 1.0)),
         body_color         = color_to_vec(with_alpha(body_rgb, 0.7)),
         script_translation = translation,
-        base_instance      = u32(slider.first_instance_at),
+        base_instance      = u32(slider.first_instance_at + first_instance),
         radius_osupx       = r,
-    }, slider_snake_instances)
+    }, last_instance - first_instance)
     
-    // note(isak): the body composite bypasses render_drawable, so it resolves the HITOBJECTS target
-    // by hand through r_layer_framebuffer to match the rest of the layer: a capture target when
-    // captured, the backbuffer for full-frame-capture maps, else the screen.
+    // note(isak): the body composite bypasses render_drawable, so we have to resolve the HITOBJECTS
+    // target through r_layer_framebuffer to match the rest of the layer
     slider_write_target := r_layer_framebuffer(.HITOBJECTS).write
     r_bind_framebuffer({ read = builtin_framebuffer(.SLIDERS), write = slider_write_target })
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
@@ -939,10 +1026,13 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     }   
     r_set_scissor_mode(scissor_rect)
     
+    // note(isak): dimming the composite tint dims border and body together, mirroring HITOBJECT_DIM
+    // the same way slider_body_alpha mirrors FADE_IN/FADE_OUT
+    body_tint := color_scale_rgb(color_white, hitobject_dim_factor(hobj.start_time_ms, map_time))
     r_draw_rect_with_uv(&renderer.quad_geometry,
                         slider_rect,
                         slider_uvs,
-                        with_alpha(color_white, slider_body_alpha(hobj, map_time)),
+                        with_alpha(body_tint, slider_body_alpha(hobj, map_time)),
                         builtin_texture(.SLIDER_FRAMEBUFFER))
     r_reset_scissor_mode()
 }
@@ -978,27 +1068,26 @@ slider_drawable_new :: proc(hobj: ^Hitobject, part: Slider_Part, size_radius_uni
     })
 }
 
-// note(isak): allocates the slider's persistent decoration drawables once, on spawn. sizes and combo color are
-// baked here (same as the head/number drawables); per-frame visibility and position come from slider_sync_gfx.
+// note(isak): allocates the slider's internal drawables (or reuses if already allocated).
+// per-frame visibility and position come from slider_sync_gfx.
 slider_create_gfx :: proc(hobj: ^Hitobject) {
     slider := &hobj.slider_state
     combo := hitobject_combo_color(hobj)
 
-    // note(isak): radius units = osupx size / radius
-    radius_scale := vec2{2, 2} / game.active_skin.elements[.HITCIRCLE].metrics
-    tick_size   := radius_scale * game.active_skin.elements[.SLIDER_TICK].metrics
-    repeat_size := radius_scale * game.active_skin.elements[.SLIDER_REPEAT].metrics
-    ball_size   := radius_scale * game.active_skin.elements[.SLIDER_BALL].metrics
-    follow_size := vec2{2, 2} * f32(slider.follow_circle_radius_mult)
-    end_size    := vec2{2, 2}
+    tick_size    := skin_element_size_radius_units(.SLIDER_TICK)
+    repeat_size  := skin_element_size_radius_units(.SLIDER_REPEAT)
+    ball_size    := skin_element_size_radius_units(.SLIDER_BALL)
+    end_size     := skin_element_size_radius_units(.SLIDER_END)
+    overlay_size := skin_element_size_radius_units(.SLIDER_END_OVERLAY)
+    follow_size  := vec2{2, 2} * f32(slider.follow_circle_radius_mult)
 
     gfx := &slider.gfx
-    gfx.end_circle   = slider_drawable_new(hobj, .END,           end_size,    combo,       {.FADE_IN})
-    gfx.end_overlay  = slider_drawable_new(hobj, .END_OVERLAY,   end_size,    color_white, {.FADE_IN})
-    gfx.head_circle  = slider_drawable_new(hobj, .END,           end_size,    combo,       {.FADE_IN})
-    gfx.head_overlay = slider_drawable_new(hobj, .END_OVERLAY,   end_size,    color_white, {.FADE_IN})
-    gfx.end_repeat   = slider_drawable_new(hobj, .REPEAT,        repeat_size, color_white)
-    gfx.head_repeat  = slider_drawable_new(hobj, .REPEAT,        repeat_size, color_white)
+    gfx.end_circle   = slider_drawable_new(hobj, .END,           end_size,     combo,       {.FADE_IN, .HITOBJECT_DIM})
+    gfx.end_overlay  = slider_drawable_new(hobj, .END_OVERLAY,   overlay_size, color_white, {.FADE_IN, .HITOBJECT_DIM})
+    gfx.head_circle  = slider_drawable_new(hobj, .END,           end_size,     combo,       {.FADE_IN, .HITOBJECT_DIM})
+    gfx.head_overlay = slider_drawable_new(hobj, .END_OVERLAY,   overlay_size, color_white, {.FADE_IN, .HITOBJECT_DIM})
+    gfx.end_repeat   = slider_drawable_new(hobj, .REPEAT,        repeat_size, color_white, {.BEAT_PULSE})
+    gfx.head_repeat  = slider_drawable_new(hobj, .REPEAT,        repeat_size, color_white, {.BEAT_PULSE})
     gfx.follow       = slider_drawable_new(hobj, .FOLLOW_CIRCLE, follow_size, color_white)
     gfx.ball         = slider_drawable_new(hobj, .BALL,          ball_size,   combo)
 
@@ -1069,7 +1158,7 @@ slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
 
     hobj_pos := hitobject_pos(hobj)
     end_pos  := path.end_pos + hobj.script_pos_translation
-    snake_full := slider_snake_out_factor(hobj) >= 1
+    snake_full := slider_snake_in_factor(hobj) >= 1
 
     current_span := slider.checked_repeats_count
     last_span := slider.path_travel_count - 1
@@ -1155,8 +1244,6 @@ slider_render_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
     }
 }
 
-
-COMBO_NUMBER_SCALE :: f32(0.8)
 
 // note(isak): extracts up to 4 decimal digits of n into buf (most-significant first), returns count
 write_combo_digits :: proc(buf: ^[4]int, n: int) -> (count: int) {

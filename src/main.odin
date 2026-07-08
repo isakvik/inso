@@ -4,6 +4,7 @@ import "core:sort"
 VERSION :: #config(VERSION, "dev (unversioned)")
 
 import "base:runtime"
+import "core:c"
 import "core:container/queue"
 import "core:fmt"
 import "core:hash"
@@ -16,7 +17,6 @@ import "core:path/filepath"
 import "core:time"
 import vmem "core:mem/virtual"
 
-import "core:c"
 import "bass"
 import imgui "imgui"
 import imgui_gl3 "imgui/imgui_impl_opengl3"
@@ -39,8 +39,7 @@ Memory_Arena_Type :: enum {
     // note(isak): judgements (unbounded). cleared on mapset reload/unload
     JUDGEMENTS,
     
-    // note(isak): skin data (names, paths)
-    // cleared on skin unload
+    // note(isak): skin data (names, paths). cleared on skin unload
     SKIN,
 
     // note(isak): active sound channels (Sound_Channel slotmap). freed and reinited on game_sounds_clear
@@ -354,7 +353,7 @@ main :: proc() {
 
             if window.resized && game.mode == .EDITOR {
                 // todo(isak): @hack
-                beatmap_open(game.beatmap.map_reference, true)
+                //beatmap_open(game.beatmap.map_reference, true)
             }
             window.resized = false
             
@@ -366,6 +365,7 @@ main :: proc() {
             profiler_block_begin(.GAME_UPDATE); defer profiler_block_end()
             
             handle_debug_ui_events()
+            file_dialog_poll()
             if key_is_down(.LCTRL) && key_is_pressed(.F5) {
                 discover_maps("songs/")
                 discover_skins("skins/")
@@ -409,83 +409,12 @@ main :: proc() {
         }
         
         {
-            /*
-                todo(isak): state of the renderer:
-                usage:
-                - batch overrun has not been tested (although an infinite loop crashes, which is expected) @beta
-                - transforms should be a dynamic stack that we just write as we process the frame; can save a bunch
-                    of draw calls
-            */
             profiler_block_begin(.GAME_DRAW); defer profiler_block_end()
             
             r_bind_layer_and_push_current_state(.PLATFORM, transform = window.screenspace_transform)
 
-            if app.debug_display_fontatlas {
-                r_draw_rect(&renderer.quad_geometry,
-                    {0, 0, f32(text_engine.ctx.width), f32(text_engine.ctx.height)},
-                    color_white,
-                    builtin_texture(.FONT_ATLAS))
-            }
-
-            if app.debug_display_frame_profiler {
-                profiler_push_blocks_as_text(renderer, frame_count)
-                profiler_push_gpu_blocks_as_text(renderer)
-            }
-            if app.debug_display_frame_graph || app.debug_display_frame_profiler {
-                profiler_push_quad(&renderer.quad_geometry, frame_count)
-            }
-            if app.debug_display_memory_profiler {
-                profiler_push_memory_diag_text(renderer)
-            }
-            
-            if app.debug_display_textures {
-                /*for i in 0..<50 {
-                    r_draw_quad(&renderer.quad_geometry, 
-                        vec2{400 + 40*(f32(i%10)), 10 + 40*f32(i/10)},
-                        vec2{440 + 40*(f32(i%10)), 50 + 40*f32(i/10)},
-                        vec2{0,0}, vec2{1,1},
-                        color_white, 
-                        tex_index = u32(i)
-                    )
-                }*/
-
-                r_push_transform(window.screenspace_transform)
-                r_draw_quad(&renderer.quad_geometry, 
-                    vec2{0, 0},
-                    vec2{f32(window.rect.w), f32(window.rect.h)},
-                    vec2{0,0}, vec2{1,1},
-                    color_black
-                )
-                r_draw_quad(&renderer.quad_geometry, 
-                    vec2{0, 0},
-                    vec2{f32(window.rect.w), f32(window.rect.h)},
-                    vec2{0,0}, vec2{1,1},
-                    color_white, 
-                    tex_index = builtin_texture(.SLIDER_FRAMEBUFFER)
-                )
-                push_text(renderer, "Slider texture buffer (press F6 to hide)",
-                    pos     = {window.rect.w / 2, 50},
-                    size    = 18,
-                    color   = {255, 255, 255, 150},
-                    align_h = .Center,
-                    align_v = .Bottom)
-            }
-            
-            if app.debug_display_playfield_cursor {
-                r_push_transform(game.playfield_transform)
-                pf_cur_rect: Rect = { game.input.mouse_pos.x, game.input.mouse_pos.y, 20, 20 }
-                r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, builtin_texture(.WHITE),
-                    f32(time_s_since_beginning_of_program()))
-            }
-
+            debug_visuals_draw(renderer, frame_count)
             notify_draw(renderer)
-
-            push_text(renderer, VERSION,
-                pos     = {window.rect.w / 2, window.rect.h - 8},
-                size    = 14,
-                color   = {255, 255, 255, 150},
-                align_h = .Center,
-                align_v = .Bottom)
 
             end_frame(renderer)
 
@@ -548,6 +477,7 @@ begin_frame :: proc(renderer: ^Renderer) {
     r_bind_layer(.BACKGROUND)
     r_bind_pipeline({ pipeline = builtin_pipeline_slot(.QUAD) })
 
+    // note(isak): clear map-dependent extra targets
     if game.active_mapset != nil {
         for &rt, i in game.active_mapset.render_targets.data {
             if rt.clear_every_frame {
@@ -555,13 +485,10 @@ begin_frame :: proc(renderer: ^Renderer) {
                 r_clear(with_alpha(color_black, 0.0))
             }
         }
-    }
-
-    // note(isak): the swapchain is cleared by the sokol pass, but the offscreen backbuffer isn't,
-    // so clear it here (color + depth) before the frame's layers draw into it.
-    if render_to_backbuffer_active() {
-        r_bind_framebuffer({ write = builtin_framebuffer(.BACKBUFFER) })
-        r_clear(with_alpha(color_black, 0.0))
+        if game.active_mapset.notosu_map.use_backbuffer {
+            r_bind_framebuffer({ write = builtin_framebuffer(.BACKBUFFER) })
+            r_clear(with_alpha(color_black, 0.0))
+        }
     }
 
     main_framebuffer := builtin_framebuffer(.BACKBUFFER) if render_to_backbuffer_active() else builtin_framebuffer(.DEFAULT)
@@ -587,9 +514,7 @@ end_frame :: proc(renderer: ^Renderer) {
     if !window.transparent {
         // note(isak): windows window with transparency captures the alpha of the last drawn pixels and uses that for
         // the window's opacity value. when we don't want transparency, clear alpha of every pixel to 1.0.
-        // this must stay unconditional: platform-layer draws land on the screen after any post-processing
-        // present, so they reintroduce sub-1 alpha the present didn't cover.
-        r_bind_layer(.PLATFORM)
+        r_check_and_bind_layer(.PLATFORM)
         r_bind_pipeline({ pipeline = builtin_pipeline_slot(.QUAD) })
         r_push_transform(window.screenspace_transform)
         r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
@@ -640,7 +565,7 @@ open_external_map :: proc(external_map_path: string) -> (success: bool) {
     append(&app.map_reference_names, ref_display_cstr)
     
     beatmap_open(ref)
-    
+
     app.external_map_open = true
     return true
 }
@@ -651,19 +576,7 @@ imgui_update :: proc() {
     
     imgui_dropdown_draw(&app.map_dropdown)
     if imgui.SmallButton("open external") {
-        temp_mode := window.mode
-        if window.mode != .WINDOWED {
-            window_set_mode(.WINDOWED)
-        }
-        
-        external_map_path, ok := platform_file_dialog_open_osu(memory.allocators[.GLOBAL])
-        if ok {
-            open_external_map(external_map_path)
-        }
-
-        if temp_mode != .WINDOWED {
-            window_set_mode(temp_mode)
-        }
+        file_dialog_open_osu()
     }
     imgui.Separator()
 
@@ -891,6 +804,66 @@ handle_debug_ui_events :: proc() {
         window.cursor_hidden = !sdl.ShowCursor()
     } else if !window.cursor_hidden && !want_mouse {
         window.cursor_hidden = sdl.HideCursor()
+    }
+}
+
+debug_visuals_draw :: proc(renderer: ^Renderer, frame_count: u64) {
+    if app.debug_display_fontatlas {
+        r_draw_rect(&renderer.quad_geometry,
+            {0, 0, f32(text_engine.ctx.width), f32(text_engine.ctx.height)},
+            color_white,
+            builtin_texture(.FONT_ATLAS))
+    }
+
+    if app.debug_display_frame_profiler {
+        profiler_push_blocks_as_text(renderer, frame_count)
+        profiler_push_gpu_blocks_as_text(renderer)
+    }
+    if app.debug_display_frame_graph || app.debug_display_frame_profiler {
+        profiler_push_quad(&renderer.quad_geometry, frame_count)
+    }
+    if app.debug_display_memory_profiler {
+        profiler_push_memory_diag_text(renderer)
+    }
+    
+    if app.debug_display_textures {
+        /*for i in 0..<50 {
+            r_draw_quad(&renderer.quad_geometry, 
+                vec2{400 + 40*(f32(i%10)), 10 + 40*f32(i/10)},
+                vec2{440 + 40*(f32(i%10)), 50 + 40*f32(i/10)},
+                vec2{0,0}, vec2{1,1},
+                color_white, 
+                tex_index = u32(i)
+            )
+        }*/
+
+        r_push_transform(window.screenspace_transform)
+        r_draw_quad(&renderer.quad_geometry, 
+            vec2{0, 0},
+            vec2{f32(window.rect.w), f32(window.rect.h)},
+            vec2{0,0}, vec2{1,1},
+            color_black
+        )
+        r_draw_quad(&renderer.quad_geometry, 
+            vec2{0, 0},
+            vec2{f32(window.rect.w), f32(window.rect.h)},
+            vec2{0,0}, vec2{1,1},
+            color_white, 
+            tex_index = builtin_texture(.SLIDER_FRAMEBUFFER)
+        )
+        push_text(renderer, "Slider texture buffer (press F6 to hide)",
+            pos     = {window.rect.w / 2, 50},
+            size    = 18,
+            color   = {255, 255, 255, 150},
+            align_h = .Center,
+            align_v = .Bottom)
+    }
+    
+    if app.debug_display_playfield_cursor {
+        r_push_transform(game.playfield_transform)
+        pf_cur_rect: Rect = { game.input.mouse_pos.x, game.input.mouse_pos.y, 20, 20 }
+        r_draw_layout_rect(&renderer.quad_geometry, pf_cur_rect, .CENTER, color_red, builtin_texture(.WHITE),
+            f32(time_s_since_beginning_of_program()))
     }
 }
 

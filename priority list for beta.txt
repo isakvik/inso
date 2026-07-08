@@ -1,8 +1,5 @@
 priority list for beta
 
-bugs
-    ui scaling is bad on 4k
-
 old features
     reverse arrow animation
     combobreak sound
@@ -24,7 +21,6 @@ TEST
     limit testing
     
 rendering
-    locking bugfix
     3d pipeline support
     
 gameplay

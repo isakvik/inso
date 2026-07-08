@@ -1,10 +1,12 @@
 package notosu
 
+import "base:intrinsics"
+import "core:c"
 import "core:fmt"
 import "core:log"
 import "core:mem"
 import os "core:os"
-import "core:sys/windows"
+import "core:strings"
 import "core:path/filepath"
 
 import sdl "vendor:sdl3"
@@ -36,7 +38,17 @@ app: struct {
     map_reference_names: [dynamic]cstring, // note(isak): parallel for imgui
 
     external_map_open: bool,
-    
+
+    // note(isak): completed/path are written from sdl's dialog0 thread, read on the main
+    // thread via file_dialog_poll. everything else is main-thread only
+    file_open_dialog: struct {
+        is_open: bool,
+        restore_mode: Window_Mode,
+        completed: bool,
+        path_len: int,
+        path_buffer: [4096]u8,
+    },
+
     skin_references:      [dynamic]string,
     skin_reference_names: [dynamic]cstring, // note(isak): parallel for imgui
     
@@ -293,4 +305,58 @@ read_entire_file_to_cstring :: proc(path: string, allocator := context.allocator
     _ = new(byte, allocator)
     len := len(data)
     return cstring(raw_data(data)), len, err
+}
+
+
+//////////////////////////////////////////////////////
+// note(isak): io dialog (sdl)
+
+// note(isak): sdl requires the filter list to stay valid until the dialog callback runs
+osu_file_dialog_filters := [?]sdl.DialogFileFilter {
+    { name = ".osu Files", pattern = "osu" },
+    { name = "All Files",  pattern = "*" },
+}
+
+file_dialog_open_osu :: proc() {
+    if app.file_open_dialog.is_open do return
+    app.file_open_dialog.is_open = true
+
+    app.file_open_dialog.restore_mode = window.mode
+    if window.mode == .FULLSCREEN {
+        window_set_mode(.BORDERLESS_FULLSCREEN)
+    }
+
+    sdl.ShowOpenFileDialog(_file_dialog_done_proc, nil, window.handle,
+        raw_data(osu_file_dialog_filters[:]), i32(len(osu_file_dialog_filters)),
+        nil, false)
+}
+
+// note(isak): runs on sdl's dialog thread on windows
+_file_dialog_done_proc :: proc "c" (userdata: rawptr, filelist: [^]cstring, filter: c.int) {
+    path_len := 0
+    if filelist != nil && filelist[0] != nil {
+        path := ([^]u8)(filelist[0])
+        for path_len < len(app.file_open_dialog.path_buffer) && path[path_len] != 0 {
+            app.file_open_dialog.path_buffer[path_len] = path[path_len]
+            path_len += 1
+        }
+    }
+    app.file_open_dialog.path_len = path_len
+    intrinsics.atomic_store_explicit(&app.file_open_dialog.completed, true, .Release)
+}
+
+file_dialog_poll :: proc() {
+    if !intrinsics.atomic_load_explicit(&app.file_open_dialog.completed, .Acquire) do return
+    app.file_open_dialog.completed = false
+    app.file_open_dialog.is_open = false
+
+    if app.file_open_dialog.path_len > 0 {
+        // todo(isak): @leak, but pretty small
+        path := strings.clone(string(app.file_open_dialog.path_buffer[:app.file_open_dialog.path_len]),
+            memory.allocators[.GLOBAL])
+        open_external_map(path)
+    }
+    if window.mode != app.file_open_dialog.restore_mode {
+        window_set_mode(app.file_open_dialog.restore_mode)
+    }
 }

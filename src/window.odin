@@ -196,6 +196,7 @@ window_on_resize :: proc(new_w, new_h: i32) {
 
 window_set_mode :: proc(mode: Window_Mode) {
     window.mode = mode
+    game.user_config.window_mode = mode
 
     switch mode {
     case .FULLSCREEN:
@@ -235,24 +236,17 @@ window_set_mode :: proc(mode: Window_Mode) {
             sdl.SetWindowPosition(window.handle, x, y)
         }
     }
-
-    game.user_config.window_mode = mode
 }
 
 window_cycle_mode :: proc(current_mode: Window_Mode) {
     switch current_mode {
     case .WINDOWED:
-        window.mode = .BORDERLESS_FULLSCREEN
         window_set_mode(.BORDERLESS_FULLSCREEN)
     case .BORDERLESS_FULLSCREEN:
-        window.mode = .FULLSCREEN
         window_set_mode(.FULLSCREEN)
     case .FULLSCREEN:
-        window.mode = .WINDOWED
         window_set_mode(.WINDOWED)
     }
-
-    game.user_config.window_mode = window.mode
 }
 
 window_apply_vsync :: proc(enabled: bool) {

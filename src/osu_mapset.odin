@@ -857,7 +857,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                         switch arg_i {
                             case 0: timing_point.time, ok = strconv.parse_f64(value); assert(ok)
                             case 1: timing_point.beat_length, ok = strconv.parse_f64(value); assert(ok)
-                            case 2: meter, ok := strconv.parse_u64(value); assert(ok); 
+                            case 2: meter, ok := strconv.parse_u64(value); assert(ok) 
                                 timing_point.meter = u8(meter)
                             case 3: sample_set, ok := strconv.parse_u64(value); assert(ok)
                                 switch sample_set {

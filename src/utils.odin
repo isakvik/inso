@@ -209,9 +209,9 @@ guarding_allocator_proc :: proc(
 // note(isak): collision utils
 
 point_in_rect :: proc(p: vec2, r: Rect) -> bool {
-    is_within_x := p.x >= (r.x) && p.x <= (r.x + r.w);
-    is_within_y := p.y >= (r.y) && p.y <= (r.y + r.h);
-    return is_within_x && is_within_y;
+    is_within_x := p.x >= (r.x) && p.x <= (r.x + r.w)
+    is_within_y := p.y >= (r.y) && p.y <= (r.y + r.h)
+    return is_within_x && is_within_y
 }
 
 point_in_circle :: proc(p, c: vec2, r: f32) -> bool {

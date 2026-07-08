@@ -1,16 +1,18 @@
 priority list for beta
 
+known discrepancies
+    slider mechanics leniency from lazer
+    no hidden sliderticks
+    we reuse reversearrows instead of spawning new ones
+
 old features
-    reverse arrow animation
     combobreak sound
     cursor ripple
-    
-    cursortrail (mcosu uses a custom shader here)
     note stacking
-    object dimming
+    slider body color from combo color
 
 extra features
-    slider snaking out
+    rotate slider from head
     mine elements
 
 scripting
@@ -19,9 +21,6 @@ scripting
 TEST
     notosu custom buffers
     limit testing
-    
-rendering
-    3d pipeline support
     
 gameplay
     non-scalar playfield scale

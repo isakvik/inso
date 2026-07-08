@@ -13,11 +13,13 @@ in float color; // 0 = edge, 1 = center
 
 out vec4 frag_color;
 
-const float BORDER_WIDTH = 0.10;
+// note(isak): band widths are fractions of the circle radius, matching mcosu's slider shader
+// (defaultBorderSize / defaultTransitionSize / outerShadowSize)
+const float BORDER_WIDTH = 0.11;
 const float BORDER_TRANSITION_WIDTH = 0.011;
 const float SHADOW_WIDTH = 0.08;
 
-const vec4 OUTER_SHADOW_COLOR = vec4(0.0, 0.0, 0.0, 0.2);
+const vec4 OUTER_SHADOW_COLOR = vec4(0.0, 0.0, 0.0, 0.25);
 
 vec4 getInnerBodyColor(vec4 bodyColor) {
 	float brightnessMultiplier = 0.25;
@@ -36,34 +38,27 @@ vec4 getOuterBodyColor(vec4 bodyColor) {
 }
 
 void main() {
-    vec4 tt = vec4(0,1,0,1);
-    
-    vec4 outer_border_color = vec4(body_color.rgb, color);
-    
-    if (color < SHADOW_WIDTH) {
-        frag_color = vec4(OUTER_SHADOW_COLOR.rgb, color * (OUTER_SHADOW_COLOR.a / SHADOW_WIDTH));
-    } 
-    else if (color >= SHADOW_WIDTH && color < SHADOW_WIDTH + BORDER_TRANSITION_WIDTH) {
-        float delta = (color - SHADOW_WIDTH + BORDER_TRANSITION_WIDTH) / (2 * BORDER_TRANSITION_WIDTH);
-        //float delta = (color - SHADOW_WIDTH) / (BORDER_TRANSITION_WIDTH);
-        
+    vec4 inner_body = vec4(getInnerBodyColor(body_color).rgb, body_color.a);
+    vec4 outer_body = vec4(getOuterBodyColor(body_color).rgb, body_color.a);
+
+    if (color < SHADOW_WIDTH - BORDER_TRANSITION_WIDTH) {
+        float delta = color / (SHADOW_WIDTH - BORDER_TRANSITION_WIDTH);
+        frag_color = mix(vec4(0.0), OUTER_SHADOW_COLOR, delta);
+    }
+    else if (color < SHADOW_WIDTH + BORDER_TRANSITION_WIDTH) {
+        float delta = (color - SHADOW_WIDTH + BORDER_TRANSITION_WIDTH) / (2.0 * BORDER_TRANSITION_WIDTH);
         frag_color = mix(OUTER_SHADOW_COLOR, border_color, delta);
     }
-    else if (color >= SHADOW_WIDTH + BORDER_TRANSITION_WIDTH && color < SHADOW_WIDTH + BORDER_TRANSITION_WIDTH + BORDER_WIDTH) {
+    else if (color < SHADOW_WIDTH + BORDER_WIDTH - BORDER_TRANSITION_WIDTH) {
         frag_color = border_color;
-    } 
-    else if (color >= SHADOW_WIDTH + BORDER_WIDTH + BORDER_TRANSITION_WIDTH && color < SHADOW_WIDTH + BORDER_WIDTH + BORDER_TRANSITION_WIDTH * 2) {
-        float width_at = SHADOW_WIDTH + BORDER_WIDTH;
-        float delta = (color - width_at - BORDER_TRANSITION_WIDTH) / (2 * BORDER_TRANSITION_WIDTH);
-        frag_color = mix(border_color, outer_border_color, delta);
-    } 
-    else if (color >= SHADOW_WIDTH + BORDER_WIDTH + BORDER_TRANSITION_WIDTH * 2) {
-        float width_at = SHADOW_WIDTH + BORDER_WIDTH + BORDER_TRANSITION_WIDTH * 2;
-        float body_t = (color - width_at) / (1.0 - width_at);
-
-        vec4 inner = vec4(getInnerBodyColor(body_color).rgb, body_color.a);
-        vec4 outer = vec4(getOuterBodyColor(body_color).rgb, body_color.a);
-        
-        frag_color = mix(outer, inner, body_t);
+    }
+    else if (color < SHADOW_WIDTH + BORDER_WIDTH + BORDER_TRANSITION_WIDTH) {
+        float delta = (color - SHADOW_WIDTH - BORDER_WIDTH + BORDER_TRANSITION_WIDTH) / (2.0 * BORDER_TRANSITION_WIDTH);
+        frag_color = mix(border_color, outer_body, delta);
+    }
+    else {
+        float band_start = SHADOW_WIDTH + BORDER_WIDTH + BORDER_TRANSITION_WIDTH;
+        float delta = (color - band_start) / (1.0 - band_start);
+        frag_color = mix(outer_body, inner_body, delta);
     }
 }

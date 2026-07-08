@@ -18,6 +18,11 @@ Map_Reference :: struct {
     external: bool, // note(isak): opened from outside songs/; survives a songs-folder rediscovery
 }
 
+Skin_Reference :: struct {
+    folder_path: string,
+    external: bool, // note(isak): opened from outside skins/; survives a skins-folder rediscovery
+}
+
 app: struct {
     base_dir: string,
     logger: log.Logger,
@@ -43,13 +48,14 @@ app: struct {
     // thread via file_dialog_poll. everything else is main-thread only
     file_open_dialog: struct {
         is_open: bool,
+        purpose: File_Dialog_Purpose,
         restore_mode: Window_Mode,
         completed: bool,
         path_len: int,
         path_buffer: [4096]u8,
     },
 
-    skin_references:      [dynamic]string,
+    skin_references:      [dynamic]Skin_Reference,
     skin_reference_names: [dynamic]cstring, // note(isak): parallel for imgui
     
     ui_enabled: bool,
@@ -114,7 +120,7 @@ Mouse_ID :: enum {
 Mouse :: struct {
     device_handle: Mouse_Handle,
     pos: vec2,
-    scroll_delta: f32, // note(isak): vertical wheel delta accumulated this frame, reset before polling. >0 = scroll up
+    scroll_delta: f32, // note(isak): vertical wheel delta accumulated this frame. >0 = scroll up
     buttons: [Mouse_Button]Button_State,
     last_click_position: [Mouse_Button]vec2,
 
@@ -220,7 +226,7 @@ keyboard: struct {
 
     state: [2]Keyboard_State,
     // note(isak): if there's a reason to add text input (that's not ui related), we might wanna add some locale
-    // info or state related to character translation messages
+    // info or state related to character translation messages here
 }
 
 keyboard_init :: proc() {
@@ -309,7 +315,12 @@ read_entire_file_to_cstring :: proc(path: string, allocator := context.allocator
 
 
 //////////////////////////////////////////////////////
-// note(isak): io dialog (sdl)
+// note(isak): io dialog (async sdl dialogs)
+
+File_Dialog_Purpose :: enum {
+    OSU_MAP,
+    SKIN_FOLDER,
+}
 
 // note(isak): sdl requires the filter list to stay valid until the dialog callback runs
 osu_file_dialog_filters := [?]sdl.DialogFileFilter {
@@ -318,17 +329,33 @@ osu_file_dialog_filters := [?]sdl.DialogFileFilter {
 }
 
 file_dialog_open_osu :: proc() {
-    if app.file_open_dialog.is_open do return
+    if _file_dialog_begin(.OSU_MAP) {
+        sdl.ShowOpenFileDialog(_file_dialog_done_proc, nil, window.handle,
+            raw_data(osu_file_dialog_filters[:]), i32(len(osu_file_dialog_filters)),
+            nil, false)
+    }
+}
+
+file_dialog_open_skin_folder :: proc() {
+    if _file_dialog_begin(.SKIN_FOLDER) {
+        when ODIN_OS == .Windows {
+            win32_folder_dialog_show()
+        } else {
+            sdl.ShowOpenFolderDialog(_file_dialog_done_proc, nil, window.handle, nil, false)
+        }
+    }
+}
+
+_file_dialog_begin :: proc(purpose: File_Dialog_Purpose) -> bool {
+    if app.file_open_dialog.is_open do return false
     app.file_open_dialog.is_open = true
+    app.file_open_dialog.purpose = purpose
 
     app.file_open_dialog.restore_mode = window.mode
     if window.mode == .FULLSCREEN {
         window_set_mode(.BORDERLESS_FULLSCREEN)
     }
-
-    sdl.ShowOpenFileDialog(_file_dialog_done_proc, nil, window.handle,
-        raw_data(osu_file_dialog_filters[:]), i32(len(osu_file_dialog_filters)),
-        nil, false)
+    return true
 }
 
 // note(isak): runs on sdl's dialog thread on windows
@@ -354,7 +381,10 @@ file_dialog_poll :: proc() {
         // todo(isak): @leak, but pretty small
         path := strings.clone(string(app.file_open_dialog.path_buffer[:app.file_open_dialog.path_len]),
             memory.allocators[.GLOBAL])
-        open_external_map(path)
+        switch app.file_open_dialog.purpose {
+        case .OSU_MAP:     open_external_map(path)
+        case .SKIN_FOLDER: open_external_skin(path)
+        }
     }
     if window.mode != app.file_open_dialog.restore_mode {
         window_set_mode(app.file_open_dialog.restore_mode)

@@ -401,11 +401,27 @@ SLIDER_BALL_ANIMATION_LOOP_MS :: f64(1000)
 // note(isak): the looping slide sound is attenuated below the section volume so it doesn't drown out hits
 SLIDER_SLIDE_VOLUME :: f32(0.5)
 
-slider_snake_out_factor :: proc(hobj: ^Hitobject) -> f64 {
+// note(isak): how far the body has grown out of the head during the approach, 0 to 1.
+// 1 outright when snaking in is disabled, so dependent gfx (end circles, repeats) appear immediately
+slider_snake_in_factor :: proc(hobj: ^Hitobject) -> f64 {
+    if .SLIDER_SNAKE_IN not_in hobj.flags || !game.user_config.snaking_in_sliders_enabled {
+        return 1
+    }
     preempt_ms := hitobject_preempt_ms(hobj)
     snake_duration_ms := preempt_ms * (1.0/3.0)
     time_into_preempt  := beatmap_music_time_ms(&game.beatmap) - hobj.start_time_ms + preempt_ms
     return clamp(time_into_preempt / snake_duration_ms, 0, 1)
+}
+
+// note(isak): fraction of the path retracted behind the ball, 0 to 1; 0 until the final span starts.
+// 0 outright when snaking out is disabled, so the body stays whole until it fades
+slider_snake_out_factor :: proc(hobj: ^Hitobject) -> f64 {
+    if .SLIDER_SNAKE_OUT not_in hobj.flags || !game.user_config.snaking_out_sliders_enabled {
+        return 0
+    }
+    span_ms := max(hobj.slider_state.duration_ms, 1)
+    final_span_start_ms := hobj.end_time_ms - span_ms
+    return clamp((beatmap_music_time_ms(&game.beatmap) - final_span_start_ms) / span_ms, 0, 1)
 }
 
 // note(isak): returns the map time at which the tick should begin its popin for the given span

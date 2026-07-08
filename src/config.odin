@@ -180,6 +180,7 @@ config_supply_default :: proc() -> (result: User_Configuration) {
         master_volume            = 0.5,
         music_volume             = 0.5,
         hitsound_volume          = 0.8,
+        skin_path                = "skins/gn/",
         use_beatmap_skin         = true,
         window_width             = 1280,
         window_height            = 720,

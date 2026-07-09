@@ -189,6 +189,7 @@ config_supply_default :: proc() -> (result: User_Configuration) {
         cursor_sensitivity       = 1.0,
         playfield_border_opacity = 0.0,
         ui_scale                 = 1.0,
+        bg_dim                   = 0.5,
         snaking_in_sliders_enabled  = true,
         snaking_out_sliders_enabled = true,
     }

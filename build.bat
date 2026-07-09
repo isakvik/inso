@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 
 if not exist build mkdir build
-if not exist "build\SDL3.dll" xcopy ".\lib\windows" ".\build" /Y /I
+if not exist "build\SDL3.dll" xcopy ".\lib\windows\*.dll" ".\build" /D /Y /I
 if not exist "build\Roboto-Regular.ttf" copy ".\data\Roboto-Regular.ttf" ".\build\Roboto-Regular.ttf" /Y
 
 set exec_name=inso.exe

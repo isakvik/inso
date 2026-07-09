@@ -7,3 +7,5 @@ inso.raddbg_project
 imgui.ini
 /User.ini
 inso.log
+inso-*.zip
+inso.log

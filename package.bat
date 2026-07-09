@@ -5,7 +5,8 @@ set release_dir=build-release
 set exec_name=inso.exe
 set zip_name=inso-%VERSION%.zip
 
-if not exist %release_dir% mkdir %release_dir%
+if exist %release_dir% rmdir /S /Q %release_dir%
+mkdir %release_dir%
 
 echo [package] building %VERSION%...
 
@@ -14,7 +15,7 @@ if %ERRORLEVEL% neq 0 goto stop
 
 echo [package] copying runtime files...
 
-xcopy ".\lib\windows" ".\%release_dir%" /Y /I /Q
+xcopy ".\lib\windows\*.dll" ".\%release_dir%" /Y /I /Q
 for %%d in (data shaders skins songs) do (
     xcopy /E /I /Y /Q ".\%%d" ".\%release_dir%\%%d"
 )

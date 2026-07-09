@@ -664,6 +664,7 @@ imgui_update :: proc() {
             bg_dim_apply(game.user_config.bg_dim)
         }
 
+        imgui.Checkbox("Use beatmap skin", &game.user_config.use_beatmap_skin)
         imgui.Checkbox("Snaking in sliders", &game.user_config.snaking_in_sliders_enabled)
         imgui.Checkbox("Snaking out sliders", &game.user_config.snaking_out_sliders_enabled)
 

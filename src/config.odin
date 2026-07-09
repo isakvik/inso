@@ -22,6 +22,7 @@ User_Configuration :: struct {
     gpu_profiler_enabled: bool,
 
     skin_path: string,
+    use_beatmap_skin: bool,
 
     window_width: f32,
     window_height: f32,
@@ -75,6 +76,9 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         }
         if v, ok := get(gen, "skin_path"); ok {
             result.skin_path = strings.clone(v)
+        }
+        if v, ok := get(gen, "use_beatmap_skin"); ok {
+            result.use_beatmap_skin = v == "true"
         }
         if v, ok := get(gen, "window_width"); ok {
             if f, ok2 := strconv.parse_f32(v); ok2 do result.window_width = f
@@ -136,6 +140,7 @@ config_save :: proc(path: string) {
     ini.write_pair(w, "music_volume",             game.user_config.music_volume)
     ini.write_pair(w, "hitsound_volume",          game.user_config.hitsound_volume)
     ini.write_pair(w, "skin_path",                game.user_config.skin_path)
+    ini.write_pair(w, "use_beatmap_skin",         game.user_config.use_beatmap_skin)
     ini.write_pair(w, "window_width",             game.user_config.window_width)
     ini.write_pair(w, "window_height",            game.user_config.window_height)
     ini.write_pair(w, "window_mode",              window_mode_keys[game.user_config.window_mode])
@@ -176,6 +181,7 @@ config_supply_default :: proc() -> (result: User_Configuration) {
         music_volume             = 0.5,
         hitsound_volume          = 0.8,
         skin_path                = "skins/gn/",
+        use_beatmap_skin         = true,
         window_width             = 1280,
         window_height            = 720,
         window_mode              = .WINDOWED,

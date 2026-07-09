@@ -195,6 +195,8 @@ window_on_resize :: proc(new_w, new_h: i32) {
 }
 
 window_set_mode :: proc(mode: Window_Mode) {
+    if game.mode == .PLAY do return
+
     window.mode = mode
     game.user_config.window_mode = mode
 

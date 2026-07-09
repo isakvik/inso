@@ -12,6 +12,7 @@ quad_fs_path :: "shaders/quad.fs.glsl"
 
 slider_vs_path :: "shaders/slider.vs.glsl"
 slider_fs_path :: "shaders/slider.fs.glsl"
+slider_present_fs_path :: "shaders/slider_present.fs.glsl"
 
 text_vs_path :: "shaders/text.vs.glsl"
 text_fs_path :: "shaders/text.fs.glsl"
@@ -33,6 +34,7 @@ Builtin_Shader_Slot :: enum {
     QUAD,
     SLIDER,
     TEXT,
+    SLIDER_PRESENT,
 }
 
 builtin_shader_slot :: proc(s: Builtin_Shader_Slot) -> u32 {
@@ -46,6 +48,8 @@ Builtin_Pipeline_Slot :: enum {
     SLIDER,
     TEXT,
     TEXT_PREMULTIPLIED,
+    SLIDER_PRESENT,
+    SLIDER_PRESENT_PREMULTIPLIED,
 }
 
 builtin_pipeline_slot :: proc(s: Builtin_Pipeline_Slot) -> u32 {
@@ -57,10 +61,10 @@ user_pipeline_slot :: proc(s: u32) -> u32 {
 }
 
 // note(isak): the CLEAR handler forces the depth mask on, then restores it to whatever the bound
-// pipeline wants - only the slider pipeline and mesh shaders (DepthWrite) actually write depth.
+// pipeline wants - only mesh shaders (DepthWrite) actually write depth.
 pipeline_writes_depth :: proc(id: Pipeline_ID) -> bool {
     if int(id) < len(Builtin_Pipeline_Slot) {
-        return Builtin_Pipeline_Slot(id) == .SLIDER
+        return false
     }
     if game.active_mapset != nil {
         user_idx := int(id) - len(Builtin_Pipeline_Slot)
@@ -281,10 +285,36 @@ slider_pipeline_desc :: proc() -> sg.Pipeline_Desc {
     return {
         label = "builtin.slider",
         shader = window.shaders.data[builtin_shader_slot(.SLIDER)].shader,
-        //index_type = .UINT16,
         cull_mode = .NONE,
-        blend_color = {1.0, 1.0, 1.0, 0.0}, // note(isak): clears to 0 alpha so black transparency works
-        depth = {compare = .LESS_EQUAL, write_enabled = true}, // note(isak): slider geometry uses depth
+        // note(isak): MAX-blends the distance field written by slider.fs; max over overlapping
+        // circles of (1 - d/r) is the distance to the nearest path point, so the union of
+        // circles needs no depth attachment (blend factors are ignored for MIN/MAX equations)
+        colors = {
+            0 = { blend = {
+                enabled          = true,
+                op_rgb           = .MAX,
+                op_alpha         = .MAX,
+                src_factor_rgb   = .ONE,
+                src_factor_alpha = .ONE,
+                dst_factor_rgb   = .ONE,
+                dst_factor_alpha = .ONE,
+            }},
+        },
+    }
+}
+
+// note(isak): composites a slider body into its layer: quad VS + a FS that samples the
+// SLIDERS distance field and maps it through the border/body banding (sliderParams stays
+// bound from the body draw right before this)
+slider_present_pipeline_desc :: proc(blend: Blend_Mode = .ALPHA) -> sg.Pipeline_Desc {
+    return {
+        label = "builtin.slider_present",
+        shader = window.shaders.data[builtin_shader_slot(.SLIDER_PRESENT)].shader,
+        cull_mode = .NONE,
+        blend_color = {1.0, 1.0, 1.0, 1.0},
+        colors = {
+            0 = { blend = blend_state_for_mode(blend) }
+        },
     }
 }
 
@@ -404,8 +434,7 @@ populate_slider_circle_vertices :: proc(geometry: ^Buffer(Slider_Vertex)) {
         vert_i := geometry.count
         verts := geometry.data
 
-        // note(isak): the middle of our circle is raised for depth testing
-        verts[vert_i + 0] = { pos = { 0, 0, 1 } }
+        verts[vert_i + 0] = { pos = { 0, 0, 0 } }
         verts[vert_i + 1 + UNIT_CIRCLE_VERTEX_COUNT] = { pos = { 0, 1, 0 } }
 
         th: f32

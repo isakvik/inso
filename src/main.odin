@@ -953,6 +953,8 @@ process_builtin_shader_changes :: proc(watch: ^Directory_Watch) {
         pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.QUAD_PREMULTIPLIED)], quad_pipeline_desc(.PREMULTIPLIED))
         pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.QUAD_PREMULTIPLIED_OVER)], quad_pipeline_desc(.PREMULTIPLIED_OVER))
         pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.SLIDER)], slider_pipeline_desc())
+        pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.SLIDER_PRESENT)], slider_present_pipeline_desc())
+        pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.SLIDER_PRESENT_PREMULTIPLIED)], slider_present_pipeline_desc(.PREMULTIPLIED))
         pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.TEXT)], text_pipeline_desc())
         pipeline_reinit(&window.pipelines.data[builtin_pipeline_slot(.TEXT_PREMULTIPLIED)], text_pipeline_desc(.PREMULTIPLIED))
     }

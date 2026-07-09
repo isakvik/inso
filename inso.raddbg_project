@@ -1,0 +1,144 @@
+// raddbg 0.9.26 project file
+
+recent_file: path: "src/main.odin"
+recent_file: path: ".claude/worktrees/hitobject-dim/src/osu_graphics.odin"
+recent_file: path: "../../../Program Files/odin/base/runtime/core.odin"
+recent_file: path: "src/osu_beatmap.odin"
+recent_file: path: "src/decoder.odin"
+recent_file: path: "../../../Program Files/odin/core/thread/thread_pool.odin"
+recent_file: path: "../../../Program Files/odin/core/mem/virtual/arena.odin"
+recent_file: path: "src/osu_mapset.odin"
+recent_file: path: "d:/os/obj/amd64fre/minkernel/crts/ucrt/src/appcrt/startup/mt/objfre/amd64/minkernel/crts/ucrt/src/appcrt/startup/abort.cpp"
+recent_file: path: "../../../Program Files/odin/core/sort/sort.odin"
+recent_file: path: "src/renderer.odin"
+recent_file: path: "../../../Program Files/odin/vendor/sokol/c/sokol_gfx.h"
+recent_file: path: "src/osu.odin"
+recent_file: path: "src/osu_graphics.odin"
+recent_file: path: "src/osu_hitobjects.odin"
+recent_file: path: "src/crash_stats_windows.odin"
+recent_file: path: "src/lua.odin"
+recent_file: path: "src/osu_skins.odin"
+recent_file: path: "src/gl_utils.odin"
+recent_file: path: "../../../Program Files/odin/vendor/OpenGL/wrappers.odin"
+recent_file: path: "src/platform_input_windows.odin"
+recent_file: path: "src/utils.odin"
+recent_file: path: "../../../Program Files/odin/core/os/path_windows.odin"
+recent_file: path: "src/platform_ui.odin"
+recent_file: path: "../../../Program Files/odin/core/encoding/ini/ini.odin"
+recent_file: path: "../../../Program Files/odin/core/encoding/ini/ini_os.odin"
+recent_file: path: "src/renderer_resources.odin"
+recent_file: path: "../../../Program Files/odin/base/runtime/error_checks.odin"
+recent_file: path: "src/osu_ui.odin"
+recent_file: path: "src/osu_sliderpath.odin"
+recent_file: path: "src/osu_hit_error_bar.odin"
+recent_file: path: "src/osu_slider.odin"
+recent_file: path: "src/platform.odin"
+recent_file: path: "src/config.odin"
+recent_file: path: "../../../Program Files/odin/base/runtime/core_builtin.odin"
+recent_file: path: "d:/os/obj/amd64fre/minkernel/crts/ucrt/src/appcrt/string/mt/objfre/amd64/minkernel/crts/ucrt/src/appcrt/string/strnlen.cpp"
+recent_file: path: "src/parser.odin"
+recent_file: path: "D:/a/_work/1/s/src/vctools/crt/vcruntime/src/string/amd64/memset.asm"
+recent_file: path: "../../../Program Files/odin/base/runtime/internal.odin"
+recent_file: path: "D:/a/_work/1/s/src/vctools/crt/vcruntime/src/string/amd64/memcpy.asm"
+recent_file: path: "src/audio.odin"
+recent_file: path: "src/window_windows.odin"
+recent_file: path: "../../../Program Files/odin/core/mem/tracking_allocator.odin"
+recent_file: path: "../../../Program Files/odin/core/os/file.odin"
+recent_file: path: "../../../Program Files/odin/core/os/file_windows.odin"
+recent_file: path: "../../../Program Files/odin/core/container/queue/queue.odin"
+recent_file: path: "src/window.odin"
+recent_file: path: "src/slotmap/slotmap.odin"
+recent_file: path: "../../../Program Files/odin/core/os/os2/file_util.odin"
+recent_file: path: "../../../Program Files/odin/core/os/os2/file.odin"
+recent_file: path: "../../../Program Files/odin/core/os/os2/file_windows.odin"
+recent_file: path: "src/win32_watcher.odin"
+recent_file: path: "../../cpp/luajit/src/lj_dispatch.c"
+recent_file: path: "../../../Program Files/odin/base/runtime/dynamic_map_internal.odin"
+recent_file: path: "../../../Program Files/odin/core/fmt/fmt.odin"
+recent_file: path: "../../../Program Files/odin/core/strings/builder.odin"
+recent_file: path: "../../../Program Files/odin/core/log/file_console_logger.odin"
+recent_file: path: "src/osu_core.odin"
+recent_file: path: "../../cpp/luajit/src/lj_api.c"
+recent_file: path: "../../cpp/luajit/src/lj_gc.c"
+recent_file: path: "../../cpp/luajit/src/lj_err.c"
+recent_file: path: "../../cpp/luajit/src/lib_package.c"
+recent_file: path: "../../../Program Files/odin/base/runtime/entry_windows.odin"
+recent_file: path: "src/swap_buffer/swap_buffer.odin"
+recent_file: path: "src/osu_play.odin"
+recent_file: path: "src/sound.odin"
+recent_file: path: "../../../Program Files/odin/vendor/cgltf/cgltf.odin"
+recent_file: path: "../../../Program Files/odin/core/strings/strings.odin"
+recent_file: path: "../../../Program Files/odin/vendor/sokol/c/sokol_log.h"
+recent_file: path: "../../../Program Files/odin/core/os/os2/allocators.odin"
+recent_file: path: "../../unrelated/zed-dev/zed-raddebugger-proxy/src/main.odin"
+recent_file: path: "../../../Program Files/odin/base/runtime/procs_windows_amd64.odin"
+recent_file: path: "../../../Program Files/odin/core/mem/alloc.odin"
+recent_file: path: "src/rb/rb.odin"
+recent_file: path: "src/gl_texture.odin"
+recent_file: path: "src/text.odin"
+recent_file: path: "src/profiler.odin"
+recent_file: path: "src/util.odin"
+recent_file: path: "../../../Program Files/odin/vendor/microui/microui.odin"
+recent_file: path: "../microui_in_odin.odin"
+recent_file: path: "../../../Program Files/odin/core/os/os_windows.odin"
+recent_file: path: "../../../Program Files/odin/core/mem/virtual/virtual.odin"
+recent_file: path: "../../../Program Files/odin/vendor/fontstash/fontstash.odin"
+recent_file: path: "d:/os/obj/amd64fre/minkernel/crts/ucrt/src/appcrt/startup/mt/objfre/amd64/minkernel/crts/ucrt/src/appcrt/startup/assert.cpp"
+recent_file: path: "src/mapset.odin"
+recent_file: path: "src/game.odin"
+recent_file: path: "src/gl_persistent_buffer.odin"
+recent_file: path: "src/skins.odin"
+recent_file: path: "../../../Program Files/odin/vendor/OpenGL/impl.odin"
+recent_file: path: "../../../Program Files/odin/vendor/sdl3/sdl3_video.odin"
+recent_file: path: "../../../Program Files/odin/core/path/filepath/path.odin"
+target:
+{
+  executable: "build/inso.exe"
+  working_directory: build
+  enabled: 1
+}
+debug_info:
+{
+  path: "F:/Code/odin/inso/build/main.pdb"
+  timestamp: 66204194513879
+}
+target:
+{
+  executable: "../microui_in_odin.exe"
+  working_directory: "../../odin"
+}
+debug_info:
+{
+  path: "F:/Code/odin/microui_in_odin.pdb"
+  timestamp: 66202973714951
+}
+debug_info:
+{
+  path: "F:/Code/odin/inso/build/inso.pdb"
+  timestamp: 66219757406204
+}
+target:
+{
+  executable: "../../unrelated/zed-dev/zed-raddebugger-proxy/src.exe"
+  working_directory: "../../unrelated/zed-dev/zed-raddebugger-proxy"
+}
+debug_info:
+{
+  path: "F:/code/unrelated/zed-dev/zed-raddebugger-proxy/src.pdb"
+  timestamp: 66204210094087
+}
+debug_info:
+{
+  path: "F:/code/unrelated/zed-dev/zed-raddebugger-proxy/bin/raddbg-proxy.pdb"
+  timestamp: 66204276834703
+}
+debug_info:
+{
+  path: "F:/Code/cpp/luajit/src/lua51.pdb"
+  timestamp: 66207000938760
+}
+watch_pin:
+{
+  expression: "&game.beatmap.drawables.values.data[150],100"
+  source_location: "src/renderer.odin:852:1"
+}

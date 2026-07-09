@@ -229,8 +229,15 @@ renderer_init :: proc() {
         queue.push(&window.pipelines, sg.make_pipeline(text_pipeline_desc()))
         queue.push(&window.pipelines, sg.make_pipeline(text_pipeline_desc(.PREMULTIPLIED)))
     }
+    {
+        slider_present_shader, err := shader_init(quad_vs_path, slider_present_fs_path, context.temp_allocator)
+        assert(err == .NONE)
+        queue.push(&window.shaders, slider_present_shader)
+        queue.push(&window.pipelines, sg.make_pipeline(slider_present_pipeline_desc()))
+        queue.push(&window.pipelines, sg.make_pipeline(slider_present_pipeline_desc(.PREMULTIPLIED)))
+    }
 
-    window.framebuffers[.SLIDERS] = fbo_init(1, 1, i32(window.rect.w), i32(window.rect.h), gl.RGBA8)
+    window.framebuffers[.SLIDERS] = fbo_init(1, 0, i32(window.rect.w), i32(window.rect.h), gl.R16F)
     window.framebuffers[.BACKBUFFER] = fbo_init(1, 1, i32(window.rect.w), i32(window.rect.h), gl.RGBA8)
     
 
@@ -961,6 +968,7 @@ _r_effective_pipeline :: proc(pipeline: Pipeline_ID, write_offscreen: bool) -> P
     if write_offscreen {
         if pipeline == builtin_pipeline_slot(.QUAD) do return builtin_pipeline_slot(.QUAD_PREMULTIPLIED)
         if pipeline == builtin_pipeline_slot(.TEXT) do return builtin_pipeline_slot(.TEXT_PREMULTIPLIED)
+        if pipeline == builtin_pipeline_slot(.SLIDER_PRESENT) do return builtin_pipeline_slot(.SLIDER_PRESENT_PREMULTIPLIED)
     }
     return pipeline
 }

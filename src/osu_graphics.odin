@@ -1010,14 +1010,15 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     slider_write_target := r_layer_framebuffer(.HITOBJECTS).write
     r_bind_framebuffer({ read = builtin_framebuffer(.SLIDERS), write = slider_write_target })
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
-    r_bind_pipeline({ pipeline = builtin_pipeline_slot(.QUAD) })
-    
+
     r_push_transform(window.screenspace_transform)
     if app.debug_display_slider_bounds {
+        r_bind_pipeline({ pipeline = builtin_pipeline_slot(.QUAD) })
         r_reset_scissor_mode()
         r_draw_rect_outline(&renderer.quad_geometry, slider_rect, color_cyan, 1)
     }
-    
+    r_bind_pipeline({ pipeline = builtin_pipeline_slot(.SLIDER_PRESENT) })
+
     scissor_rect := Rect{
         2 + math.ceil(slider_rect.x),
         2 + math.ceil(slider_rect.y),

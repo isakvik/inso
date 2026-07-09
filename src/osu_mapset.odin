@@ -527,6 +527,7 @@ mapset_parse_inso :: proc(mapset: ^Mapset, inso_file: string) -> Inso_Map {
                 switch value {
                 case "builtin.quad":   return strings.concatenate({app.base_dir, "/", quad_fs_path})
                 case "builtin.slider": return strings.concatenate({app.base_dir, "/", slider_fs_path})
+                case "builtin.slider_present": return strings.concatenate({app.base_dir, "/", slider_present_fs_path})
                 case "builtin.text":   return strings.concatenate({app.base_dir, "/", text_fs_path})
                 case: return value
                 }

@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "core:strings"
 import "core:log"

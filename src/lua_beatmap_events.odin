@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "core:strings"
 import lua "luajit"
@@ -51,7 +51,7 @@ lua_beatmap_event_docs := [Lua_Beatmap_Event_Type]Lua_Beatmap_Event_Doc {
     },
     .ON_FIXED_UPDATE = {
         "void on_fixed_update( float music_time_ms )",
-        "called at a fixed rate in music time, decoupled from framerate. useful for simulation logic as it catches up in a loop on forward seek and replays deterministically. the rate is customizable by setting FixedUpdateRate in the notosu file. " +
+        "called at a fixed rate in music time, decoupled from framerate. useful for simulation logic as it catches up in a loop on forward seek and replays deterministically. the rate is customizable by setting FixedUpdateRate in the inso file. " +
         "note: if this is declared, the engine will call scheduled events using the fixed update timer for consistency.",
     },
     .ON_BEAT = {

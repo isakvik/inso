@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import sdl "vendor:sdl3"
 

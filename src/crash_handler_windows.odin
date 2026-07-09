@@ -1,5 +1,5 @@
 #+build windows
-package notosu
+package inso
 
 import "core:fmt"
 import "core:os"
@@ -237,7 +237,7 @@ crash_handler_run :: proc() {
     ) {
         win.MessageBoxW(nil,
             win.utf8_to_wstring(fmt.tprintf("failed to launch game process (error %d)", win.GetLastError())),
-            win.utf8_to_wstring("notosu"),
+            win.utf8_to_wstring("inso"),
             win.MB_OK | win.MB_ICONERROR)
         return
     }
@@ -250,16 +250,16 @@ crash_handler_run :: proc() {
         msg: string
         if log_path != "" {
             msg = fmt.tprintf(
-                "notosu exited with code 0x%08X\n\ncrash log: %s",
+                "inso exited with code 0x%08X\n\ncrash log: %s",
                 exit_code, log_path)
         } else {
             msg = fmt.tprintf(
-                "notosu exited with code 0x%08X\n\ncrash log could not be written.",
+                "inso exited with code 0x%08X\n\ncrash log could not be written.",
                 exit_code)
         }
         win.MessageBoxW(nil,
             win.utf8_to_wstring(msg),
-            win.utf8_to_wstring("notosu crashed"),
+            win.utf8_to_wstring("inso crashed"),
             win.MB_OK | win.MB_ICONERROR)
     }
 }
@@ -346,7 +346,7 @@ crash_handler_write_log :: proc(
     defer strings.builder_destroy(&b)
 
     // header
-    fmt.sbprintf(&b, "notosu %s\n", VERSION)
+    fmt.sbprintf(&b, "inso %s\n", VERSION)
     fmt.sbprintf(&b, "crash_%s\n\n", stem[6:]) // strip "crash_" prefix for the timestamp
 
     // exception info
@@ -453,7 +453,7 @@ _CRASH_HANDLER_MODE_NAMES := [4]string{
 }
 
 crash_handler_append_stats :: proc(b: ^strings.Builder, child_pid: win.DWORD) {
-    name := fmt.tprintf("Local\\notosu_stats_%d", child_pid)
+    name := fmt.tprintf("Local\\inso_stats_%d", child_pid)
     mapping := win.OpenFileMappingW(win.FILE_MAP_READ, false, win.utf8_to_wstring(name))
     if mapping == nil {
         fmt.sbprint(b, "\ncrash stats: unavailable (shared memory not found)\n")

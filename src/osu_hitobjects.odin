@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "core:time"
 import "core:log"
@@ -361,10 +361,12 @@ followpoint_emit :: proc(beatmap: ^Beatmap, conn: ^Followpoint_Connection, map_t
 
         // note(isak): handle animation frames
         tex_override: u32
+        frame_metrics := metrics
         if frame_count > 1 {
             progress := (map_time - fade_in_time) / FOLLOWPOINT_PREEMPT_MS
             frame    := clamp(int(progress * f64(frame_count)), 0, frame_count - 1)
-            tex_override = skin_frame_texture(.FOLLOWPOINT, frame)
+            tex_override  = skin_frame_texture(.FOLLOWPOINT, frame)
+            frame_metrics = skin_frame_metrics(.FOLLOWPOINT, frame)
         }
 
         point := Drawable{
@@ -372,7 +374,7 @@ followpoint_emit :: proc(beatmap: ^Beatmap, conn: ^Followpoint_Connection, map_t
             element       = builtin_element_slot(.FOLLOWPOINT),
             layer         = .HITOBJECTS,
             pos           = start_pos + delta * slot,
-            size          = metrics * scale,
+            size          = frame_metrics * scale,
             angle_rad     = math.atan2(delta.y, delta.x),
             anchor        = .CENTER,
             color         = with_alpha(color_white, alpha),

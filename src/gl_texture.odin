@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "core:fmt"
 import os "core:os"
@@ -13,8 +13,8 @@ import stbi "vendor:stb/image"
 // uv.z in the quad carries the layer index for frame selection.
 
 Texture_Wrap :: enum {
-    CLAMP,   // note(isak): default — edge samples clamp, no bleed
-    REPEAT,  // note(isak): tiling, e.g. scrolling backgrounds / render fx
+    CLAMP,
+    REPEAT,
 }
 
 _gl_wrap :: proc(wrap: Texture_Wrap) -> i32 {

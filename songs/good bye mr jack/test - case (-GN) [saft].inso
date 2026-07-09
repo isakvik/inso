@@ -1,4 +1,4 @@
-notosu file format v1
+inso file format v1
 
 [General]
 LuaEntryPoint: test.lua

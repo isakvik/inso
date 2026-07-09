@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import imgui "imgui"
 import imgui_gl3 "imgui/imgui_impl_opengl3"

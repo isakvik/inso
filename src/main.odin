@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "core:sort"
 VERSION :: #config(VERSION, "dev (unversioned)")
@@ -186,7 +186,7 @@ main :: proc() {
 
     game.active_skin = skin_load(game.user_config.skin_path)
     
-    notosu_load_time := time_s_since_beginning_of_program()
+    inso_load_time := time_s_since_beginning_of_program()
 
     //-- @temp todo(isak): handle this properly when menu mode is a thing
     initial_map_ref :=
@@ -194,7 +194,7 @@ main :: proc() {
     //--
 
     osu_on_init()
-    notify_info("notosu! loaded in %.3vs", notosu_load_time)
+    notify_info("inso! loaded in %.3vs", inso_load_time)
     
     beatmap_open(initial_map_ref)
     
@@ -491,7 +491,7 @@ begin_frame :: proc(renderer: ^Renderer) {
                 r_clear(with_alpha(color_black, 0.0))
             }
         }
-        if game.active_mapset.notosu_map.use_backbuffer {
+        if game.active_mapset.inso_map.use_backbuffer {
             r_bind_framebuffer({ write = builtin_framebuffer(.BACKBUFFER) })
             r_clear(with_alpha(color_black, 0.0))
         }
@@ -517,7 +517,7 @@ begin_frame :: proc(renderer: ^Renderer) {
 end_frame :: proc(renderer: ^Renderer) {
     text_submit_geometry(renderer)
 
-    if !window.transparent {
+    if !window.transparent && !window_is_exclusive_fullscreen() {
         // note(isak): windows window with transparency captures the alpha of the last drawn pixels and uses that for
         // the window's opacity value. when we don't want transparency, clear alpha of every pixel to 1.0.
         r_check_and_bind_layer(.PLATFORM)
@@ -664,11 +664,14 @@ imgui_update :: proc() {
             bg_dim_apply(game.user_config.bg_dim)
         }
 
-        imgui.Checkbox("Use beatmap skin", &game.user_config.use_beatmap_skin)
+        if imgui.Checkbox("Use beatmap skin", &game.user_config.use_beatmap_skin) {
+            beatmap_open(game.beatmap.map_reference, true)
+        }
+        
         imgui.Checkbox("Snaking in sliders", &game.user_config.snaking_in_sliders_enabled)
         imgui.Checkbox("Snaking out sliders", &game.user_config.snaking_out_sliders_enabled)
 
-        if game.active_map != nil {
+        /*if game.active_map != nil {
             ar_override := f32(game.active_map.diff_approach_rate)
             if imgui.SliderFloat("Approach rate##ar", &ar_override, 0, 10) {
                 game.active_map.diff_approach_rate = f64(ar_override)
@@ -677,6 +680,18 @@ imgui_update :: proc() {
                     hobj.custom_preempt_ms = preempt
                 }
                 game.beatmap.max_preempt_ms = preempt
+            }
+        }*/
+        
+        for mod in Osu_Mod {
+            enabled := mod in game.mods
+            if imgui.Checkbox(osu_mod_table[mod].name, &enabled) {
+                game.mods ~= {mod}
+                
+                if mod == .DOUBLE_TIME && !enabled {
+                    game.time_rate = 1.0
+                }
+                beatmap_open(game.beatmap.map_reference, true)
             }
         }
     }

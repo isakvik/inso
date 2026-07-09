@@ -2,8 +2,8 @@
 
 set /p VERSION=<VERSION
 set release_dir=build-release
-set exec_name=notosu.exe
-set zip_name=notosu-%VERSION%.zip
+set exec_name=inso.exe
+set zip_name=inso-%VERSION%.zip
 
 if not exist %release_dir% mkdir %release_dir%
 

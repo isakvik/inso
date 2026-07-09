@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "core:log"
 import os "core:os"
@@ -6,7 +6,7 @@ import os "core:os"
 // note(isak): release builds are packaged with -subsystem:windows (see package.bat), so there's
 // no attached console and anything printed to stdout/stderr is lost
 LOG_TO_FILE   :: #config(LOG_TO_FILE, !ODIN_DEBUG)
-LOG_FILE_PATH :: "notosu.log"
+LOG_FILE_PATH :: "inso.log"
 
 logging: struct {
     file: ^os.File,

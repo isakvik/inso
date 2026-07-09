@@ -1,5 +1,5 @@
 #+build !windows
-package notosu
+package inso
 
 crash_stats_init    :: proc() {}
 crash_stats_cleanup :: proc() {}

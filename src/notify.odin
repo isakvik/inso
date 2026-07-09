@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "core:fmt"
 
@@ -55,9 +55,10 @@ notify_warn  :: proc(fmt_str: string, args: ..any) { _notify_push(.WARN,  fmt_st
 notify_error :: proc(fmt_str: string, args: ..any) { _notify_push(.ERROR, fmt_str, ..args) }
 
 notify_draw :: proc(renderer: ^Renderer) {
-    now    := time_s_since_beginning_of_program()
-    base_y := window.rect.h - NOTIFY_MARGIN_Y
-    drawn  := 0
+    now         := time_s_since_beginning_of_program()
+    line_height := uisc(NOTIFY_LINE_HEIGHT)
+    base_y      := window.rect.h - uisc(NOTIFY_MARGIN_Y)
+    drawn       := 0
 
     for i in 0..<notify.count {
         // walk ring newest-first
@@ -80,13 +81,13 @@ notify_draw :: proc(renderer: ^Renderer) {
         }
 
         text := string(entry.msg[:entry.len])
-        pos  := [2]f32{window.rect.w - NOTIFY_MARGIN_X, f32(base_y) - f32(drawn) * NOTIFY_LINE_HEIGHT}
+        pos  := [2]f32{window.rect.w - uisc(NOTIFY_MARGIN_X), f32(base_y) - f32(drawn) * line_height}
 
         rgb   := _notify_level_rgb[entry.level]
         width: f32
         push_text(renderer, text,
             pos     = pos,
-            size    = NOTIFY_FONT_SIZE,
+            size    = uisc(NOTIFY_FONT_SIZE),
             color   = {rgb[0], rgb[1], rgb[2], alpha},
             align_h = .Right,
             align_v = .Bottom,
@@ -95,11 +96,12 @@ notify_draw :: proc(renderer: ^Renderer) {
 
         // text is right/bottom-anchored at pos; the batched glyph draw always
         // composites over this quad, so push it here behind the text.
+        bg_padding := uisc(NOTIFY_BG_PADDING)
         bg := Rect{
-            pos.x - width - NOTIFY_BG_PADDING,
-            pos.y - NOTIFY_LINE_HEIGHT,
-            width + NOTIFY_BG_PADDING * 2,
-            NOTIFY_LINE_HEIGHT,
+            pos.x - width - bg_padding,
+            pos.y - line_height,
+            width + bg_padding * 2,
+            line_height,
         }
         bg_alpha := u8(f64(NOTIFY_BG_ALPHA) * f64(alpha) / 255.0)
         r_draw_rect(&renderer.quad_geometry, bg, {0, 0, 0, bg_alpha})

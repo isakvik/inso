@@ -10,7 +10,7 @@ if [ -f data/Roboto-Regular.ttf ] && [ ! -f build/Roboto-Regular.ttf ]; then
 fi
 
 odin run src \
-    -out:build/notosu_temp \
+    -out:build/inso_temp \
     -define:SOKOL_USE_GL=true \
     -o:minimal \
     -extra-linker-flags:"-Llib/linux/ -Wl,-rpath,\$ORIGIN -ldl -lm"

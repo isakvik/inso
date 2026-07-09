@@ -1,5 +1,5 @@
 #+build windows
-package notosu
+package inso
 
 import win "core:sys/windows"
 import "core:fmt"
@@ -68,7 +68,7 @@ _crash_stats_ptr: ^Crash_Stats
 
 crash_stats_init :: proc() {
     pid  := win.GetCurrentProcessId()
-    name := fmt.tprintf("Local\\notosu_stats_%d", pid)
+    name := fmt.tprintf("Local\\inso_stats_%d", pid)
     _crash_stats_mapping = win.CreateFileMappingW(
         win.INVALID_HANDLE_VALUE, nil,
         win.PAGE_READWRITE,

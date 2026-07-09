@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "vendor:wasm/WebGL"
 import "base:runtime"
@@ -1207,7 +1207,8 @@ slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
     if ball_frame_count > 1 {
         if d_ball, ok := slotmap.get(&game.beatmap.drawables, gfx.ball); ok {
             frame := int(map_time / SLIDER_BALL_ANIMATION_LOOP_MS * f64(ball_frame_count)) %% ball_frame_count
-            d_ball.tex = skin_frame_texture(.SLIDER_BALL, frame)
+            d_ball.tex  = skin_frame_texture(.SLIDER_BALL, frame)
+            d_ball.size = skin_frame_metrics(.SLIDER_BALL, frame) * (2.0 / SKIN_CIRCLE_REFERENCE_PX)
         }
     }
     

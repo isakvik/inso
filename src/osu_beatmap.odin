@@ -1,10 +1,11 @@
-package notosu
-
-import sb "swap_buffer"
-import "slotmap"
+package inso
 
 import "core:container/queue"
 import "core:log"
+import "core:math/linalg"
+
+import sb "swap_buffer"
+import "slotmap"
 
 
 Beatmap :: struct {
@@ -78,10 +79,10 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     beatmap^ = { map_reference = map_reference }
     beatmap_load(beatmap)
 
-    if game.active_notosu_map.double_mouse {
+    if game.active_inso_map.double_mouse {
         ok := mouse_enable_double_mouse_mode()
         if !ok {
-            game.active_notosu_map.double_mouse = false
+            game.active_inso_map.double_mouse = false
         } else {
             game.input.mouse_keys_enabled = true
             notify_warn("mouse keys enabled" if game.input.mouse_keys_enabled else "mouse keys disabled")
@@ -89,19 +90,23 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     }
     
     // map logic init
-    
+
+    mods_apply_to_map()
+
     beatmap.circle_radius_osupx = convert_circle_size_to_radius_osupx(game.active_map.diff_circle_size)
-    beatmap.preempt_ms = convert_approach_rate_to_preempt_ms(game.active_map.diff_approach_rate)
-    // note(isak): hitobject_set_preempt (lua) raises this above the global as custom preempts come in
-    beatmap.max_preempt_ms = beatmap.preempt_ms
     beatmap.timing_windows = convert_overall_difficulty_to_timing_window(game.active_map.diff_overall_difficulty)
+    beatmap.preempt_ms = convert_approach_rate_to_preempt_ms(game.active_map.diff_approach_rate)
+    beatmap.max_preempt_ms = beatmap.preempt_ms
+
+    beatmap_write_slider_instances(game.active_map)
+    beatmap_apply_note_stacking(game.active_map, beatmap.preempt_ms, beatmap.circle_radius_osupx)
     
     beatmap.length_ms = sound_get_length_ms(&beatmap.music)
     beatmap.start_time_ms = min(beatmap_game_time_to_music_time(beatmap, -beatmap.preempt_ms), -500)
     beatmap.music_time_ms = beatmap.start_time_ms
     beatmap.auto_last_hit_time_ms = beatmap_music_time_ms(beatmap)
 
-    fixed_update_rate_hz := game.active_notosu_map.fixed_update_rate_hz
+    fixed_update_rate_hz := game.active_inso_map.fixed_update_rate_hz
     if fixed_update_rate_hz <= 0 do fixed_update_rate_hz = 120
     beatmap.fixed_update_dt_ms = 1000.0 / fixed_update_rate_hz
     beatmap.last_fixed_tick_ms = beatmap_music_time_ms(beatmap)
@@ -123,21 +128,10 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     
     // map graphics init
     
-    beatmap.next_drawable_id = 1
-    queue.init(&beatmap.elements, 1024, memory.allocators[.MAPSET])
-    queue.append(&beatmap.elements, null_element)
-    queue.init(&beatmap.animations, 1024, memory.allocators[.MAPSET])
-
     create_default_elements(&beatmap.elements, &beatmap.animations)
-    
-    sb.init(&beatmap.phase_transitions, 256, memory.allocators[.DRAWABLES])
+    mods_apply_to_graphics()
 
-    sb.init(&beatmap.gameplay_expiring_gfx, 8192, memory.allocators[.DRAWABLES])
-    sb.init(&beatmap.map_expiring_gfx, 8192, memory.allocators[.DRAWABLES])
-    slotmap.init(&beatmap.drawables, 8192, memory.allocators[.DRAWABLES])
-    _ = slotmap.insert(&beatmap.drawables, null_drawable)
-
-    beatmap.bg_handle = TEST_bg_drawable(game.active_map.bg_filename, game.active_notosu_map.bg_pipeline_name)
+    beatmap.bg_handle = TEST_bg_drawable(game.active_map.bg_filename, game.active_inso_map.bg_pipeline_name)
     bg_dim_apply(game.user_config.bg_dim)
 
     if lua_cares_about_event(.ON_INIT) {
@@ -267,9 +261,21 @@ beatmap_load :: proc(beatmap: ^Beatmap) {
         log.error("tried to open map sound file, but failed:", game.active_map.audio_filepath)
     }
     
-    if game.active_notosu_map.lua_entry_point != "" {
-        lua_create_beatmap_script_context(game.active_notosu_map.lua_entry_point)
+    if game.active_inso_map.lua_entry_point != "" {
+        lua_create_beatmap_script_context(game.active_inso_map.lua_entry_point)
     }
+    
+    beatmap.next_drawable_id = 1
+    queue.init(&beatmap.elements, 1024, memory.allocators[.MAPSET])
+    queue.append(&beatmap.elements, null_element)
+    queue.init(&beatmap.animations, 1024, memory.allocators[.MAPSET])
+    
+    sb.init(&beatmap.phase_transitions, 256, memory.allocators[.DRAWABLES])
+
+    sb.init(&beatmap.gameplay_expiring_gfx, 8192, memory.allocators[.DRAWABLES])
+    sb.init(&beatmap.map_expiring_gfx, 8192, memory.allocators[.DRAWABLES])
+    slotmap.init(&beatmap.drawables, 8192, memory.allocators[.DRAWABLES])
+    _ = slotmap.insert(&beatmap.drawables, null_drawable)
 }
 
 beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false) {
@@ -290,7 +296,7 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false) {
     game.active_mapset, ok = mapset_open_for_editing(ref.folder_path, ref.osu_filename)
     assert(ok)
     game.active_map = &game.active_mapset.osu_map
-    game.active_notosu_map = &game.active_mapset.notosu_map
+    game.active_inso_map = &game.active_mapset.inso_map
 
     prepare_textures_for_rendering()
     beatmap_on_init(ref, &game.beatmap)
@@ -535,4 +541,108 @@ beatmap_check_timing_change :: proc(beatmap: ^Beatmap) {
     
     bpm := 60000 / max(timing_point.beat_length, 1)
     lua_beatmap_on_timing_change(beat, bpm)
+}
+
+
+beatmap_write_slider_instances :: proc(osu_map: ^Osu_Map) {
+    for &path in osu_map.slider_paths {
+        path.instance_count, path.first_instance_at =
+            write_instances_from_path(&window.renderer.slider_instances, &path)
+    }
+}
+
+OSU_STACK_DISTANCE_OSUPX :: f32(3)
+
+/*
+    note(isak): stable's note stacking, as ported in lazer's OsuBeatmapProcessor.applyStacking.
+    runs at beatmap init after mods and slider instance baking (it needs the flipped positions
+    and the baked slider endpoints), and before anything reads positions.
+
+    todo(isak): instead of baking, we can probably expose stacking direction and distance to lua
+    for some extra fun
+*/
+beatmap_apply_note_stacking :: proc(osu_map: ^Osu_Map, preempt_ms: f64, radius_osupx: f32) {
+    hitobjects := osu_map.hitobjects
+    if len(hitobjects) < 2 do return
+
+    // note(isak): leniency 0 is not an early-out - stable still stacks exactly-simultaneous
+    // coincident objects (2B maps), since the break below only fires on a positive time gap
+    stack_threshold_ms := preempt_ms * osu_map.stack_leniency
+
+    // for sliders, stacking compares against where the tail rests after all spans
+    stack_end_pos :: proc(osu_map: ^Osu_Map, hobj: ^Hitobject) -> vec2 {
+        if hobj.type != .SLIDER do return hobj.pos
+        path := &osu_map.slider_paths[hobj.slider_path_index]
+        return path.end_pos if hobj.slider_state.path_travel_count % 2 == 1 else path.pos
+    }
+
+    // note(isak): resolve stack counts for all hitobjects
+    for i := len(hitobjects) - 1; i > 0; i -= 1 {
+        hobj_i := &hitobjects[i]
+        if hobj_i.stack_count != 0 || hobj_i.type == .SPINNER do continue
+
+        n := i
+        switch hobj_i.type {
+        case .CIRCLE:
+            for n -= 1; n >= 0; n -= 1 {
+                hobj_n := &hitobjects[n]
+                if hobj_n.type == .SPINNER do continue
+                if hobj_i.start_time_ms - hobj_n.end_time_ms > stack_threshold_ms do break
+
+                // a circle chain landing on a slider tail stacks under it instead; the chain
+                // built so far is shifted down and the slider restarts as a new stack base
+                if hobj_n.type == .SLIDER &&
+                   linalg.distance(stack_end_pos(osu_map, hobj_n), hobj_i.pos) < OSU_STACK_DISTANCE_OSUPX {
+                    offset := hobj_i.stack_count - hobj_n.stack_count + 1
+                    for j in n + 1 ..= i {
+                        hobj_j := &hitobjects[j]
+                        if linalg.distance(stack_end_pos(osu_map, hobj_n), hobj_j.pos) < OSU_STACK_DISTANCE_OSUPX {
+                            hobj_j.stack_count -= offset
+                        }
+                    }
+                    break
+                }
+
+                if linalg.distance(hobj_n.pos, hobj_i.pos) < OSU_STACK_DISTANCE_OSUPX {
+                    hobj_n.stack_count = hobj_i.stack_count + 1
+                    hobj_i = hobj_n
+                }
+            }
+        case .SLIDER:
+            for n -= 1; n >= 0; n -= 1 {
+                hobj_n := &hitobjects[n]
+                if hobj_n.type == .SPINNER do continue
+                if hobj_i.start_time_ms - hobj_n.start_time_ms > stack_threshold_ms do break
+
+                if linalg.distance(stack_end_pos(osu_map, hobj_n), hobj_i.pos) < OSU_STACK_DISTANCE_OSUPX {
+                    hobj_n.stack_count = hobj_i.stack_count + 1
+                    hobj_i = hobj_n
+                }
+            }
+        case .SPINNER, .NONE:
+        }
+    }
+
+    // note(isak): bake stack position into every hitobject
+    offset_per_stack := radius_osupx / 10
+    for &hobj in hitobjects {
+        if hobj.stack_count == 0 do continue
+        offset := vec2{-offset_per_stack, -offset_per_stack} * f32(hobj.stack_count)
+
+        hobj.pos += offset
+        if hobj.type != .SLIDER do continue
+
+        path := &osu_map.slider_paths[hobj.slider_path_index]
+        path.pos        += offset
+        path.end_pos    += offset
+        path.bounds_min += offset
+        path.bounds_max += offset
+        for &node in path.nodes {
+            node += offset
+        }
+        instances := window.renderer.slider_instances.data[path.first_instance_at:][:path.instance_count]
+        for &instance_pos in instances {
+            instance_pos += offset
+        }
+    }
 }

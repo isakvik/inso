@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "core:encoding/ini"
 import "core:log"

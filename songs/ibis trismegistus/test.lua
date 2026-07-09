@@ -18,7 +18,7 @@ local rand = load_file("rand.lua")
 -- trigger_event("spellcard")
 -- register_event("spellcard", function () end )
 --
--- buffer system (you can declare buffers in the .notosu and just write stuff here)
+-- buffer system (you can declare buffers in the .inso and just write stuff here)
 --
 -- event stuff is half-baked - you can trigger events on elements, drawables, hitobjects,
 -- and you can schedule them to the future, but you can't pass arguments to them via scheduling

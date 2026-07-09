@@ -1,5 +1,5 @@
 #+build windows
-package notosu
+package inso
 
 import "core:sys/windows"
 

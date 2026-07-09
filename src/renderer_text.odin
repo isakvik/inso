@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "core:fmt"
 import os "core:os"

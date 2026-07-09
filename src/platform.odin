@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "base:intrinsics"
 import "core:c"
@@ -352,7 +352,7 @@ _file_dialog_begin :: proc(purpose: File_Dialog_Purpose) -> bool {
     app.file_open_dialog.purpose = purpose
 
     app.file_open_dialog.restore_mode = window.mode
-    if window.mode == .FULLSCREEN {
+    if window.mode == .EXCLUSIVE_FULLSCREEN {
         window_set_mode(.BORDERLESS_FULLSCREEN)
     }
     return true

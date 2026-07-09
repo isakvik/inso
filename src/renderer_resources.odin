@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "core:math"
 import "core:container/queue"

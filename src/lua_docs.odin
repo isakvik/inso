@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 // note(isak): generates a static HTML reference for the Lua API straight from the registration tables
 // (lua_classes, luaapi_global_funcs, luaapi_enum_constants). signatures and descriptions live inline on each

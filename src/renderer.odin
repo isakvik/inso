@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "base:runtime"
 import "core:math"

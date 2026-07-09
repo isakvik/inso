@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "core:fmt"
 import "core:math/ease"
@@ -7,7 +7,7 @@ import "core:math/linalg"
 //////////////////////////////////////////////////////
 // note(isak): ui scaling
 
-UI_REFERENCE_HEIGHT :: 720
+UI_REFERENCE_HEIGHT :: 800
 
 ui_scale_recompute :: proc() {
     game.ui_scale = (window.rect.h / UI_REFERENCE_HEIGHT) * game.user_config.ui_scale

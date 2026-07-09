@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import q "core:container/queue"
 import "core:fmt"
@@ -83,19 +83,19 @@ clipspace_transform := transform_from_bounds({0, 0, 1, 1}, 1)
 
 
 Window_Mode :: enum {
-    FULLSCREEN,
+    EXCLUSIVE_FULLSCREEN,
     BORDERLESS_FULLSCREEN,
     WINDOWED,
 }
 
 window_mode_keys := [Window_Mode]string {
-    .FULLSCREEN = "fullscreen",
+    .EXCLUSIVE_FULLSCREEN = "fullscreen",
     .BORDERLESS_FULLSCREEN = "borderless_fullscreen",
     .WINDOWED = "windowed",
 }
 
 window_mode_display_names := [Window_Mode]cstring {
-    .FULLSCREEN = "Fullscreen",
+    .EXCLUSIVE_FULLSCREEN = "Fullscreen",
     .BORDERLESS_FULLSCREEN = "Borderless",
     .WINDOWED = "Windowed",
 }
@@ -113,7 +113,7 @@ window_init :: proc(rect: Rect, mode: Window_Mode) {
 
     window.rect = rect
     window.handle = sdl.CreateWindow(
-        fmt.ctprintf("notosu! - v%s", VERSION),
+        fmt.ctprintf("inso! - v%s", VERSION),
         i32(rect.w), i32(rect.h), sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE | sdl.WINDOW_TRANSPARENT)
     window.aspect_ratio = f32(rect.h) / f32(rect.w)
     window.pixel_density = sdl.GetWindowPixelDensity(window.handle)
@@ -161,6 +161,11 @@ window_init :: proc(rect: Rect, mode: Window_Mode) {
         max_vs_ssbo, max_fs_ssbo, max_combined_ssbo)
 }
 
+window_cleanup :: proc() {
+    sdl.GL_DestroyContext(window.gl_context)
+    sdl.DestroyWindow(window.handle)
+}
+
 window_on_resize :: proc(new_w, new_h: i32) {
     window.resized = true
     window.rect.w = f32(new_w)
@@ -201,7 +206,7 @@ window_set_mode :: proc(mode: Window_Mode) {
     game.user_config.window_mode = mode
 
     switch mode {
-    case .FULLSCREEN:
+    case .EXCLUSIVE_FULLSCREEN:
         sdl.SetWindowFullscreen(window.handle, true)
         sdl.SetWindowBordered(window.handle, true)
     case .BORDERLESS_FULLSCREEN:
@@ -245,8 +250,8 @@ window_cycle_mode :: proc(current_mode: Window_Mode) {
     case .WINDOWED:
         window_set_mode(.BORDERLESS_FULLSCREEN)
     case .BORDERLESS_FULLSCREEN:
-        window_set_mode(.FULLSCREEN)
-    case .FULLSCREEN:
+        window_set_mode(.EXCLUSIVE_FULLSCREEN)
+    case .EXCLUSIVE_FULLSCREEN:
         window_set_mode(.WINDOWED)
     }
 }
@@ -261,7 +266,6 @@ window_set_resizable :: proc(enabled: bool) {
     sdl.SetWindowResizable(window.handle, enabled)
 }
 
-window_cleanup :: proc() {
-    sdl.GL_DestroyContext(window.gl_context)
-    sdl.DestroyWindow(window.handle)
+window_is_exclusive_fullscreen :: proc() -> bool {
+    return window.focused && window.mode == .EXCLUSIVE_FULLSCREEN
 }

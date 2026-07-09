@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "base:runtime"
 import c "core:c"

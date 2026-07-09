@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "base:runtime"
 import "core:log"
@@ -12,7 +12,7 @@ import sdl "vendor:sdl3"
 
 
 // note(isak): API versioning/compat policy (after initial release)
-// maps declare a target API version in their .notosu header. when making breaking changes:
+// maps declare a target API version in their .inso header. when making breaking changes:
 //   - prefer add-only (rename new, keep old) until a clean break is necessary
 //   - on a breaking change: write compat/vN.lua (loaded before the map script for old versions)
 //   - shims can patch static methods directly (Hitobject.old = Hitobject.new) and instance
@@ -372,6 +372,9 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
   { "get_base_pos", luaapi_hitobject_get_base_pos,
     "(float x, float y) hitobject:get_base_pos( void )",
     "the object's current position in osupx before any script translation." },
+  { "get_stack_count", luaapi_hitobject_get_stack_count,
+    "int hitobject:get_stack_count( void )",
+    "the object's note stacking level; 0 = unstacked. positive stacks offset up-left, negative (circles under a slider tail) down-right. the offset is already baked into the object's position." },
   { "get_pos", luaapi_hitobject_get_pos,
     "(float x, float y) hitobject:get_pos( void )",
     "the object's current position in osupx." },
@@ -700,6 +703,13 @@ luaapi_hitobject_has_any_bits :: proc "c" (L: ^lua.State) -> (result: i32) {
     })
 }
 
+
+luaapi_hitobject_get_stack_count :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        lua.pushinteger(L, lua.Integer(hobj.stack_count))
+        return 1
+    })
+}
 
 luaapi_hitobject_get_base_pos :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {

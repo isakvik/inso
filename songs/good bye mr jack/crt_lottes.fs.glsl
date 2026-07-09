@@ -1,6 +1,6 @@
 #version 460
 // CRT-styled scalar postprocess, adapted from Timothy Lottes' public-domain [CRTS]
-// (https://www.shadertoy.com/view/MtSfRK, RetroArch port by hunterk) for notosu's post-pass
+// (https://www.shadertoy.com/view/MtSfRK, RetroArch port by hunterk) for inso's post-pass
 // pipeline. samples the src render target (PostParams.srcSlots.x); tunables come from UserParams.
 #ifdef BINDLESS
 #extension GL_ARB_bindless_texture : require

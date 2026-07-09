@@ -4,11 +4,12 @@ known discrepancies
     slider mechanics leniency from lazer
     no hidden sliderticks
     we reuse reversearrows instead of spawning new ones
+    circle and overlay blend individually
+        this seems like an optimization on osu's side that creates a single texture from circle and overlays?
 
 old features
     combobreak sound
     cursor ripple
-    note stacking
     slider body color from combo color
 
 extra features
@@ -19,7 +20,7 @@ scripting
     Animated_Drawable - pass a spritesheet
 
 TEST
-    notosu custom buffers
+    custom buffers
     limit testing
     
 gameplay

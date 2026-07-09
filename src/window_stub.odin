@@ -1,4 +1,4 @@
 #+build !windows
-package notosu
+package inso
 
 _platform_dpi_init :: proc() {}

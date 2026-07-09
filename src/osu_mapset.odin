@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "base:intrinsics"
 import "base:runtime"
@@ -24,7 +24,7 @@ import sg "vendor:sokol/gfx"
 /*
 mapset definition:
 - .osu (core, lets you interface with existing editors)
-- .notosu (additional interface, resource setup)
+- .inso (additional interface, resource setup)
 - .lua files (event callbacks, calls game API)
 - .glsl (shaders, .vs.glsl/.fs.glsl)
 
@@ -58,7 +58,7 @@ Mapset :: struct {
     folder_path:  string,
     osu_filename: string, // note(isak): which .osu file was loaded
     osu_map: Osu_Map,
-    notosu_map: Notosu_Map,
+    inso_map: Inso_Map,
 
     num_shaders: int,
     shader_blend_modes: [dynamic]Blend_Mode,
@@ -105,7 +105,7 @@ BACKBUFFER_TEXTURE_NAME :: "backbuffer"
 
 // note(isak): every uncaptured layer draws into the backbuffer target instead of the screen
 render_to_backbuffer_active :: proc() -> bool {
-    return game.active_mapset != nil && game.active_mapset.notosu_map.use_backbuffer
+    return game.active_mapset != nil && game.active_mapset.inso_map.use_backbuffer
 }
 
 mapset_texture_slot :: proc(name: string) -> (result: u32, found: bool) {
@@ -172,15 +172,15 @@ mapset_buffer :: proc(name: string) -> (result: ^Mapset_Buffer, found: bool) {
 }
 
 
-Notosu_Map_System :: enum {
+Inso_Map_System :: enum {
     OSU_FILE,
-    NOTOSU_FILE,
+    INSO_FILE,
     SCRIPTS,
     SHADERS,
     ASSETS,
 }
 
-Notosu_Section_Header_Types :: enum {
+Inso_Section_Header_Types :: enum {
     HEADER,
     GENERAL,
     SHADERS,
@@ -189,7 +189,7 @@ Notosu_Section_Header_Types :: enum {
     HIT_OBJECT_EXTRA_BITS,
 }
 
-notosu_section_headers := []string{
+inso_section_headers := []string{
     "",
     "[General]",
     "[Shaders]",
@@ -402,14 +402,14 @@ mapset_walk_directory :: proc(mapset: ^Mapset, path: string) {
 mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
     extension := filepath.ext(file.name)
     switch {
-        case extension == ".notosu": {
+        case extension == ".inso": {
             filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
             if file_err != nil {
                 log.errorf("mapset: failed to read '{}': {}", file.name, file_err)
                 notify_error("mapset: failed to read '%s': %v", file.name, file_err)
                 break
             }
-            mapset.notosu_map = mapset_parse_notosu(mapset, filedata)
+            mapset.inso_map = mapset_parse_inso(mapset, filedata)
         }
         case extension == ".osu": {
             if mapset.osu_filename != "" && file.name != mapset.osu_filename do break
@@ -460,11 +460,11 @@ mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
     }
 }
 
-mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map {
-    result: Notosu_Map
+mapset_parse_inso :: proc(mapset: ^Mapset, inso_file: string) -> Inso_Map {
+    result: Inso_Map
     context.allocator = memory.allocators[.MAPSET]
 
-    c: Consumer = { str = notosu_file }
+    c: Consumer = { str = inso_file }
     
     section_index := 0
     section_loop: for {
@@ -476,7 +476,7 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
         defer section_index += 1
         
         if len(lines) == 0 {
-            fmt.println(notosu_section_headers[section_index], ":: section was blank")
+            fmt.println(inso_section_headers[section_index], ":: section was blank")
             continue
         }
         
@@ -486,15 +486,15 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
         }
         
         expected_happy_case := section_index
-        for lines[0] != notosu_section_headers[section_index] {
-            section_index = (section_index + 1) % int(max(Notosu_Section_Header_Types))
+        for lines[0] != inso_section_headers[section_index] {
+            section_index = (section_index + 1) % int(max(Inso_Section_Header_Types))
             if section_index == expected_happy_case {
-                fmt.println(notosu_section_headers[expected_happy_case], ":: unhandled section")
+                fmt.println(inso_section_headers[expected_happy_case], ":: unhandled section")
                 continue section_loop
             }
         }
         
-        #partial switch Notosu_Section_Header_Types(section_index) {
+        #partial switch Inso_Section_Header_Types(section_index) {
         case .GENERAL:
             for i in 1..<len(lines) {
                 key, value := get_key_value(lines[i])
@@ -670,16 +670,16 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
                 line := lines[i]
                 time_str, bits_str := get_key_value(line, ',')
                 if len(bits_str) == 0 {
-                    log.errorf("notosu HitObjectExtraBits: malformed line '{}', expected '<time>,<bits>'", line)
-                    notify_warn("notosu HitObjectExtraBits: malformed line '%s'", line)
+                    log.errorf("inso HitObjectExtraBits: malformed line '{}', expected '<time>,<bits>'", line)
+                    notify_warn("inso HitObjectExtraBits: malformed line '%s'", line)
                     continue
                 }
 
                 time_ms, time_ok := strconv.parse_int(strings.trim_space(time_str))
                 bits, bits_ok := strconv.parse_u64(strings.trim_space(bits_str))
                 if !time_ok || !bits_ok {
-                    log.errorf("notosu HitObjectExtraBits: couldn't parse line '{}'", line)
-                    notify_warn("notosu HitObjectExtraBits: couldn't parse line '%s'", line)
+                    log.errorf("inso HitObjectExtraBits: couldn't parse line '{}'", line)
+                    notify_warn("inso HitObjectExtraBits: couldn't parse line '%s'", line)
                     continue
                 }
 
@@ -698,18 +698,18 @@ mapset_parse_notosu :: proc(mapset: ^Mapset, notosu_file: string) -> Notosu_Map 
 EXTRA_BITS_HIGHEST_SAFE_VALUE : u64 : 0x001FFFFFFFFFFFFF
 
 // note(isak): apply parsed [HitObjectExtraBits] rows onto hitobjects by their start time. run after the full
-// mapset walk so both the .osu and .notosu are guaranteed parsed.
+// mapset walk so both the .osu and .inso are guaranteed parsed.
 mapset_apply_hitobject_extra_bits :: proc(mapset: ^Mapset) {
-    for entry in mapset.notosu_map.hitobject_extra_bits {
+    for entry in mapset.inso_map.hitobject_extra_bits {
         index, found := mapset.hitobject_index_by_ms[entry.time_ms]
         if !found {
-            log.warnf("notosu HitObjectExtraBits: no hitobject at time {}", entry.time_ms)
-            notify_warn("notosu HitObjectExtraBits: no hitobject at time %d", entry.time_ms)
+            log.warnf("inso HitObjectExtraBits: no hitobject at time {}", entry.time_ms)
+            notify_warn("inso HitObjectExtraBits: no hitobject at time %d", entry.time_ms)
             continue
         }
         if entry.bits > EXTRA_BITS_HIGHEST_SAFE_VALUE {
-            log.warnf("notosu HitObjectExtraBits: more than 53 extra bits not supported")
-            notify_warn("notosu HitObjectExtraBits: more than 53 extra bits not supported")
+            log.warnf("inso HitObjectExtraBits: more than 53 extra bits not supported")
+            notify_warn("inso HitObjectExtraBits: more than 53 extra bits not supported")
         }
         mapset.osu_map.hitobjects[index].extra_bits = entry.bits
     }
@@ -734,7 +734,10 @@ mapset_reinit_custom_shaders :: proc(mapset: ^Mapset) {
 
 
 mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
-    result: Osu_Map
+    result: Osu_Map = {
+        stack_leniency = 0.7    
+    }
+    
     context.allocator = memory.allocators[.MAPSET]
     
     c: Consumer = { str = osu_file }
@@ -778,6 +781,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                             result.audio_filepath = strings.concatenate({mapset.folder_path, value})
                         case "AudioLeadIn": result.audio_lead_in, ok = strconv.parse_f64(value); assert(ok)
                         case "PreviewTime": result.preview_time_ms, ok = strconv.parse_f64(value); assert(ok)
+                        case "StackLeniency": result.stack_leniency, ok = strconv.parse_f64(value); assert(ok)
                         case "SampleSet": 
                             switch value {
                                 case "Normal": result.sample_set = .NORMAL
@@ -981,9 +985,6 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                             bounds_max = {math.F32_MIN, math.F32_MIN},
                         }
                         mapset_parse_osu_slider_params(hobj, &slider, hobj_extra_params)
-                        slider.instance_count, slider.first_instance_at = 
-                            write_instances_from_path(&window.renderer.slider_instances, &slider)
-                                                      
                         hobj.slider_path_index = int(slider_temp_queue.len)
                         queue.append(&slider_temp_queue, slider)
                     case:
@@ -1109,7 +1110,6 @@ hitsound_timing_point_index_at :: proc(timing_points: []Timing_Point, event_time
 }
 
 map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
-
     sort.quick_sort_proc(osu_map.hitobjects, proc(a, b: Hitobject) -> int {
         return int(a.start_time_ms) - int(b.start_time_ms)
     })
@@ -1434,18 +1434,18 @@ convert_overall_difficulty_to_timing_window :: proc(od: f64) -> Timing_Window {
 }
 
 
-mapset_check_system_file_watch :: proc(watch: ^Directory_Watch) -> [Notosu_Map_System]bool {
-    updated_systems: [Notosu_Map_System]bool
+mapset_check_system_file_watch :: proc(watch: ^Directory_Watch) -> [Inso_Map_System]bool {
+    updated_systems: [Inso_Map_System]bool
     directory_watch_poll(watch)
     for {
         filename, ok := directory_watch_next_file(watch)
         if !ok do break
         extension := filepath.ext(filename)
         switch extension {
-        case ".osu":    updated_systems[.OSU_FILE]    = true
-        case ".glsl":   updated_systems[.SHADERS]     = true
-        case ".lua":    updated_systems[.SCRIPTS]     = true
-        case ".notosu": updated_systems[.NOTOSU_FILE] = true
+        case ".osu":    updated_systems[.OSU_FILE]  = true
+        case ".glsl":   updated_systems[.SHADERS]   = true
+        case ".lua":    updated_systems[.SCRIPTS]   = true
+        case ".inso":   updated_systems[.INSO_FILE] = true
         }
         for img_ext in supported_image_extensions {
             if extension == img_ext {

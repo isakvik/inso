@@ -1,9 +1,9 @@
 build
 build-release
-notosu.raddbg_project
+inso.raddbg_project
 *.mp3
 *.mp4
 *.avi
 imgui.ini
 /User.ini
-notosu.log
+inso.log

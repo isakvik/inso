@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "base:runtime"
 import "core:fmt"
@@ -88,6 +88,7 @@ Skin_Element :: struct {
     // window.skin_frame_textures from frame_slot_base. frame_count == 1 means static. see skin_frame_texture.
     frame_slot_base: u32,
     frame_count: int,
+    frame_metrics: []vec2, // note(isak): frames 1..; frame 0 uses metrics. see skin_frame_metrics
 }
 
 skin_element_animatable := #partial [Skin_Element_Type]bool {
@@ -360,27 +361,45 @@ skin_try_load_texture :: proc(stem: string, tex_store: ^Texture) -> (is_high_res
     return false, false
 }
 
+// note(isak): natural display size. @2x textures are double-resolution for the same visual size
+texture_display_metrics :: proc(tex: ^Texture, is_high_res: bool) -> vec2 {
+    display_scale: f32 = is_high_res ? 0.5 : 1.0
+    return {f32(tex.w) * display_scale, f32(tex.h) * display_scale}
+}
+
 // note(isak): loads -1, -2, ... into the shared frame block until one is missing. frame 0 already lives
-// in window.skin_elements, so frame_count is the total including it.
+// in window.skin_elements, so frame_count is the total including it. each frame can independently be
+// @2x, so metrics are stored per frame.
 skin_load_animation_frames :: proc(skin: ^Skin, element: Skin_Element_Type) {
     stem := skin.element_paths[element]
     frame_slot_base := u32(len(window.skin_frame_textures))
+    frame_metrics := make([dynamic]vec2)
 
     for frame := 1; ; frame += 1 {
         tex: Texture
-        _, ok := skin_try_load_texture(fmt.tprintf("%s-%d", stem, frame), &tex)
+        is_high_res, ok := skin_try_load_texture(fmt.tprintf("%s-%d", stem, frame), &tex)
         if !ok {
-            _, ok = skin_try_load_texture(fmt.tprintf("%s%d", stem, frame), &tex)
+            is_high_res, ok = skin_try_load_texture(fmt.tprintf("%s%d", stem, frame), &tex)
             if !ok do break
         }
         append(&window.skin_frame_textures, tex)
+        append(&frame_metrics, texture_display_metrics(&tex, is_high_res))
     }
 
     frame_count := 1 + (int(len(window.skin_frame_textures)) - int(frame_slot_base))
     if frame_count > 1 {
         skin.elements[element].frame_slot_base = frame_slot_base
         skin.elements[element].frame_count = frame_count
+        skin.elements[element].frame_metrics = frame_metrics[:]
     }
+}
+
+// note(isak): frame 0 reads the element's own metrics, mirroring how its texture lives in the
+// element's own slot. out-of-range frames fall back to frame 0
+skin_frame_metrics :: proc(skin_el: Skin_Element_Type, frame: int) -> vec2 {
+    element := &game.active_skin.elements[skin_el]
+    if frame <= 0 || frame - 1 >= len(element.frame_metrics) do return element.metrics
+    return element.frame_metrics[frame - 1]
 }
 
 skin_load_elements :: proc(skin: ^Skin) {
@@ -405,9 +424,7 @@ skin_load_elements :: proc(skin: ^Skin) {
         skin.elements[element].texture = tex_store.tex_id
         skin.elements[element].is_high_resolution = is_high_res
 
-        // note(isak): natural display size. @2x textures are double-resolution for the same visual size
-        display_scale: f32 = is_high_res ? 0.5 : 1.0
-        skin.elements[element].metrics = {f32(tex_store.w) * display_scale, f32(tex_store.h) * display_scale}
+        skin.elements[element].metrics = texture_display_metrics(tex_store, is_high_res)
 
         if ok && skin_element_animatable[element] {
             skin_load_animation_frames(skin, element)

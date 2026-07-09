@@ -1,7 +1,8 @@
 #+build windows
-package notosu
+package inso
 
 import "core:slice"
+import "base:intrinsics"
 import "base:runtime"
 import "core:log"
 import "core:strings"
@@ -52,13 +53,55 @@ input_refresh_mouse_devices :: proc() {
     }
 }
 
-hook_call_count: int
-wm_input_count: int
+// note(isak): low-level keyboard hook that swallows the windows key during play mode, like osu.
+// ll hook callbacks are serviced by the installing thread's message pump, and windows stalls
+// keyboard delivery to the foreground app until the hook answers - installing from the game
+// thread couples every keypress on the system to our frame time (~10ms message handling spikes).
+// so the hook lives on a dedicated thread whose only job is pumping messages; it installs once
+// on first use and stays for the process lifetime, _win32_winkey_swallow toggles the behavior
+_win32_winkey_thread: windows.HANDLE
+_win32_winkey_thread_failed: bool
+_win32_winkey_swallow: bool
+
+windows_key_set_disabled :: proc(disabled: bool) {
+    if disabled && _win32_winkey_thread == nil {
+        if _win32_winkey_thread_failed do return
+        _win32_winkey_thread = windows.CreateThread(nil, 0, _win32_winkey_thread_proc, nil, 0, nil)
+        if _win32_winkey_thread == nil {
+            _win32_winkey_thread_failed = true
+            log.errorf("creating the windows key hook thread failed! win32 error: %d", windows.GetLastError())
+            return
+        }
+    }
+    intrinsics.atomic_store_explicit(&_win32_winkey_swallow, disabled, .Relaxed)
+}
+
+_win32_winkey_thread_proc :: proc "system" (param: rawptr) -> windows.DWORD {
+    hook := windows.SetWindowsHookExW(windows.WH_KEYBOARD_LL, _win32_winkey_hook_proc, nil, 0)
+    if hook == nil do return 1
+
+    // note(isak): GetMessageW never returns for hook dispatch (the callback runs inside it), so
+    // this loop just keeps the thread responsive until process exit
+    msg: windows.MSG
+    for windows.GetMessageW(&msg, nil, 0, 0) > 0 {
+        windows.TranslateMessage(&msg)
+        windows.DispatchMessageW(&msg)
+    }
+    windows.UnhookWindowsHookEx(hook)
+    return 0
+}
+
+_win32_winkey_hook_proc :: proc "system" (code: windows.c_int, wparam: windows.WPARAM, lparam: windows.LPARAM) -> windows.LRESULT {
+    if code == windows.HC_ACTION && intrinsics.atomic_load_explicit(&_win32_winkey_swallow, .Relaxed) {
+        key := cast(^windows.KBDLLHOOKSTRUCT)uintptr(lparam)
+        if key.vkCode == windows.VK_LWIN || key.vkCode == windows.VK_RWIN {
+            return 1
+        }
+    }
+    return windows.CallNextHookEx(nil, code, wparam, lparam)
+}
 
 _win32_message_hook :: proc(userdata: rawptr, msg: ^windows.MSG) -> bool {
-    hook_call_count += 1
-    if msg.message == windows.WM_INPUT do wm_input_count += 1
-
     /* 
     // note(isak): we get a bunch of garbage input device change messages on startup, so commented this out for now
     if msg.message == windows.WM_INPUT_DEVICE_CHANGE {

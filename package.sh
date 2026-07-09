@@ -3,8 +3,8 @@ set -e
 
 VERSION=$(tr -d '[:space:]' < VERSION)
 release_dir=build-release
-exec_name=notosu
-zip_name=notosu-${VERSION}-linux.zip
+exec_name=inso
+zip_name=inso-${VERSION}-linux.zip
 
 mkdir -p "$release_dir"
 

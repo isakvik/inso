@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "core:mem/virtual"
 import "core:fmt"

@@ -1,4 +1,4 @@
-package notosu
+package inso
 
 import "core:time"
 import sb "swap_buffer"
@@ -34,7 +34,7 @@ playfield_base_translation_osupx :: vec2{0, 72} // (512-384)/2 + 8
 game: struct {
     dt: f64, 
     active_mapset: ^Mapset,
-    active_notosu_map: ^Notosu_Map,
+    active_inso_map: ^Inso_Map,
     active_map: ^Osu_Map,
     active_skin: ^Skin,
     
@@ -59,6 +59,8 @@ game: struct {
     },
 
     // note(isak): map game logic fields
+
+    mods: Osu_Mods,
     
     beatmap: Beatmap,
     beatmap_active: bool,
@@ -156,12 +158,13 @@ Hitobject :: struct {
 
     start_time_ms, end_time_ms: f64,
     pos, script_pos_translation: vec2,
+    stack_count: int, // note(isak): the stack offset is baked into pos (and the slider path) on beatmap load
 
     timing_point_index_uninherited: int,
     timing_point_index_inherited: int,
     hitsound_timing_point_index: int, // note(isak): resolved with hitsound leniency at start_time_ms
     hitsound_flags: Hitsound_Flags,
-    extra_bits: u64, // note(isak): from the notosu file
+    extra_bits: u64, // note(isak): from the inso file
     combo_index: int, // note(isak): 1-indexed combo within the current map
     combo_number: u16,
     combo_color_skip_offset: u8, // note(isak): how many combo colors to skip on new combo
@@ -462,7 +465,7 @@ Judgement :: struct {
     time: f64,
 }
 
-Notosu_Map :: struct {
+Inso_Map :: struct {
     lua_entry_point: string,
     bg_pipeline_name: string,
     double_mouse: bool,
@@ -472,7 +475,7 @@ Notosu_Map :: struct {
     shaders: []Shader,
 
     // note(isak): parsed [HitObjectExtraBits] rows, applied to hitobjects after the whole mapset is walked
-    // (the .osu and .notosu files can be parsed in either order)
+    // (the .osu and .inso files can be parsed in either order)
     hitobject_extra_bits: [dynamic]Hitobject_Extra_Bits,
 }
 
@@ -495,6 +498,8 @@ Osu_Map :: struct {
         creator: string,
         difficulty_name: string,
     
+        stack_leniency: f64,
+
         diff_hp_drain: f64,
         diff_circle_size: f64,
         diff_overall_difficulty: f64,
@@ -512,7 +517,7 @@ Osu_Map :: struct {
     hitobjects: []Hitobject,
     slider_paths: []Slider_Path,
     timing_points: []Timing_Point,
-    bookmarks_ms: []f64, // note(isak): [Editor] Bookmarks, ascending music-time ms
+    bookmarks_ms: []f64,
 }
 
 
@@ -530,10 +535,11 @@ osu_on_update :: proc(dt: f64) {
     game.dt = dt
 
     window_set_resizable(game.mode != .PLAY)
+    windows_key_set_disabled(game.mode == .PLAY && window.focused)
 
     if game.mode != .PLAY {
         updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
-        if updated_systems[.OSU_FILE] || updated_systems[.NOTOSU_FILE] || updated_systems[.SCRIPTS] {
+        if updated_systems[.OSU_FILE] || updated_systems[.INSO_FILE] || updated_systems[.SCRIPTS] {
             beatmap_open(game.beatmap.map_reference, true)
         }
         if updated_systems[.SHADERS] {
@@ -993,6 +999,7 @@ handle_editor_input_events :: proc() {
     if key_is_down(.LCTRL) {
         if key_is_pressed(.LEFT)  do editor_seek_bookmark(&game.beatmap, -1)
         if key_is_pressed(.RIGHT) do editor_seek_bookmark(&game.beatmap, +1)
+        if key_is_pressed(.O)     do file_dialog_open_osu()
     }
 
     if !app.ui_wants_mouse {

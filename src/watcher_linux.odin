@@ -1,5 +1,5 @@
 #+build linux
-package notosu
+package inso
 
 import "core:log"
 import "core:strings"

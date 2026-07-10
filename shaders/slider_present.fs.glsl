@@ -9,13 +9,15 @@ layout(binding = 4, std430) readonly buffer textureHandles {
 uniform sampler2DArray textures[16];
 #endif
 
-layout (binding = 6, std140) uniform sliderParams {
-    mat3 transform;
-    vec4 border_color;
-    vec4 body_color;
-    vec2 script_translation_osupx;
-    uint baseInstance;
-    float radiusOsupx;
+layout (binding = 3, std140) uniform globalData {
+    mat3 t;
+    mat3 playfieldTransform;
+    float time;
+    float circleSizeOsupx;
+    vec2 cursorPos;
+    vec2 resolution;
+    vec4 sliderBorderColor;
+    vec4 sliderBodyColor;
 };
 
 in vec3 uv; // xy = tex coords, z = array layer index
@@ -50,8 +52,8 @@ vec4 getOuterBodyColor(vec4 bodyColor) {
 
 // field: 0 = outside/edge, 1 = path spine
 vec4 bandColor(float field) {
-    vec4 inner_body = vec4(getInnerBodyColor(body_color).rgb, body_color.a);
-    vec4 outer_body = vec4(getOuterBodyColor(body_color).rgb, body_color.a);
+    vec4 inner_body = vec4(getInnerBodyColor(sliderBodyColor).rgb, sliderBodyColor.a);
+    vec4 outer_body = vec4(getOuterBodyColor(sliderBodyColor).rgb, sliderBodyColor.a);
 
     if (field < SHADOW_WIDTH - BORDER_TRANSITION_WIDTH) {
         float delta = field / (SHADOW_WIDTH - BORDER_TRANSITION_WIDTH);
@@ -59,14 +61,14 @@ vec4 bandColor(float field) {
     }
     else if (field < SHADOW_WIDTH + BORDER_TRANSITION_WIDTH) {
         float delta = (field - SHADOW_WIDTH + BORDER_TRANSITION_WIDTH) / (2.0 * BORDER_TRANSITION_WIDTH);
-        return mix(OUTER_SHADOW_COLOR, border_color, delta);
+        return mix(OUTER_SHADOW_COLOR, sliderBorderColor, delta);
     }
     else if (field < SHADOW_WIDTH + BORDER_WIDTH - BORDER_TRANSITION_WIDTH) {
-        return border_color;
+        return sliderBorderColor;
     }
     else if (field < SHADOW_WIDTH + BORDER_WIDTH + BORDER_TRANSITION_WIDTH) {
         float delta = (field - SHADOW_WIDTH - BORDER_WIDTH + BORDER_TRANSITION_WIDTH) / (2.0 * BORDER_TRANSITION_WIDTH);
-        return mix(border_color, outer_body, delta);
+        return mix(sliderBorderColor, outer_body, delta);
     }
     else {
         float band_start = SHADOW_WIDTH + BORDER_WIDTH + BORDER_TRANSITION_WIDTH;

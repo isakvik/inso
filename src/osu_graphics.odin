@@ -946,6 +946,56 @@ slider_body_alpha :: proc(hobj: ^Hitobject, map_time: f64) -> f32 {
     return f32(min(fade_in, fade_out))
 }
 
+SLIDER_ATLAS_PAD :: 2
+
+// note(isak): the SLIDERS framebuffer is a window-sized atlas of cached body distance fields.
+// slots are bump-allocated in rows; when the atlas fills up we reset the whole thing and bump
+// the generation, which lazily regenerates every visible body over the following frames - one
+// frame of regeneration costs what every frame cost before caching, so resets are cheap.
+Slider_Atlas :: struct {
+    cur_x, cur_y, row_h: i32,
+    generation: u32, // starts at 1 so zero-value Slider_Body_Caches are never valid
+}
+
+Slider_Body_Cache :: struct {
+    content_rect: Rect, // atlas texels, excluding the cleared gutter around the slot
+    texels_per_osupx: f32,
+    baked_first, baked_last: i32,
+    generation: u32,
+}
+
+slider_atlas_reset :: proc "contextless" () {
+    atlas := &window.slider_atlas
+    atlas.cur_x = 0
+    atlas.cur_y = 0
+    atlas.row_h = 0
+    atlas.generation += 1
+}
+
+// w and h must each fit the atlas minus the gutter; callers guarantee that by clamping their
+// texel density. allocation therefore always succeeds after at most one reset.
+slider_atlas_alloc :: proc(w, h: i32) -> (content: Rect) {
+    atlas := &window.slider_atlas
+    atlas_w := i32(window.rect.w)
+    atlas_h := i32(window.rect.h)
+    padded_w := w + 2 * SLIDER_ATLAS_PAD
+    padded_h := h + 2 * SLIDER_ATLAS_PAD
+
+    if atlas.cur_x + padded_w > atlas_w {
+        atlas.cur_y += atlas.row_h
+        atlas.cur_x = 0
+        atlas.row_h = 0
+    }
+    if atlas.cur_y + padded_h > atlas_h {
+        slider_atlas_reset()
+    }
+
+    content = Rect{f32(atlas.cur_x + SLIDER_ATLAS_PAD), f32(atlas.cur_y + SLIDER_ATLAS_PAD), f32(w), f32(h)}
+    atlas.cur_x += padded_w
+    atlas.row_h = max(atlas.row_h, padded_h)
+    return content
+}
+
 slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slider_Path, map_time: f64) {
     first_instance := i32(0)
     last_instance  := max(1, i32(f64(slider.instance_count) * slider_snake_in_factor(hobj)))
@@ -960,82 +1010,123 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
         return
     }
 
-    // note(isak): slider geometry is in CS-normalized units (osupx / radius)
     r := hitobject_radius_osupx(hobj)
-    cs_to_osupx := mat3{r, 0, 0, 0, r, 0, 0, 0, 1}
-    slider_pf_transform := mat3_to_transform(transform_to_mat3(game.playfield_transform) * cs_to_osupx)
-
-    translation := hobj.script_pos_translation
-    slider_rect := slider_screenspace_bounding_box(hobj, slider, translation)
-
-    slider_uvs := Rect{
-        slider_rect.x / window.rect.w,
-        slider_rect.y / window.rect.h,
-        slider_rect.w / window.rect.w,
-        slider_rect.h / window.rect.h,
+    bbox_osupx := Rect{
+        slider.bounds_min.x - r,
+        slider.bounds_min.y - r,
+        slider.bounds_max.x - slider.bounds_min.x + r * 2,
+        slider.bounds_max.y - slider.bounds_min.y + r * 2,
     }
 
-    r_bind_pipeline({ pipeline = builtin_pipeline_slot(.SLIDER) })
-    r_bind_framebuffer({ write = builtin_framebuffer(.SLIDERS) })
-    r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
+    // bake at the on-screen texel density so static playfields sample the field 1:1; bodies
+    // larger than the atlas bake at whatever density fits (banding stays sharp regardless
+    // since the thresholds run on the sampled field)
+    texels_per_osupx := min(
+        playfield_px_per_osupx(),
+        (window.rect.w - 2 * SLIDER_ATLAS_PAD) / bbox_osupx.w,
+        (window.rect.h - 2 * SLIDER_ATLAS_PAD) / bbox_osupx.h)
 
-    if window.intel_gpu {
-        // note(isak): on intel igpus, a scissored glClear ignores ClipControl(UPPER_LEFT)
-        r_set_scissor_mode(
-            i32(slider_rect.x),
-            i32(window.rect.h - slider_rect.y - slider_rect.h),
-            i32(slider_rect.w),
-            i32(slider_rect.h))
-        r_clear(with_alpha(color_black, 0.0))
-        r_set_scissor_mode(slider_rect)
-    } else {
-        r_set_scissor_mode(slider_rect)
-        r_clear(with_alpha(color_black, 0.0))
+    cache := &hobj.slider_state.body_cache
+    stale := cache.generation != window.slider_atlas.generation ||
+             cache.baked_first != first_instance ||
+             cache.baked_last  != last_instance ||
+             abs(cache.texels_per_osupx - texels_per_osupx) > texels_per_osupx * 0.005
+
+    if stale {
+        content_w := i32(math.ceil(bbox_osupx.w * texels_per_osupx))
+        content_h := i32(math.ceil(bbox_osupx.h * texels_per_osupx))
+        if cache.generation != window.slider_atlas.generation ||
+           i32(cache.content_rect.w) != content_w || i32(cache.content_rect.h) != content_h {
+            cache.content_rect = slider_atlas_alloc(content_w, content_h)
+        }
+        cache.texels_per_osupx = texels_per_osupx
+        cache.baked_first = first_instance
+        cache.baked_last = last_instance
+        cache.generation = window.slider_atlas.generation
+
+        // note(isak): slider geometry is in CS-normalized units (osupx / radius); the bake
+        // transform places the body's osupx bbox at its atlas slot, treating the atlas like a
+        // second screen so all scissor/uv conventions match the window. script translation is
+        // NOT baked - it moves the presented quad instead
+        place_atlas_px := mat3{
+            texels_per_osupx, 0, cache.content_rect.x - bbox_osupx.x * texels_per_osupx,
+            0, texels_per_osupx, cache.content_rect.y - bbox_osupx.y * texels_per_osupx,
+            0, 0, 1,
+        }
+        cs_to_osupx := mat3{r, 0, 0, 0, r, 0, 0, 0, 1}
+        bake_transform := mat3_to_transform(transform_to_mat3(window.screenspace_transform) * place_atlas_px * cs_to_osupx)
+
+        slot_rect := Rect{
+            cache.content_rect.x - SLIDER_ATLAS_PAD,
+            cache.content_rect.y - SLIDER_ATLAS_PAD,
+            f32(content_w + 2 * SLIDER_ATLAS_PAD),
+            f32(content_h + 2 * SLIDER_ATLAS_PAD),
+        }
+
+        r_bind_pipeline({ pipeline = builtin_pipeline_slot(.SLIDER) })
+        r_bind_framebuffer({ write = builtin_framebuffer(.SLIDERS) })
+        r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
+
+        if window.intel_gpu {
+            // note(isak): on intel igpus, a scissored glClear ignores ClipControl(UPPER_LEFT)
+            r_set_scissor_mode(
+                i32(slot_rect.x),
+                i32(window.rect.h - slot_rect.y - slot_rect.h),
+                i32(slot_rect.w),
+                i32(slot_rect.h))
+            r_clear(with_alpha(color_black, 0.0))
+            r_set_scissor_mode(slot_rect)
+        } else {
+            r_set_scissor_mode(slot_rect)
+            r_clear(with_alpha(color_black, 0.0))
+        }
+
+        r_push_draw_slider(Slider_Params{
+            transform          = bake_transform,
+            base_instance      = u32(slider.first_instance_at + first_instance),
+            radius_osupx       = r,
+        }, last_instance - first_instance)
     }
 
-    border_rgb := game.active_skin.slider_border.a != 0 ? game.active_skin.slider_border : color_white
-    body_rgb   := game.active_skin.slider_track_override.a != 0 ? game.active_skin.slider_track_override : color_white
-
-    r_push_draw_slider(Slider_Params{
-        transform          = slider_pf_transform,
-        border_color       = color_to_vec(with_alpha(border_rgb, 1.0)),
-        body_color         = color_to_vec(with_alpha(body_rgb, 0.7)),
-        script_translation = translation,
-        base_instance      = u32(slider.first_instance_at + first_instance),
-        radius_osupx       = r,
-    }, last_instance - first_instance)
-    
     // note(isak): the body composite bypasses render_drawable, so we have to resolve the HITOBJECTS
     // target through r_layer_framebuffer to match the rest of the layer
+    translation := hobj.script_pos_translation
     slider_write_target := r_layer_framebuffer(.HITOBJECTS).write
     r_bind_framebuffer({ read = builtin_framebuffer(.SLIDERS), write = slider_write_target })
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
 
-    r_push_transform(window.screenspace_transform)
     if app.debug_display_slider_bounds {
         r_bind_pipeline({ pipeline = builtin_pipeline_slot(.QUAD) })
+        r_push_transform(window.screenspace_transform)
         r_reset_scissor_mode()
-        r_draw_rect_outline(&renderer.quad_geometry, slider_rect, color_cyan, 1)
+        r_draw_rect_outline(&renderer.quad_geometry, slider_screenspace_bounding_box(hobj, slider, translation), color_cyan, 1)
     }
     r_bind_pipeline({ pipeline = builtin_pipeline_slot(.SLIDER_PRESENT) })
+    r_reset_scissor_mode()
 
-    scissor_rect := Rect{
-        2 + math.ceil(slider_rect.x),
-        2 + math.ceil(slider_rect.y),
-        math.floor(slider_rect.w) - 4,
-        math.floor(slider_rect.h) - 4,
-    }   
-    r_set_scissor_mode(scissor_rect)
-    
+    // uvs cover the exact fractional field extent, not the ceil'd slot, so texels map 1:1
+    atlas_uvs := Rect{
+        cache.content_rect.x / window.rect.w,
+        cache.content_rect.y / window.rect.h,
+        bbox_osupx.w * texels_per_osupx / window.rect.w,
+        bbox_osupx.h * texels_per_osupx / window.rect.h,
+    }
+    body_rect := Rect{
+        bbox_osupx.x + translation.x,
+        bbox_osupx.y + translation.y,
+        bbox_osupx.w,
+        bbox_osupx.h,
+    }
+
     // note(isak): dimming the composite tint dims border and body together, mirroring HITOBJECT_DIM
     // the same way slider_body_alpha mirrors FADE_IN/FADE_OUT
     body_tint := color_scale_rgb(color_white, hitobject_dim_factor(hobj.start_time_ms, map_time))
+    r_push_transform(game.playfield_transform)
     r_draw_rect_with_uv(&renderer.quad_geometry,
-                        slider_rect,
-                        slider_uvs,
+                        body_rect,
+                        atlas_uvs,
                         with_alpha(body_tint, slider_body_alpha(hobj, map_time)),
                         builtin_texture(.SLIDER_FRAMEBUFFER))
-    r_reset_scissor_mode()
 }
 
 slider_part_element :: proc(hobj: ^Hitobject, part: Slider_Part) -> Element_ID {

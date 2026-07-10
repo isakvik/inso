@@ -257,6 +257,8 @@ Slider_State :: struct {
     gfx: Slider_Handles,
     // note(isak): per-part element override set from lua (0 = use the builtin slot)
     custom_elements: [Slider_Part]Element_ID,
+
+    body_cache: Slider_Body_Cache,
 }
 
 hitobject_pos :: proc(hobj: ^Hitobject) -> vec2 {

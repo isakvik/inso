@@ -58,6 +58,9 @@ window: struct {
 
     shader_global_buffer: GL_Uniform_Buffer(Shader_Globals),
     slider_param_store: GL_Triple_Buffer(Slider_Params_Slot),
+    // note(isak): the SLIDERS framebuffer doubles as a window-sized atlas of cached slider
+    // body distance fields; this is the allocator state (see slider_render_path)
+    slider_atlas: Slider_Atlas,
     user_param_buffer: GL_Uniform_Buffer(User_Shader_Params),
     post_param_buffer: GL_Uniform_Buffer(Post_Pass_Params),
     circle_geo_buffer: GL_Buffer(Slider_Vertex),
@@ -189,6 +192,7 @@ window_on_resize :: proc(new_w, new_h: i32) {
     
     fbo_reinit(&window.framebuffers[.SLIDERS], new_w, new_h)
     fbo_reinit(&window.framebuffers[.BACKBUFFER], new_w, new_h)
+    slider_atlas_reset()
 
     if game.active_mapset != nil {
         for &rt in game.active_mapset.render_targets.data {

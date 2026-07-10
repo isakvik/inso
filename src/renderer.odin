@@ -88,6 +88,9 @@ Shader_Globals :: struct {
     circle_size_osupx: f32,
     cursor_pos: [2]f32,
     resolution: [2]f32,
+    _pad: [2]f32, // std140: the vec4s below align to 16
+    slider_border_color: vec4,
+    slider_body_color: vec4,
 }
 
 Layer_State_Field :: enum { FRAMEBUFFER, PIPELINE, SCISSOR }
@@ -238,6 +241,7 @@ renderer_init :: proc() {
     }
 
     window.framebuffers[.SLIDERS] = fbo_init(1, 0, i32(window.rect.w), i32(window.rect.h), gl.R16F)
+    window.slider_atlas.generation = 1
     window.framebuffers[.BACKBUFFER] = fbo_init(1, 1, i32(window.rect.w), i32(window.rect.h), gl.RGBA8)
     
 

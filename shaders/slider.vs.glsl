@@ -16,8 +16,6 @@ layout(binding = 5, std430) readonly buffer sliderInstanceData {
 };
 layout (binding = 6, std140) uniform sliderParams {
     mat3 transform;
-    vec4 border_color;
-    vec4 body_color;
     vec2 script_translation_osupx;
     uint baseInstance;
     float radiusOsupx;

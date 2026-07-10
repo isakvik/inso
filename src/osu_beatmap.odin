@@ -253,6 +253,10 @@ beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
 }
 
 beatmap_load :: proc(beatmap: ^Beatmap) {
+    // hitobjects are reallocated from the mapset arena, so any body cache generation they
+    // carry must be unable to match the atlas
+    slider_atlas_reset()
+
     ok: bool
     beatmap.music, ok = sound_stream_init(game.active_map.audio_filepath, prescan = true)
     if ok {

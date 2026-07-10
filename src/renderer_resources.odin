@@ -122,11 +122,10 @@ Post_Pass_Params :: struct #align(16) {
     src: [4]u32,
 }
 
-// note(isak): per-draw slider params, one slot per DRAW_SLIDER command
+// note(isak): per-draw slider params, one slot per DRAW_SLIDER command. border/body colors
+// live in Shader_Globals (skin-global, read by slider_present.fs)
 Slider_Params :: struct {
     transform:          Transform, // slider-space -> ndc; sliders don't use the frame transform ring
-    border_color:       vec4,
-    body_color:         vec4,
     script_translation: vec2,  // osupx, applied in VS before coord normalization
     base_instance:      u32,   // replaces gl_BaseInstance for intel compat
     radius_osupx:       f32,   // per-object radius, used in VS instead of global circleSizeOsupx

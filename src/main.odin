@@ -485,6 +485,13 @@ begin_frame :: proc(renderer: ^Renderer) {
 
     batch_begin(renderer)
 
+    slider_border := color_white
+    slider_body := color_white
+    if game.active_skin != nil {
+        if game.active_skin.slider_border.a != 0 do slider_border = game.active_skin.slider_border
+        if game.active_skin.slider_track_override.a != 0 do slider_body = game.active_skin.slider_track_override
+    }
+
     r_set_shader_globals({
         transform = identity_transform,
         playfield_transform = game.playfield_transform,
@@ -492,6 +499,8 @@ begin_frame :: proc(renderer: ^Renderer) {
         circle_size_osupx = game.beatmap.circle_radius_osupx,
         cursor_pos = mouse.pos,
         resolution = vec2{window.rect.w, window.rect.h},
+        slider_border_color = color_to_vec(with_alpha(slider_border, 1.0)),
+        slider_body_color   = color_to_vec(with_alpha(slider_body, 0.7)),
     })
 
     r_bind_layer(.BACKGROUND)

@@ -426,10 +426,15 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
   { "get_cs", luaapi_hitobject_get_cs,
     "float hitobject:get_cs( void )",
     "the object's circle size, derived from its radius." },
+  { "get_cs_radius", luaapi_hitobject_get_cs_radius,
+    "float hitobject:get_cs_radius( void )",
+    "the object's circle size radius in osupx." },
   { "set_cs", luaapi_hitobject_set_cs,
     "self hitobject:set_cs( float cs )",
     "overrides the object's circle size (converted to a radius)." },
-
+  { "set_cs_radius", luaapi_hitobject_set_cs_radius,
+    "self hitobject:set_cs_radius( float radius )",
+    "overrides the object's circle size radius in osupx." },
   { "get_slider_distance", luaapi_hitobject_get_slider_distance,
     "float hitobject:get_slider_distance( void )",
     "the slider's path length in osupx (0 for non-sliders)." },
@@ -873,10 +878,26 @@ luaapi_hitobject_get_cs :: proc "c" (L: ^lua.State) -> (result: i32) {
     })
 }
 
+luaapi_hitobject_get_cs_radius :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        r := f64(hobj.custom_radius_osupx if hobj.custom_radius_osupx != 0 else game.beatmap.circle_radius_osupx)
+        lua.pushnumber(L, lua.Number(r))
+        return 1
+    })
+}
+
 luaapi_hitobject_set_cs :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         cs := f64(lua_number(2))
         hobj.custom_radius_osupx = f32((54.4 - 4.48 * cs) * 1.00041)
+        return 0
+    })
+}
+
+luaapi_hitobject_set_cs_radius :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        cs_radius := f64(lua_number(2))
+        hobj.custom_radius_osupx = f32(cs_radius)
         return 0
     })
 }

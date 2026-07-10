@@ -99,7 +99,7 @@ foreign lib {
     Mixer_ChannelGetLevel       :: proc(handle: DWORD) -> DWORD ---
     Mixer_ChannelGetLevelEx     :: proc(handle: DWORD, levels: ^f32, length: f32, flags: DWORD) -> BOOL ---
     Mixer_ChannelGetData        :: proc(handle: DWORD, buffer: rawptr, length: DWORD) -> DWORD ---
-    Mixer_ChannelSetSync        :: proc(handle: DWORD, type: DWORD, param: QWORD, _proc: proc "c" (), user: rawptr) -> HSYNC ---
+    Mixer_ChannelSetSync        :: proc(handle: DWORD, type: DWORD, param: QWORD, _proc: SYNCPROC, user: rawptr) -> HSYNC ---
     Mixer_ChannelRemoveSync     :: proc(channel: DWORD, sync: HSYNC) -> BOOL ---
     Mixer_ChannelSetMatrix      :: proc(handle: DWORD, _matrix: rawptr) -> BOOL ---
     Mixer_ChannelSetMatrixEx    :: proc(handle: DWORD, _matrix: rawptr, time: f32) -> BOOL ---

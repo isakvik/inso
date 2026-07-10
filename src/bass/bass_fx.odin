@@ -362,13 +362,15 @@ FX_BPM_TRAN_X2       :: 0
 FX_BPM_TRAN_2FREQ    :: 1
 FX_BPM_TRAN_FREQ2    :: 2
 
+BPMPROC         :: proc "c" (chan: DWORD, bpm: f32, user: rawptr)
+BPMPROGRESSPROC :: proc "c" (chan: DWORD, percent: f32, user: rawptr)
+BPMPROCESSPROC  :: BPMPROGRESSPROC // back-compatibility
+BPMBEATPROC     :: proc "c" (chan: DWORD, beatpos: f64, user: rawptr)
+
 @(default_calling_convention="c",link_prefix="BASS_")
 foreign lib {
-    BPMPROC                   :: proc(DWORD, f32, rawptr) ---
-    BPMPROGRESSPROC           :: proc(DWORD, f32, rawptr) ---
-    BPMPROCESSPROC            :: proc(DWORD, f32, rawptr) ---                                // back-compatibility
-    FX_BPM_DecodeGet     :: proc(chan: DWORD, startSec: f64, endSec: f64, minMaxBPM: DWORD, flags: DWORD, _proc: proc "c" (), user: rawptr) -> f32 ---
-    FX_BPM_CallbackSet   :: proc(handle: DWORD, _proc: proc "c" (), period: f64, minMaxBPM: DWORD, flags: DWORD, user: rawptr) -> BOOL ---
+    FX_BPM_DecodeGet     :: proc(chan: DWORD, startSec: f64, endSec: f64, minMaxBPM: DWORD, flags: DWORD, _proc: BPMPROGRESSPROC, user: rawptr) -> f32 ---
+    FX_BPM_CallbackSet   :: proc(handle: DWORD, _proc: BPMPROC, period: f64, minMaxBPM: DWORD, flags: DWORD, user: rawptr) -> BOOL ---
     FX_BPM_CallbackReset :: proc(handle: DWORD) -> BOOL ---
     FX_BPM_Translate     :: proc(handle: DWORD, val2tran: f32, trans: DWORD) -> f32 --- // deprecated
     FX_BPM_Free          :: proc(handle: DWORD) -> BOOL ---
@@ -376,10 +378,9 @@ foreign lib {
     /*===========================================================================
     Beat position trigger
     ===========================================================================*/
-    BPMBEATPROC                   :: proc(DWORD, f64, rawptr) ---
-    FX_BPM_BeatCallbackSet   :: proc(handle: DWORD, _proc: proc "c" (), user: rawptr) -> BOOL ---
+    FX_BPM_BeatCallbackSet   :: proc(handle: DWORD, _proc: BPMBEATPROC, user: rawptr) -> BOOL ---
     FX_BPM_BeatCallbackReset :: proc(handle: DWORD) -> BOOL ---
-    FX_BPM_BeatDecodeGet     :: proc(chan: DWORD, startSec: f64, endSec: f64, flags: DWORD, _proc: proc "c" (), user: rawptr) -> BOOL ---
+    FX_BPM_BeatDecodeGet     :: proc(chan: DWORD, startSec: f64, endSec: f64, flags: DWORD, _proc: BPMBEATPROC, user: rawptr) -> BOOL ---
     FX_BPM_BeatSetParameters :: proc(handle: DWORD, bandwidth: f32, centerfreq: f32, beat_rtime: f32) -> BOOL ---
     FX_BPM_BeatGetParameters :: proc(handle: DWORD, bandwidth: ^f32, centerfreq: ^f32, beat_rtime: ^f32) -> BOOL ---
     FX_BPM_BeatFree          :: proc(handle: DWORD) -> BOOL ---

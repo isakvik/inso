@@ -1,5 +1,6 @@
 package inso
 
+import "base:intrinsics"
 import "core:strings"
 import "core:log"
 import os "core:os"
@@ -11,6 +12,7 @@ Sound_Category :: enum { MUSIC, HITSOUND }
 
 audio: struct {
     ready: bool,
+    device_reinit_requested: bool,
     output_mixer:   bass.HSTREAM,
     music_mixer:    bass.HSTREAM,
     hitsound_mixer: bass.HSTREAM,
@@ -33,7 +35,7 @@ Sound_Flag :: enum u32 {
 Base_Sound :: struct {
     flags: Sound_Flags,
     volume: f32, // note(isak): 0.0 - 1.0 range
-    pan: f32,
+    pan: f32, // note(isak): -1.0 - 1.0 range
     time_at: f64,
     expires_at_ms: f64, // note(isak): 0 = no expiry
 }
@@ -67,38 +69,46 @@ Sample :: struct {
 // note(isak): audio engine api
 
 when ODIN_OS == .Windows {
-    // note(isak): WASAPI output callback. BASS runs as a decode source, WASAPI pulls from it
-    _bass_wasapi_proc :: proc "c" (buffer: rawptr, len: u32, user_data: rawptr) -> u32 {
+    // note(isak): bass runs as a decode source, wasapi reads from it
+    _bass_wasapi_output_proc :: proc "c" (buffer: rawptr, len: u32, user_data: rawptr) -> u32 {
         if audio.output_mixer != 0 {
             c := bass.ChannelGetData(audio.output_mixer, buffer, len)
             return max(c, 0)
         }
         return 0
     }
-}
 
-// todo(isak): should probably call this device_init() or something
-// todo(isak): device selection
-audio_init :: proc(device: Device = -1) -> bool {
-    when ODIN_OS == .Windows {
-        /*
-        note(isak): we're using some flags that make BASS run very smoothly with WASAPI in windows' shared audio mode
-        courtesy of LastExceed: https://github.com/ppy/osu-framework/pull/6651
+    // note(isak): basswasapi wraps the COM device event listener for us; this fires on its event
+    // thread, so we only flag the change here and let the main loop do the reinit
+    _bass_wasapi_notify_proc :: proc "c" (notify: bass.DWORD, device: bass.DWORD, user: rawptr) {
+        switch notify {
+        case bass.WASAPI_NOTIFY_DEFOUTPUT, bass.WASAPI_NOTIFY_FAIL:
+            intrinsics.atomic_store(&audio.device_reinit_requested, true)
+        case bass.WASAPI_NOTIFY_ENABLED:
+            // note(isak): a device (re)appeared; only interesting if we lost output earlier
+            if !audio.ready {
+                intrinsics.atomic_store(&audio.device_reinit_requested, true)
+            }
+        }
+    }
 
-        the following is the old osu lazer init that makes BASS run like ass, which are useful for provoking large
-        interpolation deltas (for handling the music buffer granularity/play time discrepancy):
+    /*
+    note(isak): we're using some flags that make BASS run very smoothly with WASAPI in windows' shared audio mode
+    courtesy of LastExceed: https://github.com/ppy/osu-framework/pull/6651
 
-            device = -1,
-            freq = 0,
-            chans = 0,
-            flags = 0,
-            buffer = 0.02,
-            period = 0,
-            _proc = _bass_wasapi_proc,
-            user = nil
-        */
-        bass.Init(device, 44100, bass.DEVICE_NOSPEAKER, nil, nil)
+    the following is the old osu lazer init that makes BASS run like ass, which are useful for provoking large
+    interpolation deltas (for handling the music buffer granularity/play time discrepancy):
 
+        device = -1,
+        freq = 0,
+        chans = 0,
+        flags = 0,
+        buffer = 0.02,
+        period = 0,
+        _proc = _bass_wasapi_proc,
+        user = nil
+    */
+    _wasapi_output_init :: proc() -> (info: bass.WASAPI_INFO, ok: bool) {
         if !bass.WASAPI_Init(
             device = -1,
             freq = 0,
@@ -106,17 +116,24 @@ audio_init :: proc(device: Device = -1) -> bool {
             flags = bass.WASAPI_EVENT | bass.WASAPI_AUTOFORMAT,
             buffer = 0,
             period = 1.1920929e-07, // math.F32_EPSILON
-            _proc = _bass_wasapi_proc,
+            _proc = _bass_wasapi_output_proc,
             user = nil
         ) {
             log.error("BASS_WASAPI init error:", bass.ErrorGetCode())
-            return false
+            return
         }
+        bass.WASAPI_GetInfo(&info)
+        return info, true
+    }
+}
 
-        bass.WASAPI_Start()
+// todo(isak): should probably call this device_init() or something
+// todo(isak): device selection
+audio_init :: proc(device: Device = -1) -> bool {
+    when ODIN_OS == .Windows {
+        bass.Init(device, 44100, bass.DEVICE_NOSPEAKER, nil, nil)
 
-        wasapi_info: bass.WASAPI_INFO
-        bass.WASAPI_GetInfo(&wasapi_info)
+        wasapi_info := _wasapi_output_init() or_return
         audio.output_mixer = bass.Mixer_StreamCreate(wasapi_info.freq, wasapi_info.chans,
             bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
         audio.music_mixer = bass.Mixer_StreamCreate(wasapi_info.freq, wasapi_info.chans,
@@ -125,6 +142,9 @@ audio_init :: proc(device: Device = -1) -> bool {
             bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
         bass.Mixer_StreamAddChannel(audio.output_mixer, audio.music_mixer,    bass.MIXER_DOWNMIX)
         bass.Mixer_StreamAddChannel(audio.output_mixer, audio.hitsound_mixer, bass.MIXER_DOWNMIX)
+
+        bass.WASAPI_Start()
+        bass.WASAPI_SetNotify(_bass_wasapi_notify_proc, nil)
     } else {
         // note(isak): on linux/mac, BASS handles output via ALSA/PulseAudio directly.
         // these must be set before Init. CONFIG_BUFFER defaults to 500ms which causes huge delay on pause/seek
@@ -165,6 +185,45 @@ audio_cleanup :: proc() {
         bass.WASAPI_Free()
     } else {
         bass.Free()
+    }
+}
+
+// note(isak): moves the WASAPI output onto the new default device when windows reports a change
+// (or the current device dies). the mixer chain survives untouched unless the new device runs
+// a different format, in which case only the output mixer is rebuilt.
+// bassmix resamples the music/hitsound mixers into it, so playback position is preserved
+audio_handle_device_change :: proc() -> (reinitialized: bool) {
+    when ODIN_OS == .Windows {
+        if !intrinsics.atomic_exchange(&audio.device_reinit_requested, false) {
+            return false
+        }
+
+        bass.WASAPI_Free()
+        wasapi_info, ok := _wasapi_output_init()
+        if !ok {
+            // note(isak): no usable output device right now
+            audio.ready = false
+            return false
+        }
+
+        mixer_info: bass.CHANNELINFO
+        bass.ChannelGetInfo(audio.output_mixer, &mixer_info)
+        if wasapi_info.freq != mixer_info.freq || wasapi_info.chans != mixer_info.chans {
+            bass.Mixer_ChannelRemove(audio.music_mixer)
+            bass.Mixer_ChannelRemove(audio.hitsound_mixer)
+            bass.StreamFree(audio.output_mixer)
+            audio.output_mixer = bass.Mixer_StreamCreate(wasapi_info.freq, wasapi_info.chans,
+                bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
+            bass.Mixer_StreamAddChannel(audio.output_mixer, audio.music_mixer,    bass.MIXER_DOWNMIX)
+            bass.Mixer_StreamAddChannel(audio.output_mixer, audio.hitsound_mixer, bass.MIXER_DOWNMIX)
+        }
+
+        bass.WASAPI_Start()
+        audio.ready = true
+        log.info("audio output moved to new default device")
+        return true
+    } else {
+        return false
     }
 }
 

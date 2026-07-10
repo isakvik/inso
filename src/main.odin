@@ -372,6 +372,10 @@ main :: proc() {
             
             handle_debug_ui_events()
             file_dialog_poll()
+            if audio_handle_device_change() {
+                // note(isak): session volume is remembered per-device by windows, so re-apply ours
+                audio_set_volume(game.user_config.master_volume)
+            }
             if key_is_down(.LCTRL) && key_is_pressed(.F5) {
                 discover_maps("songs/")
                 discover_skins("skins/")

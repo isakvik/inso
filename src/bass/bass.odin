@@ -410,17 +410,13 @@ BASS_3DALG_OFF     :: 1
 SAMCHAN_NEW    :: 1  // get a new playback channel
 SAMCHAN_STREAM  :: 2 // create a stream
 
-@(default_calling_convention="c")
-foreign lib {
-    STREAMPROC :: proc(HSTREAM, rawptr, DWORD, rawptr) -> DWORD ---
-}
-
 /* User stream callback function.
 handle : The stream that needs writing
 buffer : Buffer to write the samples in
 length : Number of bytes to write
 user   : The 'user' parameter value given when calling StreamCreate
 RETURN : Number of bytes written and STREAMPROC_xxx flags */
+STREAMPROC :: proc "c" (handle: HSTREAM, buffer: rawptr, length: DWORD, user: rawptr) -> DWORD
 STREAMPROC_AGAIN :: 0x40000000 // call again for remainder
 STREAMPROC_END   :: 0x80000000 // end the stream
 
@@ -435,29 +431,26 @@ STREAMFILE_NOBUFFER   :: 0
 STREAMFILE_BUFFER     :: 1
 STREAMFILE_BUFFERPUSH :: 2
 
-@(default_calling_convention="c")
-foreign lib {
-    // User file callback functions
-    FILECLOSEPROC :: proc(rawptr) ---
-    FILELENPROC   :: proc(rawptr) -> QWORD ---
-    FILEREADPROC  :: proc(rawptr, DWORD, rawptr) -> DWORD ---
-    FILESEEKPROC  :: proc(QWORD, rawptr) -> BOOL ---
-    FILEOPENPROC  :: proc(cstring, DWORD) -> rawptr ---
-}
+// User file callback functions
+FILECLOSEPROC :: proc "c" (user: rawptr)
+FILELENPROC   :: proc "c" (user: rawptr) -> QWORD
+FILEREADPROC  :: proc "c" (buffer: rawptr, length: DWORD, user: rawptr) -> DWORD
+FILESEEKPROC  :: proc "c" (offset: QWORD, user: rawptr) -> BOOL
+FILEOPENPROC  :: proc "c" (file: cstring, flags: DWORD) -> rawptr
 
 FILEPROCS :: struct {
-    close:  proc "c" (),
-    length: proc "c" () -> QWORD,
-    read:   proc "c" () -> DWORD,
-    seek:   proc "c" () -> BOOL,
+    close:  FILECLOSEPROC,
+    length: FILELENPROC,
+    read:   FILEREADPROC,
+    seek:   FILESEEKPROC,
 }
 
 FILEOPENPROCS :: struct {
-    close:  proc "c" (),
-    length: proc "c" () -> QWORD,
-    read:   proc "c" () -> DWORD,
-    seek:   proc "c" () -> BOOL,
-    open:   proc "c" () -> rawptr,
+    close:  FILECLOSEPROC,
+    length: FILELENPROC,
+    read:   FILEREADPROC,
+    seek:   FILESEEKPROC,
+    open:   FILEOPENPROC,
 }
 
 // StreamPutFileData options
@@ -478,15 +471,11 @@ FILEPOS_BUFFERING :: 9
 FILEPOS_AVAILABLE :: 10
 FILEPOS_ASYNCSIZE :: 12
 
-@(default_calling_convention="c")
-foreign lib {
-    DOWNLOADPROC :: proc(rawptr, DWORD, rawptr) ---
-}
-
 /* Internet stream download callback function.
 buffer : Buffer containing the downloaded data... NULL=end of download
 length : Number of bytes in the buffer
 user   : The 'user' parameter value given when calling StreamCreateURL */
+DOWNLOADPROC :: proc "c" (buffer: rawptr, length: DWORD, user: rawptr)
 
 // ChannelSetSync types
 SYNC_POS        :: 0
@@ -509,25 +498,20 @@ SYNC_THREAD     :: 0x20000000 // flag: call sync in other thread
 SYNC_MIXTIME    :: 0x40000000 // flag: sync at mixtime, else at playtime
 SYNC_ONETIME    :: 0x80000000 // flag: sync only once, else continuously
 
-@(default_calling_convention="c")
-foreign lib {
-    SYNCPROC :: proc(HSYNC, DWORD, DWORD, rawptr) ---
+/* Sync callback function.
+handle : The sync that has occured
+channel: Channel that the sync occured in
+data   : Additional data associated with the sync's occurance
+user   : The 'user' parameter given when calling ChannelSetSync */
+SYNCPROC :: proc "c" (handle: HSYNC, channel: DWORD, data: DWORD, user: rawptr)
 
-    /* Sync callback function.
-    handle : The sync that has occured
-    channel: Channel that the sync occured in
-    data   : Additional data associated with the sync's occurance
-    user   : The 'user' parameter given when calling ChannelSetSync */
-    DSPPROC :: proc(HDSP, DWORD, rawptr, DWORD, rawptr) ---
-
-    /* DSP callback function.
-    handle : The DSP handle
-    channel: Channel that the DSP is being applied to
-    buffer : Buffer to apply the DSP to
-    length : Number of bytes in the buffer
-    user   : The 'user' parameter given when calling ChannelSetDSP */
-    RECORDPROC :: proc(HRECORD, rawptr, DWORD, rawptr) -> BOOL ---
-}
+/* DSP callback function.
+handle : The DSP handle
+channel: Channel that the DSP is being applied to
+buffer : Buffer to apply the DSP to
+length : Number of bytes in the buffer
+user   : The 'user' parameter given when calling ChannelSetDSP */
+DSPPROC :: proc "c" (handle: HDSP, channel: DWORD, buffer: rawptr, length: DWORD, user: rawptr)
 
 /* Recording callback function.
 handle : The recording handle
@@ -535,6 +519,7 @@ buffer : Buffer containing the recorded sample data
 length : Number of bytes
 user   : The 'user' parameter value given when calling RecordStart
 RETURN : TRUE = continue recording, FALSE = stop */
+RECORDPROC :: proc "c" (handle: HRECORD, buffer: rawptr, length: DWORD, user: rawptr) -> BOOL
 
 // Special RECORDPROCs
 RECORDPROC_NONE   :: 0  // no RECORDPROC
@@ -906,26 +891,18 @@ FX_VOLUME_PARAM :: struct {
     lCurve:   DWORD,
 }
 
-@(default_calling_convention="c")
-foreign lib {
-    DEVICENOTIFYPROC :: proc(DWORD) ---
-}
-
 /* Device notification callback function.
 notify : The notification (DEVICENOTIFY_xxx) */
+DEVICENOTIFYPROC :: proc "c" (notify: DWORD)
 DEVICENOTIFY_ENABLED        :: 0 // a device has been added or removed
 DEVICENOTIFY_DEFAULT        :: 1 // the default output device has changed
 DEVICENOTIFY_REC_DEFAULT    :: 2 // the default recording device has changed
 DEVICENOTIFY_DEFAULTCOM     :: 3 // the default communication output device has changed
 DEVICENOTIFY_REC_DEFAULTCOM :: 4 // the default communication recording device has changed
 
-@(default_calling_convention="c")
-foreign lib {
-    IOSNOTIFYPROC :: proc(DWORD) ---
-}
-
 /* iOS notification callback function.
 status : The notification (IOSNOTIFY_xxx) */
+IOSNOTIFYPROC :: proc "c" (status: DWORD)
 IOSNOTIFY_INTERRUPT     :: 1 // interruption started
 IOSNOTIFY_INTERRUPT_END :: 2 // interruption ended
 
@@ -971,9 +948,9 @@ foreign lib {
     SampleGetChannel       :: proc(handle: HSAMPLE, flags: DWORD) -> DWORD ---
     SampleGetChannels      :: proc(handle: HSAMPLE, channels: ^HCHANNEL) -> DWORD ---
     SampleStop             :: proc(handle: HSAMPLE) -> BOOL ---
-    StreamCreate           :: proc(freq: DWORD, chans: DWORD, flags: DWORD, _proc: proc "c" () -> DWORD, user: rawptr) -> HSTREAM ---
+    StreamCreate           :: proc(freq: DWORD, chans: DWORD, flags: DWORD, _proc: STREAMPROC, user: rawptr) -> HSTREAM ---
     StreamCreateFile       :: proc(filetype: DWORD, file: rawptr, offset: QWORD, length: QWORD, flags: DWORD) -> HSTREAM ---
-    StreamCreateURL        :: proc(url: cstring, offset: DWORD, flags: DWORD, _proc: proc "c" (), user: rawptr) -> HSTREAM ---
+    StreamCreateURL        :: proc(url: cstring, offset: DWORD, flags: DWORD, _proc: DOWNLOADPROC, user: rawptr) -> HSTREAM ---
     StreamCreateFileUser   :: proc(system: DWORD, flags: DWORD, _proc: ^FILEPROCS, user: rawptr) -> HSTREAM ---
     StreamCancel           :: proc(user: rawptr) -> BOOL ---
     StreamFree             :: proc(handle: HSTREAM) -> BOOL ---
@@ -991,7 +968,7 @@ foreign lib {
     RecordGetInputName     :: proc(input: i32) -> cstring ---
     RecordSetInput         :: proc(input: i32, flags: DWORD, volume: f32) -> BOOL ---
     RecordGetInput         :: proc(input: i32, volume: ^f32) -> DWORD ---
-    RecordStart            :: proc(freq: DWORD, chans: DWORD, flags: DWORD, _proc: proc "c" () -> BOOL, user: rawptr) -> HRECORD ---
+    RecordStart            :: proc(freq: DWORD, chans: DWORD, flags: DWORD, _proc: RECORDPROC, user: rawptr) -> HRECORD ---
     ChannelBytes2Seconds   :: proc(handle: DWORD, pos: QWORD) -> f64 ---
     ChannelSeconds2Bytes   :: proc(handle: DWORD, pos: f64) -> QWORD ---
     ChannelGetDevice       :: proc(handle: DWORD) -> DWORD ---
@@ -1024,12 +1001,12 @@ foreign lib {
     ChannelGetLevel        :: proc(handle: DWORD) -> DWORD ---
     ChannelGetLevelEx      :: proc(handle: DWORD, levels: ^f32, length: f32, flags: DWORD) -> BOOL ---
     ChannelGetData         :: proc(handle: DWORD, buffer: rawptr, length: DWORD) -> DWORD ---
-    ChannelSetSync         :: proc(handle: DWORD, type: DWORD, param: QWORD, _proc: proc "c" (), user: rawptr) -> HSYNC ---
+    ChannelSetSync         :: proc(handle: DWORD, type: DWORD, param: QWORD, _proc: SYNCPROC, user: rawptr) -> HSYNC ---
     ChannelRemoveSync      :: proc(handle: DWORD, sync: HSYNC) -> BOOL ---
     ChannelSetLink         :: proc(handle: DWORD, chan: DWORD) -> BOOL ---
     ChannelRemoveLink      :: proc(handle: DWORD, chan: DWORD) -> BOOL ---
-    ChannelSetDSP          :: proc(handle: DWORD, _proc: proc "c" (), user: rawptr, priority: i32) -> HDSP ---
-    ChannelSetDSPEx        :: proc(handle: DWORD, _proc: proc "c" (), user: rawptr, priority: i32, flags: DWORD) -> HDSP ---
+    ChannelSetDSP          :: proc(handle: DWORD, _proc: DSPPROC, user: rawptr, priority: i32) -> HDSP ---
+    ChannelSetDSPEx        :: proc(handle: DWORD, _proc: DSPPROC, user: rawptr, priority: i32, flags: DWORD) -> HDSP ---
     ChannelRemoveDSP       :: proc(handle: DWORD, dsp: HDSP) -> BOOL ---
     ChannelSetFX           :: proc(handle: DWORD, type: DWORD, priority: i32) -> HFX ---
     ChannelRemoveFX        :: proc(handle: DWORD, fx: HFX) -> BOOL ---

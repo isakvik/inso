@@ -105,15 +105,11 @@ RETURN : The number of bytes written (output devices), 0/1 = stop/continue (inpu
 WASAPIPROC_PUSH  :: 0  // push output
 WASAPIPROC_BASS  :: -1 // BASS channel
 
-@(default_calling_convention="c")
-foreign lib {
-    WASAPINOTIFYPROC :: proc(DWORD, DWORD, rawptr) ---
-}
-
 /* WASAPI device notification callback function.
 notify : The notification (WASAPI_NOTIFY_xxx)
 device : Device that the notification applies to
 user   : The 'user' parameter given when calling WASAPI_SetNotify */
+WASAPINOTIFYPROC :: proc "c" (notify: DWORD, device: DWORD, user: rawptr)
 
 // Device notifications
 WASAPI_NOTIFY_ENABLED   :: 0
@@ -125,7 +121,7 @@ WASAPI_NOTIFY_FAIL      :: 0x100
 @(default_calling_convention="c",link_prefix="BASS_")
 foreign lib {
     WASAPI_GetVersion     :: proc() -> DWORD ---
-    WASAPI_SetNotify      :: proc(_proc: proc "c" (), user: rawptr) -> BOOL ---
+    WASAPI_SetNotify      :: proc(_proc: WASAPINOTIFYPROC, user: rawptr) -> BOOL ---
     WASAPI_GetDeviceInfo  :: proc(device: DWORD, info: ^WASAPI_DEVICEINFO) -> BOOL ---
     WASAPI_GetDeviceLevel :: proc(device: DWORD, chan: i32) -> f32 ---
     WASAPI_SetDevice      :: proc(device: DWORD) -> BOOL ---

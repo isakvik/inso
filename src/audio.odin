@@ -16,8 +16,6 @@ audio: struct {
     output_mixer:   bass.HSTREAM,
     music_mixer:    bass.HSTREAM,
     hitsound_mixer: bass.HSTREAM,
-    music_volume:   f32,
-    hitsound_volume: f32,
 }
 
 Device :: i32
@@ -123,7 +121,26 @@ when ODIN_OS == .Windows {
             return
         }
         bass.WASAPI_GetInfo(&info)
+
+        device_info: bass.WASAPI_DEVICEINFO
+        bass.WASAPI_GetDeviceInfo(bass.WASAPI_GetDevice(), &device_info)
+
+        buffer_samples := info.buflen / (info.chans * _wasapi_format_bytes(info.format))
+        log.infof("WASAPI output: %s :: %vhz %vch, buffer %v samples (%.1fms), device period min %.1fms / default %.1fms",
+            device_info.name, info.freq, info.chans, buffer_samples,
+            f64(buffer_samples) * 1000 / f64(info.freq),
+            f64(device_info.minperiod) * 1000, f64(device_info.defperiod) * 1000)
+
         return info, true
+    }
+
+    _wasapi_format_bytes :: proc(format: bass.DWORD) -> bass.DWORD {
+        switch format {
+        case bass.WASAPI_FORMAT_8BIT:  return 1
+        case bass.WASAPI_FORMAT_16BIT: return 2
+        case bass.WASAPI_FORMAT_24BIT: return 3
+        }
+        return 4 // FLOAT / 32BIT
     }
 }
 
@@ -131,7 +148,13 @@ when ODIN_OS == .Windows {
 // todo(isak): device selection
 audio_init :: proc(device: Device = -1) -> bool {
     when ODIN_OS == .Windows {
-        bass.Init(device, 44100, bass.DEVICE_NOSPEAKER, nil, nil)
+        // note(isak): device 0 is BASS's "no sound" device; it only hosts decode streams and
+        // samples here, all actual output goes through WASAPI. this keeps every sound on one
+        // output path and out of reach of device removal
+        if !bass.Init(0, 44100, 0, nil, nil) {
+            log.error("BASS init error:", bass.ErrorGetCode())
+            return false
+        }
 
         wasapi_info := _wasapi_output_init() or_return
         audio.output_mixer = bass.Mixer_StreamCreate(wasapi_info.freq, wasapi_info.chans,
@@ -174,8 +197,6 @@ audio_init :: proc(device: Device = -1) -> bool {
         return false
     }
 
-    audio.music_volume   = 1.0
-    audio.hitsound_volume = 1.0
     audio.ready = true
     return true
 }
@@ -183,9 +204,8 @@ audio_init :: proc(device: Device = -1) -> bool {
 audio_cleanup :: proc() {
     when ODIN_OS == .Windows {
         bass.WASAPI_Free()
-    } else {
-        bass.Free()
     }
+    bass.Free()
 }
 
 // note(isak): moves the WASAPI output onto the new default device when windows reports a change
@@ -238,12 +258,8 @@ audio_set_volume :: proc(volume: f32) {
 
 audio_set_category_volume :: proc(category: Sound_Category, volume: f32) {
     switch category {
-    case .MUSIC:
-        audio.music_volume = volume
-        bass.ChannelSetAttribute(audio.music_mixer, bass.ATTRIB_VOL, volume)
-    case .HITSOUND:
-        audio.hitsound_volume = volume
-        bass.ChannelSetAttribute(audio.hitsound_mixer, bass.ATTRIB_VOL, volume)
+    case .MUSIC:    bass.ChannelSetAttribute(audio.music_mixer,    bass.ATTRIB_VOL, volume)
+    case .HITSOUND: bass.ChannelSetAttribute(audio.hitsound_mixer, bass.ATTRIB_VOL, volume)
     }
 }
 
@@ -278,7 +294,8 @@ sound_stream_init :: proc(path: string, prescan: bool = false, loop: bool = fals
 
 sound_channel_init :: proc(s: ^Sample, loop: bool = false) -> (result: Sound_Channel, ok: bool) {
     if !audio.ready || s.handle == 0 do return
-    channel := bass.SampleGetChannel(s.handle, (loop ? bass.SAMPLE_LOOP : 0) | bass.STREAM_DECODE)
+    // note(isak): STREAM_DECODE is only valid on sample channels together with SAMCHAN_STREAM
+    channel := bass.SampleGetChannel(s.handle, (loop ? bass.SAMPLE_LOOP : 0) | bass.SAMCHAN_STREAM | bass.STREAM_DECODE)
     if channel == 0 {
         log.error("BASS sample get channel error:", bass.ErrorGetCode())
         return result, false
@@ -536,18 +553,21 @@ sample_load_memory :: proc(data: rawptr, max_simultaneous: int = 8) -> (result: 
     return result, true
 }
 
+// note(isak): fire-and-forget playback through the hitsound mixer. the decode sample stream
+// frees itself when it ends, and the mixer applies the hitsound category volume
 sample_play :: proc(s: ^Sample, volume: f32 = 1.0, pan: f32 = 0.0) {
     if !audio.ready || s.handle == 0 do return
-    channel := bass.SampleGetChannel(s.handle, 0)
+    channel := bass.SampleGetChannel(s.handle, bass.SAMCHAN_STREAM | bass.STREAM_DECODE)
     if channel == 0 {
         log.error("BASS sample get channel error:", bass.ErrorGetCode())
         return
     }
     bass.ChannelSetAttribute(channel, bass.ATTRIB_NORAMP, 1.0)
-    bass.ChannelSetAttribute(channel, bass.ATTRIB_VOL, volume * audio.hitsound_volume)
+    bass.ChannelSetAttribute(channel, bass.ATTRIB_VOL, volume)
     bass.ChannelSetAttribute(channel, bass.ATTRIB_PAN, pan)
-    if !bass.ChannelPlay(channel, false) {
-        log.error("BASS sample play error:", bass.ErrorGetCode())
+    if !bass.Mixer_StreamAddChannel(audio.hitsound_mixer, channel,
+        bass.MIXER_DOWNMIX | bass.MIXER_NORAMPIN | bass.STREAM_AUTOFREE) {
+        log.error("BASS mixer add channel error:", bass.ErrorGetCode())
     }
 }
 

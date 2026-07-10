@@ -373,6 +373,12 @@ beatmap_game_time_to_music_time :: proc(beatmap: ^Beatmap, game_time: f64) -> f6
 // i can't help but feel like there's a simpler solution because even on a good setup it's routinely "off" by a 
 // millisecond, but maybe i just don't understand the problem that deeply?
 beatmap_music_position_interpolated_ms :: proc(beatmap: ^Beatmap) -> (result: f64) {
+    // note(isak): no output device right now (see audio_handle_device_change); position queries
+    // report 0, so freeze time instead. recovery lands in the big-discrepancy branch below
+    if !audio.ready {
+        return beatmap.music_time_ms
+    }
+
     real_time := time_s_since_beginning_of_program()
     song_time := sound_get_position_ms(&beatmap.music)
     

@@ -1035,8 +1035,9 @@ handle_universal_input_events :: proc() {
 //////////////////////////////////////////////////////
 // note(isak): managed game sound API
 
+// note(isak): expires_at_ms is absolute music time, 0 = no expiry
 game_sound_play :: proc(
-    s: ^Sample, loop: bool = false, volume: f32 = 1.0, category: Sound_Category = .HITSOUND, expires_at: f64 = math.F64_MAX
+    s: ^Sample, loop: bool = false, volume: f32 = 1.0, category: Sound_Category = .HITSOUND, expires_at_ms: f64 = 0
 ) -> (result: slotmap.Handle) {
     if s.handle == 0 do return
 
@@ -1050,13 +1051,14 @@ game_sound_play :: proc(
     if !ok do return
 
     handle := slotmap.insert(&game.sounds, sound)
-    sound_play(&sound, loop = loop, volume = volume, category = category)
+    stored, _ := slotmap.get(&game.sounds, handle)
+    sound_play(stored, loop = loop, volume = volume, category = category)
 
-    if expires_at != math.F64_MAX {
-        base := cast(^Base_Sound)&sound
-        base.expires_at_ms = beatmap_music_time_ms(&game.beatmap) + expires_at
+    if expires_at_ms != 0 {
+        base := cast(^Base_Sound)stored
+        base.expires_at_ms = expires_at_ms
         sb.append(&game.expiring_sounds, handle)
-    } 
+    }
     return handle
 }
 

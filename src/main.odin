@@ -132,6 +132,8 @@ main :: proc() {
         log.panic("SDL video init error:", sdl.GetError())
     }
 
+    platform_claim_scheduling_priority()
+
     game.user_config = config_load("user.ini")
     defer config_save("user.ini")
 
@@ -223,7 +225,9 @@ main :: proc() {
                 }
             }
             
-            // todo(isak): game input should happen in a separate thread for input resolution purposes
+            // note(isak): raw mouse/keyboard arrives timestamped from the input thread (see
+            // platform_input_thread_windows.odin) and is applied in the drain below. sdl events
+            // remain the source for ui, text input and window state
 
             for sdl.PollEvent(&event) {
                 #partial switch event.type {
@@ -321,7 +325,13 @@ main :: proc() {
                     running = false
                 }
             }
-            
+
+            // the frame-start snapshot lets the hittesting event walk re-integrate cursor motion
+            // to the position each press actually happened at
+            game.input.frame_start_mouse_screen = mouse.pos
+            game.input.frame_events = input_thread_drain()
+            input_thread_apply_events(game.input.frame_events)
+
             keyboard_next_frame()
 
             if app.mouse_input_mode == .SDL_INPUT || !window.mouse_inside || !window.focused {

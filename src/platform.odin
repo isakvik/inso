@@ -65,6 +65,7 @@ app: struct {
     offset_window_open: bool,
 
     mouse_input_mode: Mouse_Input_Mode,
+    input_thread_active: bool, // note(isak): per-event judgement runs only when this is up
     input_device_hwids: []string,
     input_device_handles: []Mouse_Handle,
 }
@@ -112,6 +113,34 @@ Button_State :: struct {
     is_down, was_down: bool
 }
 
+Input_Event_Kind :: enum u8 {
+    MOUSE,
+    KEY,
+}
+
+// a single raw input transition, stamped with QueryPerformanceCounter ticks on the input thread
+// the moment it arrived. drained in arrival order once per frame on the game thread
+Input_Event :: struct {
+    tsc: i64,
+    device: Mouse_Handle,
+    kind: Input_Event_Kind,
+
+    // .MOUSE
+    motion_x, motion_y: i32,
+    button_flags: u16, // win32 RI_MOUSE_* transition flags
+    absolute_motion: bool,
+
+    // .KEY
+    scancode: sdl.Scancode,
+    key_is_down: bool,
+}
+
+// button_flags transition bits, numerically identical to win32's RI_MOUSE_*
+INPUT_M1_DOWN: u16 : 0x0001
+INPUT_M1_UP:   u16 : 0x0002
+INPUT_M2_DOWN: u16 : 0x0004
+INPUT_M2_UP:   u16 : 0x0008
+
 Mouse_ID :: enum {
     PRIMARY,
     SECONDARY,
@@ -138,14 +167,12 @@ mouse_init :: proc() {
 
     when ODIN_OS == .Windows {
         if !app.disable_raw_input {
-            raw_input_enable()
-            raw_input_register_sdl_hook()
-            
-            if game.user_config.raw_input_enabled {
-                mouse_enable_raw_input_mode()
+            if input_thread_start() {
+                app.input_thread_active = true
+                if game.user_config.raw_input_enabled {
+                    mouse_enable_raw_input_mode()
+                }
             }
-    
-            //app.input_device_hwids, app.input_device_handles = input_enumerate_mouse_devices(memory.allocators[.GLOBAL])
         }
     }
 }

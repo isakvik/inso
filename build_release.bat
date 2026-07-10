@@ -14,6 +14,7 @@ if %ERRORLEVEL% equ 0 (
 odin build ./src -linker:radlink -out:build/%exec_name% -define:SOKOL_USE_GL=true -no-bounds-check -o:speed
 if %ERRORLEVEL% equ 1 goto stop 
 python debug.py
+echo [build] build OK
 if %ERRORLEVEL% equ 1 goto stop
 goto end
 :stop

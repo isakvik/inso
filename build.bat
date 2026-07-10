@@ -22,6 +22,7 @@ if %ERRORLEVEL% equ 0 (
 
 odin build ./src -linker:radlink -debug -out:build/%exec_name% -define:SOKOL_USE_GL=true -define:VERSION=%VERSION%
 if %ERRORLEVEL% equ 1 goto stop
+echo [build] build OK
 python debug.py
 if %ERRORLEVEL% equ 1 goto stop
 goto end

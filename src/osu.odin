@@ -56,6 +56,14 @@ game: struct {
 
         available_presses: int,
         last_hit_at, last_valid_press_at: f64,
+
+        // note(isak): per-event judgement state (see process_hittesting_event_walk).
+        // frame_events is this frame's drained slice from the input thread, valid until the next
+        // drain. raw_held tracks physical controller state across frames so keyboard autorepeat
+        // makes and stale releases can't fabricate presses
+        frame_events: []Input_Event,
+        frame_start_mouse_screen: vec2,
+        raw_held: struct { k1, k2, m1, m2: bool },
     },
 
     // note(isak): map game logic fields

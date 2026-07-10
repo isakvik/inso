@@ -7,34 +7,9 @@ import "base:runtime"
 import "core:log"
 import "core:strings"
 import "core:sys/windows"
-import sdl "vendor:sdl3"
 
-
-win32_hook_odin_context:  runtime.Context
 
 Mouse_Handle :: windows.HANDLE
-
-// note(isak): you CANNOT disable getting raw input messages once it has been enabled
-raw_input_enable :: proc() {
-    rid: [1]windows.RAWINPUTDEVICE
-
-    props := sdl.GetWindowProperties(window.handle)
-    hwnd := sdl.GetPointerProperty(props, sdl.PROP_WINDOW_WIN32_HWND_POINTER, nil)
-
-    rid[0].usUsagePage = windows.HID_USAGE_PAGE_GENERIC
-    rid[0].usUsage = windows.HID_USAGE_GENERIC_MOUSE
-    rid[0].dwFlags = windows.RIDEV_INPUTSINK | windows.RIDEV_DEVNOTIFY
-    rid[0].hwndTarget = windows.HWND(hwnd)
-
-    if windows.RegisterRawInputDevices(&rid[0], 1, size_of(rid)) == windows.FALSE {
-        log.errorf("registering for Raw Input failed! win32 error: %d", windows.GetLastError())
-    }
-}
-
-raw_input_register_sdl_hook :: proc() {
-    win32_hook_odin_context = context
-    sdl.SetWindowsMessageHook(_win32_message_hook, nil)
-}
 
 // note(isak): raw input device handles are NOT stable across unplug/replug or sleep/resume - windows
 // hands the same physical device a fresh handle. re-enumerate the hwid->handle map and re-resolve each
@@ -100,81 +75,6 @@ _win32_winkey_hook_proc :: proc "system" (code: windows.c_int, wparam: windows.W
     }
     return windows.CallNextHookEx(nil, code, wparam, lparam)
 }
-
-_win32_message_hook :: proc(userdata: rawptr, msg: ^windows.MSG) -> bool {
-    /* 
-    // note(isak): we get a bunch of garbage input device change messages on startup, so commented this out for now
-    if msg.message == windows.WM_INPUT_DEVICE_CHANGE {
-        context = win32_hook_odin_context
-        input_refresh_mouse_devices()
-        return true
-    }
-    */
-
-    if msg.message != windows.WM_INPUT do return true
-
-    context = win32_hook_odin_context
-
-    size: windows.UINT
-    windows.GetRawInputData(windows.HRAWINPUT(msg.lParam), windows.RID_INPUT, nil, &size, size_of(windows.RAWINPUTHEADER))
-    if size == 0 || size > size_of(windows.RAWINPUT) do return true
-
-    raw: windows.RAWINPUT
-    windows.GetRawInputData(windows.HRAWINPUT(msg.lParam), windows.RID_INPUT, &raw, &size, size_of(windows.RAWINPUTHEADER))
-
-    if raw.header.dwType != windows.RIM_TYPEMOUSE do return true
-
-    m := &raw.data.mouse
-
-    switch app.mouse_input_mode {
-    case .RAW_DOUBLE_MOUSE_INPUT:
-        target: ^Mouse
-        if raw.header.hDevice == mouse.device_handle {
-            target = &mouse
-        } else if raw.header.hDevice == mouse_secondary.device_handle {
-            target = &mouse_secondary
-        } else {
-            return true
-        }
-        apply_raw_mouse_update(target, m)
-
-    case .RAW_SINGLE_MOUSE_INPUT:
-        // note(isak): any physical mouse will move the primary cursor, so no handle filtering here
-        apply_raw_mouse_update(&mouse, m)
-
-    case .REBINDING_MOUSE_PRIMARY:
-        if m.usButtonFlags & windows.RI_MOUSE_LEFT_BUTTON_DOWN != 0 {
-            mouse_rebind(.PRIMARY, raw.header.hDevice)
-            app.mouse_input_mode = .SDL_INPUT
-        }
-
-    case .REBINDING_MOUSE_SECONDARY:
-        if m.usButtonFlags & windows.RI_MOUSE_LEFT_BUTTON_DOWN != 0 {
-            mouse_rebind(.SECONDARY, raw.header.hDevice)
-            app.mouse_input_mode = .SDL_INPUT
-        }
-    
-    case .SDL_INPUT: break
-    }
-
-    return true
-}
-
-apply_raw_mouse_update :: proc(target: ^Mouse, m: ^windows.RAWMOUSE) {
-    if window.mouse_inside && m.usFlags & windows.MOUSE_MOVE_ABSOLUTE == 0 {
-        target.pos.x += f32(m.lLastX) * game.user_config.cursor_sensitivity
-        target.pos.y += f32(m.lLastY) * game.user_config.cursor_sensitivity
-    }
-
-    flags := m.usButtonFlags
-    if flags & windows.RI_MOUSE_LEFT_BUTTON_DOWN   != 0 do target.buttons[.LEFT].is_down   = true
-    if flags & windows.RI_MOUSE_LEFT_BUTTON_UP     != 0 do target.buttons[.LEFT].is_down   = false
-    if flags & windows.RI_MOUSE_RIGHT_BUTTON_DOWN  != 0 do target.buttons[.RIGHT].is_down  = true
-    if flags & windows.RI_MOUSE_RIGHT_BUTTON_UP    != 0 do target.buttons[.RIGHT].is_down  = false
-    if flags & windows.RI_MOUSE_MIDDLE_BUTTON_DOWN != 0 do target.buttons[.MIDDLE].is_down = true
-    if flags & windows.RI_MOUSE_MIDDLE_BUTTON_UP   != 0 do target.buttons[.MIDDLE].is_down = false
-}
-
 
 input_enumerate_mouse_devices :: proc(
     alloc: runtime.Allocator = context.allocator,

@@ -1196,8 +1196,7 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
             slider.tick_hits = make([]bool, slider.tick_count, context.allocator)
 
             // note(isak): bake the lenient hitsound timing point for every edge and tick now that the
-            // slider's duration is known. tick times mirror the judgement schedule in slider_update:
-            // odd traversals run their ticks back-to-front, shifting the first tick's offset
+            // slider's duration is known
             for &edge, k in hobj.slider_edge_hitsounds {
                 edge.timing_point_index = hitsound_timing_point_index_at(osu_map.timing_points,
                     hobj.start_time_ms + f64(k) * slider.duration_ms)

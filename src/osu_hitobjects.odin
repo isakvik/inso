@@ -156,41 +156,53 @@ process_hitobject_hittesting :: proc(visible_hobjs: []Hitobject, map_time: f64) 
         return
     }
 
-    // todo(isak): move input resolution to its own thread. only one resolved note per press for now
+    if app.input_thread_active && game.mode == .PLAY {
+        process_hittesting_event_walk(visible_hobjs, map_time)
+        return
+    }
+
+    // frame-quantized fallback: non-play modes, and platforms without the raw input thread.
+    // every press this frame judges at the same map_time and frame-end cursor position
     for valid_controller_press() {
-        game.input.last_valid_press_at = map_time
         consume_controller_press()
+        resolve_press(visible_hobjs, map_time, game.input.mouse_pos)
+    }
+}
 
-        front, clicked: ^Hitobject
-        for &hobj in visible_hobjs {
-            if !hitobject_head_hittable(&hobj, map_time) do continue
-            if front == nil do front = &hobj
-            if point_in_circle(game.input.mouse_pos, hitobject_pos(&hobj), hitobject_radius_osupx(&hobj)) {
-                clicked = &hobj
-                break
-            }
+// resolves a single controller press against the hittable heads: notelock front-checking,
+// judgement, and phase transitions. press_time is the map time the press happened at
+resolve_press :: proc(visible_hobjs: []Hitobject, press_time: f64, cursor_osupx: vec2) {
+    game.input.last_valid_press_at = press_time
+
+    front, clicked: ^Hitobject
+    for &hobj in visible_hobjs {
+        if !hitobject_head_hittable(&hobj, press_time) do continue
+        if front == nil do front = &hobj
+        if point_in_circle(cursor_osupx, hitobject_pos(&hobj), hitobject_radius_osupx(&hobj)) {
+            clicked = &hobj
+            break
         }
+    }
 
-        if clicked == nil do continue
+    if clicked == nil do return
 
-        if clicked != front {
-            clicked.notelock_shake_at_ms = map_time
-            continue
-        }
+    if clicked != front {
+        clicked.notelock_shake_at_ms = press_time
+        return
+    }
 
-        judgement := hitobject_on_click(clicked, map_time)
-        if judgement == .NONE {
-            clicked.notelock_shake_at_ms = map_time
-            continue
-        }
+    judgement := hitobject_on_click(clicked, press_time)
+    if judgement == .NONE {
+        clicked.notelock_shake_at_ms = press_time
+        return
+    }
 
-        #partial switch clicked.type {
-        case .CIRCLE:
-            hitobject_emit_phase_transition(clicked, .HIT)
-            judgement_new_drawable(clicked)
-        case .SLIDER:
-            hitobject_emit_phase_transition(clicked, .HOLD)
-        }
+    #partial switch clicked.type {
+    case .CIRCLE:
+        hitobject_emit_phase_transition(clicked, .HIT)
+        judgement_new_drawable(clicked)
+    case .SLIDER:
+        hitobject_emit_phase_transition(clicked, .HOLD)
     }
 }
 

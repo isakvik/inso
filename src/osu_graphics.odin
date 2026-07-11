@@ -387,7 +387,7 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
         })
     }
     
-    anim_judgement := animation_new(anims,
+    default_anim_judgement := animation_new(anims,
         Animation_Scale{
             tween = .QUAD_OUT,
             start_time  = 0,   
@@ -402,9 +402,9 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
             end_alpha = 0.0,
         },
     )
-    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS)].animations = anim_judgement
-    elements.data[builtin_element_slot(.JUDGEMENT_GOOD)].animations      = anim_judgement
-    elements.data[builtin_element_slot(.JUDGEMENT_OK)].animations        = anim_judgement
+    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS)].animations = default_anim_judgement
+    elements.data[builtin_element_slot(.JUDGEMENT_GOOD)].animations      = default_anim_judgement
+    elements.data[builtin_element_slot(.JUDGEMENT_OK)].animations        = default_anim_judgement
 
     elements.data[builtin_element_slot(.JUDGEMENT_MISS)].animations = animation_new(anims,
         Animation_Alpha{
@@ -412,7 +412,29 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
             start_alpha = 1.0, end_alpha = 0.0,
         },
     )
-    
+
+    judgement_types := [?]Element_Type{.JUDGEMENT_MISS, .JUDGEMENT_OK, .JUDGEMENT_GOOD, .JUDGEMENT_MARVELOUS}
+    for el_type in judgement_types {
+        skin_el     := skin_element_for_type_table[el_type]
+        frame_count := game.active_skin.elements[skin_el].frame_count
+        if frame_count <= 1 do continue
+
+        frames := make([]Animation, frame_count, context.temp_allocator)
+        for frame in 0..<frame_count {
+            // note(isak): standard 60fps animation. i don't think i've ever seen anything else, although
+            // i know you can configure an AnimationRate in the skin.ini.
+            fps_factor: f64 = 60 / (1000.0 / JUDGEMENT_DISPLAY_DURATION)
+            
+            frames[frame] = Animation_Texture{
+                start_time = f64(frame)     / fps_factor,
+                end_time   = f64(frame + 1) / fps_factor,
+                texture_id = skin_frame_texture(skin_el, frame),
+            }
+        }
+        elements.data[builtin_element_slot(el_type)].animations = animation_new(anims, ..frames)
+    }
+
+
     anim_hit := animation_new(anims, 
         Animation_Scale{
             start_time = 0,

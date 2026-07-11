@@ -1121,7 +1121,7 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
         return int(a.time) - int(b.time)
     })
     
-    assert(osu_map.timing_points[0].type == .UNINHERITED, "map error :: first timing point is inherited")
+    //assert(osu_map.timing_points[0].type == .UNINHERITED, "map error :: first timing point is inherited")
     osu_map.timing_points[0].starts_at_beat = 1
     
     current_timing_point_index_uninherited: int

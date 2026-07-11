@@ -10,6 +10,8 @@ import sb "swap_buffer"
 //////////////////////////////////////////////////////
 // note(isak): judgements
 
+JUDGEMENT_DISPLAY_DURATION :: 600
+
 judgement_new :: proc(hobj: ^Hitobject, type: Judgement_Type, time_error_ms: f64) {
     time := beatmap_music_time_ms(&game.beatmap)
     hobj.judgement_index = int(game.beatmap.judgements.len)
@@ -45,12 +47,14 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
         }
 
         cs := hitobject_radius_osupx(hobj)
-        element_scale := (cs * 2) / game.active_skin.elements[.HITCIRCLE].metrics
+        element_scale := (cs * 2) / SKIN_CIRCLE_REFERENCE_PX
         skin_el := skin_element_for_type_table[el_type]
+
+        // note(isak): animated judgements flip through their frames in place, so no miss fall
+        judgement_is_animated := game.active_skin.elements[skin_el].frame_count > 1
+        vel := judgement.result == .MISS && !judgement_is_animated ? vec2{0, 10} : vec2{0, 0}
         
-        vel := judgement.result == .MISS ? vec2{0, 10} : vec2{0, 0}
-        
-        drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
+        drawable_new_expiring(&game.beatmap.judgement_expiring_gfx, {
             flags         = {.ACTIVE},
             element       = builtin_element_slot(el_type),
             layer         = .HITOBJECTS,
@@ -62,7 +66,7 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
             vel           = vel,
             
             start_time_ms = judgement.time,
-            end_time_ms   = judgement.time + 600,
+            end_time_ms   = judgement.time + JUDGEMENT_DISPLAY_DURATION,
         })
     }
     

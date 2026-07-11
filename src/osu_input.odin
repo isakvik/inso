@@ -39,10 +39,8 @@ process_hittesting_event_walk :: proc(visible_hobjs: []Hitobject, map_time_now: 
                 continue // only the primary mouse aims and presses
             }
 
-            // mirrors apply_raw_mouse_event so the integrated position matches frame-end mouse.pos
-            if raw_cursor && window.mouse_inside && !event.absolute_motion {
-                cursor_screen.x += f32(event.motion_x) * game.user_config.cursor_sensitivity
-                cursor_screen.y += f32(event.motion_y) * game.user_config.cursor_sensitivity
+            if raw_cursor {
+                cursor_screen += raw_mouse_motion_delta(&event)
             }
 
             m1_press, m2_press: bool

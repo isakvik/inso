@@ -28,7 +28,13 @@ input_refresh_mouse_devices :: proc() {
     }
 }
 
-// note(isak): low-level keyboard hook that swallows the windows key during play mode, like osu.
+// note(isak): blocks the windows key during play mode, like osu, in two layers. the primary is
+// RIDEV_NOHOTKEYS on our keyboard raw input registration - win32k then skips its start menu
+// hotkey for our foreground windows. this matters because the LL hook below provably cannot see
+// a win key pressed while raw mouse input is streaming (win32k quirk; the key skips the whole
+// legacy hook layer yet still fires the hotkey). the hook remains as the second layer and carries
+// --disable-raw-input runs, where there is no registration to hang NOHOTKEYS on.
+//
 // ll hook callbacks are serviced by the installing thread's message pump, and windows stalls
 // keyboard delivery to the foreground app until the hook answers - installing from the game
 // thread couples every keypress on the system to our frame time (~10ms message handling spikes).
@@ -37,8 +43,18 @@ input_refresh_mouse_devices :: proc() {
 _win32_winkey_thread: windows.HANDLE
 _win32_winkey_thread_failed: bool
 _win32_winkey_swallow: bool
+_win32_nohotkeys_applied: bool // game-thread only; retried until the input thread's window exists
+_win32_winkey_hook_error: u32 // note(isak): install failure from the hook thread, logged at the next toggle
 
 windows_key_set_disabled :: proc(disabled: bool) {
+    if err := intrinsics.atomic_exchange_explicit(&_win32_winkey_hook_error, 0, .Relaxed); err != 0 {
+        log.errorf("installing the windows key hook failed! win32 error: %d", err)
+    }
+
+    if _win32_nohotkeys_applied != disabled && input_thread_set_win_hotkeys_disabled(disabled) {
+        _win32_nohotkeys_applied = disabled
+    }
+
     if disabled && _win32_winkey_thread == nil {
         if _win32_winkey_thread_failed do return
         _win32_winkey_thread = windows.CreateThread(nil, 0, _win32_winkey_thread_proc, nil, 0, nil)
@@ -48,12 +64,16 @@ windows_key_set_disabled :: proc(disabled: bool) {
             return
         }
     }
+
     intrinsics.atomic_store_explicit(&_win32_winkey_swallow, disabled, .Relaxed)
 }
 
 _win32_winkey_thread_proc :: proc "system" (param: rawptr) -> windows.DWORD {
     hook := windows.SetWindowsHookExW(windows.WH_KEYBOARD_LL, _win32_winkey_hook_proc, nil, 0)
-    if hook == nil do return 1
+    if hook == nil {
+        intrinsics.atomic_store_explicit(&_win32_winkey_hook_error, windows.GetLastError(), .Relaxed)
+        return 1
+    }
 
     // note(isak): GetMessageW never returns for hook dispatch (the callback runs inside it), so
     // this loop just keeps the thread responsive until process exit

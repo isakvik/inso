@@ -31,7 +31,8 @@ PROCESS_POWER_THROTTLING_STATE :: struct {
     StateMask:   windows.ULONG,
 }
 
-AVRT_PRIORITY_HIGH: i32 : 1
+AVRT_PRIORITY_HIGH:     i32 : 1
+AVRT_PRIORITY_CRITICAL: i32 : 2
 
 // note(isak): must run on the main thread - mmcss registration is per-thread.
 // high priority class wins scheduler ties against normal background processes, mmcss "Games"

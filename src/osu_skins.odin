@@ -94,6 +94,10 @@ Skin_Element :: struct {
 skin_element_animatable := #partial [Skin_Element_Type]bool {
     .FOLLOWPOINT = true,
     .SLIDER_BALL = true,
+    .HIT0   = true,
+    .HIT50  = true,
+    .HIT100 = true,
+    .HIT300 = true,
 }
 
 skin_element_names := [Skin_Element_Type]string {

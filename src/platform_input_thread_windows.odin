@@ -31,16 +31,40 @@ input_thread: struct {
 
     device_change_pending: bool, // note(isak): atomics; written by the input thread, consumed at drain
     startup_error: u32,
+    raw_window: uintptr, // the message-only hwnd owning our registrations; set once by the thread
 }
 
 // event timestamps and the walk's "now" come from the same clock, so offsets stay comparable
-input_tsc_now :: proc() -> (result: i64) {
+input_tsc_now :: proc "contextless" () -> (result: i64) {
     windows.QueryPerformanceCounter(cast(^windows.LARGE_INTEGER)&result)
     return
 }
 
 input_tsc_frequency :: proc() -> i64 {
     return input_thread.qpc_frequency
+}
+
+// note(isak): RIDEV_NOHOTKEYS turns off win32k's own win key hotkey handling (the start menu)
+// while one of our windows is foreground. this acts a layer above the LL keyboard hook and covers
+// the case the hook provably cannot see on this machine: a win key pressed while raw mouse input
+// is streaming (see the winkey investigation). re-registering the same usage updates the flags in
+// place. returns false until the input thread's window exists - callers should retry
+input_thread_set_win_hotkeys_disabled :: proc(disabled: bool) -> bool {
+    hwnd := windows.HWND(intrinsics.atomic_load_explicit(&input_thread.raw_window, .Acquire))
+    if hwnd == nil do return false
+
+    rid: windows.RAWINPUTDEVICE
+    rid.usUsagePage = windows.HID_USAGE_PAGE_GENERIC
+    rid.usUsage = windows.HID_USAGE_GENERIC_KEYBOARD
+    rid.dwFlags = windows.RIDEV_INPUTSINK
+    if disabled do rid.dwFlags |= windows.RIDEV_NOHOTKEYS
+    rid.hwndTarget = hwnd
+
+    if windows.RegisterRawInputDevices(&rid, 1, size_of(windows.RAWINPUTDEVICE)) == windows.FALSE {
+        log.errorf("re-registering keyboard raw input for hotkey suppression failed! win32 error: %d", windows.GetLastError())
+        return false
+    }
+    return true
 }
 
 input_thread_start :: proc() -> bool {
@@ -51,8 +75,8 @@ input_thread_start :: proc() -> bool {
         log.errorf("creating the raw input thread failed! win32 error: %d", windows.GetLastError())
         return false
     }
-    // note(isak): the thread is idle between events; high priority just means a busy game/audio
-    // thread can't delay the QPC stamp
+    // note(isak): floor for when mmcss is unavailable; the thread proc registers itself with
+    // mmcss above the boosted main thread so nothing of ours can delay the QPC stamp
     windows.SetThreadPriority(input_thread.handle, windows.THREAD_PRIORITY_HIGHEST)
     return true
 }
@@ -82,9 +106,9 @@ input_thread_drain :: proc() -> []Input_Event {
     return input_thread.buffers[read_buffer][:count]
 }
 
-// note(isak): applies the drained events to the frame-level mouse/rebinding state exactly like the
-// old sdl message hook did. gameplay judgement consumes the same slice per-event with timestamps
-// in process_hittesting_event_walk - this is only the end-of-frame state for ui and everything else
+// note(isak): applies the drained events to the frame-level mouse/rebinding state. gameplay
+// judgement consumes the same slice per-event with timestamps in process_hittesting_event_walk -
+// this is only the end-of-frame state for ui and everything else
 input_thread_apply_events :: proc(events: []Input_Event) {
     for &event in events {
         if event.kind != .MOUSE do continue
@@ -105,15 +129,10 @@ input_thread_apply_events :: proc(events: []Input_Event) {
             // note(isak): any physical mouse will move the primary cursor, so no handle filtering here
             apply_raw_mouse_event(&mouse, &event)
 
-        case .REBINDING_MOUSE_PRIMARY:
-            if event.button_flags & windows.RI_MOUSE_LEFT_BUTTON_DOWN != 0 {
-                mouse_rebind(.PRIMARY, event.device)
-                app.mouse_input_mode = .SDL_INPUT
-            }
-
-        case .REBINDING_MOUSE_SECONDARY:
-            if event.button_flags & windows.RI_MOUSE_LEFT_BUTTON_DOWN != 0 {
-                mouse_rebind(.SECONDARY, event.device)
+        case .REBINDING_MOUSE_PRIMARY, .REBINDING_MOUSE_SECONDARY:
+            if event.button_flags & INPUT_M1_DOWN != 0 {
+                id: Mouse_ID = app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY ? .PRIMARY : .SECONDARY
+                mouse_rebind(id, event.device)
                 app.mouse_input_mode = .SDL_INPUT
             }
 
@@ -123,18 +142,15 @@ input_thread_apply_events :: proc(events: []Input_Event) {
 }
 
 apply_raw_mouse_event :: proc(target: ^Mouse, event: ^Input_Event) {
-    if window.mouse_inside && !event.absolute_motion {
-        target.pos.x += f32(event.motion_x) * game.user_config.cursor_sensitivity
-        target.pos.y += f32(event.motion_y) * game.user_config.cursor_sensitivity
-    }
+    target.pos += raw_mouse_motion_delta(event)
 
     flags := event.button_flags
-    if flags & windows.RI_MOUSE_LEFT_BUTTON_DOWN   != 0 do target.buttons[.LEFT].is_down   = true
-    if flags & windows.RI_MOUSE_LEFT_BUTTON_UP     != 0 do target.buttons[.LEFT].is_down   = false
-    if flags & windows.RI_MOUSE_RIGHT_BUTTON_DOWN  != 0 do target.buttons[.RIGHT].is_down  = true
-    if flags & windows.RI_MOUSE_RIGHT_BUTTON_UP    != 0 do target.buttons[.RIGHT].is_down  = false
-    if flags & windows.RI_MOUSE_MIDDLE_BUTTON_DOWN != 0 do target.buttons[.MIDDLE].is_down = true
-    if flags & windows.RI_MOUSE_MIDDLE_BUTTON_UP   != 0 do target.buttons[.MIDDLE].is_down = false
+    if flags & INPUT_M1_DOWN != 0 do target.buttons[.LEFT].is_down   = true
+    if flags & INPUT_M1_UP   != 0 do target.buttons[.LEFT].is_down   = false
+    if flags & INPUT_M2_DOWN != 0 do target.buttons[.RIGHT].is_down  = true
+    if flags & INPUT_M2_UP   != 0 do target.buttons[.RIGHT].is_down  = false
+    if flags & INPUT_M3_DOWN != 0 do target.buttons[.MIDDLE].is_down = true
+    if flags & INPUT_M3_UP   != 0 do target.buttons[.MIDDLE].is_down = false
 }
 
 
@@ -173,9 +189,17 @@ _input_thread_proc :: proc "system" (param: rawptr) -> windows.DWORD {
         intrinsics.atomic_store_explicit(&input_thread.startup_error, windows.GetLastError(), .Relaxed)
         return 1
     }
+    intrinsics.atomic_store_explicit(&input_thread.raw_window, uintptr(hwnd), .Release)
 
     // note(isak): Sleep(1) below needs 1ms timer resolution to actually pace at ~1khz
     windows.timeBeginPeriod(1)
+
+    // mmcss registration is per-thread and must run here. CRITICAL sits above the main thread's
+    // AVRT_PRIORITY_HIGH in the same "Games" class, keeping the QPC stamp ahead of a busy frame
+    mmcss_index: windows.DWORD
+    if mmcss := AvSetMmThreadCharacteristicsW(windows.L("Games"), &mmcss_index); mmcss != nil {
+        AvSetMmThreadPriority(mmcss, AVRT_PRIORITY_CRITICAL)
+    }
 
     // the pump has two gears. idle/low-rate: block in GetMessageW and read each event's data
     // directly - zero cpu while nothing moves, exact per-event QPC stamps. hot stream (8khz mice):
@@ -224,8 +248,7 @@ _input_thread_drain_raw_input_buffer :: proc "system" () -> (total: int) {
         count := windows.GetRawInputBuffer(cast(windows.PRAWINPUT)&buffer[0], &size, size_of(windows.RAWINPUTHEADER))
         if count == 0 || count == ~windows.UINT(0) do break
 
-        qpc: i64
-        windows.QueryPerformanceCounter(cast(^windows.LARGE_INTEGER)&qpc)
+        qpc := input_tsc_now()
 
         raw := cast(^windows.RAWINPUT)&buffer[0]
         for _ in 0..<count {
@@ -255,9 +278,7 @@ _input_thread_on_wm_input :: proc "system" (lparam: windows.LPARAM) {
     copied := windows.GetRawInputData(windows.HRAWINPUT(lparam), windows.RID_INPUT, &raw, &size, size_of(windows.RAWINPUTHEADER))
     if copied == ~windows.UINT(0) do return
 
-    qpc: i64
-    windows.QueryPerformanceCounter(cast(^windows.LARGE_INTEGER)&qpc)
-    _input_thread_queue_raw_event(&raw, qpc)
+    _input_thread_queue_raw_event(&raw, input_tsc_now())
 }
 
 _input_thread_queue_raw_event :: proc "system" (raw: ^windows.RAWINPUT, tsc: i64) {

@@ -64,6 +64,9 @@ Beatmap :: struct {
     bg_handle: Drawable_Handle,
 
     gameplay_expiring_gfx: sb.Swap_Buffer(Drawable_Handle),
+    // note(isak): judgements live in their own buffer drawn after gameplay_expiring_gfx, so they
+    // always stack above the hit pop animation regardless of same-frame insertion order
+    judgement_expiring_gfx: sb.Swap_Buffer(Drawable_Handle),
     map_expiring_gfx: sb.Swap_Buffer(Drawable_Handle),
 
     drawables: slotmap.Slotmap(Drawable),
@@ -77,7 +80,7 @@ Beatmap :: struct {
 
 beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     beatmap^ = { map_reference = map_reference }
-    beatmap_load(beatmap)
+    beatmap_allocate_internals(beatmap)
 
     if game.active_inso_map.double_mouse {
         ok := mouse_enable_double_mouse_mode()
@@ -90,6 +93,10 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     }
     
     // map logic init
+
+    for setting in Difficulty_Setting {
+        map_difficulty_defaults[setting] = map_difficulty_setting(game.active_map, setting)^
+    }
 
     mods_apply_to_map()
 
@@ -120,11 +127,10 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     beatmap.playfield_rotation_anchor_osupx = {256, 192}
     
     game.playfield_dirty_transform = true
-    
-    queue.init(&beatmap.judgements, 8192, memory.allocators[.JUDGEMENTS])
-    queue.append(&beatmap.judgements, null_judgement)
-    hit_error_bar_reset(&game.hit_error_bar)
-    sb.init(&beatmap.expiring_hitobjects, 256, memory.allocators[.MAPSET])
+
+    for setting in Difficulty_Setting {
+        difficulty_adjust_settings[setting] = map_difficulty_setting(game.active_map, setting)^
+    }
     
     // map graphics init
     
@@ -247,12 +253,13 @@ beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
     sb.destroy(&beatmap.phase_transitions)
     sb.destroy(&beatmap.map_expiring_gfx)
     sb.destroy(&beatmap.gameplay_expiring_gfx)
+    sb.destroy(&beatmap.judgement_expiring_gfx)
     sb.destroy(&beatmap.expiring_hitobjects)
     slotmap.destroy(&beatmap.drawables)
     queue.destroy(&beatmap.judgements)
 }
 
-beatmap_load :: proc(beatmap: ^Beatmap) {
+beatmap_allocate_internals :: proc(beatmap: ^Beatmap) {
     ok: bool
     beatmap.music, ok = sound_stream_init(game.active_map.audio_filepath, prescan = true)
     if ok {
@@ -273,9 +280,15 @@ beatmap_load :: proc(beatmap: ^Beatmap) {
     sb.init(&beatmap.phase_transitions, 256, memory.allocators[.DRAWABLES])
 
     sb.init(&beatmap.gameplay_expiring_gfx, 8192, memory.allocators[.DRAWABLES])
+    sb.init(&beatmap.judgement_expiring_gfx, 1024, memory.allocators[.DRAWABLES])
     sb.init(&beatmap.map_expiring_gfx, 8192, memory.allocators[.DRAWABLES])
     slotmap.init(&beatmap.drawables, 8192, memory.allocators[.DRAWABLES])
     _ = slotmap.insert(&beatmap.drawables, null_drawable)
+    
+    queue.init(&beatmap.judgements, 8192, memory.allocators[.JUDGEMENTS])
+    queue.append(&beatmap.judgements, null_judgement)
+    hit_error_bar_reset(&game.hit_error_bar)
+    sb.init(&beatmap.expiring_hitobjects, 256, memory.allocators[.MAPSET])
 }
 
 beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false) {
@@ -345,6 +358,11 @@ beatmap_reset_object_state :: proc(beatmap: ^Beatmap) {
         slotmap.remove(&beatmap.drawables, handle)
     }
     sb.reset(&beatmap.gameplay_expiring_gfx)
+
+    for handle in beatmap.judgement_expiring_gfx.current {
+        slotmap.remove(&beatmap.drawables, handle)
+    }
+    sb.reset(&beatmap.judgement_expiring_gfx)
 
     // note(isak): followpoints are immediate-mode (no drawables to rewind), but the forward-only cursor
     // must rewind to the start so it can re-scan toward the seek target

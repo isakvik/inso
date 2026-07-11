@@ -613,6 +613,7 @@ osu_on_update :: proc(dt: f64) {
     hitobjects_draw(visible_hobjs, map_time)
     
     process_and_draw_expiring_gfx_refs(&game.beatmap.gameplay_expiring_gfx)
+    process_and_draw_expiring_gfx_refs(&game.beatmap.judgement_expiring_gfx)
     
     r_bind_layer_and_push_current_state(.BACKGROUND, transform = game.playfield_transform)
     process_and_draw_expiring_gfx_refs(&game.beatmap.map_expiring_gfx)

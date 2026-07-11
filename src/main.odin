@@ -9,13 +9,14 @@ import "core:container/queue"
 import "core:fmt"
 import "core:hash"
 import "core:log"
-import "core:os"
-import "core:strings"
+import "core:math"
 import "core:math/linalg"
 import "core:mem"
-import "core:path/filepath"
-import "core:time"
 import vmem "core:mem/virtual"
+import "core:os"
+import "core:path/filepath"
+import "core:strings"
+import "core:time"
 
 import "bass"
 import imgui "imgui"
@@ -706,6 +707,19 @@ imgui_update :: proc() {
                     game.time_rate = 1.0
                 }
                 beatmap_open(game.beatmap.map_reference, true)
+            }
+            
+            if mod == .DIFFICULTY_ADJUST {
+                for &setting, i in difficulty_adjust_settings {
+                    if imgui.Button(fmt.ctprint("x##", difficulty_setting_names[i])) {
+                        setting = map_difficulty_defaults[i]
+                    }
+                    imgui.SameLine()
+                    setting_slider: f32 = f32(setting)
+                    if imgui.SliderFloat(fmt.ctprint(difficulty_setting_names[i]), &setting_slider, -10, 10) {
+                        setting = f64(setting_slider)
+                    }
+                }
             }
         }
     }

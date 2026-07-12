@@ -7,7 +7,6 @@ import "slotmap"
 import "core:log"
 import "core:math"
 import "core:math/linalg"
-import vmem "core:mem/virtual"
 import "core:strings"
 
 import sdl "vendor:sdl3"
@@ -548,7 +547,9 @@ osu_on_update :: proc(dt: f64) {
     if game.mode != .PLAY {
         updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
         if updated_systems[.OSU_FILE] || updated_systems[.INSO_FILE] || updated_systems[.SCRIPTS] {
-            beatmap_open(game.beatmap.map_reference, true)
+            // note(isak): the .inso allocates into the MAPSET arena (render targets, extra bits),
+            // so its changes need the full asset reload; .osu/script changes regen in place
+            beatmap_open(game.beatmap.map_reference, true, reload_assets = updated_systems[.INSO_FILE])
         }
         if updated_systems[.SHADERS] {
             mapset_reinit_custom_shaders(game.active_mapset)
@@ -1119,7 +1120,7 @@ game_sounds_clear :: proc() {
         sound_destroy(&s)
     }
     slotmap.destroy(&game.sounds)
-    vmem.arena_free_all(&memory.arenas[.SOUND])
+    free_all(memory.allocators[.SOUND])
     slotmap.init(&game.sounds, allocator = memory.allocators[.SOUND], capacity = 128)
     _ = slotmap.insert(&game.sounds, null_sound)
 

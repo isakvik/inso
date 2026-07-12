@@ -168,8 +168,6 @@ config_save :: proc(path: string) {
             log.error("couldn't write backup path file either!", bkp_err)
         }
     }
-    
-    assert(err == os.General_Error.None, "config_save :: error while writing to settings file!")
 }
 
 config_supply_default :: proc() -> (result: User_Configuration) {

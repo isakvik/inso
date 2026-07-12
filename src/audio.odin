@@ -55,8 +55,7 @@ Sound_Channel :: struct {
     handle: bass.HCHANNEL,
 }
 
-// note(isak): sample held in memory with a fixed channel pool; use for fire-and-forget
-// short sounds that may overlap (hitsounds)
+// note(isak): sample held in memory with a fixed channel pool. use for short sounds that may overlap
 Sample :: struct {
     handle:    bass.HSAMPLE,
     filepath:  string, // note(isak): filename only (no dir); join with mapset.folder_path for full path
@@ -76,8 +75,8 @@ when ODIN_OS == .Windows {
         return 0
     }
 
-    // note(isak): basswasapi wraps the COM device event listener for us; this fires on its event
-    // thread, so we only flag the change here and let the main loop do the reinit
+    // note(isak): basswasapi wraps the COM device event listener for us; this fires on its event thread,
+    // so we only set a flag here and let the main loop do the reinit
     _bass_wasapi_notify_proc :: proc "c" (notify: bass.DWORD, device: bass.DWORD, user: rawptr) {
         switch notify {
         case bass.WASAPI_NOTIFY_DEFOUTPUT, bass.WASAPI_NOTIFY_FAIL:

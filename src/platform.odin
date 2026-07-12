@@ -2,7 +2,6 @@ package inso
 
 import "base:intrinsics"
 import "core:c"
-import "core:fmt"
 import "core:log"
 import "core:mem"
 import os "core:os"
@@ -277,13 +276,6 @@ keyboard_next_frame :: proc() {
     num_keys: i32
     sdl_state := sdl.GetKeyboardState(&num_keys)
     mem.copy(keyboard.buttons, sdl_state, len(Keyboard_State))
-}
-
-keyboard_rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
-    if (event.type == sdl.EventType.KEY_DOWN) {
-        rebind^ = event.key.scancode //TODO(yokes): this doesn't work, game.input.k1_key = event.key.scancode works
-        fmt.printfln("key set to {}", event.key.scancode)
-    }
 }
 
 input_validate_mouse_hwid :: proc(id: Mouse_ID, hwid: string) -> bool {

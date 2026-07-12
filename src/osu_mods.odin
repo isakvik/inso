@@ -65,8 +65,6 @@ map_difficulty_setting :: proc(osu_map: ^Osu_Map, setting: Difficulty_Setting) -
     unreachable()
 }
 
-// note(isak): the user's target values, seeded to the loaded map's stats by beatmap_on_init.
-// map_difficulty_defaults keeps the pre-mod stats so the UI can reset a slider to the map's own value
 difficulty_adjust_settings: [Difficulty_Setting]f64
 map_difficulty_defaults:    [Difficulty_Setting]f64
 

@@ -3,7 +3,6 @@ package inso
 import "base:runtime"
 import "core:fmt"
 import "core:log"
-import "core:mem/virtual"
 import os "core:os"
 import "core:strconv"
 import "core:strings"
@@ -512,7 +511,7 @@ skin_unload :: proc(skin: ^Skin) {
     }
 
     window.skin_textures = {}
-    virtual.arena_free_all(&memory.arenas[.SKIN])
+    free_all(memory.allocators[.SKIN])
 }
 
 skin_reload :: proc(skin: ^Skin) {

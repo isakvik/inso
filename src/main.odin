@@ -29,10 +29,16 @@ Memory_Arena_Type :: enum {
     // note(isak): never cleared. used instead of odin's regular arena to keep track of our allocations
     GLOBAL,
     
-    // note(isak): this is to be used for mapset runtime data, such as timing state, judgements, etc. (fill in)
+    // note(isak): this is to be used for mapset runtime data, such as timing state, judgements, etc.
     // cleared on mapset reload/unload
     MAPSET,
-    
+
+    // note(isak): everything derived from the .osu file (hitobjects, slider paths, timing points).
+    // mods and stacking mutate this in place, so mod toggles/retries re-parse into a fresh arena
+    // while assets in MAPSET stay resident. cleared on map data regen and mapset reload/unload
+    MAP_DATA,
+
+
     // note(isak): this is to be used for graphical entity data, "unbounded" since it's written to by
     // game logic and scripts. cleared on mapset reload/unload
     DRAWABLES,
@@ -56,6 +62,7 @@ Memory_Arena_Type :: enum {
 memory_arena_names := [?]string {
     "Global",
     "Mapset",
+    "Map data",
     "Drawables",
     "Judgements",
     "Skin",
@@ -471,7 +478,7 @@ main :: proc() {
             
             frame_count += 1
 
-            vmem.arena_free_all(&memory.arenas[.FRAME])
+            free_all(memory.allocators[.FRAME])
             for layer in Layer {
                 queue.clear(&window.renderer.layer_command_queues[layer])
             }
@@ -710,15 +717,40 @@ imgui_update :: proc() {
             }
             
             if mod == .DIFFICULTY_ADJUST {
+                DIFFICULTY_ADJUST_RELOAD_DELAY_S :: 0.5
+                @static reload_deadline_s: f64
+
+                difficulty_adjust_touch :: proc() {
+                    reload_deadline_s = time_s_since_beginning_of_program() + DIFFICULTY_ADJUST_RELOAD_DELAY_S
+                }
+                difficulty_adjust_reload_when_settled :: proc(reload_deadline_s: f64) -> (reloaded: bool) {
+                    if reload_deadline_s != 0 && time_s_since_beginning_of_program() >= reload_deadline_s {
+                        beatmap_open(game.beatmap.map_reference, true)
+                        return true
+                    }
+                    return false
+                }
+
+                temp_settings := difficulty_adjust_settings
                 for &setting, i in difficulty_adjust_settings {
                     if imgui.Button(fmt.ctprint("x##", difficulty_setting_names[i])) {
                         setting = map_difficulty_defaults[i]
+                        difficulty_adjust_touch()
                     }
                     imgui.SameLine()
                     setting_slider: f32 = f32(setting)
                     if imgui.SliderFloat(fmt.ctprint(difficulty_setting_names[i]), &setting_slider, -10, 10) {
                         setting = f64(setting_slider)
+                        difficulty_adjust_touch()
                     }
+                    // a held slider postpones a pending reload even while the value sits still
+                    if reload_deadline_s != 0 && imgui.IsItemActive() {
+                        difficulty_adjust_touch()
+                    }
+                }
+                
+                if difficulty_adjust_reload_when_settled(reload_deadline_s) {
+                    reload_deadline_s = 0
                 }
             }
         }

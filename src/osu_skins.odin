@@ -410,10 +410,14 @@ skin_load_elements :: proc(skin: ^Skin) {
         tex_store := &window.skin_textures[element]
         skin.elements[element].frame_count = 1
 
-        is_high_res, ok := skin_try_load_texture(skin.element_paths[element], tex_store)
-        if !ok && skin_element_animatable[element] {
-            // note(isak): handle first frame of animated elements
+        // note(isak): stable rule - if animation frames exist, they take precedence for gameplay
+        // even when the skin also ships a plain static image
+        is_high_res, ok: bool
+        if skin_element_animatable[element] {
             is_high_res, ok = skin_try_load_texture(fmt.tprintf("%s-0", skin.element_paths[element]), tex_store)
+        }
+        if !ok {
+            is_high_res, ok = skin_try_load_texture(skin.element_paths[element], tex_store)
         }
         if !ok {
             is_high_res, ok = skin_try_load_texture(fmt.tprintf("%s0", skin.element_paths[element]), tex_store)
@@ -421,7 +425,8 @@ skin_load_elements :: proc(skin: ^Skin) {
 
         // todo(isak): we handle as much as we handle here, but can supply a default skin like osu here
         if !ok {
-            log.debugf("skin warning: no texture found for {}", fmt.enum_value_to_string(element))
+            el_str, _ := fmt.enum_value_to_string(element)
+            log.debugf("skin warning: no texture found for {}", el_str)
         }
 
         skin.elements[element].texture = tex_store.tex_id

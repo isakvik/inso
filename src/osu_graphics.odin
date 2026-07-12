@@ -378,7 +378,6 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
         tex = skin_texture(.APPROACHCIRCLE),
         flags = {.USE_COMBO_COLOR},
 
-        // note(isak): osu parity - approachScale = 1 + 3 * (delta / preempt), reaching exactly 1 at hit time
         animations = animation_new(anims, Animation_Scale{
             start_time = 0,
             end_time = 1,
@@ -387,30 +386,50 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
         })
     }
     
+    judgement_fade_in_end    :: 120.0 / JUDGEMENT_DISPLAY_DURATION
+    judgement_fade_out_start :: 500.0 / JUDGEMENT_DISPLAY_DURATION
+
+    judgement_fade_in := Animation_Alpha{
+        start_time  = 0, end_time  = judgement_fade_in_end,
+        start_alpha = 0, end_alpha = 1,
+    }
+    judgement_fade_out := Animation_Alpha{
+        start_time  = judgement_fade_out_start, end_time = 1,
+        start_alpha = 1, end_alpha = 0,
+    }
+
     default_anim_judgement := animation_new(anims,
         Animation_Scale{
-            tween = .QUAD_OUT,
-            start_time  = 0,   
-            end_time = 0.2,
-            start_scale = {0.8, 0.8}, 
-            end_scale = {1.0, 1.0},
+            start_time  = 0, end_time = judgement_fade_in_end * 0.8,
+            start_scale = {0.6, 0.6}, end_scale = {1.1, 1.1},
         },
-        Animation_Alpha{
-            start_time  = 0.7, 
-            end_time = 1.0,
-            start_alpha = 1.0, 
-            end_alpha = 0.0,
+        Animation_Scale{
+            start_time  = judgement_fade_in_end * 0.8, end_time = judgement_fade_in_end * 1.2,
+            start_scale = {1.1, 1.1}, end_scale = {0.9, 0.9},
         },
+        Animation_Scale{
+            start_time  = judgement_fade_in_end * 1.2, end_time = judgement_fade_in_end * 1.4,
+            start_scale = {0.9, 0.9}, end_scale = {1.0, 1.0},
+        },
+        judgement_fade_in,
+        judgement_fade_out,
     )
     elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS)].animations = default_anim_judgement
     elements.data[builtin_element_slot(.JUDGEMENT_GOOD)].animations      = default_anim_judgement
     elements.data[builtin_element_slot(.JUDGEMENT_OK)].animations        = default_anim_judgement
 
     elements.data[builtin_element_slot(.JUDGEMENT_MISS)].animations = animation_new(anims,
-        Animation_Alpha{
-            start_time  = 0.4, end_time  = 1.0,
-            start_alpha = 1.0, end_alpha = 0.0,
+        Animation_Scale{
+            start_time  = 0, end_time = judgement_fade_in_end,
+            start_scale = {2, 2}, end_scale = {1, 1},
         },
+        Animation_Translate{
+            tween = .CUBIC_IN,
+            start_time = 0, end_time = 1,
+            start_pos = {0, -5}, end_pos = {0, 40},
+        },
+        judgement_fade_in,
+        judgement_fade_out,
     )
 
     judgement_types := [?]Element_Type{.JUDGEMENT_MISS, .JUDGEMENT_OK, .JUDGEMENT_GOOD, .JUDGEMENT_MARVELOUS}
@@ -418,11 +437,10 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
         skin_el     := skin_element_for_type_table[el_type]
         frame_count := game.active_skin.elements[skin_el].frame_count
         if frame_count <= 1 do continue
-
-        frames := make([]Animation, frame_count, context.temp_allocator)
+        
+        frames := make([]Animation, 2 + frame_count, context.temp_allocator)
         for frame in 0..<frame_count {
-            // note(isak): standard 60fps animation. i don't think i've ever seen anything else, although
-            // i know you can configure an AnimationRate in the skin.ini.
+            // note(isak): this is a 60fps animation. i don't think i've seen anything else for these
             fps_factor: f64 = 60 / (1000.0 / JUDGEMENT_DISPLAY_DURATION)
             
             frames[frame] = Animation_Texture{
@@ -431,6 +449,8 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
                 texture_id = skin_frame_texture(skin_el, frame),
             }
         }
+        frames[frame_count]     = judgement_fade_in
+        frames[frame_count + 1] = judgement_fade_out
         elements.data[builtin_element_slot(el_type)].animations = animation_new(anims, ..frames)
     }
 

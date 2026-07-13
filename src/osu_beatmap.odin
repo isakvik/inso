@@ -269,9 +269,7 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
         music_time_before_load = game.beatmap.music_time_ms
     }
 
-    // a regen reuses the active mapset's assets and only re-parses the .osu; anything else
-    // (different map, changed .inso, first load) is a full reload
-    reload := game.beatmap_active && !reload_assets &&
+    fast_reload_path := game.beatmap_active && !reload_assets &&
         ref.folder_path == game.beatmap.map_reference.folder_path &&
         ref.osu_filename == game.beatmap.map_reference.osu_filename
 
@@ -282,11 +280,11 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
         beatmap_on_destroy(&game.beatmap)
     }
 
-    if reload {
-        // note(isak): we also reload assets in case mapset reload fails
-        reload = mapset_reload_map_data(game.active_mapset)
+    if fast_reload_path {
+        // note(isak): in case fast reload fails, we try again with a complete reload
+        fast_reload_path = mapset_reload_map_data(game.active_mapset)
     }
-    if !reload {
+    if !fast_reload_path {
         if game.beatmap_active {
             cleanup_textures_for_rendering()
             mapset_free(game.active_mapset)
@@ -335,7 +333,7 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
     game.beatmap_active = true
     window.transparent = false
 
-    notify_info("%sloaded beatmap in %.3vs", "re" if reload else "", time_s_since_beginning_of_program() - load_start)
+    notify_info("%sloaded beatmap in %.3vs", "re" if fast_reload_path else "", time_s_since_beginning_of_program() - load_start)
 
     if keep_position {
         if music_time_before_load >= 0 {

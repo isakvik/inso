@@ -140,8 +140,6 @@ main :: proc() {
         log.panic("SDL video init error:", sdl.GetError())
     }
 
-    platform_claim_scheduling_priority()
-
     game.user_config = config_load("user.ini")
     defer config_save("user.ini")
 
@@ -204,7 +202,7 @@ main :: proc() {
     //--
 
     osu_on_init()
-    notify_info("inso! loaded in %.3vs", inso_load_time)
+    notify_info("inso loaded in %.3vs", inso_load_time)
     
     beatmap_open(initial_map_ref)
     
@@ -376,8 +374,7 @@ main :: proc() {
             app.ui_enabled = game.mode == .EDITOR
 
             if window.resized && game.mode == .EDITOR {
-                // todo(isak): @hack
-                //beatmap_open(game.beatmap.map_reference, true)
+                beatmap_open(game.beatmap.map_reference, true)
             }
             window.resized = false
             
@@ -442,7 +439,7 @@ main :: proc() {
             r_bind_layer_and_push_current_state(.PLATFORM, transform = window.screenspace_transform)
 
             debug_visuals_draw(renderer, frame_count)
-            notify_draw(renderer)
+            notify_draw_notifications(renderer)
 
             end_frame(renderer)
 
@@ -689,6 +686,8 @@ imgui_update :: proc() {
         if imgui.Checkbox("Use beatmap skin", &game.user_config.use_beatmap_skin) {
             beatmap_open(game.beatmap.map_reference, true)
         }
+
+        imgui.Checkbox("Use beatmap hitsounds", &game.user_config.use_beatmap_hitsounds)
         
         imgui.Checkbox("Snaking in sliders", &game.user_config.snaking_in_sliders_enabled)
         imgui.Checkbox("Snaking out sliders", &game.user_config.snaking_out_sliders_enabled)

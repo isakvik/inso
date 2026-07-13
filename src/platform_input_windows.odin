@@ -1,3 +1,4 @@
+
 #+build windows
 package inso
 
@@ -11,9 +12,8 @@ import "core:sys/windows"
 
 Mouse_Handle :: windows.HANDLE
 
-// note(isak): raw input device handles are NOT stable across unplug/replug or sleep/resume - windows
-// hands the same physical device a fresh handle. re-enumerate the hwid->handle map and re-resolve each
-// bound mouse from its persisted hwid
+// note(isak): raw input device handles are NOT stable across unplug/replug or sleep/resume.
+// re-enumerate the hwid->handle map and resolve each bound mouse from its persisted hwid
 input_refresh_mouse_devices :: proc() {
     app.input_device_hwids, app.input_device_handles = input_enumerate_mouse_devices(memory.allocators[.GLOBAL])
 
@@ -30,9 +30,9 @@ input_refresh_mouse_devices :: proc() {
 
 // note(isak): blocks the windows key during play mode, like osu, in two layers. the primary is
 // RIDEV_NOHOTKEYS on our keyboard raw input registration - win32k then skips its start menu
-// hotkey for our foreground windows. this matters because the LL hook below provably cannot see
-// a win key pressed while raw mouse input is streaming (win32k quirk; the key skips the whole
-// legacy hook layer yet still fires the hotkey). the hook remains as the second layer and carries
+// hotkey for our foreground windows. this matters because the LL hook below cannot see a win key
+// pressed while raw mouse input is streaming (win32k quirk; the key skips the whole legacy hook
+// layer yet still fires the hotkey). the hook remains as the second layer and carries
 // --disable-raw-input runs, where there is no registration to hang NOHOTKEYS on.
 //
 // ll hook callbacks are serviced by the installing thread's message pump, and windows stalls

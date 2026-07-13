@@ -47,6 +47,10 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
             pos = path.pos if hobj.slider_state.path_travel_count % 2 == 0 else path.end_pos
         }
 
+        if .LAST_IN_COMBO in hobj.flags {
+            el_type = judgement_resolve_combo_end_type(hobj, judgement.result, el_type)
+        }
+
         cs := hitobject_radius_osupx(hobj)
         element_scale := (cs * 2) / SKIN_CIRCLE_REFERENCE_PX
         skin_el := skin_element_for_type_table[el_type]
@@ -67,6 +71,32 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
         })
     }
     
+}
+
+judgement_resolve_combo_end_type :: proc(hobj: ^Hitobject, result: Judgement_Type, plain: Element_Type) -> Element_Type {
+    if result != .MARVELOUS && result != .GOOD do return plain
+
+    has_good := false
+    for i := hobj.index; i >= 0; i -= 1 {
+        section_hobj := &game.beatmap.hitobjects[i]
+        if section_hobj.type != .SPINNER {
+            if section_hobj.judgement_index <= 0 do return plain
+            switch queue.get(&game.beatmap.judgements, section_hobj.judgement_index).result {
+            case .MARVELOUS:
+            case .GOOD:
+                has_good = true
+            case .NONE, .MISS, .OK,
+                .SLIDER_SMALL_SCOREPOINT, .SLIDER_LARGE_SCOREPOINT, .SLIDER_SCOREPOINT_MISS,
+                .SLIDER_HEAD_MISS, .SLIDER_HEAD_OK, .SLIDER_HEAD_GOOD, .SLIDER_HEAD_MARVELOUS,
+                .IGNORED_HIT, .COMBO_BREAK:
+                return plain
+            }
+        }
+        if .NEW_COMBO in section_hobj.flags do break
+    }
+
+    if result == .GOOD do return .JUDGEMENT_GOOD_KATU
+    return .JUDGEMENT_MARVELOUS_KATU if has_good else .JUDGEMENT_MARVELOUS_GEKI
 }
 
 //////////////////////////////////////////////////////
@@ -97,6 +127,7 @@ play_hit_hitsounds :: proc(timing_point: ^Timing_Point, normal_set, addition_set
 
 resolve_hitsound :: proc(sample_set: Skin_Sample_Set, hitsound_type: Skin_Hitsound_Type, sample_index: u32) -> ^Sample {
     skin_hitsound := &game.active_skin.hitsounds[sample_set][hitsound_type]
+    if !game.user_config.use_beatmap_hitsounds do return skin_hitsound
     if game.active_mapset == nil || sample_index == 0 do return skin_hitsound
 
     key := Hitsound_Key{sample_set, hitsound_type, sample_index}
@@ -166,13 +197,13 @@ process_hitobject_hittesting :: proc(visible_hobjs: []Hitobject, map_time: f64) 
     // every press this frame judges at the same map_time and frame-end cursor position
     for valid_controller_press() {
         consume_controller_press()
-        resolve_press(visible_hobjs, map_time, game.input.mouse_pos)
+        check_controller_press(visible_hobjs, map_time, game.input.mouse_pos)
     }
 }
 
 // resolves a single controller press against the hittable heads: notelock front-checking,
 // judgement, and phase transitions. press_time is the map time the press happened at
-resolve_press :: proc(visible_hobjs: []Hitobject, press_time: f64, cursor_osupx: vec2) {
+check_controller_press :: proc(visible_hobjs: []Hitobject, press_time: f64, cursor_osupx: vec2) {
     game.input.last_valid_press_at = press_time
 
     front, clicked: ^Hitobject

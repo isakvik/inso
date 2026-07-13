@@ -33,6 +33,9 @@ skin_element_for_type_table := #partial #sparse [Element_Type]Skin_Element_Type{
     .JUDGEMENT_OK        = .HIT50,
     .JUDGEMENT_GOOD      = .HIT100,
     .JUDGEMENT_MARVELOUS = .HIT300,
+    .JUDGEMENT_GOOD_KATU      = .HIT100K,
+    .JUDGEMENT_MARVELOUS_KATU = .HIT300K,
+    .JUDGEMENT_MARVELOUS_GEKI = .HIT300G,
 
     .CLICKED_HIT_CIRCLE = .HITCIRCLE,
     .CLICKED_HIT_CIRCLE_OVERLAY = .HITCIRCLE_OVERLAY,
@@ -216,6 +219,10 @@ Element_Type :: enum {
     JUDGEMENT_OK,
     JUDGEMENT_GOOD,
     JUDGEMENT_MARVELOUS,
+
+    JUDGEMENT_GOOD_KATU,
+    JUDGEMENT_MARVELOUS_KATU,
+    JUDGEMENT_MARVELOUS_GEKI,
 
     COMBO_DIGIT_0,
     COMBO_DIGIT_1,
@@ -417,6 +424,9 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
     elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS)].animations = default_anim_judgement
     elements.data[builtin_element_slot(.JUDGEMENT_GOOD)].animations      = default_anim_judgement
     elements.data[builtin_element_slot(.JUDGEMENT_OK)].animations        = default_anim_judgement
+    elements.data[builtin_element_slot(.JUDGEMENT_GOOD_KATU)].animations      = default_anim_judgement
+    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS_KATU)].animations = default_anim_judgement
+    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS_GEKI)].animations = default_anim_judgement
 
     elements.data[builtin_element_slot(.JUDGEMENT_MISS)].animations = animation_new(anims,
         Animation_Scale{
@@ -432,7 +442,10 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
         judgement_fade_out,
     )
 
-    judgement_types := [?]Element_Type{.JUDGEMENT_MISS, .JUDGEMENT_OK, .JUDGEMENT_GOOD, .JUDGEMENT_MARVELOUS}
+    judgement_types := [?]Element_Type{
+        .JUDGEMENT_MISS, .JUDGEMENT_OK, .JUDGEMENT_GOOD, .JUDGEMENT_MARVELOUS,
+        .JUDGEMENT_GOOD_KATU, .JUDGEMENT_MARVELOUS_KATU, .JUDGEMENT_MARVELOUS_GEKI,
+    }
     for el_type in judgement_types {
         skin_el     := skin_element_for_type_table[el_type]
         frame_count := game.active_skin.elements[skin_el].frame_count

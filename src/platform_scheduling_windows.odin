@@ -15,8 +15,9 @@ foreign scheduling_kernel32 {
 
 @(default_calling_convention="system")
 foreign avrt {
-    AvSetMmThreadCharacteristicsW :: proc(TaskName: windows.LPCWSTR, TaskIndex: ^windows.DWORD) -> windows.HANDLE ---
-    AvSetMmThreadPriority         :: proc(AvrtHandle: windows.HANDLE, Priority: i32) -> windows.BOOL ---
+    AvSetMmThreadCharacteristicsW  :: proc(TaskName: windows.LPCWSTR, TaskIndex: ^windows.DWORD) -> windows.HANDLE ---
+    AvSetMmThreadPriority          :: proc(AvrtHandle: windows.HANDLE, Priority: i32) -> windows.BOOL ---
+    AvRevertMmThreadCharacteristics :: proc(AvrtHandle: windows.HANDLE) -> windows.BOOL ---
 }
 
 ProcessPowerThrottling: i32 : 4
@@ -34,20 +35,28 @@ PROCESS_POWER_THROTTLING_STATE :: struct {
 AVRT_PRIORITY_HIGH:     i32 : 1
 AVRT_PRIORITY_CRITICAL: i32 : 2
 
+_scheduling_elevated:    bool
+_mmcss_games_handle:     windows.HANDLE
+
 // note(isak): must run on the main thread - mmcss registration is per-thread.
 // high priority class wins scheduler ties against normal background processes, mmcss "Games"
 // boosts the render thread in a way that cooperates with audio, and the power throttling opt-out
 // keeps us off e-cores and keeps timeBeginPeriod(1) honored while the window is occluded
-platform_claim_scheduling_priority :: proc() {
+platform_set_scheduling_priority :: proc(elevated: bool) {
+    if _scheduling_elevated == elevated do return
+    _scheduling_elevated = elevated
+
     process := windows.GetCurrentProcess()
 
-    if !SetPriorityClass(process, windows.HIGH_PRIORITY_CLASS) {
-        log.warnf("SetPriorityClass(HIGH) failed! win32 error: %d", windows.GetLastError())
+    priority_class := windows.DWORD(elevated ? windows.HIGH_PRIORITY_CLASS : windows.NORMAL_PRIORITY_CLASS)
+    if !SetPriorityClass(process, priority_class) {
+        log.warnf("SetPriorityClass(%x) failed! win32 error: %d", priority_class, windows.GetLastError())
     }
 
     throttling := PROCESS_POWER_THROTTLING_STATE {
         Version     = PROCESS_POWER_THROTTLING_CURRENT_VERSION,
-        ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION,
+        // note(isak): elevated forces throttling off; a zero control mask hands control back to the system
+        ControlMask = elevated ? PROCESS_POWER_THROTTLING_EXECUTION_SPEED | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION : 0,
         StateMask   = 0,
     }
     if !SetProcessInformation(process, ProcessPowerThrottling, &throttling, size_of(throttling)) {
@@ -55,11 +64,16 @@ platform_claim_scheduling_priority :: proc() {
         log.infof("power throttling opt-out unavailable, win32 error: %d", windows.GetLastError())
     }
 
-    task_index: windows.DWORD
-    mmcss_handle := AvSetMmThreadCharacteristicsW(windows.L("Games"), &task_index)
-    if mmcss_handle == nil {
-        log.warnf("mmcss 'Games' registration failed! win32 error: %d", windows.GetLastError())
-    } else {
-        AvSetMmThreadPriority(mmcss_handle, AVRT_PRIORITY_HIGH)
+    if elevated {
+        task_index: windows.DWORD
+        _mmcss_games_handle = AvSetMmThreadCharacteristicsW(windows.L("Games"), &task_index)
+        if _mmcss_games_handle == nil {
+            log.warnf("mmcss 'Games' registration failed! win32 error: %d", windows.GetLastError())
+        } else {
+            AvSetMmThreadPriority(_mmcss_games_handle, AVRT_PRIORITY_HIGH)
+        }
+    } else if _mmcss_games_handle != nil {
+        AvRevertMmThreadCharacteristics(_mmcss_games_handle)
+        _mmcss_games_handle = nil
     }
 }

@@ -54,10 +54,10 @@ notify_info  :: proc(fmt_str: string, args: ..any) { _notify_push(.INFO,  fmt_st
 notify_warn  :: proc(fmt_str: string, args: ..any) { _notify_push(.WARN,  fmt_str, ..args) }
 notify_error :: proc(fmt_str: string, args: ..any) { _notify_push(.ERROR, fmt_str, ..args) }
 
-notify_draw :: proc(renderer: ^Renderer) {
+notify_draw_notifications :: proc(renderer: ^Renderer) {
     now         := time_s_since_beginning_of_program()
-    line_height := uisc(NOTIFY_LINE_HEIGHT)
-    base_y      := window.rect.h - uisc(NOTIFY_MARGIN_Y)
+    line_height := to_ui_scale(NOTIFY_LINE_HEIGHT)
+    base_y      := window.rect.h - to_ui_scale(NOTIFY_MARGIN_Y)
     drawn       := 0
 
     for i in 0..<notify.count {
@@ -81,22 +81,20 @@ notify_draw :: proc(renderer: ^Renderer) {
         }
 
         text := string(entry.msg[:entry.len])
-        pos  := [2]f32{window.rect.w - uisc(NOTIFY_MARGIN_X), f32(base_y) - f32(drawn) * line_height}
+        pos  := [2]f32{window.rect.w - to_ui_scale(NOTIFY_MARGIN_X), f32(base_y) - f32(drawn) * line_height}
 
         rgb   := _notify_level_rgb[entry.level]
         width: f32
         push_text(renderer, text,
             pos     = pos,
-            size    = uisc(NOTIFY_FONT_SIZE),
+            size    = to_ui_scale(NOTIFY_FONT_SIZE),
             color   = {rgb[0], rgb[1], rgb[2], alpha},
             align_h = .Right,
             align_v = .Bottom,
             x_inc   = &width,
         )
 
-        // text is right/bottom-anchored at pos; the batched glyph draw always
-        // composites over this quad, so push it here behind the text.
-        bg_padding := uisc(NOTIFY_BG_PADDING)
+        bg_padding := to_ui_scale(NOTIFY_BG_PADDING)
         bg := Rect{
             pos.x - width - bg_padding,
             pos.y - line_height,

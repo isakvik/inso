@@ -11,9 +11,6 @@ Osu_Mod :: enum {
 
 Osu_Mods :: distinct bit_set[Osu_Mod]
 
-// note(isak): mods hook into two points of beatmap_on_init: apply_to_map runs before the
-// diff_* -> radius/preempt/window conversions and slider instance baking, apply_to_graphics
-// after create_default_elements
 Osu_Mod_Info :: struct {
     name: cstring,
     apply_to_map: proc(),
@@ -29,12 +26,14 @@ osu_mod_table := [Osu_Mod]Osu_Mod_Info {
     .DIFFICULTY_ADJUST = { name = "Difficulty adjust", apply_to_map = difficulty_adjust_apply_to_map },
 }
 
+// note(isak): runs before the diff_* -> radius/preempt/window conversions and slider instance baking
 mods_apply_to_map :: proc() {
     for mod in game.mods {
         if apply := osu_mod_table[mod].apply_to_map; apply != nil do apply()
     }
 }
 
+// note(isak): runs after create_default_elements
 mods_apply_to_graphics :: proc() {
     for mod in game.mods {
         if apply := osu_mod_table[mod].apply_to_graphics; apply != nil do apply()
@@ -131,7 +130,7 @@ hidden_apply_to_graphics :: proc() {
 
     // note(isak): animation times are normalized against the circle drawable lifetime
     // (preempt + ok window), so per-object custom preempts from scripts get proportionally
-    // scaled fades rather than exact stable timing
+    // scaled fades rather than the same timing
     preempt  := game.beatmap.preempt_ms
     lifetime := preempt + game.beatmap.timing_windows.ok
     fade_in_end  := preempt * 0.4 / lifetime

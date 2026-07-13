@@ -543,6 +543,7 @@ osu_on_update :: proc(dt: f64) {
 
     window_set_resizable(game.mode != .PLAY)
     windows_key_set_disabled(game.mode == .PLAY && window.focused)
+    platform_set_scheduling_priority(game.mode == .PLAY)
 
     if game.mode != .PLAY {
         updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
@@ -558,7 +559,6 @@ osu_on_update :: proc(dt: f64) {
     
     // note(isak): game logic - map
     
-    // todo(isak): this really handles a bunch of debug stuff too. fix up the modes and such
     #partial switch game.mode {
         case .PLAY:
             handle_play_input_events()
@@ -642,8 +642,8 @@ osu_on_update :: proc(dt: f64) {
         render_timeline_clipspace(&game.ui_timeline)
 
         push_text(&window.renderer, "Edit mode",
-            pos     = {window.rect.w / 2, uisc(30)},
-            size    = uisc(24),
+            pos     = {window.rect.w / 2, to_ui_scale(30)},
+            size    = to_ui_scale(24),
             color   = {255, 255, 255, 150},
             align_h = .Center,
             align_v = .Bottom)
@@ -674,14 +674,14 @@ osu_on_update :: proc(dt: f64) {
             
         prompt := strings.concatenate({"Rebinding: ", rebindable_input_key_names[game.input.rebinding_key]}, context.temp_allocator)
         push_text(&window.renderer, prompt,
-            pos = {window.rect.w / 2, window.rect.h / 2 - uisc(12)},
-            size = uisc(16),
+            pos = {window.rect.w / 2, window.rect.h / 2 - to_ui_scale(12)},
+            size = to_ui_scale(16),
             color = {255, 255, 255, 150},
             align_h = .Center,
             align_v = .Middle)
         push_text(&window.renderer, "Press any key...",
-            pos = {window.rect.w / 2, window.rect.h / 2 + uisc(12)},
-            size = uisc(16),
+            pos = {window.rect.w / 2, window.rect.h / 2 + to_ui_scale(12)},
+            size = to_ui_scale(16),
             color = {255, 255, 255, 150},
             align_h = .Center,
             align_v = .Middle)

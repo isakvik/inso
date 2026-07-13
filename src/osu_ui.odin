@@ -13,7 +13,7 @@ ui_scale_recompute :: proc() {
     game.ui_scale = (window.rect.h / UI_REFERENCE_HEIGHT) * game.user_config.ui_scale
 }
 
-uisc :: proc(v: f32) -> f32 {
+to_ui_scale :: proc(v: f32) -> f32 {
     return v * game.ui_scale
 }
 
@@ -63,12 +63,12 @@ hit_error_bar_draw_screenspace :: proc(hit_error_bar: ^Hit_Error_Bar) {
     
     r_push_transform(window.screenspace_transform)
 
-    bar_h := uisc(26)
+    bar_h := to_ui_scale(26)
     cx := window.rect.w / 2
     cy := window.rect.h - bar_h / 2
-    tick_h := uisc(26)
+    tick_h := to_ui_scale(26)
 
-    px_per_ms := uisc(1)
+    px_per_ms := to_ui_scale(1)
     bar_w := px_per_ms * f32(tw.ok) * 2
     
     now := game.beatmap.music_time_ms
@@ -76,12 +76,12 @@ hit_error_bar_draw_screenspace :: proc(hit_error_bar: ^Hit_Error_Bar) {
     r_draw_rect(&window.renderer.quad_geometry, 
                 {cx - bar_w / 2, cy - bar_h / 2, bar_w, bar_h}, with_alpha(color_black, 0.2))
     
-    hit_error_zone(cx, cy, f32(tw.ok)        * px_per_ms, uisc(6), with_alpha(HIT_COLOR_OK, 0.85))
-    hit_error_zone(cx, cy, f32(tw.good)      * px_per_ms, uisc(6), with_alpha(HIT_COLOR_GOOD, 0.85))
-    hit_error_zone(cx, cy, f32(tw.marvelous) * px_per_ms, uisc(6), with_alpha(HIT_COLOR_MARVELOUS, 0.85))
+    hit_error_zone(cx, cy, f32(tw.ok)        * px_per_ms, to_ui_scale(6), with_alpha(HIT_COLOR_OK, 0.85))
+    hit_error_zone(cx, cy, f32(tw.good)      * px_per_ms, to_ui_scale(6), with_alpha(HIT_COLOR_GOOD, 0.85))
+    hit_error_zone(cx, cy, f32(tw.marvelous) * px_per_ms, to_ui_scale(6), with_alpha(HIT_COLOR_MARVELOUS, 0.85))
 
     // perfect-timing center line
-    r_draw_rect(&window.renderer.quad_geometry, {cx - uisc(1), cy - tick_h / 2, uisc(2), tick_h}, color_white)
+    r_draw_rect(&window.renderer.quad_geometry, {cx - to_ui_scale(1), cy - tick_h / 2, to_ui_scale(2), tick_h}, color_white)
 
     sum, shown := 0.0, 0
     for i in 0 ..< hit_error_bar.count {
@@ -92,7 +92,7 @@ hit_error_bar_draw_screenspace :: proc(hit_error_bar: ^Hit_Error_Bar) {
         alpha := f32(1 - age / HIT_ERROR_TICK_FADE_MS)
         x := clamp(cx + f32(e.error_ms) * px_per_ms, cx - bar_w / 2, cx + bar_w)
 
-        r_draw_rect(&window.renderer.quad_geometry, {x - uisc(1), cy - tick_h / 2, uisc(2), tick_h},
+        r_draw_rect(&window.renderer.quad_geometry, {x - to_ui_scale(1), cy - tick_h / 2, to_ui_scale(2), tick_h},
             with_alpha(hit_error_color(e.judgement), alpha))
 
         sum   += e.error_ms
@@ -103,8 +103,8 @@ hit_error_bar_draw_screenspace :: proc(hit_error_bar: ^Hit_Error_Bar) {
         mean := sum / f64(shown)
         sign := mean >= 0 ? "+" : ""
         push_text(&window.renderer, fmt.tprintf("%s%.0f ms", sign, mean),
-            pos     = {cx, cy - uisc(20)},
-            size    = uisc(14),
+            pos     = {cx, cy - to_ui_scale(20)},
+            size    = to_ui_scale(14),
             color   = color_white,
             align_h = .Center,
             align_v = .Baseline)
@@ -160,8 +160,8 @@ ui_init_timeline :: proc(ui: ^UI_Timeline) {
 // todo(isak): you can make a lot of this common for ui components, such as the hover state, and leave functionality
 // to this method... need to rewrite a bit of the size handling then but it's not a problem
 ui_update_timeline :: proc(ui: ^UI_Timeline, time_value: ^f64) -> (result: bool) {
-    h_px := uisc(ui.h_px)
-    hitbox_h_px := uisc(ui.hitbox_h_px)
+    h_px := to_ui_scale(ui.h_px)
+    hitbox_h_px := to_ui_scale(ui.hitbox_h_px)
 
     timeline_hitbox := rect_from_points({0, window.rect.h - hitbox_h_px}, {window.rect.w, window.rect.h})
 
@@ -262,8 +262,8 @@ render_timeline_clipspace :: proc(ui: ^UI_Timeline) {
                          .BOTTOM_LEFT, with_alpha(color_lime_green, 0.2))
     }
 
-    line_w := uisc(2) / window.rect.w
-    line_h := max(ui.display_h_px, uisc(10)) / window.rect.h
+    line_w := to_ui_scale(2) / window.rect.w
+    line_h := max(ui.display_h_px, to_ui_scale(10)) / window.rect.h
     for bookmark_ms in game.active_map.bookmarks_ms {
         fract := f32((bookmark_ms - game.beatmap.start_time_ms) / map_len_with_preempt)
         r_draw_layout_rect(&window.renderer.quad_geometry, {fract, 1, line_w, line_h},
@@ -282,8 +282,8 @@ input_display_draw_screenspace :: proc() {
         r_draw_layout_rect(&window.renderer.quad_geometry, rect, .BOTTOM_RIGHT, display_color, builtin_texture(.WHITE))
     }
 
-    key := uisc(30)
-    half := uisc(15)
+    key := to_ui_scale(30)
+    half := to_ui_scale(15)
     cy := window.rect.h / 2
 
     render_input_key(game.input.k1, { window.rect.w, cy - key,   key, key }, color_dim_yellow)

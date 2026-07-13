@@ -57,8 +57,8 @@ process_hittesting_event_walk :: proc(visible_hobjs: []Hitobject, map_time_now: 
 
             if (m1_press || m2_press) && window.focused {
                 cursor := screenspace_to_playfield_osupx(cursor_screen) if raw_cursor else game.input.mouse_pos
-                if m1_press do resolve_press(visible_hobjs, press_time, cursor)
-                if m2_press do resolve_press(visible_hobjs, press_time, cursor)
+                if m1_press do check_controller_press(visible_hobjs, press_time, cursor)
+                if m2_press do check_controller_press(visible_hobjs, press_time, cursor)
             }
 
         case .KEY:
@@ -81,7 +81,7 @@ process_hittesting_event_walk :: proc(visible_hobjs: []Hitobject, map_time_now: 
 
             if key_press && window.focused {
                 cursor := screenspace_to_playfield_osupx(cursor_screen) if raw_cursor else game.input.mouse_pos
-                resolve_press(visible_hobjs, press_time, cursor)
+                check_controller_press(visible_hobjs, press_time, cursor)
             }
         }
     }

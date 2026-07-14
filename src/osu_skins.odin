@@ -13,6 +13,7 @@ Skin :: struct {
     element_paths: [Skin_Element_Type]string,
     elements: [Skin_Element_Type]Skin_Element,
     hitsounds: [Skin_Sample_Set][Skin_Hitsound_Type]Hitsound,
+    combobreak: Sample,
 
     using ini_options: struct {
         slider_border: Color,
@@ -501,12 +502,7 @@ skin_render_element :: proc(skin: ^Skin, el: Skin_Element_Type) -> Skin_Element_
     return el
 }
 
-skin_try_load_hitsound :: proc(skin: ^Skin, sample_set: Skin_Sample_Set, hitsound_type: Skin_Hitsound_Type) -> bool {
-    stem := strings.concatenate({
-        skin_sample_set_name[sample_set], "-",
-        skin_hitsound_type_name[hitsound_type],
-    }, context.temp_allocator)
-
+skin_try_load_sample :: proc(stem: string, dest: ^Sample) -> bool {
     for extension in supported_audio_extensions {
         // note(isak): path is persisted
         path := strings.concatenate({stem, extension}, context.allocator)
@@ -516,11 +512,20 @@ skin_try_load_hitsound :: proc(skin: ^Skin, sample_set: Skin_Sample_Set, hitsoun
 
         sample, ok := sample_load_file(path)
         if ok {
-            skin.hitsounds[sample_set][hitsound_type] = sample
+            dest^ = sample
             return true
         }
     }
     return false
+}
+
+skin_try_load_hitsound :: proc(skin: ^Skin, sample_set: Skin_Sample_Set, hitsound_type: Skin_Hitsound_Type) -> bool {
+    stem := strings.concatenate({
+        skin_sample_set_name[sample_set], "-",
+        skin_hitsound_type_name[hitsound_type],
+    }, context.temp_allocator)
+
+    return skin_try_load_sample(stem, &skin.hitsounds[sample_set][hitsound_type])
 }
 
 skin_load_hitsounds :: proc(skin: ^Skin) {
@@ -532,6 +537,9 @@ skin_load_hitsounds :: proc(skin: ^Skin) {
             if !loaded[sample_set][hitsound_type] do any_missing = true
         }
     }
+
+    loaded_combobreak := skin_try_load_sample("combobreak", &skin.combobreak)
+    if !loaded_combobreak do any_missing = true
 
     // note(isak): missing hitsounds resolve from the default skin, same as element textures.
     // a present-but-silent (empty) file counts as supplied - that's how skins mute a sound
@@ -545,6 +553,7 @@ skin_load_hitsounds :: proc(skin: ^Skin) {
                 skin_try_load_hitsound(skin, sample_set, hitsound_type)
             }
         }
+        if !loaded_combobreak do skin_try_load_sample("combobreak", &skin.combobreak)
 
         os.change_directory(app.base_dir)
         os.change_directory(skin.path)
@@ -561,6 +570,9 @@ skin_unload :: proc(skin: ^Skin) {
                 sample_destroy(&hitsound)
             }
         }
+    }
+    if skin.combobreak.handle != 0 {
+        sample_destroy(&skin.combobreak)
     }
 
     for element in Skin_Element_Type {

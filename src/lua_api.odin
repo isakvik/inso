@@ -22,7 +22,7 @@ import sdl "vendor:sdl3"
 //     odin-side version check at the call site
 
 // @beta
-// todo(isak): expose scoring state to lua (combo, score, accuracy)
+// todo(isak): expose score (the points number) once stable score v1 is implemented
 // todo(isak): z-index within a layer (currently insertion-order only)
 
 Lua_Class_Type :: enum {
@@ -2194,6 +2194,18 @@ luaapi_beatmap_static_funcs := []Lua_Function {
   { "add_post_pass", luaapi_beatmap_add_post_pass,
     "void Beatmap.add_post_pass{ shader=, src=, dst=, Layer after }",
     "queues a fullscreen shader pass sampling src (string or table) into dst, running after the 'after' layer (default HITOBJECTS). src/dst names may be a render target, 'screen' (the window), or 'backbuffer' (the whole-frame capture; requires [General] Backbuffer: 1)." },
+  { "get_accuracy", luaapi_beatmap_get_accuracy,
+    "float Beatmap.get_accuracy( void )",
+    "the running accuracy from 0 to 1 over objects judged so far. 1 before anything is judged." },
+  { "get_combo", luaapi_beatmap_get_combo,
+    "int Beatmap.get_combo( void )",
+    "the current combo." },
+  { "get_max_combo", luaapi_beatmap_get_max_combo,
+    "int Beatmap.get_max_combo( void )",
+    "the highest combo reached this play." },
+  { "get_hit_counts", luaapi_beatmap_get_hit_counts,
+    "(int marvelous, int good, int ok, int miss) Beatmap.get_hit_counts( void )",
+    "per-result totals over objects judged so far." },
   { "get_timing_windows", luaapi_beatmap_get_timing_windows,
     "(float marvelous, float good, float ok, float miss) Beatmap.get_timing_windows( void )",
     "the current hit window half-widths in ms." },
@@ -2378,6 +2390,34 @@ luaapi_beatmap_add_post_pass :: proc "c" (L: ^lua.State) -> i32 {
 
     append(&mapset.post_passes, pass)
     return 0
+}
+
+luaapi_beatmap_get_accuracy :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua.pushnumber(L, lua.Number(score_accuracy(&game.beatmap.score)))
+    return 1
+}
+
+luaapi_beatmap_get_combo :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua.pushinteger(L, lua.Integer(game.beatmap.score.combo))
+    return 1
+}
+
+luaapi_beatmap_get_max_combo :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua.pushinteger(L, lua.Integer(game.beatmap.score.max_combo))
+    return 1
+}
+
+luaapi_beatmap_get_hit_counts :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    score := &game.beatmap.score
+    lua.pushinteger(L, lua.Integer(score.hit_counts[.MARVELOUS]))
+    lua.pushinteger(L, lua.Integer(score.hit_counts[.GOOD]))
+    lua.pushinteger(L, lua.Integer(score.hit_counts[.OK]))
+    lua.pushinteger(L, lua.Integer(score.hit_counts[.MISS]))
+    return 4
 }
 
 luaapi_beatmap_get_timing_windows :: proc "c" (L: ^lua.State) -> i32 {

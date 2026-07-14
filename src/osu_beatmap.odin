@@ -41,6 +41,7 @@ Beatmap :: struct {
     slider_paths: []Slider_Path,
     
     judgements: queue.Queue(Judgement),
+    score: Score_State,
     expiring_hitobjects: sb.Swap_Buffer(int), // note(isak): keeps track of visible objects until their expiry
     
     timing_windows: Timing_Window,
@@ -151,7 +152,8 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap, kept_mu
 }
 
 beatmap_on_update :: proc(beatmap: ^Beatmap) {
-    if sound_is_finished(&beatmap.music) {
+    // note(isak): don't let the end-of-music restart tear down a completed play's results
+    if sound_is_finished(&beatmap.music) && !beatmap.score.completed {
         beatmap_open(beatmap.map_reference)
     }
     
@@ -429,6 +431,12 @@ beatmap_reset_object_state :: proc(beatmap: ^Beatmap) {
             hitobject_reset_transient(&hobj)
         }
     }
+
+    // note(isak): every judgement_index was just zeroed, so the old entries are unreachable -
+    // truncate back to the null sentinel and re-judge from scratch
+    queue.clear(&beatmap.judgements)
+    queue.append(&beatmap.judgements, null_judgement)
+    beatmap.score = {}
 }
 
 beatmap_music_time_ms :: proc(beatmap: ^Beatmap) -> f64 {

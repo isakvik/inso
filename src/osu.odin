@@ -470,6 +470,26 @@ Judgement_Type :: enum {
 Judgement :: struct {
     result: Judgement_Type,
     time: f64,
+    time_error_ms: f64,
+    hobj_index: int,
+}
+
+Score_State :: struct {
+    hit_counts: [Judgement_Type]int,
+    combo: int,
+    max_combo: int,
+    completed: bool, // note(isak): set once when the last scoring object is judged; gates the results screen, file save and on_map_complete
+}
+
+score_judged_object_count :: proc(score: ^Score_State) -> int {
+    return score.hit_counts[.MARVELOUS] + score.hit_counts[.GOOD] + score.hit_counts[.OK] + score.hit_counts[.MISS]
+}
+
+score_accuracy :: proc(score: ^Score_State) -> f64 {
+    judged := score_judged_object_count(score)
+    if judged == 0 do return 1
+    numerator := 300*score.hit_counts[.MARVELOUS] + 100*score.hit_counts[.GOOD] + 50*score.hit_counts[.OK]
+    return f64(numerator) / f64(300 * judged)
 }
 
 Inso_Map :: struct {
@@ -598,6 +618,7 @@ osu_on_update :: proc(dt: f64) {
     process_hitobject_hittesting(visible_hobjs, map_time)
     process_hitobject_phase_transitions()
     game_sounds_process_expiry()
+    results_screen_update()
 
     // game render
     
@@ -663,6 +684,8 @@ osu_on_update :: proc(dt: f64) {
             cursor_draw(mouse_secondary.pos, skin_texture(.CURSOR))
         }
     }
+
+    results_screen_draw()
 
     if game.input.rebinding_key != .NONE {
         r_check_and_bind_layer(.PLATFORM)

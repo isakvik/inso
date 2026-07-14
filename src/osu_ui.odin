@@ -1,8 +1,11 @@
 package inso
 
 import "core:fmt"
+import "core:log"
 import "core:math/ease"
 import "core:math/linalg"
+import os "core:os"
+import "core:time"
 
 //////////////////////////////////////////////////////
 // note(isak): ui scaling
@@ -297,4 +300,117 @@ input_display_draw_screenspace :: proc() {
         render_input_key(game.input.ms1, { window.rect.w, cy + key,   key, half }, color_dim_orange)
         render_input_key(game.input.ms2, { window.rect.w, cy + 2*key, key, half }, color_dim_orange)
     }
+}
+
+
+//////////////////////////////////////////////////////
+// note(isak): results screen
+
+RESULTS_GRACE_PERIOD_MS :: 1000
+
+beatmap_last_scoring_hitobject :: proc(beatmap: ^Beatmap) -> ^Hitobject {
+    #reverse for &hobj in beatmap.hitobjects {
+        if hobj.type != .SPINNER do return &hobj
+    }
+    return nil
+}
+
+results_screen_update :: proc() {
+    if game.mode != .PLAY || game.beatmap.score.completed do return
+
+    last := beatmap_last_scoring_hitobject(&game.beatmap)
+    if last == nil || last.judgement_index <= 0 do return
+    if beatmap_music_time_ms(&game.beatmap) < last.end_time_ms + RESULTS_GRACE_PERIOD_MS do return
+
+    game.beatmap.score.completed = true
+    score_write_results_file()
+    lua_beatmap_on_map_complete()
+}
+
+results_screen_draw :: proc() {
+    if !game.beatmap.score.completed do return
+
+    r_check_and_bind_layer(.PLATFORM)
+    r_push_transform(fullscreen_transform)
+    r_draw_quad(&window.renderer.quad_geometry,
+        vec2{0,0}, vec2{1,1},
+        vec2{0,0}, vec2{1,1},
+        with_alpha(color_black, 0.8))
+
+    score := &game.beatmap.score
+    center_x := window.rect.w / 2
+    y := window.rect.h / 2 - to_ui_scale(130)
+
+    map_name := fmt.tprintf("%s - %s [%s]",
+        game.active_map.artist, game.active_map.title, game.active_map.difficulty_name)
+    push_text(&window.renderer, map_name,
+        pos = {center_x, y}, size = to_ui_scale(20),
+        color = {255, 255, 255, 180}, align_h = .Center, align_v = .Middle)
+    y += to_ui_scale(60)
+
+    push_text(&window.renderer, fmt.tprintf("%.2f%%", score_accuracy(score) * 100),
+        pos = {center_x, y}, size = to_ui_scale(56),
+        color = color_white, align_h = .Center, align_v = .Middle)
+    y += to_ui_scale(52)
+
+    push_text(&window.renderer, fmt.tprintf("%dx max combo", score.max_combo),
+        pos = {center_x, y}, size = to_ui_scale(24),
+        color = {255, 255, 255, 220}, align_h = .Center, align_v = .Middle)
+    y += to_ui_scale(44)
+
+    counts := fmt.tprintf("marvelous %d   good %d   ok %d   miss %d",
+        score.hit_counts[.MARVELOUS], score.hit_counts[.GOOD],
+        score.hit_counts[.OK], score.hit_counts[.MISS])
+    push_text(&window.renderer, counts,
+        pos = {center_x, y}, size = to_ui_scale(18),
+        color = {255, 255, 255, 180}, align_h = .Center, align_v = .Middle)
+    y += to_ui_scale(30)
+
+    push_text(&window.renderer, fmt.tprintf("unstable rate %.1f", score_unstable_rate()),
+        pos = {center_x, y}, size = to_ui_scale(18),
+        color = {255, 255, 255, 180}, align_h = .Center, align_v = .Middle)
+
+    push_text(&window.renderer, "score saved to scores/",
+        pos = {center_x, window.rect.h - to_ui_scale(64)}, size = to_ui_scale(14),
+        color = {255, 255, 255, 120}, align_h = .Center, align_v = .Middle)
+    push_text(&window.renderer, "esc to exit",
+        pos = {center_x, window.rect.h - to_ui_scale(40)}, size = to_ui_scale(14),
+        color = {255, 255, 255, 120}, align_h = .Center, align_v = .Middle)
+}
+
+score_write_results_file :: proc() {
+    now := time.now()
+    year, month, day := time.date(now)
+    hour, minute, second := time.clock_from_time(now)
+
+    _ = os.make_directory("scores")
+    path := fmt.tprintf("scores/%04d-%02d-%02d_%02d-%02d-%02d.txt",
+        year, int(month), day, hour, minute, second)
+
+    score := &game.beatmap.score
+    content := fmt.tprintf(
+        "%s - %s [%s]\n" +
+        "played %04d-%02d-%02d %02d:%02d:%02d utc\n" +
+        "\n" +
+        "accuracy       %.2f%%\n" +
+        "max combo      %dx\n" +
+        "marvelous      %d\n" +
+        "good           %d\n" +
+        "ok             %d\n" +
+        "miss           %d\n" +
+        "unstable rate  %.1f\n",
+        game.active_map.artist, game.active_map.title, game.active_map.difficulty_name,
+        year, int(month), day, hour, minute, second,
+        score_accuracy(score) * 100,
+        score.max_combo,
+        score.hit_counts[.MARVELOUS], score.hit_counts[.GOOD],
+        score.hit_counts[.OK], score.hit_counts[.MISS],
+        score_unstable_rate(),
+    )
+
+    if err := os.write_entire_file(path, transmute([]byte)content); err != os.General_Error.None {
+        notify_warn("couldn't write results file: %v", err)
+        return
+    }
+    log.infof("results written to %s", path)
 }

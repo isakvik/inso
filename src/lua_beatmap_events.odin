@@ -19,6 +19,8 @@ Lua_Beatmap_Event_Type :: enum {
     ON_CURSOR_MOVED,
     ON_JUDGEMENT,
     ON_KIAI_CHANGE,
+    ON_COMBO_BREAK,
+    ON_MAP_COMPLETE,
 }
 lua_beatmap_event_names := [Lua_Beatmap_Event_Type]cstring {
     .ON_INIT = "on_init",
@@ -34,6 +36,8 @@ lua_beatmap_event_names := [Lua_Beatmap_Event_Type]cstring {
     .ON_CURSOR_MOVED = "on_cursor_moved",
     .ON_JUDGEMENT = "on_judgement",
     .ON_KIAI_CHANGE = "on_kiai_change",
+    .ON_COMBO_BREAK = "on_combo_break",
+    .ON_MAP_COMPLETE = "on_map_complete",
 }
 
 Lua_Beatmap_Event_Doc :: struct {
@@ -93,6 +97,14 @@ lua_beatmap_event_docs := [Lua_Beatmap_Event_Type]Lua_Beatmap_Event_Doc {
     .ON_KIAI_CHANGE = {
         "void on_kiai_change( bool kiai )",
         "called when the kiai state is set or unset.",
+    },
+    .ON_COMBO_BREAK = {
+        "void on_combo_break( int lost_combo )",
+        "called when the combo resets to 0, with the combo count that was lost. not called for breaks at 0 combo.",
+    },
+    .ON_MAP_COMPLETE = {
+        "void on_map_complete( void )",
+        "called once when the last scoring hitobject has been judged and the results screen appears (play mode only). seeking backward re-arms it.",
     },
 }
 
@@ -198,6 +210,21 @@ lua_beatmap_on_cursor_moved :: proc(pos: vec2) {
             lua.pushnumber(lua_beatmap.state, lua.Number(pos.x))
             lua.pushnumber(lua_beatmap.state, lua.Number(pos.y))
             return 2
+        }
+    )
+}
+
+lua_beatmap_on_map_complete :: proc() {
+    if !lua_cares_about_event(.ON_MAP_COMPLETE) do return
+    lua_call_beatmap_func(lua_beatmap_event_names[.ON_MAP_COMPLETE])
+}
+
+lua_beatmap_on_combo_break :: proc(lost_combo: int) {
+    if !lua_cares_about_event(.ON_COMBO_BREAK) do return
+    lua_call_beatmap_func(lua_beatmap_event_names[.ON_COMBO_BREAK], lost_combo,
+        proc(lost_combo: int) -> i32 {
+            lua.pushinteger(lua_beatmap.state, lua.Integer(lost_combo))
+            return 1
         }
     )
 }

@@ -16,9 +16,78 @@ LIGHTING_DISPLAY_DURATION  :: 600
 judgement_new :: proc(hobj: ^Hitobject, type: Judgement_Type, time_error_ms: f64) {
     time := beatmap_music_time_ms(&game.beatmap)
     hobj.judgement_index = int(game.beatmap.judgements.len)
-    queue.append(&game.beatmap.judgements, Judgement{ type, time })
-    
+    queue.append(&game.beatmap.judgements, Judgement{ type, time, time_error_ms, hobj.index })
+
+    score_apply_judgement(hobj, type)
     lua_beatmap_on_judgement(hobj.index, type, time_error_ms)
+}
+
+COMBOBREAK_SOUND_MIN_COMBO :: 20
+
+score_apply_judgement :: proc(hobj: ^Hitobject, type: Judgement_Type) {
+    score := &game.beatmap.score
+    score.hit_counts[type] += 1
+
+    // note(isak): a slider's final MISS/OK/GOOD/MARVELOUS is its accuracy judgement only -
+    // combo was already counted by its head, ticks, repeats and tail as they happened
+    slider_aggregate := hobj.type == .SLIDER
+
+    switch type {
+    case .OK, .GOOD, .MARVELOUS:
+        if !slider_aggregate do score_combo_increment(score)
+    case .MISS:
+        if !slider_aggregate do score_combo_break(score)
+    case .SLIDER_HEAD_OK, .SLIDER_HEAD_GOOD, .SLIDER_HEAD_MARVELOUS,
+         .SLIDER_SMALL_SCOREPOINT, .SLIDER_LARGE_SCOREPOINT:
+        score_combo_increment(score)
+    case .SLIDER_HEAD_MISS, .SLIDER_SCOREPOINT_MISS, .COMBO_BREAK:
+        score_combo_break(score)
+    case .NONE, .IGNORED_HIT:
+    }
+}
+
+// note(isak): slider aggregates and scorepoints carry no real timing error, so unstable rate
+// only samples circle hits and slider head hits
+judgement_counts_for_unstable_rate :: proc(judgement: Judgement) -> bool {
+    #partial switch judgement.result {
+    case .SLIDER_HEAD_OK, .SLIDER_HEAD_GOOD, .SLIDER_HEAD_MARVELOUS:
+        return true
+    case .OK, .GOOD, .MARVELOUS:
+        return game.beatmap.hitobjects[judgement.hobj_index].type == .CIRCLE
+    }
+    return false
+}
+
+score_unstable_rate :: proc() -> f64 {
+    sum, sum_squares: f64
+    count := 0
+    for i in 1..<int(game.beatmap.judgements.len) {
+        judgement := queue.get(&game.beatmap.judgements, i)
+        if !judgement_counts_for_unstable_rate(judgement) do continue
+        sum += judgement.time_error_ms
+        sum_squares += judgement.time_error_ms * judgement.time_error_ms
+        count += 1
+    }
+    if count == 0 do return 0
+    mean := sum / f64(count)
+    return 10 * math.sqrt(max(sum_squares / f64(count) - mean*mean, 0))
+}
+
+score_combo_increment :: proc(score: ^Score_State) {
+    score.combo += 1
+    score.max_combo = max(score.max_combo, score.combo)
+}
+
+score_combo_break :: proc(score: ^Score_State) {
+    lost := score.combo
+    score.combo = 0
+    if lost == 0 do return
+
+    scrubbing := game.paused || game.ui_timeline.dragging || game.ui_timeline.released
+    if lost >= COMBOBREAK_SOUND_MIN_COMBO && !scrubbing {
+        sample_play(&game.active_skin.combobreak)
+    }
+    lua_beatmap_on_combo_break(lost)
 }
 
 judgement_new_drawable :: proc(hobj: ^Hitobject) {
@@ -268,6 +337,8 @@ process_expiring_hitobjects :: proc(expiring_hitobjects: ^sb.Swap_Buffer(int)) {
         #partial switch hobj.type {
         case .SLIDER:
             expired = slider_process(hobj, map_time)
+        case .SPINNER:
+            expired = spinner_process_expiry(hobj, map_time)
         case:
             expired = hitcircle_process_expiry(hobj, map_time)
         }
@@ -277,6 +348,17 @@ process_expiring_hitobjects :: proc(expiring_hitobjects: ^sb.Swap_Buffer(int)) {
         }
     }
     sb.swap(expiring_hitobjects)
+}
+
+// note(isak): spinners are unsupported for now - they take no input and post no judgements,
+// so they don't exist to scoring. they expire silently at their end time
+spinner_process_expiry :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
+    if hobj.end_time_ms < map_time {
+        hobj.flags &~= {.VISIBLE}
+        hobj.flags |= {.EXPIRED}
+        expired = true
+    }
+    return expired
 }
 
 hitcircle_process_expiry :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {

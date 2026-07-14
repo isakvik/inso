@@ -18,15 +18,29 @@ judgement_new :: proc(hobj: ^Hitobject, type: Judgement_Type, time_error_ms: f64
     hobj.judgement_index = int(game.beatmap.judgements.len)
     queue.append(&game.beatmap.judgements, Judgement{ type, time, time_error_ms, hobj.index })
 
-    score_apply_judgement(hobj, type)
+    score_apply_judgement(hobj, type, time_error_ms)
     lua_beatmap_on_judgement(hobj.index, type, time_error_ms)
 }
 
 COMBOBREAK_SOUND_MIN_COMBO :: 20
 
-score_apply_judgement :: proc(hobj: ^Hitobject, type: Judgement_Type) {
+score_apply_judgement :: proc(hobj: ^Hitobject, type: Judgement_Type, time_error_ms: f64) {
     score := &game.beatmap.score
     score.hit_counts[type] += 1
+
+    if judgement_carries_hit_error(hobj.type, type) {
+        errors := &score.hit_errors
+        errors.sum += time_error_ms
+        errors.sum_squares += time_error_ms * time_error_ms
+        errors.count += 1
+        if time_error_ms < 0 {
+            errors.early_sum += time_error_ms
+            errors.early_count += 1
+        } else {
+            errors.late_sum += time_error_ms
+            errors.late_count += 1
+        }
+    }
 
     // note(isak): a slider's final MISS/OK/GOOD/MARVELOUS is its accuracy judgement only -
     // combo was already counted by its head, ticks, repeats and tail as they happened
@@ -42,35 +56,40 @@ score_apply_judgement :: proc(hobj: ^Hitobject, type: Judgement_Type) {
         score_combo_increment(score)
     case .SLIDER_HEAD_MISS, .SLIDER_SCOREPOINT_MISS, .COMBO_BREAK:
         score_combo_break(score)
-    case .NONE, .IGNORED_HIT:
+    case .NONE, .IGNORED_HIT, .SLIDER_END_MISS:
     }
 }
 
-// note(isak): slider aggregates and scorepoints carry no real timing error, so unstable rate
-// only samples circle hits and slider head hits
-judgement_counts_for_unstable_rate :: proc(judgement: Judgement) -> bool {
-    #partial switch judgement.result {
+// note(isak): slider aggregates and scorepoints carry no real timing error, so the hit error
+// stats only sample circle hits and slider head hits
+judgement_carries_hit_error :: proc(hobj_type: Hitobject_Type, result: Judgement_Type) -> bool {
+    #partial switch result {
     case .SLIDER_HEAD_OK, .SLIDER_HEAD_GOOD, .SLIDER_HEAD_MARVELOUS:
         return true
     case .OK, .GOOD, .MARVELOUS:
-        return game.beatmap.hitobjects[judgement.hobj_index].type == .CIRCLE
+        return hobj_type == .CIRCLE
     }
     return false
 }
 
-score_unstable_rate :: proc() -> f64 {
-    sum, sum_squares: f64
-    count := 0
-    for i in 1..<int(game.beatmap.judgements.len) {
-        judgement := queue.get(&game.beatmap.judgements, i)
-        if !judgement_counts_for_unstable_rate(judgement) do continue
-        sum += judgement.time_error_ms
-        sum_squares += judgement.time_error_ms * judgement.time_error_ms
-        count += 1
-    }
-    if count == 0 do return 0
-    mean := sum / f64(count)
-    return 10 * math.sqrt(max(sum_squares / f64(count) - mean*mean, 0))
+// note(isak): errors are signed, negative = early. early_mean/late_mean average the early and
+// late hits separately, the way stable's results screen "Error: -a ms - +b ms" does
+Hit_Error_Stats :: struct {
+    mean: f64,
+    early_mean: f64,
+    late_mean: f64,
+    unstable_rate: f64, // 10x the standard deviation
+}
+
+score_hit_error_stats :: proc() -> (stats: Hit_Error_Stats) {
+    errors := &game.beatmap.score.hit_errors
+    if errors.count == 0 do return {}
+
+    stats.mean = errors.sum / f64(errors.count)
+    stats.unstable_rate = 10 * math.sqrt(max(errors.sum_squares / f64(errors.count) - stats.mean*stats.mean, 0))
+    if errors.early_count > 0 do stats.early_mean = errors.early_sum / f64(errors.early_count)
+    if errors.late_count > 0  do stats.late_mean  = errors.late_sum / f64(errors.late_count)
+    return stats
 }
 
 score_combo_increment :: proc(score: ^Score_State) {
@@ -105,7 +124,7 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
         case .SLIDER_SMALL_SCOREPOINT:  el_type = .LIGHTING
         case .SLIDER_LARGE_SCOREPOINT:  el_type = .LIGHTING
 
-        case .NONE, .COMBO_BREAK, .IGNORED_HIT, .SLIDER_SCOREPOINT_MISS, 
+        case .NONE, .COMBO_BREAK, .IGNORED_HIT, .SLIDER_SCOREPOINT_MISS, .SLIDER_END_MISS,
             .SLIDER_HEAD_MISS, .SLIDER_HEAD_OK, .SLIDER_HEAD_GOOD, .SLIDER_HEAD_MARVELOUS:
             return
         }
@@ -157,7 +176,7 @@ judgement_resolve_combo_end_type :: proc(hobj: ^Hitobject, result: Judgement_Typ
             case .NONE, .MISS, .OK,
                 .SLIDER_SMALL_SCOREPOINT, .SLIDER_LARGE_SCOREPOINT, .SLIDER_SCOREPOINT_MISS,
                 .SLIDER_HEAD_MISS, .SLIDER_HEAD_OK, .SLIDER_HEAD_GOOD, .SLIDER_HEAD_MARVELOUS,
-                .IGNORED_HIT, .COMBO_BREAK:
+                .IGNORED_HIT, .COMBO_BREAK, .SLIDER_END_MISS:
                 return plain
             }
         }
@@ -287,7 +306,9 @@ check_controller_press :: proc(visible_hobjs: []Hitobject, press_time: f64, curs
 
     if clicked == nil do return
 
-    if clicked != front {
+    // note(isak): stable's notelock only blocks while a strictly earlier note is still hittable,
+    // so simultaneous notes are hittable in any order
+    if clicked != front && front.start_time_ms < clicked.start_time_ms {
         clicked.notelock_shake_at_ms = press_time
         return
     }
@@ -830,6 +851,8 @@ slider_finalize :: proc(hobj: ^Hitobject) {
         slider_play_edge_hitsound(hobj, slider.path_travel_count)
         judgement_new(hobj, .SLIDER_LARGE_SCOREPOINT, 0)
         slider.hit_judgement_count += 1
+    } else {
+        judgement_new(hobj, .SLIDER_END_MISS, 0)
     }
 
     slider_stop_slide_sounds(slider)

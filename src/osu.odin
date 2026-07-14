@@ -461,6 +461,7 @@ Judgement_Type :: enum {
     SLIDER_HEAD_OK,
     SLIDER_HEAD_GOOD,
     SLIDER_HEAD_MARVELOUS,
+    SLIDER_END_MISS,
     
     IGNORED_HIT, // note(isak): intended for when we need a result that doesn't affect score
     COMBO_BREAK, // note(isak): intended for scripted misses
@@ -479,10 +480,25 @@ Score_State :: struct {
     combo: int,
     max_combo: int,
     completed: bool, // note(isak): set once when the last scoring object is judged; gates the results screen, file save and on_map_complete
+
+    // note(isak): accumulated in judgement_new so stat queries stay O(1) on marathon maps
+    hit_errors: struct {
+        sum, sum_squares:     f64,
+        early_sum, late_sum:  f64,
+        count, early_count, late_count: int,
+    },
 }
 
 score_judged_object_count :: proc(score: ^Score_State) -> int {
     return score.hit_counts[.MARVELOUS] + score.hit_counts[.GOOD] + score.hit_counts[.OK] + score.hit_counts[.MISS]
+}
+
+score_total_scoring_objects :: proc() -> int {
+    total := 0
+    for &hobj in game.beatmap.hitobjects {
+        if hobj.type != .SPINNER do total += 1
+    }
+    return total
 }
 
 score_accuracy :: proc(score: ^Score_State) -> f64 {

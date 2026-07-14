@@ -8,16 +8,16 @@ known discrepancies
         this seems like an optimization on osu's side that creates a single texture from circle and overlays?
 
 old features
-    combobreak sound
     cursor ripple
     slider body color from combo color
+    sliderball tint
 
 extra features
     rotate slider from head
     mine elements
 
 scripting
-    Animated_Drawable - pass a spritesheet
+    animated drawable - pass a spritesheet
 
 TEST
     custom buffers
@@ -37,16 +37,10 @@ game
 
 platform
     lua profiling (nested profiler block support)
-    input thread
     builtin resource pack
     file watch parity across platforms
         linux recursive watch support
         windows unicode filename conversion
-
-beta hardening
-    replace user/data-path asserts with recoverable errors
-        map parsing
-        config io
 
 YEAST mode
     screen capture must work

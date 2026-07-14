@@ -5,6 +5,7 @@ import "core:log"
 import "core:math/ease"
 import "core:math/linalg"
 import os "core:os"
+import "core:strings"
 import "core:time"
 
 //////////////////////////////////////////////////////
@@ -102,6 +103,7 @@ hit_error_bar_draw_screenspace :: proc(hit_error_bar: ^Hit_Error_Bar) {
         shown += 1
     }
 
+    /* todo(isak): show mean error text - UR should be exposed through a config instead
     if shown > 0 {
         mean := sum / f64(shown)
         sign := mean >= 0 ? "+" : ""
@@ -112,6 +114,7 @@ hit_error_bar_draw_screenspace :: proc(hit_error_bar: ^Hit_Error_Bar) {
             align_h = .Center,
             align_v = .Baseline)
     }
+    */
 }
 
 hit_error_zone :: proc(cx, cy, half_px, h: f32, color: Color) {
@@ -366,7 +369,9 @@ results_screen_draw :: proc() {
         color = {255, 255, 255, 180}, align_h = .Center, align_v = .Middle)
     y += to_ui_scale(30)
 
-    push_text(&window.renderer, fmt.tprintf("unstable rate %.1f", score_unstable_rate()),
+    hit_errors := score_hit_error_stats()
+    push_text(&window.renderer,
+        fmt.tprintf("unstable rate %.1f   %.2f ms / +%.2f ms", hit_errors.unstable_rate, hit_errors.early_mean, hit_errors.late_mean),
         pos = {center_x, y}, size = to_ui_scale(18),
         color = {255, 255, 255, 180}, align_h = .Center, align_v = .Middle)
 
@@ -388,6 +393,34 @@ score_write_results_file :: proc() {
         year, int(month), day, hour, minute, second)
 
     score := &game.beatmap.score
+    hit_errors := score_hit_error_stats()
+
+    judged := score_judged_object_count(score)
+    total := score_total_scoring_objects()
+
+    mods_text: strings.Builder
+    strings.builder_init(&mods_text, context.temp_allocator)
+    for mod in game.mods {
+        if strings.builder_len(mods_text) > 0 do strings.write_string(&mods_text, ", ")
+        strings.write_string(&mods_text, string(osu_mod_table[mod].name))
+    }
+
+    // note(isak): defaults are captured before mods apply, so any difference is an adjusted play
+    difficulty_changes: strings.Builder
+    strings.builder_init(&difficulty_changes, context.temp_allocator)
+    difficulty_labels := [Difficulty_Setting]string {
+        .CIRCLE_SIZE        = "circle size   ",
+        .APPROACH_RATE      = "approach rate ",
+        .HP_DRAIN           = "hp drain      ",
+        .OVERALL_DIFFICULTY = "overall diff  ",
+    }
+    for setting in Difficulty_Setting {
+        current := map_difficulty_setting(game.active_map, setting)^
+        if current == map_difficulty_defaults[setting] do continue
+        fmt.sbprintf(&difficulty_changes, "%s %.1f -> %.1f\n",
+            difficulty_labels[setting], map_difficulty_defaults[setting], current)
+    }
+
     content := fmt.tprintf(
         "%s - %s [%s]\n" +
         "played %04d-%02d-%02d %02d:%02d:%02d utc\n" +
@@ -398,14 +431,25 @@ score_write_results_file :: proc() {
         "good           %d\n" +
         "ok             %d\n" +
         "miss           %d\n" +
-        "unstable rate  %.1f\n",
+        "unstable rate  %.1f\n" +
+        "hit error      %.2f ms / +%.2f ms\n" +
+        "\n" +
+        "objects judged %d / %d%s\n" +
+        "time rate      %.2fx%s\n" +
+        "mods           %s\n" +
+        "%s",
         game.active_map.artist, game.active_map.title, game.active_map.difficulty_name,
         year, int(month), day, hour, minute, second,
         score_accuracy(score) * 100,
         score.max_combo,
         score.hit_counts[.MARVELOUS], score.hit_counts[.GOOD],
         score.hit_counts[.OK], score.hit_counts[.MISS],
-        score_unstable_rate(),
+        hit_errors.unstable_rate,
+        hit_errors.early_mean, hit_errors.late_mean,
+        judged, total, judged < total ? " (partial play!)" : "",
+        game.time_rate, game.time_rate == 1 ? "" : " (!)",
+        strings.builder_len(mods_text) > 0 ? strings.to_string(mods_text) : "none",
+        strings.to_string(difficulty_changes),
     )
 
     if err := os.write_entire_file(path, transmute([]byte)content); err != os.General_Error.None {

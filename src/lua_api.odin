@@ -2206,6 +2206,12 @@ luaapi_beatmap_static_funcs := []Lua_Function {
   { "get_hit_counts", luaapi_beatmap_get_hit_counts,
     "(int marvelous, int good, int ok, int miss) Beatmap.get_hit_counts( void )",
     "per-result totals over objects judged so far." },
+  { "get_unstable_rate", luaapi_beatmap_get_unstable_rate,
+    "float Beatmap.get_unstable_rate( void )",
+    "unstable rate over hits so far: 10x the standard deviation of hit timing errors. samples circle and slider head hits only." },
+  { "get_hit_error_mean", luaapi_beatmap_get_hit_error_mean,
+    "float Beatmap.get_hit_error_mean( void )",
+    "the mean signed hit timing error in ms over hits so far. negative = early, positive = late." },
   { "get_timing_windows", luaapi_beatmap_get_timing_windows,
     "(float marvelous, float good, float ok, float miss) Beatmap.get_timing_windows( void )",
     "the current hit window half-widths in ms." },
@@ -2418,6 +2424,18 @@ luaapi_beatmap_get_hit_counts :: proc "c" (L: ^lua.State) -> i32 {
     lua.pushinteger(L, lua.Integer(score.hit_counts[.OK]))
     lua.pushinteger(L, lua.Integer(score.hit_counts[.MISS]))
     return 4
+}
+
+luaapi_beatmap_get_unstable_rate :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua.pushnumber(L, lua.Number(score_hit_error_stats().unstable_rate))
+    return 1
+}
+
+luaapi_beatmap_get_hit_error_mean :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua.pushnumber(L, lua.Number(score_hit_error_stats().mean))
+    return 1
 }
 
 luaapi_beatmap_get_timing_windows :: proc "c" (L: ^lua.State) -> i32 {

@@ -268,6 +268,7 @@ judgement_type_name :: proc "contextless" (j: Judgement_Type) -> cstring {
     case .SLIDER_HEAD_MARVELOUS:   return "SliderHeadMarvelous"
     case .IGNORED_HIT:             return "IgnoredHit"
     case .COMBO_BREAK:             return "ComboBreak"
+    case .SLIDER_END_MISS:         return "SliderEndMiss"
     }
     return "None"
 }

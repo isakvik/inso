@@ -126,8 +126,11 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap, kept_mu
     beatmap.playfield_translation_osupx = {}
     beatmap.playfield_rotation_rad = 0
     beatmap.playfield_rotation_anchor_osupx = {256, 192}
-    
-    game.playfield_dirty_transform = true
+
+    // note(isak): rebuild eagerly - the script's on_init converts through this transform
+    // (set_pos_px et al), and the lazy rebuild in osu_on_update comes too late for it
+    game.playfield_transform = playfield_build_transform()
+    game.playfield_dirty_transform = false
 
     for setting in Difficulty_Setting {
         difficulty_adjust_settings[setting] = map_difficulty_setting(game.active_map, setting)^
@@ -293,8 +296,6 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
             game.beatmap_active = false
         }
 
-        // note(isak): a map that fails to open (deleted folder, corrupt .osu) must not take the
-        // game down; fall back to the previous map, then to the first discovered one
         fallback_refs := [?]Map_Reference{
             ref,
             game.beatmap.map_reference,
@@ -323,6 +324,10 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
         game.active_inso_map = &game.active_mapset.inso_map
 
         prepare_textures_for_rendering()
+
+        if game.active_inso_map.use_backbuffer {
+            fbo_clear(&window.framebuffers[.BACKBUFFER])
+        }
     }
 
     if game.active_map.audio_filepath != old_audio_filepath {
@@ -360,8 +365,6 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
 
 _beatmap_allocate_internals :: proc(beatmap: ^Beatmap, kept_music: Sound = nil) {
     if kept_music != nil {
-        // note(isak): the audio file is unchanged from the previous load - the stream stays
-        // in the mixer, skipping the prescan. mirror the fresh-stream start state (paused at 0)
         beatmap.music = kept_music
         sound_pause(&beatmap.music)
         sound_set_position_ms(&beatmap.music, 0)

@@ -323,7 +323,19 @@ fbo_init :: proc(color_texture_count, depth_texture_count: u32, w, h: i32, color
     success := gl.CheckNamedFramebufferStatus(result.id, gl.FRAMEBUFFER)
     assert(success == gl.FRAMEBUFFER_COMPLETE)
     assert(result.id != 0)
+
+    fbo_clear(&result)
     return result
+}
+
+fbo_clear :: proc(fb: ^GL_Framebuffer) {
+    for i in 0..<fb.color_texture_count {
+        gl.ClearTexImage(fb.color_textures[i], 0, gl.RGBA, gl.FLOAT, nil)
+    }
+    if fb.depth_texture_count > 0 {
+        depth_stencil := struct #packed { depth: f32, stencil: u32 }{ 1.0, 0 }
+        gl.ClearTexImage(fb.depth_texture, 0, gl.DEPTH_STENCIL, gl.FLOAT_32_UNSIGNED_INT_24_8_REV, &depth_stencil)
+    }
 }
 
 fbo_reinit :: proc(fb: ^GL_Framebuffer, new_w, new_h: i32) {

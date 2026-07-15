@@ -18,7 +18,9 @@ Skin :: struct {
     using ini_options: struct {
         slider_border: Color,
         slider_track_override: Color,
-    
+        slider_ball: Color,
+        allow_slider_ball_tint: bool,
+
         font_hit_circle_prefix: string,
         font_hit_circle_overlap: f32,
 
@@ -104,6 +106,13 @@ skin_element_animatable := #partial [Skin_Element_Type]bool {
     .HIT100K = true,
     .HIT300K = true,
     .HIT300G = true,
+}
+
+skin_element_optional := #partial [Skin_Element_Type]bool {
+    .SLIDER_END                  = true,
+    .SLIDER_END_OVERLAY          = true,
+    .SLIDER_START_CIRCLE         = true,
+    .SLIDER_START_CIRCLE_OVERLAY = true,
 }
 
 skin_element_names := [Skin_Element_Type]string {
@@ -298,7 +307,8 @@ skin_handle_ini :: proc(skin: ^Skin) {
         font_hit_circle_overlap = 3,
 
         slider_border = color_white,
-        slider_track_override = 0
+        slider_track_override = 0,
+        slider_ball = color_white,
     }
 
     src, read_err := read_entire_file_to_string("skin.ini", context.temp_allocator)
@@ -327,6 +337,12 @@ skin_handle_ini :: proc(skin: ^Skin) {
     }
     if v, ok := get(sections, "Colours", "SliderTrackOverride"); ok {
         if c, parsed := parse_osu_color(v); parsed do skin.slider_track_override = c
+    }
+    if v, ok := get(sections, "Colours", "SliderBall"); ok {
+        if c, parsed := parse_osu_color(v); parsed do skin.slider_ball = c
+    }
+    if v, ok := get(sections, "General", "AllowSliderBallTint"); ok {
+        skin.allow_slider_ball_tint = v == "1"
     }
 
     max_combo := 0
@@ -372,7 +388,7 @@ skin_load_elements :: proc(skin: ^Skin) {
     any_missing := false
     for element in Skin_Element_Type {
         skin.elements[element].frame_count = 1
-        if !skin_load_element_textures(skin, element, skin.element_paths[element]) {
+        if !skin_load_element_textures(skin, element, skin.element_paths[element]) && !skin_element_optional[element] {
             any_missing = true
         }
     }
@@ -388,6 +404,7 @@ skin_load_elements :: proc(skin: ^Skin) {
         default_paths := skin_load_element_paths(&default_skin, context.temp_allocator)
 
         for element in Skin_Element_Type {
+            if skin_element_optional[element] do continue
             if window.skin_textures[element].tex_id != 0 do continue
             if !skin_load_element_textures(skin, element, default_paths[element]) {
                 el_str, _ := fmt.enum_value_to_string(element)
@@ -404,18 +421,6 @@ skin_load_elements :: proc(skin: ^Skin) {
     }
     if skin.elements[.SLIDER_START_CIRCLE].texture > 0 {
         skin.has_sliderstart = true
-    }
-    
-    // note(isak): fallbacks. copies the metrics so they're read correctly by skin_render_element
-    for element in Skin_Element_Type {
-        if window.skin_textures[element].tex_id == 0 {
-            #partial switch element {
-            case .SLIDER_END:
-                skin.elements[element] = skin.elements[.HITCIRCLE]
-            case .SLIDER_END_OVERLAY: 
-                skin.elements[element] = skin.elements[.SLIDER_END if skin.has_sliderend else .HITCIRCLE_OVERLAY]
-            }
-        }
     }
 }
 
@@ -490,16 +495,16 @@ skin_load_animation_frames :: proc(skin: ^Skin, element: Skin_Element_Type, stem
     }
 }
 
-// note(isak): the skin slot an element should actually read. we redirect to the fallback slot
-// (rather than copying the texture into the slider-end slot) so the same bindless handle isn't 
-// duplicated across two slots and marked resident twice
-skin_render_element :: proc(skin: ^Skin, el: Skin_Element_Type) -> Skin_Element_Type {
-    if window.skin_textures[el].tex_id != 0 do return el
+skin_effective_element :: proc(skin: ^Skin, el: Skin_Element_Type) -> Skin_Element_Type {
     #partial switch el {
-    case .SLIDER_END:         return .HITCIRCLE
-    case .SLIDER_END_OVERLAY: return .SLIDER_END if skin.has_sliderend else .HITCIRCLE_OVERLAY
+    case .SLIDER_END:         if !skin.has_sliderend do return .HITCIRCLE
+    case .SLIDER_END_OVERLAY: if !skin.has_sliderend do return .HITCIRCLE_OVERLAY
     }
     return el
+}
+
+skin_draws_sliderend_overlay :: proc(skin: ^Skin) -> bool {
+    return !skin.has_sliderend || window.skin_textures[.SLIDER_END_OVERLAY].tex_id != 0
 }
 
 skin_try_load_sample :: proc(stem: string, dest: ^Sample) -> bool {

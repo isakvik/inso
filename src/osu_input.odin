@@ -1,5 +1,6 @@
 package inso
 
+import "core:math"
 import sdl "vendor:sdl3"
 
 
@@ -153,4 +154,163 @@ key_is_pressed :: proc "c" (code: sdl.Scancode) -> bool {
 
 key_is_released :: proc "c" (code: sdl.Scancode) -> bool {
     return !keyboard.buttons[code] && keyboard.buttons_prev_frame[code]
+}
+
+
+//////////////////////////////////////////////////////
+// note(isak): per-mode input handlers
+
+rebindable_input_key_code :: proc(key: Rebindable_Input_Key) -> cstring {
+    return sdl.GetScancodeName(game.input.keys[key])
+}
+
+
+handle_play_input_events :: proc() {
+    if key_is_pressed(.ESCAPE) {
+        game.mode = .EDITOR
+        beatmap_open(game.beatmap.map_reference, true)
+        beatmap_pause(&game.beatmap, true)
+    }
+    
+    if key_is_pressed(.KP_PLUS) {
+        game.user_config.universal_offset_ms += key_is_down(.LSHIFT) ? 1 : 5
+    }
+    if key_is_pressed(.KP_MINUS) {
+        game.user_config.universal_offset_ms -= key_is_down(.LSHIFT) ? 1 : 5
+    }
+    
+    if key_is_pressed(.PAGEUP) {
+        game.time_rate *= 1.5
+        sound_set_speed(&game.beatmap.music, game.time_rate)
+    }
+    if key_is_pressed(.PAGEDOWN) {
+        game.time_rate /= 1.5
+        sound_set_speed(&game.beatmap.music, game.time_rate)
+    }
+    
+    game.input.k1.is_down = keyboard.buttons[game.input.keys[.K1]]
+    game.input.k1.was_down = keyboard.buttons_prev_frame[game.input.keys[.K1]]
+    game.input.k2.is_down = keyboard.buttons[game.input.keys[.K2]]
+    game.input.k2.was_down = keyboard.buttons_prev_frame[game.input.keys[.K2]]
+    if game.input.mouse_keys_enabled {
+        game.input.m1 = mouse.buttons[.LEFT]
+        game.input.m2 = mouse.buttons[.RIGHT]
+    }
+    
+    old_mouse_pos := game.input.mouse_pos
+    game.input.mouse_pos = screenspace_to_playfield_osupx(vec2{mouse.pos.x, mouse.pos.y})
+    
+    if lua_cares_about_event(.ON_CURSOR_MOVED) && game.input.mouse_pos != old_mouse_pos {
+        lua_beatmap_on_cursor_moved(game.input.mouse_pos)
+    }
+
+    if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {
+        game.input.mouse_secondary_pos = screenspace_to_playfield_osupx(vec2{mouse_secondary.pos.x, mouse_secondary.pos.y})
+        game.input.ms1 = mouse_secondary.buttons[.LEFT]
+        game.input.ms2 = mouse_secondary.buttons[.RIGHT]
+    }
+    
+    game.input.available_presses = 0
+    if game.input.mouse_keys_enabled {
+        if button_is_pressed(game.input.k1) && !button_is_down(game.input.m1) do game.input.available_presses += 1
+        if button_is_pressed(game.input.k2) && !button_is_down(game.input.m2) do game.input.available_presses += 1
+        if button_is_pressed(game.input.m1) && !button_is_down(game.input.k1) do game.input.available_presses += 1
+        if button_is_pressed(game.input.m2) && !button_is_down(game.input.k2) do game.input.available_presses += 1
+    } else {
+        if button_is_pressed(game.input.k1) do game.input.available_presses += 1
+        if button_is_pressed(game.input.k2) do game.input.available_presses += 1
+    }
+    
+    if lua_cares_about_event(.ON_KEY_DOWN) {
+        for code in sdl.Scancode {
+            if key_is_pressed(code) do lua_beatmap_on_key_pressed(code)
+        }
+    }
+    if lua_cares_about_event(.ON_KEY_UP) {
+        for code in sdl.Scancode {
+            if key_is_released(code) do lua_beatmap_on_key_released(code)
+        }
+    }
+    if lua_cares_about_event(.ON_CONTROLLER_PRESSED) {
+        if button_is_pressed(game.input.k1) do lua_beatmap_on_controller_pressed("k1")
+        if button_is_pressed(game.input.k2) do lua_beatmap_on_controller_pressed("k2")
+        if button_is_pressed(game.input.m1) do lua_beatmap_on_controller_pressed("m1")
+        if button_is_pressed(game.input.m2) do lua_beatmap_on_controller_pressed("m2")
+    }
+    if lua_cares_about_event(.ON_CONTROLLER_RELEASED) {
+        if button_is_released(game.input.k1) do lua_beatmap_on_controller_released("k1")
+        if button_is_released(game.input.k2) do lua_beatmap_on_controller_released("k2")
+        if button_is_released(game.input.m1) do lua_beatmap_on_controller_released("m1")
+        if button_is_released(game.input.m2) do lua_beatmap_on_controller_released("m2")
+    }
+}
+
+EDITOR_BEAT_DIVISOR :: 4
+
+handle_editor_input_events :: proc() {
+    if key_is_pressed(.ESCAPE) || key_is_pressed(.SPACE) {
+        beatmap_pause(&game.beatmap, !game.paused)
+    }
+    if key_is_pressed(.F5) && !key_is_down(.LCTRL) {
+        beatmap_play(&game.beatmap, !key_is_down(.LSHIFT))
+    }
+    if key_is_pressed(.R) {
+        beatmap_open(game.beatmap.map_reference, !key_is_down(.LSHIFT))
+    }
+    
+    if key_is_pressed(.HOME) {
+        game.time_rate = 1
+        sound_set_speed(&game.beatmap.music, game.time_rate)
+    }
+    if key_is_pressed(.PAGEUP) {
+        game.time_rate *= 1.5
+        sound_set_speed(&game.beatmap.music, game.time_rate)
+    }
+    if key_is_pressed(.PAGEDOWN) {
+        game.time_rate /= 1.5
+        sound_set_speed(&game.beatmap.music, game.time_rate)
+    }
+    
+    if key_is_pressed(.Z) {
+        if len(game.beatmap.hitobjects) > 0 && 
+           !f64_within(game.beatmap.music_time_ms, game.beatmap.hitobjects[0].start_time_ms, 3) {
+            editor_seek(&game.beatmap, game.beatmap.hitobjects[0].start_time_ms)
+        }
+        else {
+            editor_seek(&game.beatmap, game.beatmap.start_time_ms)
+        }
+    }
+
+    if key_is_down(.LCTRL) {
+        if key_is_pressed(.LEFT)  do editor_seek_bookmark(&game.beatmap, -1)
+        if key_is_pressed(.RIGHT) do editor_seek_bookmark(&game.beatmap, +1)
+        if key_is_pressed(.O)     do file_dialog_open_osu()
+    }
+
+    if !app.ui_wants_mouse {
+        steps := -int(math.round(mouse.scroll_delta)) // scroll up (>0) seeks backward
+        if !key_is_down(.LCTRL) {
+            if key_is_pressed(.LEFT)  do steps -= 1
+            if key_is_pressed(.RIGHT) do steps += 1
+        }
+
+        if steps != 0 do editor_scrub_steps(&game.beatmap, steps)
+    }
+    
+    game.input.mouse_pos = screenspace_to_playfield_osupx(vec2{mouse.pos.x, mouse.pos.y})
+}
+
+handle_menu_input_events :: proc() {
+    if key_is_pressed(.S) {
+        if key_is_down(.LCTRL) && key_is_down(.LSHIFT) && key_is_down(.LALT) {
+            skin_reload(game.active_skin)
+        }
+    }
+}
+
+handle_universal_input_events :: proc() {
+    if key_is_pressed(.F10) {
+        game.input.mouse_keys_enabled = !game.input.mouse_keys_enabled
+        notify_warn("mouse keys enabled" if game.input.mouse_keys_enabled else "mouse keys disabled")
+    }
 }

@@ -16,16 +16,11 @@ if "%VERSION%"=="" (
 echo [build] %VERSION%
 
 tasklist /FI "IMAGENAME eq %exec_name%" | find /I "%exec_name%" >nul
-if %ERRORLEVEL% equ 0 ( 
+if %ERRORLEVEL% equ 0 (
     taskkill /IM %exec_name% /F /T > nul
 )
 
 odin build ./src -linker:radlink -debug -out:build/%exec_name% -define:SOKOL_USE_GL=true -define:VERSION=%VERSION%
-if %ERRORLEVEL% equ 1 goto stop
+set BUILD_ERR=%ERRORLEVEL%
+if %BUILD_ERR% neq 0 exit /b %BUILD_ERR%
 echo [build] build OK
-python debug.py
-if %ERRORLEVEL% equ 1 goto stop
-goto end
-:stop
-pause
-:end

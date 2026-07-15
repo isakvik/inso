@@ -707,16 +707,9 @@ osu_on_update :: proc(dt: f64) {
 }
 
 hitobjects_draw :: proc(visible_hobjs: []Hitobject, map_time: f64) {
-    // note(isak): objects overlapping in gameplay time ([start, end]) form clusters. visible_hobjs is
-    // start-sorted, so clusters are contiguous runs split where an object starts after the running max
-    // end time. within a cluster three strata draw in order: every slider path, then every object's gfx
-    // (2B: heads landing during a slider sit on its body), then every slider's tracking gfx (ball,
-    // follow, head click animation - so the ball rides above the heads). whole clusters stack by time,
-    // so a slider that ends before an object begins keeps its path above that object. each stratum draws
-    // earliest start on top, like osu. keeping the ball lift per-cluster (not global like mcosu's draw2)
-    // is what stops a stale ball from covering a later cluster's objects. chained overlaps merge
-    // clusters, which can lift an object's gfx above the path of a slider that ended before it began -
-    // accepted approximation, the chain is concurrent through the middle object.
+    // note(isak): we preprocess render order into sets so that we can support two cases for paths:
+    // - sliderpaths that end before the next slider should go on top of succeeding objects (stacking)
+    // - slider that begin during other sliders should have their elements go on top of the path (2B)
     cluster_bounds := make([dynamic]int, 0, len(visible_hobjs) + 1, context.temp_allocator)
     running_end_ms := math.inf_f64(-1)
     for &hobj, i in visible_hobjs {

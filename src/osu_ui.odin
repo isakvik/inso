@@ -306,20 +306,20 @@ input_display_draw_screenspace :: proc() {
 
     tr := &input_display_transitions
     key := to_ui_scale(30)
-    ypos := to_ui_scale(5) + key
+    y_step := to_ui_scale(4) + key
     half := to_ui_scale(15)
     cy := window.rect.h / 2
 
-    render_input_key(game.input.k1, &tr[0], { window.rect.w, cy - ypos,   key, key }, color_dim_yellow)
+    render_input_key(game.input.k1, &tr[0], { window.rect.w, cy - y_step,   key, key }, color_dim_yellow)
     render_input_key(game.input.k2, &tr[1], { window.rect.w, cy,          key, key }, color_dim_yellow)
 
     lit_color := app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT ? color_sky_blue :  color_magenta
-    render_input_key(game.input.m1, &tr[2], { window.rect.w, cy + ypos,   key, key }, lit_color)
-    render_input_key(game.input.m2, &tr[3], { window.rect.w, cy + 2*ypos, key, key }, lit_color)
+    render_input_key(game.input.m1, &tr[2], { window.rect.w, cy + y_step,   key, key }, lit_color)
+    render_input_key(game.input.m2, &tr[3], { window.rect.w, cy + 2*y_step, key, key }, lit_color)
 
     if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {
-        render_input_key(game.input.ms1, &tr[4], { window.rect.w, cy + ypos,   key, half }, color_dim_orange)
-        render_input_key(game.input.ms2, &tr[5], { window.rect.w, cy + 2*ypos, key, half }, color_dim_orange)
+        render_input_key(game.input.ms1, &tr[4], { window.rect.w, cy + y_step,   key, half }, color_dim_orange)
+        render_input_key(game.input.ms2, &tr[5], { window.rect.w, cy + 2*y_step, key, half }, color_dim_orange)
     }
 }
 
@@ -341,6 +341,8 @@ results_screen_update :: proc() {
 
     last := beatmap_last_scoring_hitobject(&game.beatmap)
     if last == nil || last.judgement_index <= 0 do return
+    // note(isak): the play clock free-runs past the audio end (see beatmap_on_update), so this threshold
+    // is always reachable even when the track is shorter than the last object plus the grace period
     if beatmap_music_time_ms(&game.beatmap) < last.end_time_ms + RESULTS_GRACE_PERIOD_MS do return
 
     game.beatmap.score.completed = true

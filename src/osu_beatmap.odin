@@ -33,15 +33,15 @@ Beatmap :: struct {
     fixed_update_dt_ms: f64,
     last_fixed_tick_ms: f64,
 
-    // note(isak): editor auto-hit tracks the previous frame's playhead so it only hits objects whose start
-    // crossed during continuous playback; seeks snap it to the landing time so jumped-over objects are skipped.
+    // note(isak): editor auto-hit tracks the previous frame's time so it only hits objects whose start
+    // crossed on the current frame; seeks snap it to the landing time so jumped-over objects are skipped.
     auto_last_hit_time_ms: f64,
     
     hitobjects: []Hitobject,
     slider_paths: []Slider_Path,
+    score: Score_State,
     
     judgements: queue.Queue(Judgement),
-    score: Score_State,
     expiring_hitobjects: sb.Swap_Buffer(int), // note(isak): keeps track of visible objects until their expiry
     
     timing_windows: Timing_Window,
@@ -141,7 +141,7 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap, kept_mu
     create_default_elements(&beatmap.elements, &beatmap.animations)
     mods_apply_to_graphics()
 
-    beatmap.bg_handle = TEST_bg_drawable(game.active_map.bg_filename, game.active_inso_map.bg_pipeline_name)
+    beatmap.bg_handle = create_bg_drawable(game.active_map.bg_filename, game.active_inso_map.bg_pipeline_name)
     bg_dim_apply(game.user_config.bg_dim)
 
     if lua_cares_about_event(.ON_INIT) {
@@ -155,8 +155,7 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap, kept_mu
 }
 
 beatmap_on_update :: proc(beatmap: ^Beatmap) {
-    // note(isak): don't let the end-of-music restart tear down a completed play's results
-    if sound_is_finished(&beatmap.music) && !beatmap.score.completed {
+    if sound_is_finished(&beatmap.music) && game.mode != .PLAY {
         beatmap_open(beatmap.map_reference)
     }
     
@@ -171,8 +170,10 @@ beatmap_on_update :: proc(beatmap: ^Beatmap) {
         } else {
             sound_pause(&beatmap.music)
         }
+    } else if game.mode == .PLAY && sound_is_finished(&beatmap.music) && !beatmap.score.completed {
+        beatmap.music_time_ms += game.dt * f64(game.paused ? 0 : game.time_rate)
     } else {
-        // note(isak): map play time is determined by the sound library (and whether we were able to play music or not), 
+        // note(isak): map play time is determined by the sound library (and whether we were able to play music or not),
         // but song time interpolation is required because BASS reports play position in buffer size granularity
         beatmap.music_time_ms = beatmap_music_position_interpolated_ms(&game.beatmap)
     }

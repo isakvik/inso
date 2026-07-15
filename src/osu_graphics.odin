@@ -390,14 +390,11 @@ hitcircle_create_default_hit_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_
 
     combo_color := hitobject_combo_color(hobj)
 
-    // note(isak): a slider head's click animation must stack under its own ball/follow, so the
-    // slider takes draw ownership (slider_render_tracking_gfx); the buffer keeps the lifetime
     slider_head := !sliderend && hobj.type == .SLIDER
     flags := Drawable_Flags{.ACTIVE}
     if slider_head do flags |= {.OWNER_DRAWN}
 
-    // note(isak): expiring gfx render in insertion order, so the circle goes first and the overlay
-    // draws on top of it - same stacking as the preempt drawables (which render #reverse'd)
+    // note(isak): expiring gfx render in insertion order, so order matters here
     circle_handle := drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
         flags = flags,
         element = builtin_element_slot(el_circle),
@@ -851,7 +848,7 @@ bg_dim_apply :: proc(dim: f32) {
     d.color = {v, v, v, 255}
 }
 
-TEST_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Handle) {
+create_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Handle) {
     tex, ok := mapset_texture(bg_path)
     if ok {
         bg_aspect_ratio := f32(tex.h) / f32(tex.w)
@@ -877,8 +874,8 @@ TEST_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Hand
             anchor = .CENTER,
             color = {255, 255, 255, 255},
             
-            start_time_ms = game.beatmap.start_time_ms,
-            end_time_ms = game.beatmap.length_ms
+            start_time_ms = game.beatmap.start_time_ms - 1000,
+            end_time_ms = game.beatmap.length_ms + 1000
         })
     }
     return result

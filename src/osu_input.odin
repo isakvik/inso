@@ -274,10 +274,10 @@ handle_editor_input_events :: proc() {
     if key_is_pressed(.Z) {
         if len(game.beatmap.hitobjects) > 0 && 
            !f64_within(game.beatmap.music_time_ms, game.beatmap.hitobjects[0].start_time_ms, 3) {
-            editor_seek(&game.beatmap, game.beatmap.hitobjects[0].start_time_ms)
+            editor_seek(&game.beatmap, game.beatmap.hitobjects[0].start_time_ms - f64(game.user_config.universal_offset_ms))
         }
         else {
-            editor_seek(&game.beatmap, game.beatmap.start_time_ms)
+            editor_seek(&game.beatmap, game.beatmap.start_time_ms - f64(game.user_config.universal_offset_ms))
         }
     }
 

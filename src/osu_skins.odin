@@ -3,7 +3,6 @@ package inso
 import "base:runtime"
 import "core:fmt"
 import "core:log"
-import "core:mem/virtual"
 import os "core:os"
 import "core:strconv"
 import "core:strings"
@@ -14,11 +13,17 @@ Skin :: struct {
     element_paths: [Skin_Element_Type]string,
     elements: [Skin_Element_Type]Skin_Element,
     hitsounds: [Skin_Sample_Set][Skin_Hitsound_Type]Hitsound,
+    combobreak: Sample,
 
     using ini_options: struct {
         slider_border: Color,
         slider_track_override: Color,
-    
+        slider_ball: Color,
+        allow_slider_ball_tint: bool,
+
+        cursor_expand: bool,
+        cursor_rotate: bool,
+
         font_hit_circle_prefix: string,
         font_hit_circle_overlap: f32,
 
@@ -54,6 +59,9 @@ Skin_Element_Type :: enum u32 {
     HIT50,
     HIT100,
     HIT300,
+    HIT100K,
+    HIT300K,
+    HIT300G,
 
     COMBO_0,
     COMBO_1,
@@ -77,6 +85,7 @@ Skin_Element_Type :: enum u32 {
     CURSOR_TRAIL,
     SLIDER_START_CIRCLE,
     SLIDER_START_CIRCLE_OVERLAY,
+    CURSOR_MIDDLE,
 }
 
 Skin_Element :: struct {
@@ -94,6 +103,21 @@ Skin_Element :: struct {
 skin_element_animatable := #partial [Skin_Element_Type]bool {
     .FOLLOWPOINT = true,
     .SLIDER_BALL = true,
+    .HIT0    = true,
+    .HIT50   = true,
+    .HIT100  = true,
+    .HIT300  = true,
+    .HIT100K = true,
+    .HIT300K = true,
+    .HIT300G = true,
+}
+
+skin_element_optional := #partial [Skin_Element_Type]bool {
+    .SLIDER_END                  = true,
+    .SLIDER_END_OVERLAY          = true,
+    .SLIDER_START_CIRCLE         = true,
+    .SLIDER_START_CIRCLE_OVERLAY = true,
+    .CURSOR_MIDDLE               = true,
 }
 
 skin_element_names := [Skin_Element_Type]string {
@@ -103,10 +127,13 @@ skin_element_names := [Skin_Element_Type]string {
     .HITCIRCLE_OVERLAY = "hitcircleoverlay",
     .LIGHTING         = "lighting",
 
-    .HIT0   = "hit0",
-    .HIT50  = "hit50",
-    .HIT100 = "hit100",
-    .HIT300 = "hit300",
+    .HIT0    = "hit0",
+    .HIT50   = "hit50",
+    .HIT100  = "hit100",
+    .HIT300  = "hit300",
+    .HIT100K = "hit100k",
+    .HIT300K = "hit300k",
+    .HIT300G = "hit300g",
 
     .COMBO_0 = "combo",
     .COMBO_1 = "combo",
@@ -130,6 +157,7 @@ skin_element_names := [Skin_Element_Type]string {
     .CURSOR_TRAIL         = "cursortrail",
     .SLIDER_START_CIRCLE         = "sliderstartcircle",
     .SLIDER_START_CIRCLE_OVERLAY = "sliderstartcircleoverlay",
+    .CURSOR_MIDDLE        = "cursormiddle",
 }
 
 // note(isak): resolves a "skin:" texture expression suffix (e.g. "cursor", "sliderb") to its element
@@ -285,7 +313,11 @@ skin_handle_ini :: proc(skin: ^Skin) {
         font_hit_circle_overlap = 3,
 
         slider_border = color_white,
-        slider_track_override = 0
+        slider_track_override = 0,
+        slider_ball = color_white,
+
+        cursor_expand = true,
+        cursor_rotate = true,
     }
 
     src, read_err := read_entire_file_to_string("skin.ini", context.temp_allocator)
@@ -314,6 +346,18 @@ skin_handle_ini :: proc(skin: ^Skin) {
     }
     if v, ok := get(sections, "Colours", "SliderTrackOverride"); ok {
         if c, parsed := parse_osu_color(v); parsed do skin.slider_track_override = c
+    }
+    if v, ok := get(sections, "Colours", "SliderBall"); ok {
+        if c, parsed := parse_osu_color(v); parsed do skin.slider_ball = c
+    }
+    if v, ok := get(sections, "General", "AllowSliderBallTint"); ok {
+        skin.allow_slider_ball_tint = v == "1"
+    }
+    if v, ok := get(sections, "General", "CursorExpand"); ok {
+        skin.cursor_expand = v == "1"
+    }
+    if v, ok := get(sections, "General", "CursorRotate"); ok {
+        skin.cursor_rotate = v == "1"
     }
 
     max_combo := 0
@@ -345,6 +389,56 @@ skin_handle_ini :: proc(skin: ^Skin) {
     }
 }
 
+// note(isak): frame 0 reads the element's own metrics, mirroring how its texture lives in the
+// element's own slot. out-of-range frames fall back to frame 0
+skin_frame_metrics :: proc(skin_el: Skin_Element_Type, frame: int) -> vec2 {
+    element := &game.active_skin.elements[skin_el]
+    if frame <= 0 || frame - 1 >= len(element.frame_metrics) do return element.metrics
+    return element.frame_metrics[frame - 1]
+}
+
+DEFAULT_SKIN_PATH :: "skins/_default/"
+
+skin_load_elements :: proc(skin: ^Skin) {
+    any_missing := false
+    for element in Skin_Element_Type {
+        skin.elements[element].frame_count = 1
+        if !skin_load_element_textures(skin, element, skin.element_paths[element]) && !skin_element_optional[element] {
+            any_missing = true
+        }
+    }
+
+    // note(isak): stable resolves missing elements per-file from the default skin, so incomplete
+    // skins still render. _default has its own skin.ini (digit prefix), hence the full path setup
+    if any_missing && skin.path != DEFAULT_SKIN_PATH {
+        os.change_directory(app.base_dir)
+        os.change_directory(DEFAULT_SKIN_PATH)
+
+        default_skin: Skin
+        skin_handle_ini(&default_skin)
+        default_paths := skin_load_element_paths(&default_skin, context.temp_allocator)
+
+        for element in Skin_Element_Type {
+            if skin_element_optional[element] do continue
+            if window.skin_textures[element].tex_id != 0 do continue
+            if !skin_load_element_textures(skin, element, default_paths[element]) {
+                el_str, _ := fmt.enum_value_to_string(element)
+                log.infof("skin '{}': no texture for {} in skin or _default", skin.path, el_str)
+            }
+        }
+
+        os.change_directory(app.base_dir)
+        os.change_directory(skin.path)
+    }
+
+    if skin.elements[.SLIDER_END].texture > 0 {
+        skin.has_sliderend = true
+    }
+    if skin.elements[.SLIDER_START_CIRCLE].texture > 0 {
+        skin.has_sliderstart = true
+    }
+}
+
 skin_try_load_texture :: proc(stem: string, tex_store: ^Texture) -> (is_high_res: bool, ok: bool) {
     for extension in supported_image_extensions {
         tex, err := texture_from_file(strings.concatenate({stem, "@2x", extension}, context.temp_allocator))
@@ -361,17 +455,38 @@ skin_try_load_texture :: proc(stem: string, tex_store: ^Texture) -> (is_high_res
     return false, false
 }
 
-// note(isak): natural display size. @2x textures are double-resolution for the same visual size
+skin_load_element_textures :: proc(skin: ^Skin, element: Skin_Element_Type, stem: string) -> bool {
+    tex_store := &window.skin_textures[element]
+
+    is_high_res, ok: bool
+    if skin_element_animatable[element] {
+        // note(isak): animated frames take precedence over a plain static image
+        is_high_res, ok = skin_try_load_texture(fmt.tprintf("%s-0", stem), tex_store)
+        if !ok {
+            is_high_res, ok = skin_try_load_texture(fmt.tprintf("%s0", stem), tex_store)
+        }
+    }
+    if !ok {
+        is_high_res, ok = skin_try_load_texture(stem, tex_store)
+    }
+    if !ok do return false
+
+    skin.elements[element].texture = tex_store.tex_id
+    skin.elements[element].is_high_resolution = is_high_res
+    skin.elements[element].metrics = texture_display_metrics(tex_store, is_high_res)
+
+    if skin_element_animatable[element] {
+        skin_load_animation_frames(skin, element, stem)
+    }
+    return true
+}
+
 texture_display_metrics :: proc(tex: ^Texture, is_high_res: bool) -> vec2 {
     display_scale: f32 = is_high_res ? 0.5 : 1.0
     return {f32(tex.w) * display_scale, f32(tex.h) * display_scale}
 }
 
-// note(isak): loads -1, -2, ... into the shared frame block until one is missing. frame 0 already lives
-// in window.skin_elements, so frame_count is the total including it. each frame can independently be
-// @2x, so metrics are stored per frame.
-skin_load_animation_frames :: proc(skin: ^Skin, element: Skin_Element_Type) {
-    stem := skin.element_paths[element]
+skin_load_animation_frames :: proc(skin: ^Skin, element: Skin_Element_Type, stem: string) {
     frame_slot_base := u32(len(window.skin_frame_textures))
     frame_metrics := make([dynamic]vec2)
 
@@ -386,6 +501,7 @@ skin_load_animation_frames :: proc(skin: ^Skin, element: Skin_Element_Type) {
         append(&frame_metrics, texture_display_metrics(&tex, is_high_res))
     }
 
+    // note(isak): include frame 0, which is stored in window.skin_elements
     frame_count := 1 + (int(len(window.skin_frame_textures)) - int(frame_slot_base))
     if frame_count > 1 {
         skin.elements[element].frame_slot_base = frame_slot_base
@@ -394,97 +510,73 @@ skin_load_animation_frames :: proc(skin: ^Skin, element: Skin_Element_Type) {
     }
 }
 
-// note(isak): frame 0 reads the element's own metrics, mirroring how its texture lives in the
-// element's own slot. out-of-range frames fall back to frame 0
-skin_frame_metrics :: proc(skin_el: Skin_Element_Type, frame: int) -> vec2 {
-    element := &game.active_skin.elements[skin_el]
-    if frame <= 0 || frame - 1 >= len(element.frame_metrics) do return element.metrics
-    return element.frame_metrics[frame - 1]
-}
-
-skin_load_elements :: proc(skin: ^Skin) {
-    for element in Skin_Element_Type {
-        tex_store := &window.skin_textures[element]
-        skin.elements[element].frame_count = 1
-
-        is_high_res, ok := skin_try_load_texture(skin.element_paths[element], tex_store)
-        if !ok && skin_element_animatable[element] {
-            // note(isak): handle first frame of animated elements
-            is_high_res, ok = skin_try_load_texture(fmt.tprintf("%s-0", skin.element_paths[element]), tex_store)
-        }
-        if !ok {
-            is_high_res, ok = skin_try_load_texture(fmt.tprintf("%s0", skin.element_paths[element]), tex_store)
-        }
-
-        // todo(isak): we handle as much as we handle here, but can supply a default skin like osu here
-        if !ok {
-            log.debugf("skin warning: no texture found for {}", fmt.enum_value_to_string(element))
-        }
-
-        skin.elements[element].texture = tex_store.tex_id
-        skin.elements[element].is_high_resolution = is_high_res
-
-        skin.elements[element].metrics = texture_display_metrics(tex_store, is_high_res)
-
-        if ok && skin_element_animatable[element] {
-            skin_load_animation_frames(skin, element)
-        }
-    }
-
-    if skin.elements[.SLIDER_END].texture > 0 {
-        skin.has_sliderend = true
-    }
-    if skin.elements[.SLIDER_START_CIRCLE].texture > 0 {
-        skin.has_sliderstart = true
-    }
-    
-    // note(isak): fallbacks. copies the metrics so they're read correctly by skin_render_element
-    for element in Skin_Element_Type {
-        if window.skin_textures[element].tex_id == 0 {
-            #partial switch element {
-            case .SLIDER_END:
-                skin.elements[element] = skin.elements[.HITCIRCLE]
-            case .SLIDER_END_OVERLAY: 
-                skin.elements[element] = skin.elements[.SLIDER_END if skin.has_sliderend else .HITCIRCLE_OVERLAY]
-            }
-        }
-    }
-}
-
-// note(isak): resolves the skin slot an element should actually sample. we redirect to the fallback
-// slot (rather than copying the texture into the slider-end slot) so the same bindless handle
-// isn't duplicated across two slots and marked resident twice
-skin_render_element :: proc(skin: ^Skin, el: Skin_Element_Type) -> Skin_Element_Type {
-    if window.skin_textures[el].tex_id != 0 do return el
+skin_effective_element :: proc(skin: ^Skin, el: Skin_Element_Type) -> Skin_Element_Type {
     #partial switch el {
-    case .SLIDER_END:         return .HITCIRCLE
-    case .SLIDER_END_OVERLAY: return .SLIDER_END if skin.has_sliderend else .HITCIRCLE_OVERLAY
+    case .SLIDER_END:         if !skin.has_sliderend do return .HITCIRCLE
+    case .SLIDER_END_OVERLAY: if !skin.has_sliderend do return .HITCIRCLE_OVERLAY
     }
     return el
 }
 
+skin_draws_sliderend_overlay :: proc(skin: ^Skin) -> bool {
+    return !skin.has_sliderend || window.skin_textures[.SLIDER_END_OVERLAY].tex_id != 0
+}
+
+skin_try_load_sample :: proc(stem: string, dest: ^Sample) -> bool {
+    for extension in supported_audio_extensions {
+        // note(isak): path is persisted
+        path := strings.concatenate({stem, extension}, context.allocator)
+        if !os.exists(path) {
+            continue
+        }
+
+        sample, ok := sample_load_file(path)
+        if ok {
+            dest^ = sample
+            return true
+        }
+    }
+    return false
+}
+
+skin_try_load_hitsound :: proc(skin: ^Skin, sample_set: Skin_Sample_Set, hitsound_type: Skin_Hitsound_Type) -> bool {
+    stem := strings.concatenate({
+        skin_sample_set_name[sample_set], "-",
+        skin_hitsound_type_name[hitsound_type],
+    }, context.temp_allocator)
+
+    return skin_try_load_sample(stem, &skin.hitsounds[sample_set][hitsound_type])
+}
+
 skin_load_hitsounds :: proc(skin: ^Skin) {
+    loaded: [Skin_Sample_Set][Skin_Hitsound_Type]bool
+    any_missing := false
     for sample_set in Skin_Sample_Set {
         for hitsound_type in Skin_Hitsound_Type {
-            stem := strings.concatenate({
-                skin_sample_set_name[sample_set], "-",
-                skin_hitsound_type_name[hitsound_type],
-            }, context.temp_allocator)
+            loaded[sample_set][hitsound_type] = skin_try_load_hitsound(skin, sample_set, hitsound_type)
+            if !loaded[sample_set][hitsound_type] do any_missing = true
+        }
+    }
 
-            for extension in supported_audio_extensions {
-                // note(isak): path is persisted
-                path := strings.concatenate({stem, extension}, context.allocator)
-                if !os.exists(path) {
-                    continue
-                }
-                
-                sample, ok := sample_load_file(path)
-                if ok {
-                    skin.hitsounds[sample_set][hitsound_type] = sample
-                    break
-                }
+    loaded_combobreak := skin_try_load_sample("combobreak", &skin.combobreak)
+    if !loaded_combobreak do any_missing = true
+
+    // note(isak): missing hitsounds resolve from the default skin, same as element textures.
+    // a present-but-silent (empty) file counts as supplied - that's how skins mute a sound
+    if any_missing && skin.path != DEFAULT_SKIN_PATH {
+        os.change_directory(app.base_dir)
+        os.change_directory(DEFAULT_SKIN_PATH)
+
+        for sample_set in Skin_Sample_Set {
+            for hitsound_type in Skin_Hitsound_Type {
+                if loaded[sample_set][hitsound_type] do continue
+                skin_try_load_hitsound(skin, sample_set, hitsound_type)
             }
         }
+        if !loaded_combobreak do skin_try_load_sample("combobreak", &skin.combobreak)
+
+        os.change_directory(app.base_dir)
+        os.change_directory(skin.path)
     }
 }
 
@@ -499,6 +591,9 @@ skin_unload :: proc(skin: ^Skin) {
             }
         }
     }
+    if skin.combobreak.handle != 0 {
+        sample_destroy(&skin.combobreak)
+    }
 
     for element in Skin_Element_Type {
         texture_cleanup(&window.skin_textures[element])
@@ -508,7 +603,7 @@ skin_unload :: proc(skin: ^Skin) {
     }
 
     window.skin_textures = {}
-    virtual.arena_free_all(&memory.arenas[.SKIN])
+    free_all(memory.allocators[.SKIN])
 }
 
 skin_reload :: proc(skin: ^Skin) {
@@ -523,8 +618,7 @@ skin_reload :: proc(skin: ^Skin) {
     prepare_textures_for_rendering()
 }
 
-// note(isak): register every skin directory found in skins_dir
-// allocates with given alloc + context.temp_allocator
+// note(isak): register every skin directory found in skins_dir. also uses temp_allocator
 discover_skins :: proc(skins_dir: string, alloc: runtime.Allocator = context.allocator) {
     dir_handle, err := os.open(skins_dir)
     if err != nil {
@@ -533,7 +627,7 @@ discover_skins :: proc(skins_dir: string, alloc: runtime.Allocator = context.all
     }
 
     // note(isak): externally-opened skins don't live under skins_dir, so carry them across the
-    // rebuild instead of dropping them (and orphaning the active skin / dropdown selection)
+    // rebuild instead of dropping them (QOL)
     preserved_refs  := make([dynamic]Skin_Reference, context.temp_allocator)
     preserved_names := make([dynamic]cstring, context.temp_allocator)
     for ref, i in app.skin_references {

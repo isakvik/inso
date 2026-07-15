@@ -222,7 +222,7 @@ osu_section_headers := []string{
     "[HitObjects]",
 }
 
-mapset_free :: proc(mapset: ^Mapset) -> string {
+mapset_free :: proc(mapset: ^Mapset) {
     directory_watch_close(&mapset.watch)
 
     for &texture in mapset.textures.data {
@@ -248,21 +248,45 @@ mapset_free :: proc(mapset: ^Mapset) -> string {
         sample_destroy(&sample)
     }
 
-    mapset_path := strings.clone(mapset.folder_path, context.temp_allocator)
-
-    virtual.arena_free_all(&memory.arenas[.DRAWABLES])
-    virtual.arena_free_all(&memory.arenas[.SCRIPT_ELEMENTS])
-    virtual.arena_free_all(&memory.arenas[.JUDGEMENTS])
-    virtual.arena_free_all(&memory.arenas[.MAPSET])
-
-    return mapset_path
+    free_all(memory.allocators[.DRAWABLES])
+    free_all(memory.allocators[.SCRIPT_ELEMENTS])
+    free_all(memory.allocators[.JUDGEMENTS])
+    free_all(memory.allocators[.MAP_DATA])
+    free_all(memory.allocators[.MAPSET])
 }
 
-mapset_free_and_reload :: proc(mapset: ^Mapset) -> ^Mapset {
-    mapset_path := mapset_free(mapset)
-    reloaded_mapset, ok := mapset_open_for_editing(mapset_path)
-    assert(ok)
-    return reloaded_mapset
+// note(isak): post passes and layer captures are registered by the script's on_init, so they
+// reset whenever the script context does - otherwise regens stack duplicate passes
+mapset_reset_script_render_state :: proc(mapset: ^Mapset) {
+    mapset.post_passes = make([dynamic]Post_Pass, 0, 8, memory.allocators[.MAP_DATA])
+    mapset.layer_capture = {}
+}
+
+// note(isak): mod toggles and retries only invalidate .osu-derived data (mods + stacking mutate
+// positions and slider paths in place), so regen re-parses just the .osu into a fresh MAP_DATA
+// arena. every asset in the MAPSET arena - textures, samples, shaders, the .inso - stays resident.
+mapset_reload_map_data :: proc(mapset: ^Mapset) -> (ok: bool) {
+    if mapset.osu_filename == "" do return false
+
+    free_all(memory.allocators[.DRAWABLES])
+    free_all(memory.allocators[.SCRIPT_ELEMENTS])
+    free_all(memory.allocators[.JUDGEMENTS])
+    free_all(memory.allocators[.MAP_DATA])
+    mapset_reset_script_render_state(mapset)
+    buffer_clear(&window.renderer.slider_instances)
+
+    os.change_directory(mapset.folder_path)
+    defer os.change_directory(app.base_dir)
+
+    filedata, file_err := read_entire_file_to_string(mapset.osu_filename, context.temp_allocator)
+    if file_err != nil {
+        log.errorf("mapset: failed to re-read '{}': {}", mapset.osu_filename, file_err)
+        notify_error("mapset: failed to re-read '%s': %v", mapset.osu_filename, file_err)
+        return false
+    }
+    mapset.osu_map = mapset_parse_osu(mapset, filedata) or_return
+    mapset_apply_hitobject_extra_bits(mapset)
+    return true
 }
 
 mapset_open_for_editing :: proc(path: string, osu_filename: string = "") -> (^Mapset, bool) {
@@ -288,17 +312,19 @@ mapset_open_for_editing :: proc(path: string, osu_filename: string = "") -> (^Ma
     queue.init(&mapset.samples)
     queue.init(&mapset.render_targets)
     mapset.render_target_by_name = make(map[string]u32, 8)
-    mapset.post_passes           = make([dynamic]Post_Pass, 0, 8)
     mapset.texture_slot_by_name  = make(map[string]u32, 16)
     mapset.pipeline_slot_by_name = make(map[string]u32, 16)
     mapset.buffer_slot_by_name   = make(map[string]u32, 16)
     mapset.sample_slot_by_name   = make(map[string]u32, 16)
     mapset.hitsound_slot_by_key  = make(map[Hitsound_Key]u32, 16)
-    mapset.hitobject_index_by_ms = make(map[int]int, 128)
     mapset.shader_blend_modes    = make([dynamic]Blend_Mode, 0, 8)
     mapset.shader_depth_writes   = make([dynamic]bool, 0, 8)
-    
-    mapset_walk_directory(mapset, path)
+    mapset_reset_script_render_state(mapset)
+
+
+    if !mapset_walk_directory(mapset, path) {
+        return mapset, false
+    }
     mapset_apply_hitobject_extra_bits(mapset)
 
     mapset.watch = directory_watch_init(path)
@@ -380,26 +406,27 @@ discover_maps :: proc(
     notify_info("discover_maps: found %v maps in '%s'", count, songs_dir)
 }
 
-mapset_walk_directory :: proc(mapset: ^Mapset, path: string) {
+mapset_walk_directory :: proc(mapset: ^Mapset, path: string) -> (ok: bool) {
     cwd, _ := os.get_working_directory(context.temp_allocator)
     defer os.change_directory(cwd)
-    
+
     files: []os.File_Info
     dir_handle, io_err := os.open(path)
     files, io_err = os.read_dir(dir_handle, 1024, context.temp_allocator)
-    
+
     os.change_directory(path)
 
     for file in files {
         if file.type == .Directory {
-            mapset_walk_directory(mapset, file.name)
+            mapset_walk_directory(mapset, file.name) or_return
         } else {
-            mapset_handle_file(mapset, file)
+            mapset_handle_file(mapset, file) or_return
         }
     }
+    return true
 }
 
-mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
+mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) -> (ok: bool) {
     extension := filepath.ext(file.name)
     switch {
         case extension == ".inso": {
@@ -419,7 +446,7 @@ mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
                 notify_error("mapset: failed to read '%s': %v", file.name, file_err)
                 break
             }
-            mapset.osu_map = mapset_parse_osu(mapset, filedata)
+            mapset.osu_map = mapset_parse_osu(mapset, filedata) or_return
         }
         case slice.contains(supported_image_extensions, extension): {
             if int(mapset.textures.len) >= max_user_textures() {
@@ -458,6 +485,7 @@ mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) {
             }
         }
     }
+    return true
 }
 
 mapset_parse_inso :: proc(mapset: ^Mapset, inso_file: string) -> Inso_Map {
@@ -476,12 +504,11 @@ mapset_parse_inso :: proc(mapset: ^Mapset, inso_file: string) -> Inso_Map {
         defer section_index += 1
         
         if len(lines) == 0 {
-            fmt.println(inso_section_headers[section_index], ":: section was blank")
+            fmt.println(inso_section_headers[section_index], ":: map section was blank")
             continue
         }
         
         if section_index == 0 {
-            fmt.println("::", lines[0])
             continue
         }
         
@@ -504,14 +531,14 @@ mapset_parse_inso :: proc(mapset: ^Mapset, inso_file: string) -> Inso_Map {
                     case "BackgroundPipeline":
                         result.bg_pipeline_name = strings.clone(value, context.allocator)
                     case "DoubleMouse":
-                        val, ok := strconv.parse_u64(value); assert(ok)
-                        result.double_mouse = val > 0
+                        if val, ok := strconv.parse_u64(value); ok do result.double_mouse = val > 0
+                        else do notify_warn("inso [General]: invalid DoubleMouse '%s'", value)
                     case "Backbuffer":
-                        val, ok := strconv.parse_u64(value); assert(ok)
-                        result.use_backbuffer = val > 0
+                        if val, ok := strconv.parse_u64(value); ok do result.use_backbuffer = val > 0
+                        else do notify_warn("inso [General]: invalid Backbuffer '%s'", value)
                     case "FixedUpdateRate":
-                        val, ok := strconv.parse_f64(value); assert(ok)
-                        result.fixed_update_rate_hz = val
+                        if val, ok := strconv.parse_f64(value); ok do result.fixed_update_rate_hz = val
+                        else do notify_warn("inso [General]: invalid FixedUpdateRate '%s'", value)
                 }
             }
         case .SHADERS:
@@ -734,13 +761,53 @@ mapset_reinit_custom_shaders :: proc(mapset: ^Mapset) {
 }
 
 
-mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
-    result: Osu_Map = {
-        stack_leniency = 0.7    
+// note(isak): strict variants abort the map load - use for values where garbage would corrupt gameplay
+@(require_results)
+parse_f64_strict :: proc(value, what: string) -> (result: f64, ok: bool) {
+    result, ok = strconv.parse_f64(value)
+    if !ok {
+        log.errorf("map parse :: bad {} '{}'", what, value)
+        notify_error("map parse: bad %s '%s'", what, value)
     }
-    
-    context.allocator = memory.allocators[.MAPSET]
-    
+    return
+}
+
+@(require_results)
+parse_f32_strict :: proc(value, what: string) -> (result: f32, ok: bool) {
+    result, ok = strconv.parse_f32(value)
+    if !ok {
+        log.errorf("map parse :: bad {} '{}'", what, value)
+        notify_error("map parse: bad %s '%s'", what, value)
+    }
+    return
+}
+
+@(require_results)
+parse_u64_strict :: proc(value, what: string) -> (result: u64, ok: bool) {
+    result, ok = strconv.parse_u64(value)
+    if !ok {
+        log.errorf("map parse :: bad {} '{}'", what, value)
+        notify_error("map parse: bad %s '%s'", what, value)
+    }
+    return
+}
+
+@(require_results)
+parse_int_strict :: proc(value, what: string) -> (result: int, ok: bool) {
+    result, ok = strconv.parse_int(value)
+    if !ok {
+        log.errorf("map parse :: bad {} '{}'", what, value)
+        notify_error("map parse: bad %s '%s'", what, value)
+    }
+    return
+}
+
+mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> (result: Osu_Map, ok: bool) {
+    result.stack_leniency = 0.7
+
+    context.allocator = memory.allocators[.MAP_DATA]
+    mapset.hitobject_index_by_ms = make(map[int]int, 128)
+
     c: Consumer = { str = osu_file }
     
     section_index := 0
@@ -758,7 +825,6 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
         }
         
         if section_index == 0 {
-            fmt.println("::", lines[0])
             continue
         }
 
@@ -775,14 +841,13 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
             case .GENERAL:
                 for i in 1..<len(lines) {
                     key, value := get_key_value(lines[i])
-                    ok: bool
                     switch key {
-                        case "AudioFilename": 
+                        case "AudioFilename":
                             result.audio_filename = strings.clone(value)
                             result.audio_filepath = strings.concatenate({mapset.folder_path, value})
-                        case "AudioLeadIn": result.audio_lead_in, ok = strconv.parse_f64(value); assert(ok)
-                        case "PreviewTime": result.preview_time_ms, ok = strconv.parse_f64(value); assert(ok)
-                        case "StackLeniency": result.stack_leniency, ok = strconv.parse_f64(value); assert(ok)
+                        case "AudioLeadIn": result.audio_lead_in = parse_f64_strict(value, "AudioLeadIn") or_return
+                        case "PreviewTime": result.preview_time_ms = parse_f64_strict(value, "PreviewTime") or_return
+                        case "StackLeniency": result.stack_leniency = parse_f64_strict(value, "StackLeniency") or_return
                         case "SampleSet": 
                             switch value {
                                 case "Normal": result.sample_set = .NORMAL
@@ -825,16 +890,15 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                 has_approach_rate: bool
                 for i in 1..<len(lines) {
                     key, value := get_key_value(lines[i])
-                    ok: bool
                     switch key {
-                        case "HPDrainRate": result.diff_hp_drain, ok = strconv.parse_f64(value); assert(ok)
-                        case "CircleSize": result.diff_circle_size, ok = strconv.parse_f64(value); assert(ok)
-                        case "OverallDifficulty": result.diff_overall_difficulty, ok = strconv.parse_f64(value); assert(ok)
-                        case "ApproachRate": 
-                            result.diff_approach_rate, ok = strconv.parse_f64(value); assert(ok)
+                        case "HPDrainRate": result.diff_hp_drain = parse_f64_strict(value, "HPDrainRate") or_return
+                        case "CircleSize": result.diff_circle_size = parse_f64_strict(value, "CircleSize") or_return
+                        case "OverallDifficulty": result.diff_overall_difficulty = parse_f64_strict(value, "OverallDifficulty") or_return
+                        case "ApproachRate":
+                            result.diff_approach_rate = parse_f64_strict(value, "ApproachRate") or_return
                             has_approach_rate = true
-                        case "SliderMultiplier": result.diff_slider_velocity, ok = strconv.parse_f64(value); assert(ok)
-                        case "SliderTickRate": result.diff_slider_tickrate, ok = strconv.parse_f64(value); assert(ok)
+                        case "SliderMultiplier": result.diff_slider_velocity = parse_f64_strict(value, "SliderMultiplier") or_return
+                        case "SliderTickRate": result.diff_slider_tickrate = parse_f64_strict(value, "SliderTickRate") or_return
                     }
                 }
 
@@ -858,24 +922,23 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
                         s_len = strings.index_byte(lines[i][from_i:], ',')
                         value := s_len >= 0 ? lines[i][from_i:from_i + s_len] : lines[i][from_i:]
                                        
-                        ok: bool
                         switch arg_i {
-                            case 0: timing_point.time, ok = strconv.parse_f64(value); assert(ok)
-                            case 1: timing_point.beat_length, ok = strconv.parse_f64(value); assert(ok)
-                            case 2: meter, ok := strconv.parse_u64(value); assert(ok) 
+                            case 0: timing_point.time = parse_f64_strict(value, "timing point time") or_return
+                            case 1: timing_point.beat_length = parse_f64_strict(value, "timing point beat length") or_return
+                            case 2: meter := parse_u64_strict(value, "timing point meter") or_return
                                 timing_point.meter = u8(meter)
-                            case 3: sample_set, ok := strconv.parse_u64(value); assert(ok)
+                            case 3: sample_set := parse_u64_strict(value, "timing point sample set") or_return
                                 switch sample_set {
                                     case 1: timing_point.sample_set = .NORMAL
                                     case 2: timing_point.sample_set = .SOFT
                                     case 3: timing_point.sample_set = .DRUM
                                     case:   timing_point.sample_set = result.sample_set
                                 }
-                            case 4: sample_index, ok := strconv.parse_u64(value); assert(ok)
+                            case 4: sample_index := parse_u64_strict(value, "timing point sample index") or_return
                                 timing_point.sample_index = u32(sample_index)
-                            case 5: timing_point.volume, ok = strconv.parse_f64(value); assert(ok)
+                            case 5: timing_point.volume = parse_f64_strict(value, "timing point volume") or_return
                             case 6: timing_point.type = value == "1" ? .UNINHERITED : .INHERITED
-                            case 7: effects, ok := strconv.parse_int(value); assert(ok)
+                            case 7: effects := parse_int_strict(value, "timing point effects") or_return
                                 timing_point.kiai = effects & 1 == 1
                         }
                     }
@@ -970,22 +1033,17 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
 
                     #partial switch hobj.type {
                     case .SPINNER:
-                        ok: bool
                         hitsound_params_at := strings.index_byte(hobj_extra_params, ',')
-                        if hitsound_params_at != -1 {
-                            hobj.end_time_ms, ok = strconv.parse_f64(hobj_extra_params[:hitsound_params_at])
-                        } else {
-                            hobj.end_time_ms, ok = strconv.parse_f64(hobj_extra_params)
-                        }
-                        assert(ok)
-                        
+                        end_time_str := hitsound_params_at != -1 ? hobj_extra_params[:hitsound_params_at] : hobj_extra_params
+                        hobj.end_time_ms = parse_f64_strict(end_time_str, "spinner end time") or_return
+
                     case .SLIDER:
                         hobj.flags |= {.SLIDER_SNAKE_IN, .SLIDER_SNAKE_OUT}
                         slider: Slider_Path = {
                             bounds_min = {math.F32_MAX, math.F32_MAX},
                             bounds_max = {math.F32_MIN, math.F32_MIN},
                         }
-                        mapset_parse_osu_slider_params(hobj, &slider, hobj_extra_params)
+                        mapset_parse_osu_slider_params(hobj, &slider, hobj_extra_params) or_return
                         hobj.slider_path_index = int(slider_temp_queue.len)
                         queue.append(&slider_temp_queue, slider)
                     case:
@@ -1002,8 +1060,8 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> Osu_Map {
     }
     
     map_postprocess(mapset, &result)
-    
-    return result
+
+    return result, true
 }
 
 mapset_load_shader_entry :: proc(mapset: ^Mapset, name, vs, fs: string, blend_mode: Blend_Mode, depth_write: bool) {
@@ -1122,7 +1180,7 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
         return int(a.time) - int(b.time)
     })
     
-    assert(osu_map.timing_points[0].type == .UNINHERITED, "map error :: first timing point is inherited")
+    //assert(osu_map.timing_points[0].type == .UNINHERITED, "map error :: first timing point is inherited")
     osu_map.timing_points[0].starts_at_beat = 1
     
     current_timing_point_index_uninherited: int
@@ -1240,7 +1298,7 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
     osu_map.hitobjects[last_non_spinner_hobj_i].flags |= {.LAST_IN_COMBO}
 }
 
-mapset_parse_osu_slider_params :: proc(hobj: ^Hitobject, slider: ^Slider_Path, params: string, alloc: mem.Allocator = context.allocator) {
+mapset_parse_osu_slider_params :: proc(hobj: ^Hitobject, slider: ^Slider_Path, params: string, alloc: mem.Allocator = context.allocator) -> (ok: bool) {
     from_i, s_len: int
     arg_i: int
     for from_i < len(params) && 0 <= s_len {
@@ -1248,7 +1306,6 @@ mapset_parse_osu_slider_params :: proc(hobj: ^Hitobject, slider: ^Slider_Path, p
         defer from_i += s_len + 1
         s_len = strings.index_byte(params[from_i:], ',')
         value := s_len >= 0 ? params[from_i:from_i + s_len] : params[from_i:]
-        ok: bool
         switch arg_i {
             case 0:
                 slider_type, slider_nodes_str := get_key_value(value, '|')
@@ -1259,13 +1316,13 @@ mapset_parse_osu_slider_params :: proc(hobj: ^Hitobject, slider: ^Slider_Path, p
                     case "C": slider.type = .CATMULL
                 }
                 if len(slider_nodes_str) > 0 {
-                    slider.nodes = mapset_parse_osu_slider_nodes(slider_nodes_str, hobj.pos)
+                    slider.nodes = mapset_parse_osu_slider_nodes(slider_nodes_str, hobj.pos) or_return
                 } else {
                     slider.nodes = make_slice([]Slider_Node, 1)
                     slider.nodes[0] = hobj.pos
                 }
             case 1:
-                hobj.slider_state.path_travel_count, ok = strconv.parse_int(value); assert(ok)
+                hobj.slider_state.path_travel_count = parse_int_strict(value, "slider repeat count") or_return
 
                 // note(isak): edges = path_travel_count + 1 (head, repeats, tail). default every edge to the
                 // object-level hitsound and auto sample sets; edgeSounds/edgeSets below override when present
@@ -1275,7 +1332,7 @@ mapset_parse_osu_slider_params :: proc(hobj: ^Hitobject, slider: ^Slider_Path, p
                     edge.hitsound = hobj.hitsound_flags
                 }
             case 2:
-                slider.distance_osupx, ok = strconv.parse_f64(value); assert(ok)
+                slider.distance_osupx = parse_f64_strict(value, "slider length") or_return
             case 3:
                 // note(isak): edgeSounds, e.g. "2|0|2" - one hitsound bitmask per edge
                 edge_from, edge_n, edge_i: int
@@ -1305,30 +1362,38 @@ mapset_parse_osu_slider_params :: proc(hobj: ^Hitobject, slider: ^Slider_Path, p
                 }
         }
     }
-    assert(slider.type != .NONE, "slider parse error :: unknown slidertype")
+    if slider.type == .NONE {
+        log.errorf("map parse :: unknown slider type in '{}'", params)
+        notify_error("map parse: unknown slider type in '%s'", params)
+        return false
+    }
+    return true
 }
 
 @(require_results)
-mapset_parse_osu_slider_nodes :: proc(value: string, start_pos: vec2, alloc: mem.Allocator = context.allocator) -> []Slider_Node {
+mapset_parse_osu_slider_nodes :: proc(value: string, start_pos: vec2, alloc: mem.Allocator = context.allocator) -> (nodes: []Slider_Node, ok: bool) {
     temp := virtual.arena_temp_begin(&memory.arenas[.FRAME])
     defer virtual.arena_temp_end(temp)
 
     sections := strings.split(value, "|", virtual.arena_allocator(temp.arena))
-    result := make_slice([]Slider_Node, len(sections) + 1, alloc)
+    nodes = make_slice([]Slider_Node, len(sections) + 1, alloc)
 
-    result[0] = start_pos
+    nodes[0] = start_pos
 
-    ok: bool
     for section, i in sections {
-        node := &result[i + 1]
+        node := &nodes[i + 1]
 
         sep_at := strings.index_byte(section, ':')
-        assert(sep_at > 0, "slider parse error :: unsized node")
-        node.x, ok = strconv.parse_f32(section[:sep_at]); assert(ok, "slider parse error :: node.x is not a number")
-        node.y, ok = strconv.parse_f32(section[sep_at + 1:]); assert(ok, "slider parse error :: node.y is not a number")
+        if sep_at <= 0 {
+            log.errorf("map parse :: slider node '{}' is missing ':'", section)
+            notify_error("map parse: malformed slider node '%s'", section)
+            return nodes, false
+        }
+        node.x = parse_f32_strict(section[:sep_at], "slider node x") or_return
+        node.y = parse_f32_strict(section[sep_at + 1:], "slider node y") or_return
     }
 
-    return result
+    return nodes, true
 }
 
 

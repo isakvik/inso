@@ -8,16 +8,25 @@ known discrepancies
         this seems like an optimization on osu's side that creates a single texture from circle and overlays?
 
 old features
-    combobreak sound
     cursor ripple
     slider body color from combo color
+    sliderball tint
+
+skinning
+    cursormiddle element + smooth interpolated trail for cursormiddle skins (osu.odin cursor_trail_draw)
+    cursor expand on click, CursorExpand/CursorRotate/CursorCentre ini keys
+    skin.ini AnimationFramerate (sliderball hardcoded to 1s loop; judgements/followpoints use own timing)
+    remaining ini keys: SliderBallFlip, HitCircleOverlayAboveNumber, LayeredHitSounds
+    score/combo number fonts (ScorePrefix, ComboPrefix, default-x/dot/percent glyphs) - scorescreen uses none of these yet
+    beatmap skin images
+    followpoint leadin animation (tween written but disabled, osu_hitobjects.odin followpoint_emit)
 
 extra features
     rotate slider from head
     mine elements
 
 scripting
-    Animated_Drawable - pass a spritesheet
+    animated drawable - pass a spritesheet
 
 TEST
     custom buffers
@@ -37,16 +46,10 @@ game
 
 platform
     lua profiling (nested profiler block support)
-    input thread
     builtin resource pack
     file watch parity across platforms
         linux recursive watch support
         windows unicode filename conversion
-
-beta hardening
-    replace user/data-path asserts with recoverable errors
-        map parsing
-        config io
 
 YEAST mode
     screen capture must work

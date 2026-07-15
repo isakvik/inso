@@ -3,6 +3,7 @@ package inso
 import "core:container/queue"
 import "core:log"
 import "core:math/linalg"
+import "core:strings"
 
 import sb "swap_buffer"
 import "slotmap"
@@ -32,12 +33,13 @@ Beatmap :: struct {
     fixed_update_dt_ms: f64,
     last_fixed_tick_ms: f64,
 
-    // note(isak): editor auto-hit tracks the previous frame's playhead so it only hits objects whose start
-    // crossed during continuous playback; seeks snap it to the landing time so jumped-over objects are skipped.
+    // note(isak): editor auto-hit tracks the previous frame's time so it only hits objects whose start
+    // crossed on the current frame; seeks snap it to the landing time so jumped-over objects are skipped.
     auto_last_hit_time_ms: f64,
     
     hitobjects: []Hitobject,
     slider_paths: []Slider_Path,
+    score: Score_State,
     
     judgements: queue.Queue(Judgement),
     expiring_hitobjects: sb.Swap_Buffer(int), // note(isak): keeps track of visible objects until their expiry
@@ -64,6 +66,9 @@ Beatmap :: struct {
     bg_handle: Drawable_Handle,
 
     gameplay_expiring_gfx: sb.Swap_Buffer(Drawable_Handle),
+    // note(isak): judgements live in their own buffer drawn after gameplay_expiring_gfx, so they
+    // always stack above the hit pop animation regardless of same-frame insertion order
+    judgement_expiring_gfx: sb.Swap_Buffer(Drawable_Handle),
     map_expiring_gfx: sb.Swap_Buffer(Drawable_Handle),
 
     drawables: slotmap.Slotmap(Drawable),
@@ -75,9 +80,9 @@ Beatmap :: struct {
     animations: queue.Queue(Animation),
 }
 
-beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
+beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap, kept_music: Sound = nil) {
     beatmap^ = { map_reference = map_reference }
-    beatmap_load(beatmap)
+    _beatmap_allocate_internals(beatmap, kept_music)
 
     if game.active_inso_map.double_mouse {
         ok := mouse_enable_double_mouse_mode()
@@ -91,6 +96,9 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     
     // map logic init
 
+    for setting in Difficulty_Setting {
+        map_difficulty_defaults[setting] = map_difficulty_setting(game.active_map, setting)^
+    }
     mods_apply_to_map()
 
     beatmap.circle_radius_osupx = convert_circle_size_to_radius_osupx(game.active_map.diff_circle_size)
@@ -118,20 +126,22 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
     beatmap.playfield_translation_osupx = {}
     beatmap.playfield_rotation_rad = 0
     beatmap.playfield_rotation_anchor_osupx = {256, 192}
-    
-    game.playfield_dirty_transform = true
-    
-    queue.init(&beatmap.judgements, 8192, memory.allocators[.JUDGEMENTS])
-    queue.append(&beatmap.judgements, null_judgement)
-    hit_error_bar_reset(&game.hit_error_bar)
-    sb.init(&beatmap.expiring_hitobjects, 256, memory.allocators[.MAPSET])
+
+    // note(isak): rebuild eagerly - the script's on_init converts through this transform
+    // (set_pos_px et al), and the lazy rebuild in osu_on_update comes too late for it
+    game.playfield_transform = playfield_build_transform()
+    game.playfield_dirty_transform = false
+
+    for setting in Difficulty_Setting {
+        difficulty_adjust_settings[setting] = map_difficulty_setting(game.active_map, setting)^
+    }
     
     // map graphics init
     
     create_default_elements(&beatmap.elements, &beatmap.animations)
     mods_apply_to_graphics()
 
-    beatmap.bg_handle = TEST_bg_drawable(game.active_map.bg_filename, game.active_inso_map.bg_pipeline_name)
+    beatmap.bg_handle = create_bg_drawable(game.active_map.bg_filename, game.active_inso_map.bg_pipeline_name)
     bg_dim_apply(game.user_config.bg_dim)
 
     if lua_cares_about_event(.ON_INIT) {
@@ -140,12 +150,12 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap) {
         lua_beatmap.in_init = false
     }
 
-    beatmap.followpoint_connections = make([dynamic]Followpoint_Connection, 0, len(beatmap.hitobjects), memory.allocators[.MAPSET])
+    beatmap.followpoint_connections = make([dynamic]Followpoint_Connection, 0, len(beatmap.hitobjects), memory.allocators[.MAP_DATA])
     build_followpoint_connections(beatmap)
 }
 
 beatmap_on_update :: proc(beatmap: ^Beatmap) {
-    if sound_is_finished(&beatmap.music) {
+    if sound_is_finished(&beatmap.music) && game.mode != .PLAY {
         beatmap_open(beatmap.map_reference)
     }
     
@@ -160,8 +170,10 @@ beatmap_on_update :: proc(beatmap: ^Beatmap) {
         } else {
             sound_pause(&beatmap.music)
         }
+    } else if game.mode == .PLAY && sound_is_finished(&beatmap.music) && !beatmap.score.completed {
+        beatmap.music_time_ms += game.dt * f64(game.paused ? 0 : game.time_rate)
     } else {
-        // note(isak): map play time is determined by the sound library (and whether we were able to play music or not), 
+        // note(isak): map play time is determined by the sound library (and whether we were able to play music or not),
         // but song time interpolation is required because BASS reports play position in buffer size granularity
         beatmap.music_time_ms = beatmap_music_position_interpolated_ms(&game.beatmap)
     }
@@ -232,11 +244,12 @@ beatmap_rewind_timeline :: proc(beatmap: ^Beatmap) {
     beatmap.last_fixed_tick_ms = now_ms
 }
 
+// note(isak): the music stream deliberately survives teardown - beatmap_open owns its lifetime
+// so an unchanged audio file can keep streaming across reloads
 beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
     lua_cleanup()
     game_sounds_clear()
-    sound_destroy(&beatmap.music)
-    
+
     for &hobj in beatmap.hitobjects {
         hobj.gfx_handles = {}
         hobj.gfx_handles_backing = {}
@@ -247,42 +260,14 @@ beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
     sb.destroy(&beatmap.phase_transitions)
     sb.destroy(&beatmap.map_expiring_gfx)
     sb.destroy(&beatmap.gameplay_expiring_gfx)
+    sb.destroy(&beatmap.judgement_expiring_gfx)
     sb.destroy(&beatmap.expiring_hitobjects)
     slotmap.destroy(&beatmap.drawables)
     queue.destroy(&beatmap.judgements)
 }
 
-beatmap_load :: proc(beatmap: ^Beatmap) {
-    // hitobjects are reallocated from the mapset arena, so any body cache generation they
-    // carry must be unable to match the atlas
-    slider_atlas_reset()
-
-    ok: bool
-    beatmap.music, ok = sound_stream_init(game.active_map.audio_filepath, prescan = true)
-    if ok {
-        sound_play(&beatmap.music, start_paused = true, loop = true, category = .MUSIC)
-    } else {
-        log.error("tried to open map sound file, but failed:", game.active_map.audio_filepath)
-    }
-    
-    if game.active_inso_map.lua_entry_point != "" {
-        lua_create_beatmap_script_context(game.active_inso_map.lua_entry_point)
-    }
-    
-    beatmap.next_drawable_id = 1
-    queue.init(&beatmap.elements, 1024, memory.allocators[.MAPSET])
-    queue.append(&beatmap.elements, null_element)
-    queue.init(&beatmap.animations, 1024, memory.allocators[.MAPSET])
-    
-    sb.init(&beatmap.phase_transitions, 256, memory.allocators[.DRAWABLES])
-
-    sb.init(&beatmap.gameplay_expiring_gfx, 8192, memory.allocators[.DRAWABLES])
-    sb.init(&beatmap.map_expiring_gfx, 8192, memory.allocators[.DRAWABLES])
-    slotmap.init(&beatmap.drawables, 8192, memory.allocators[.DRAWABLES])
-    _ = slotmap.insert(&beatmap.drawables, null_drawable)
-}
-
-beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false) {
+beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_assets: bool = false) {
+    ref, keep_position := ref, keep_position
     load_start := time_s_since_beginning_of_program()
 
     music_time_before_load: f64
@@ -290,25 +275,73 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false) {
         music_time_before_load = game.beatmap.music_time_ms
     }
 
+    fast_reload_path := game.beatmap_active && !reload_assets &&
+        ref.folder_path == game.beatmap.map_reference.folder_path &&
+        ref.osu_filename == game.beatmap.map_reference.osu_filename
+
+    music := game.beatmap.music
+    old_audio_filepath: string
     if game.beatmap_active {
-        cleanup_textures_for_rendering()
+        old_audio_filepath = strings.clone(game.active_map.audio_filepath, context.temp_allocator)
         beatmap_on_destroy(&game.beatmap)
-        mapset_free(game.active_mapset)
     }
 
-    ok: bool
-    game.active_mapset, ok = mapset_open_for_editing(ref.folder_path, ref.osu_filename)
-    assert(ok)
-    game.active_map = &game.active_mapset.osu_map
-    game.active_inso_map = &game.active_mapset.inso_map
+    if fast_reload_path {
+        // note(isak): in case fast reload fails, we try again with a complete reload
+        fast_reload_path = mapset_reload_map_data(game.active_mapset)
+    }
+    if !fast_reload_path {
+        if game.beatmap_active {
+            cleanup_textures_for_rendering()
+            mapset_free(game.active_mapset)
+            game.beatmap_active = false
+        }
 
-    prepare_textures_for_rendering()
-    beatmap_on_init(ref, &game.beatmap)
+        fallback_refs := [?]Map_Reference{
+            ref,
+            game.beatmap.map_reference,
+            len(app.map_references) > 0 ? app.map_references[0] : Map_Reference{},
+        }
+        opened: bool
+        try_loop: for try_ref, i in fallback_refs {
+            if try_ref.folder_path == "" do continue
+            for earlier_ref in fallback_refs[:i] {
+                if try_ref == earlier_ref do continue try_loop
+            }
+
+            game.active_mapset, opened = mapset_open_for_editing(try_ref.folder_path, try_ref.osu_filename)
+            if opened {
+                keep_position &&= try_ref == ref
+                ref = try_ref
+                break
+            }
+            notify_error("beatmap: couldn't open '%s%s'", try_ref.folder_path, try_ref.osu_filename)
+            mapset_free(game.active_mapset)
+        }
+        if !opened {
+            log.panic("beatmap_open :: no loadable beatmap found")
+        }
+        game.active_map = &game.active_mapset.osu_map
+        game.active_inso_map = &game.active_mapset.inso_map
+
+        prepare_textures_for_rendering()
+
+        if game.active_inso_map.use_backbuffer {
+            fbo_clear(&window.framebuffers[.BACKBUFFER])
+        }
+    }
+
+    if game.active_map.audio_filepath != old_audio_filepath {
+        sound_destroy(&music)
+        music = nil
+    }
+
+    beatmap_on_init(ref, &game.beatmap, music)
     sound_set_speed(&game.beatmap.music, game.time_rate)
     game.beatmap_active = true
     window.transparent = false
 
-    notify_info("loaded beatmap in %.3vs", time_s_since_beginning_of_program() - load_start)
+    notify_info("%sloaded beatmap in %.3vs", "re" if fast_reload_path else "", time_s_since_beginning_of_program() - load_start)
 
     if keep_position {
         if music_time_before_load >= 0 {
@@ -331,6 +364,44 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false) {
     // --
 }
 
+_beatmap_allocate_internals :: proc(beatmap: ^Beatmap, kept_music: Sound = nil) {
+    if kept_music != nil {
+        beatmap.music = kept_music
+        sound_pause(&beatmap.music)
+        sound_set_position_ms(&beatmap.music, 0)
+    } else {
+        ok: bool
+        beatmap.music, ok = sound_stream_init(game.active_map.audio_filepath, prescan = true)
+        if ok {
+            sound_play(&beatmap.music, start_paused = true, loop = true, category = .MUSIC)
+        } else {
+            log.error("tried to open map sound file, but failed:", game.active_map.audio_filepath)
+        }
+    }
+
+    if game.active_inso_map.lua_entry_point != "" {
+        lua_create_beatmap_script_context(game.active_inso_map.lua_entry_point)
+    }
+    
+    beatmap.next_drawable_id = 1
+    queue.init(&beatmap.elements, 1024, memory.allocators[.MAP_DATA])
+    queue.append(&beatmap.elements, null_element)
+    queue.init(&beatmap.animations, 1024, memory.allocators[.MAP_DATA])
+    
+    sb.init(&beatmap.phase_transitions, 256, memory.allocators[.DRAWABLES])
+
+    sb.init(&beatmap.gameplay_expiring_gfx, 8192, memory.allocators[.DRAWABLES])
+    sb.init(&beatmap.judgement_expiring_gfx, 1024, memory.allocators[.DRAWABLES])
+    sb.init(&beatmap.map_expiring_gfx, 8192, memory.allocators[.DRAWABLES])
+    slotmap.init(&beatmap.drawables, 8192, memory.allocators[.DRAWABLES])
+    _ = slotmap.insert(&beatmap.drawables, null_drawable)
+    
+    queue.init(&beatmap.judgements, 8192, memory.allocators[.JUDGEMENTS])
+    queue.append(&beatmap.judgements, null_judgement)
+    hit_error_bar_reset(&game.hit_error_bar)
+    sb.init(&beatmap.expiring_hitobjects, 256, memory.allocators[.MAP_DATA])
+}
+
 beatmap_seek :: proc(beatmap: ^Beatmap, pos: f64) {
     sound_set_position_ms(&game.beatmap.music, pos)
     beatmap.music_time_ms = beatmap_music_position_interpolated_ms(beatmap)
@@ -350,6 +421,11 @@ beatmap_reset_object_state :: proc(beatmap: ^Beatmap) {
     }
     sb.reset(&beatmap.gameplay_expiring_gfx)
 
+    for handle in beatmap.judgement_expiring_gfx.current {
+        slotmap.remove(&beatmap.drawables, handle)
+    }
+    sb.reset(&beatmap.judgement_expiring_gfx)
+
     // note(isak): followpoints are immediate-mode (no drawables to rewind), but the forward-only cursor
     // must rewind to the start so it can re-scan toward the seek target
     beatmap.followpoint_cursor = 0
@@ -359,6 +435,12 @@ beatmap_reset_object_state :: proc(beatmap: ^Beatmap) {
             hitobject_reset_transient(&hobj)
         }
     }
+
+    // note(isak): every judgement_index was just zeroed, so the old entries are unreachable -
+    // truncate back to the null sentinel and re-judge from scratch
+    queue.clear(&beatmap.judgements)
+    queue.append(&beatmap.judgements, null_judgement)
+    beatmap.score = {}
 }
 
 beatmap_music_time_ms :: proc(beatmap: ^Beatmap) -> f64 {

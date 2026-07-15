@@ -116,7 +116,7 @@ window_init :: proc(rect: Rect, mode: Window_Mode) {
 
     window.rect = rect
     window.handle = sdl.CreateWindow(
-        fmt.ctprintf("inso! - v%s", VERSION),
+        fmt.ctprintf("inso - v%s", VERSION),
         i32(rect.w), i32(rect.h), sdl.WINDOW_OPENGL | sdl.WINDOW_RESIZABLE | sdl.WINDOW_TRANSPARENT)
     window.aspect_ratio = f32(rect.h) / f32(rect.w)
     window.pixel_density = sdl.GetWindowPixelDensity(window.handle)

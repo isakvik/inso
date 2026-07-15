@@ -4,10 +4,7 @@ import "core:time"
 import sb "swap_buffer"
 import "slotmap"
 
-import "core:log"
 import "core:math"
-import "core:math/linalg"
-import vmem "core:mem/virtual"
 import "core:strings"
 
 import sdl "vendor:sdl3"
@@ -204,13 +201,6 @@ Slider_Flag :: enum {
     FINALIZED, // note(isak): scoring done at end_time; the slider lingers for its fade-out tail
 }
 
-Slider_Handles :: struct {
-    ball, follow:                           Drawable_Handle,
-    end_circle, end_overlay, end_repeat:    Drawable_Handle, // tail position
-    head_circle, head_overlay, head_repeat: Drawable_Handle, // head turnaround position
-    ticks: []Drawable_Handle,
-}
-
 // note(isak): exposed to lua
 Slider_Part :: enum u8 {
     BALL,
@@ -254,7 +244,13 @@ Slider_State :: struct {
     slide_sound: slotmap.Handle,
     whistle_sound: slotmap.Handle,
 
-    gfx: Slider_Handles,
+    gfx: struct {
+        ball, follow:                           Drawable_Handle,
+        end_circle, end_overlay, end_repeat:    Drawable_Handle, // tail position
+        head_circle, head_overlay, head_repeat: Drawable_Handle, // head turnaround position
+        clicked_circle, clicked_overlay:        Drawable_Handle, // head click animation, owner-drawn under the ball
+        ticks: []Drawable_Handle,
+    },
     // note(isak): per-part element override set from lua (0 = use the builtin slot)
     custom_elements: [Slider_Part]Element_ID,
 
@@ -463,6 +459,7 @@ Judgement_Type :: enum {
     SLIDER_HEAD_OK,
     SLIDER_HEAD_GOOD,
     SLIDER_HEAD_MARVELOUS,
+    SLIDER_END_MISS,
     
     IGNORED_HIT, // note(isak): intended for when we need a result that doesn't affect score
     COMBO_BREAK, // note(isak): intended for scripted misses
@@ -472,6 +469,22 @@ Judgement_Type :: enum {
 Judgement :: struct {
     result: Judgement_Type,
     time: f64,
+    time_error_ms: f64,
+    hobj_index: int,
+}
+
+Score_State :: struct {
+    hit_counts: [Judgement_Type]int,
+    combo: int,
+    max_combo: int,
+    completed: bool, // note(isak): set once when the last scoring object is judged; gates the results screen, file save and on_map_complete
+
+    // note(isak): accumulated in judgement_new so stat queries stay O(1) on marathon maps
+    hit_errors: struct {
+        sum, sum_squares:     f64,
+        early_sum, late_sum:  f64,
+        count, early_count, late_count: int,
+    },
 }
 
 Inso_Map :: struct {
@@ -545,11 +558,14 @@ osu_on_update :: proc(dt: f64) {
 
     window_set_resizable(game.mode != .PLAY)
     windows_key_set_disabled(game.mode == .PLAY && window.focused)
+    platform_set_scheduling_priority(game.mode == .PLAY)
 
     if game.mode != .PLAY {
         updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
         if updated_systems[.OSU_FILE] || updated_systems[.INSO_FILE] || updated_systems[.SCRIPTS] {
-            beatmap_open(game.beatmap.map_reference, true)
+            // note(isak): the .inso allocates into the MAPSET arena (render targets, extra bits),
+            // so its changes need the full asset reload; .osu/script changes regen in place
+            beatmap_open(game.beatmap.map_reference, true, reload_assets = updated_systems[.INSO_FILE])
         }
         if updated_systems[.SHADERS] {
             mapset_reinit_custom_shaders(game.active_mapset)
@@ -558,7 +574,6 @@ osu_on_update :: proc(dt: f64) {
     
     // note(isak): game logic - map
     
-    // todo(isak): this really handles a bunch of debug stuff too. fix up the modes and such
     #partial switch game.mode {
         case .PLAY:
             handle_play_input_events()
@@ -598,6 +613,7 @@ osu_on_update :: proc(dt: f64) {
     process_hitobject_hittesting(visible_hobjs, map_time)
     process_hitobject_phase_transitions()
     game_sounds_process_expiry()
+    results_screen_update()
 
     // game render
     
@@ -614,6 +630,7 @@ osu_on_update :: proc(dt: f64) {
     hitobjects_draw(visible_hobjs, map_time)
     
     process_and_draw_expiring_gfx_refs(&game.beatmap.gameplay_expiring_gfx)
+    process_and_draw_expiring_gfx_refs(&game.beatmap.judgement_expiring_gfx)
     
     r_bind_layer_and_push_current_state(.BACKGROUND, transform = game.playfield_transform)
     process_and_draw_expiring_gfx_refs(&game.beatmap.map_expiring_gfx)
@@ -641,8 +658,8 @@ osu_on_update :: proc(dt: f64) {
         render_timeline_clipspace(&game.ui_timeline)
 
         push_text(&window.renderer, "Edit mode",
-            pos     = {window.rect.w / 2, uisc(30)},
-            size    = uisc(24),
+            pos     = {window.rect.w / 2, to_ui_scale(30)},
+            size    = to_ui_scale(24),
             color   = {255, 255, 255, 150},
             align_h = .Center,
             align_v = .Bottom)
@@ -655,6 +672,7 @@ osu_on_update :: proc(dt: f64) {
     if !lua_beatmap.hide_skin_cursor {
         r_bind_layer_and_push_current_state(.CURSOR, transform = window.screenspace_transform)
 
+        cursor_expand_update()
         cursor_trail_draw(&cursor_trails[0], mouse.pos)
         cursor_draw(mouse.pos, skin_texture(.CURSOR))
         if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {
@@ -662,6 +680,8 @@ osu_on_update :: proc(dt: f64) {
             cursor_draw(mouse_secondary.pos, skin_texture(.CURSOR))
         }
     }
+
+    results_screen_draw()
 
     if game.input.rebinding_key != .NONE {
         r_check_and_bind_layer(.PLATFORM)
@@ -673,14 +693,14 @@ osu_on_update :: proc(dt: f64) {
             
         prompt := strings.concatenate({"Rebinding: ", rebindable_input_key_names[game.input.rebinding_key]}, context.temp_allocator)
         push_text(&window.renderer, prompt,
-            pos = {window.rect.w / 2, window.rect.h / 2 - uisc(12)},
-            size = uisc(16),
+            pos = {window.rect.w / 2, window.rect.h / 2 - to_ui_scale(12)},
+            size = to_ui_scale(16),
             color = {255, 255, 255, 150},
             align_h = .Center,
             align_v = .Middle)
         push_text(&window.renderer, "Press any key...",
-            pos = {window.rect.w / 2, window.rect.h / 2 + uisc(12)},
-            size = uisc(16),
+            pos = {window.rect.w / 2, window.rect.h / 2 + to_ui_scale(12)},
+            size = to_ui_scale(16),
             color = {255, 255, 255, 150},
             align_h = .Center,
             align_v = .Middle)
@@ -688,13 +708,9 @@ osu_on_update :: proc(dt: f64) {
 }
 
 hitobjects_draw :: proc(visible_hobjs: []Hitobject, map_time: f64) {
-    // note(isak): objects overlapping in gameplay time ([start, end]) form clusters. visible_hobjs is
-    // start-sorted, so clusters are contiguous runs split where an object starts after the running max
-    // end time. within a cluster every object's gfx draws above every slider path (2B: heads landing
-    // during a slider sit on its body); whole clusters stack by time, so a slider that ends before an
-    // object begins keeps its path above that object. both strata draw earliest start on top, like osu.
-    // chained overlaps merge clusters, which can lift an object's gfx above the path of a slider that
-    // ended before it began - accepted approximation, the chain is concurrent through the middle object.
+    // note(isak): we preprocess render order into sets so that we can support two cases for paths:
+    // - sliderpaths that end before the next slider should go on top of succeeding objects (stacking)
+    // - slider that begin during other sliders should have their elements go on top of the path (2B)
     cluster_bounds := make([dynamic]int, 0, len(visible_hobjs) + 1, context.temp_allocator)
     running_end_ms := math.inf_f64(-1)
     for &hobj, i in visible_hobjs {
@@ -734,18 +750,52 @@ hitobjects_draw :: proc(visible_hobjs: []Hitobject, map_time: f64) {
                 }
             }
         }
+
+        #reverse for &hobj in cluster {
+            if hobj.type != .SLIDER do continue
+            r_check_and_bind_layer(.HITOBJECTS)
+            slider_render_tracking_gfx(&hobj, map_time)
+        }
     }
 }
 
 cursor_draw :: proc(pos: vec2, tex_index: u32) {
-    cursor_size := cursor_size_px()
+    cursor_size := cursor_size_px() * transition_mix(cursor_expand, 1, CURSOR_EXPAND_FACTOR)
     cursor_rect: Rect = { f32(pos.x), f32(pos.y), cursor_size, cursor_size }
+    angle := f32(time_s_since_beginning_of_program()) if game.active_skin.cursor_rotate else 0
     r_draw_layout_rect(&window.renderer.quad_geometry, cursor_rect, .CENTER, color_white,
-        tex_index, f32(time_s_since_beginning_of_program()))
+        tex_index, angle)
+
+    // note(isak): cursormiddle sits centered on top and neither rotates nor expands, like stable
+    if window.skin_textures[.CURSOR_MIDDLE].tex_id != 0 {
+        size := cursor_companion_size_px(.CURSOR_MIDDLE)
+        r_draw_layout_rect(&window.renderer.quad_geometry,
+            { f32(pos.x), f32(pos.y), size.x, size.y }, .CENTER,
+            color_white, skin_texture(.CURSOR_MIDDLE))
+    }
 }
 
 cursor_size_px :: proc() -> f32 {
     return 160 * (window.rect.h / 1440) * game.user_config.cursor_size_multiplier
+}
+
+cursor_companion_size_px :: proc(el: Skin_Element_Type) -> vec2 {
+    cursor_metrics := game.active_skin.elements[.CURSOR].metrics
+    if cursor_metrics.x <= 0 do return {cursor_size_px(), cursor_size_px()}
+    return game.active_skin.elements[el].metrics * (cursor_size_px() / cursor_metrics.x)
+}
+
+CURSOR_EXPAND_FACTOR :: 1.3
+CURSOR_EXPAND_ANIM_S :: 0.1
+
+cursor_expand: Transition
+
+cursor_expand_update :: proc() {
+    pressed := button_is_down(mouse.buttons[.LEFT]) || button_is_down(mouse.buttons[.RIGHT])
+    if game.mode == .PLAY {
+        pressed = pressed || controller_key_down(1) || controller_key_down(2)
+    }
+    transition_update(&cursor_expand, pressed && game.active_skin.cursor_expand, CURSOR_EXPAND_ANIM_S)
 }
 
 // note(isak): mcosu's non-smooth trail timing (osu_cursor_trail_length / _spacing); the smooth
@@ -793,14 +843,7 @@ cursor_trail_draw :: proc(trail: ^Cursor_Trail, pos: vec2) {
         trail.count -= 1
     }
 
-    // note(isak): the cursor is drawn as a fixed-size square, so the trail derives its size from the
-    // images' natural size ratio - a skin's small trail dot stays small relative to its cursor
-    cursor_metrics := game.active_skin.elements[.CURSOR].metrics
-    trail_metrics  := game.active_skin.elements[.CURSOR_TRAIL].metrics
-    size := vec2{cursor_size_px(), cursor_size_px()}
-    if cursor_metrics.x > 0 {
-        size = trail_metrics * (cursor_size_px() / cursor_metrics.x)
-    }
+    size := cursor_companion_size_px(.CURSOR_TRAIL)
 
     for i in 0..<trail.count {
         part := trail.parts[(trail.head + i) %% CURSOR_TRAIL_MAX_PARTS]
@@ -884,162 +927,6 @@ rebindable_input_key_names := [Rebindable_Input_Key]string {
     .K2 = "Secondary",
 }
 
-rebindable_input_key_code :: proc(key: Rebindable_Input_Key) -> cstring {
-    return sdl.GetScancodeName(game.input.keys[key])
-}
-
-
-handle_play_input_events :: proc() {
-    if key_is_pressed(.ESCAPE) {
-        game.mode = .EDITOR
-        beatmap_open(game.beatmap.map_reference, true)
-        beatmap_pause(&game.beatmap, true)
-    }
-    
-    if key_is_pressed(.KP_PLUS) {
-        game.user_config.universal_offset_ms += key_is_down(.LSHIFT) ? 1 : 5
-    }
-    if key_is_pressed(.KP_MINUS) {
-        game.user_config.universal_offset_ms -= key_is_down(.LSHIFT) ? 1 : 5
-    }
-    
-    if key_is_pressed(.PAGEUP) {
-        game.time_rate *= 1.5
-        sound_set_speed(&game.beatmap.music, game.time_rate)
-    }
-    if key_is_pressed(.PAGEDOWN) {
-        game.time_rate /= 1.5
-        sound_set_speed(&game.beatmap.music, game.time_rate)
-    }
-    
-    game.input.k1.is_down = keyboard.buttons[game.input.keys[.K1]]
-    game.input.k1.was_down = keyboard.buttons_prev_frame[game.input.keys[.K1]]
-    game.input.k2.is_down = keyboard.buttons[game.input.keys[.K2]]
-    game.input.k2.was_down = keyboard.buttons_prev_frame[game.input.keys[.K2]]
-    if game.input.mouse_keys_enabled {
-        game.input.m1 = mouse.buttons[.LEFT]
-        game.input.m2 = mouse.buttons[.RIGHT]
-    }
-    
-    old_mouse_pos := game.input.mouse_pos
-    game.input.mouse_pos = screenspace_to_playfield_osupx(vec2{mouse.pos.x, mouse.pos.y})
-    
-    if lua_cares_about_event(.ON_CURSOR_MOVED) && game.input.mouse_pos != old_mouse_pos {
-        lua_beatmap_on_cursor_moved(game.input.mouse_pos)
-    }
-
-    if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {
-        game.input.mouse_secondary_pos = screenspace_to_playfield_osupx(vec2{mouse_secondary.pos.x, mouse_secondary.pos.y})
-        game.input.ms1 = mouse_secondary.buttons[.LEFT]
-        game.input.ms2 = mouse_secondary.buttons[.RIGHT]
-    }
-    
-    game.input.available_presses = 0
-    if game.input.mouse_keys_enabled {
-        if button_is_pressed(game.input.k1) && !button_is_down(game.input.m1) do game.input.available_presses += 1
-        if button_is_pressed(game.input.k2) && !button_is_down(game.input.m2) do game.input.available_presses += 1
-        if button_is_pressed(game.input.m1) && !button_is_down(game.input.k1) do game.input.available_presses += 1
-        if button_is_pressed(game.input.m2) && !button_is_down(game.input.k2) do game.input.available_presses += 1
-    } else {
-        if button_is_pressed(game.input.k1) do game.input.available_presses += 1
-        if button_is_pressed(game.input.k2) do game.input.available_presses += 1
-    }
-    
-    if lua_cares_about_event(.ON_KEY_DOWN) {
-        for code in sdl.Scancode {
-            if key_is_pressed(code) do lua_beatmap_on_key_pressed(code)
-        }
-    }
-    if lua_cares_about_event(.ON_KEY_UP) {
-        for code in sdl.Scancode {
-            if key_is_released(code) do lua_beatmap_on_key_released(code)
-        }
-    }
-    if lua_cares_about_event(.ON_CONTROLLER_PRESSED) {
-        if button_is_pressed(game.input.k1) do lua_beatmap_on_controller_pressed("k1")
-        if button_is_pressed(game.input.k2) do lua_beatmap_on_controller_pressed("k2")
-        if button_is_pressed(game.input.m1) do lua_beatmap_on_controller_pressed("m1")
-        if button_is_pressed(game.input.m2) do lua_beatmap_on_controller_pressed("m2")
-    }
-    if lua_cares_about_event(.ON_CONTROLLER_RELEASED) {
-        if button_is_released(game.input.k1) do lua_beatmap_on_controller_released("k1")
-        if button_is_released(game.input.k2) do lua_beatmap_on_controller_released("k2")
-        if button_is_released(game.input.m1) do lua_beatmap_on_controller_released("m1")
-        if button_is_released(game.input.m2) do lua_beatmap_on_controller_released("m2")
-    }
-}
-
-EDITOR_BEAT_DIVISOR :: 4
-
-handle_editor_input_events :: proc() {
-    if key_is_pressed(.ESCAPE) || key_is_pressed(.SPACE) {
-        beatmap_pause(&game.beatmap, !game.paused)
-    }
-    if key_is_pressed(.F5) && !key_is_down(.LCTRL) {
-        beatmap_play(&game.beatmap, !key_is_down(.LSHIFT))
-    }
-    if key_is_pressed(.R) {
-        beatmap_open(game.beatmap.map_reference, !key_is_down(.LSHIFT))
-    }
-    
-    if key_is_pressed(.HOME) {
-        game.time_rate = 1
-        sound_set_speed(&game.beatmap.music, game.time_rate)
-    }
-    if key_is_pressed(.PAGEUP) {
-        game.time_rate *= 1.5
-        sound_set_speed(&game.beatmap.music, game.time_rate)
-    }
-    if key_is_pressed(.PAGEDOWN) {
-        game.time_rate /= 1.5
-        sound_set_speed(&game.beatmap.music, game.time_rate)
-    }
-    
-    if key_is_pressed(.Z) {
-        if len(game.beatmap.hitobjects) > 0 && 
-           !f64_within(game.beatmap.music_time_ms, game.beatmap.hitobjects[0].start_time_ms, 3) {
-            editor_seek(&game.beatmap, game.beatmap.hitobjects[0].start_time_ms)
-        }
-        else {
-            editor_seek(&game.beatmap, game.beatmap.start_time_ms)
-        }
-    }
-
-    if key_is_down(.LCTRL) {
-        if key_is_pressed(.LEFT)  do editor_seek_bookmark(&game.beatmap, -1)
-        if key_is_pressed(.RIGHT) do editor_seek_bookmark(&game.beatmap, +1)
-        if key_is_pressed(.O)     do file_dialog_open_osu()
-    }
-
-    if !app.ui_wants_mouse {
-        steps := -int(math.round(mouse.scroll_delta)) // scroll up (>0) seeks backward
-        if !key_is_down(.LCTRL) {
-            if key_is_pressed(.LEFT)  do steps -= 1
-            if key_is_pressed(.RIGHT) do steps += 1
-        }
-
-        if steps != 0 do editor_scrub_steps(&game.beatmap, steps)
-    }
-    
-    game.input.mouse_pos = screenspace_to_playfield_osupx(vec2{mouse.pos.x, mouse.pos.y})
-}
-
-handle_menu_input_events :: proc() {
-    if key_is_pressed(.S) {
-        if key_is_down(.LCTRL) && key_is_down(.LSHIFT) && key_is_down(.LALT) {
-            skin_reload(game.active_skin)
-        }
-    }
-}
-
-handle_universal_input_events :: proc() {
-    if key_is_pressed(.F10) {
-        game.input.mouse_keys_enabled = !game.input.mouse_keys_enabled
-        notify_warn("mouse keys enabled" if game.input.mouse_keys_enabled else "mouse keys disabled")
-    }
-}
-
-
 
 //////////////////////////////////////////////////////
 // note(isak): managed game sound API
@@ -1119,7 +1006,7 @@ game_sounds_clear :: proc() {
         sound_destroy(&s)
     }
     slotmap.destroy(&game.sounds)
-    vmem.arena_free_all(&memory.arenas[.SOUND])
+    free_all(memory.allocators[.SOUND])
     slotmap.init(&game.sounds, allocator = memory.allocators[.SOUND], capacity = 128)
     _ = slotmap.insert(&game.sounds, null_sound)
 

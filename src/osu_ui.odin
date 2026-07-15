@@ -1,8 +1,12 @@
 package inso
 
 import "core:fmt"
+import "core:log"
 import "core:math/ease"
 import "core:math/linalg"
+import os "core:os"
+import "core:strings"
+import "core:time"
 
 //////////////////////////////////////////////////////
 // note(isak): ui scaling
@@ -13,7 +17,7 @@ ui_scale_recompute :: proc() {
     game.ui_scale = (window.rect.h / UI_REFERENCE_HEIGHT) * game.user_config.ui_scale
 }
 
-uisc :: proc(v: f32) -> f32 {
+to_ui_scale :: proc(v: f32) -> f32 {
     return v * game.ui_scale
 }
 
@@ -29,8 +33,8 @@ HIT_COLOR_GOOD :: color_lime_green
 HIT_COLOR_MARVELOUS :: color_light_blue
 
 Hit_Error_Entry :: struct {
-    error_ms:    f64, // click_time - object_time; negative = early, positive = late
-    time_at:     f64, // music time when recorded, for fade-out
+    error_ms:    f64, // note(isak): click_time - object_time; negative = early, positive = late
+    time_at:     f64,
     judgement:   Judgement_Type,
 }
 
@@ -63,12 +67,12 @@ hit_error_bar_draw_screenspace :: proc(hit_error_bar: ^Hit_Error_Bar) {
     
     r_push_transform(window.screenspace_transform)
 
-    bar_h := uisc(26)
+    bar_h := to_ui_scale(26)
     cx := window.rect.w / 2
     cy := window.rect.h - bar_h / 2
-    tick_h := uisc(26)
+    tick_h := to_ui_scale(26)
 
-    px_per_ms := uisc(1)
+    px_per_ms := to_ui_scale(1)
     bar_w := px_per_ms * f32(tw.ok) * 2
     
     now := game.beatmap.music_time_ms
@@ -76,12 +80,12 @@ hit_error_bar_draw_screenspace :: proc(hit_error_bar: ^Hit_Error_Bar) {
     r_draw_rect(&window.renderer.quad_geometry, 
                 {cx - bar_w / 2, cy - bar_h / 2, bar_w, bar_h}, with_alpha(color_black, 0.2))
     
-    hit_error_zone(cx, cy, f32(tw.ok)        * px_per_ms, uisc(6), with_alpha(HIT_COLOR_OK, 0.85))
-    hit_error_zone(cx, cy, f32(tw.good)      * px_per_ms, uisc(6), with_alpha(HIT_COLOR_GOOD, 0.85))
-    hit_error_zone(cx, cy, f32(tw.marvelous) * px_per_ms, uisc(6), with_alpha(HIT_COLOR_MARVELOUS, 0.85))
+    hit_error_zone(cx, cy, f32(tw.ok)        * px_per_ms, to_ui_scale(6), with_alpha(HIT_COLOR_OK, 0.85))
+    hit_error_zone(cx, cy, f32(tw.good)      * px_per_ms, to_ui_scale(6), with_alpha(HIT_COLOR_GOOD, 0.85))
+    hit_error_zone(cx, cy, f32(tw.marvelous) * px_per_ms, to_ui_scale(6), with_alpha(HIT_COLOR_MARVELOUS, 0.85))
 
     // perfect-timing center line
-    r_draw_rect(&window.renderer.quad_geometry, {cx - uisc(1), cy - tick_h / 2, uisc(2), tick_h}, color_white)
+    r_draw_rect(&window.renderer.quad_geometry, {cx - to_ui_scale(1), cy - tick_h / 2, to_ui_scale(2), tick_h}, color_white)
 
     sum, shown := 0.0, 0
     for i in 0 ..< hit_error_bar.count {
@@ -92,23 +96,25 @@ hit_error_bar_draw_screenspace :: proc(hit_error_bar: ^Hit_Error_Bar) {
         alpha := f32(1 - age / HIT_ERROR_TICK_FADE_MS)
         x := clamp(cx + f32(e.error_ms) * px_per_ms, cx - bar_w / 2, cx + bar_w)
 
-        r_draw_rect(&window.renderer.quad_geometry, {x - uisc(1), cy - tick_h / 2, uisc(2), tick_h},
+        r_draw_rect(&window.renderer.quad_geometry, {x - to_ui_scale(1), cy - tick_h / 2, to_ui_scale(2), tick_h},
             with_alpha(hit_error_color(e.judgement), alpha))
 
         sum   += e.error_ms
         shown += 1
     }
 
+    /* todo(isak): this shows mean error text - UR should be exposed through a config instead
     if shown > 0 {
         mean := sum / f64(shown)
         sign := mean >= 0 ? "+" : ""
         push_text(&window.renderer, fmt.tprintf("%s%.0f ms", sign, mean),
-            pos     = {cx, cy - uisc(20)},
-            size    = uisc(14),
+            pos     = {cx, cy - to_ui_scale(20)},
+            size    = to_ui_scale(14),
             color   = color_white,
             align_h = .Center,
             align_v = .Baseline)
     }
+    */
 }
 
 hit_error_zone :: proc(cx, cy, half_px, h: f32, color: Color) {
@@ -160,8 +166,8 @@ ui_init_timeline :: proc(ui: ^UI_Timeline) {
 // todo(isak): you can make a lot of this common for ui components, such as the hover state, and leave functionality
 // to this method... need to rewrite a bit of the size handling then but it's not a problem
 ui_update_timeline :: proc(ui: ^UI_Timeline, time_value: ^f64) -> (result: bool) {
-    h_px := uisc(ui.h_px)
-    hitbox_h_px := uisc(ui.hitbox_h_px)
+    h_px := to_ui_scale(ui.h_px)
+    hitbox_h_px := to_ui_scale(ui.hitbox_h_px)
 
     timeline_hitbox := rect_from_points({0, window.rect.h - hitbox_h_px}, {window.rect.w, window.rect.h})
 
@@ -262,8 +268,8 @@ render_timeline_clipspace :: proc(ui: ^UI_Timeline) {
                          .BOTTOM_LEFT, with_alpha(color_lime_green, 0.2))
     }
 
-    line_w := uisc(2) / window.rect.w
-    line_h := max(ui.display_h_px, uisc(10)) / window.rect.h
+    line_w := to_ui_scale(2) / window.rect.w
+    line_h := max(ui.display_h_px, to_ui_scale(10)) / window.rect.h
     for bookmark_ms in game.active_map.bookmarks_ms {
         fract := f32((bookmark_ms - game.beatmap.start_time_ms) / map_len_with_preempt)
         r_draw_layout_rect(&window.renderer.quad_geometry, {fract, 1, line_w, line_h},
@@ -274,27 +280,201 @@ render_timeline_clipspace :: proc(ui: ^UI_Timeline) {
 //////////////////////////////////////////////////////
 // note(isak): input display
 
+INPUT_DISPLAY_PRESS_SCALE :: 0.8
+INPUT_DISPLAY_ANIM_S      :: 0.15
+
+input_display_transitions: [6]Transition
+
 input_display_draw_screenspace :: proc() {
     r_push_transform(window.screenspace_transform)
-    
-    render_input_key :: proc(key: Button_State, rect: Rect, lit_color: Color) {
-        display_color := key.is_down ? lit_color : color_dark_gray
-        r_draw_layout_rect(&window.renderer.quad_geometry, rect, .BOTTOM_RIGHT, display_color, builtin_texture(.WHITE))
+
+    render_input_key :: proc(key: Button_State, tr: ^Transition, rect: Rect, lit_color: Color) {
+        transition_update(tr, key.is_down, INPUT_DISPLAY_ANIM_S)
+        scale := transition_mix(tr^, 1, INPUT_DISPLAY_PRESS_SCALE)
+
+        // note(isak): (rect.x, rect.y) anchors the bottom-right corner, so shrinking about the
+        // key's center pulls the corner inward by half the size delta
+        scaled := Rect{
+            rect.x - rect.w * (1 - scale) / 2,
+            rect.y - rect.h * (1 - scale) / 2,
+            rect.w * scale,
+            rect.h * scale,
+        }
+        display_color := key.is_down ? lit_color : color_white
+        r_draw_layout_rect(&window.renderer.quad_geometry, scaled, .BOTTOM_RIGHT, display_color, builtin_texture(.WHITE))
     }
 
-    key := uisc(30)
-    half := uisc(15)
+    tr := &input_display_transitions
+    key := to_ui_scale(30)
+    y_step := to_ui_scale(4) + key
+    half := to_ui_scale(15)
     cy := window.rect.h / 2
 
-    render_input_key(game.input.k1, { window.rect.w, cy - key,   key, key }, color_dim_yellow)
-    render_input_key(game.input.k2, { window.rect.w, cy,         key, key }, color_dim_yellow)
+    render_input_key(game.input.k1, &tr[0], { window.rect.w, cy - y_step,   key, key }, color_dim_yellow)
+    render_input_key(game.input.k2, &tr[1], { window.rect.w, cy,          key, key }, color_dim_yellow)
 
     lit_color := app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT ? color_sky_blue :  color_magenta
-    render_input_key(game.input.m1, { window.rect.w, cy + key,   key, key }, lit_color)
-    render_input_key(game.input.m2, { window.rect.w, cy + 2*key, key, key }, lit_color)
+    render_input_key(game.input.m1, &tr[2], { window.rect.w, cy + y_step,   key, key }, lit_color)
+    render_input_key(game.input.m2, &tr[3], { window.rect.w, cy + 2*y_step, key, key }, lit_color)
 
     if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {
-        render_input_key(game.input.ms1, { window.rect.w, cy + key,   key, half }, color_dim_orange)
-        render_input_key(game.input.ms2, { window.rect.w, cy + 2*key, key, half }, color_dim_orange)
+        render_input_key(game.input.ms1, &tr[4], { window.rect.w, cy + y_step,   key, half }, color_dim_orange)
+        render_input_key(game.input.ms2, &tr[5], { window.rect.w, cy + 2*y_step, key, half }, color_dim_orange)
     }
+}
+
+
+//////////////////////////////////////////////////////
+// note(isak): results screen
+
+RESULTS_GRACE_PERIOD_MS :: 1000
+
+beatmap_last_scoring_hitobject :: proc(beatmap: ^Beatmap) -> ^Hitobject {
+    #reverse for &hobj in beatmap.hitobjects {
+        if hobj.type != .SPINNER do return &hobj
+    }
+    return nil
+}
+
+results_screen_update :: proc() {
+    if game.mode != .PLAY || game.beatmap.score.completed do return
+
+    last := beatmap_last_scoring_hitobject(&game.beatmap)
+    if last == nil || last.judgement_index <= 0 do return
+    // note(isak): the play clock free-runs past the audio end (see beatmap_on_update), so this threshold
+    // is always reachable even when the track is shorter than the last object plus the grace period
+    if beatmap_music_time_ms(&game.beatmap) < last.end_time_ms + RESULTS_GRACE_PERIOD_MS do return
+
+    game.beatmap.score.completed = true
+    score_write_results_file()
+    lua_beatmap_on_map_complete()
+}
+
+results_screen_draw :: proc() {
+    if !game.beatmap.score.completed do return
+
+    r_check_and_bind_layer(.PLATFORM)
+    r_push_transform(fullscreen_transform)
+    r_draw_quad(&window.renderer.quad_geometry,
+        vec2{0,0}, vec2{1,1},
+        vec2{0,0}, vec2{1,1},
+        with_alpha(color_black, 0.8))
+
+    score := &game.beatmap.score
+    center_x := window.rect.w / 2
+    y := window.rect.h / 2 - to_ui_scale(130)
+
+    map_name := fmt.tprintf("%s - %s [%s]",
+        game.active_map.artist, game.active_map.title, game.active_map.difficulty_name)
+    push_text(&window.renderer, map_name,
+        pos = {center_x, y}, size = to_ui_scale(20),
+        color = {255, 255, 255, 180}, align_h = .Center, align_v = .Middle)
+    y += to_ui_scale(60)
+
+    push_text(&window.renderer, fmt.tprintf("%.2f%%", score_accuracy(score) * 100),
+        pos = {center_x, y}, size = to_ui_scale(56),
+        color = color_white, align_h = .Center, align_v = .Middle)
+    y += to_ui_scale(52)
+
+    push_text(&window.renderer, fmt.tprintf("%dx max combo", score.max_combo),
+        pos = {center_x, y}, size = to_ui_scale(24),
+        color = {255, 255, 255, 220}, align_h = .Center, align_v = .Middle)
+    y += to_ui_scale(44)
+
+    counts := fmt.tprintf("marvelous %d   good %d   ok %d   miss %d",
+        score.hit_counts[.MARVELOUS], score.hit_counts[.GOOD],
+        score.hit_counts[.OK], score.hit_counts[.MISS])
+    push_text(&window.renderer, counts,
+        pos = {center_x, y}, size = to_ui_scale(18),
+        color = {255, 255, 255, 180}, align_h = .Center, align_v = .Middle)
+    y += to_ui_scale(30)
+
+    hit_errors := score_hit_error_stats()
+    push_text(&window.renderer,
+        fmt.tprintf("unstable rate %.1f   %.2f ms / +%.2f ms", hit_errors.unstable_rate, hit_errors.early_mean, hit_errors.late_mean),
+        pos = {center_x, y}, size = to_ui_scale(18),
+        color = {255, 255, 255, 180}, align_h = .Center, align_v = .Middle)
+
+    push_text(&window.renderer, "score saved to scores/",
+        pos = {center_x, window.rect.h - to_ui_scale(64)}, size = to_ui_scale(14),
+        color = {255, 255, 255, 120}, align_h = .Center, align_v = .Middle)
+    push_text(&window.renderer, "esc to exit",
+        pos = {center_x, window.rect.h - to_ui_scale(40)}, size = to_ui_scale(14),
+        color = {255, 255, 255, 120}, align_h = .Center, align_v = .Middle)
+}
+
+score_write_results_file :: proc() {
+    now := time.now()
+    year, month, day := time.date(now)
+    hour, minute, second := time.clock_from_time(now)
+
+    _ = os.make_directory("scores")
+    path := fmt.tprintf("scores/%04d-%02d-%02d_%02d-%02d-%02d.txt",
+        year, int(month), day, hour, minute, second)
+
+    score := &game.beatmap.score
+    hit_errors := score_hit_error_stats()
+
+    judged := score_judged_object_count(score)
+    total := score_total_scoring_objects()
+
+    mods_text: strings.Builder
+    strings.builder_init(&mods_text, context.temp_allocator)
+    for mod in game.mods {
+        if strings.builder_len(mods_text) > 0 do strings.write_string(&mods_text, ", ")
+        strings.write_string(&mods_text, string(osu_mod_table[mod].name))
+    }
+
+    // note(isak): defaults are captured before mods apply, so any difference is an adjusted play
+    difficulty_changes: strings.Builder
+    strings.builder_init(&difficulty_changes, context.temp_allocator)
+    difficulty_labels := [Difficulty_Setting]string {
+        .CIRCLE_SIZE        = "circle size   ",
+        .APPROACH_RATE      = "approach rate ",
+        .HP_DRAIN           = "hp drain      ",
+        .OVERALL_DIFFICULTY = "overall diff  ",
+    }
+    for setting in Difficulty_Setting {
+        current := map_difficulty_setting(game.active_map, setting)^
+        if current == map_difficulty_defaults[setting] do continue
+        fmt.sbprintf(&difficulty_changes, "%s %.1f -> %.1f\n",
+            difficulty_labels[setting], map_difficulty_defaults[setting], current)
+    }
+
+    content := fmt.tprintf(
+        "%s - %s [%s]\n" +
+        "played %04d-%02d-%02d %02d:%02d:%02d utc\n" +
+        "\n" +
+        "accuracy       %.2f%%\n" +
+        "max combo      %dx\n" +
+        "marvelous      %d\n" +
+        "good           %d\n" +
+        "ok             %d\n" +
+        "miss           %d\n" +
+        "unstable rate  %.1f\n" +
+        "hit error      %.2f ms / +%.2f ms\n" +
+        "\n" +
+        "objects judged %d / %d%s\n" +
+        "time rate      %.2fx%s\n" +
+        "mods           %s\n" +
+        "%s",
+        game.active_map.artist, game.active_map.title, game.active_map.difficulty_name,
+        year, int(month), day, hour, minute, second,
+        score_accuracy(score) * 100,
+        score.max_combo,
+        score.hit_counts[.MARVELOUS], score.hit_counts[.GOOD],
+        score.hit_counts[.OK], score.hit_counts[.MISS],
+        hit_errors.unstable_rate,
+        hit_errors.early_mean, hit_errors.late_mean,
+        judged, total, judged < total ? " (partial play!)" : "",
+        game.time_rate, game.time_rate == 1 ? "" : " (!)",
+        strings.builder_len(mods_text) > 0 ? strings.to_string(mods_text) : "none",
+        strings.to_string(difficulty_changes),
+    )
+
+    if err := os.write_entire_file(path, transmute([]byte)content); err != os.General_Error.None {
+        notify_warn("couldn't write results file: %v", err)
+        return
+    }
+    log.infof("results written to %s", path)
 }

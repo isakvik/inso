@@ -1,4 +1,4 @@
 #+build !windows
 package inso
 
-platform_claim_scheduling_priority :: proc() {}
+platform_set_scheduling_priority :: proc(elevated: bool) {}

@@ -161,8 +161,6 @@ Texture_Index :: struct {
     index: u32
 }
 
-// note(isak): the skin region is variable-length: one slot per element followed by the animation
-// frames for animatable elements. this is its runtime length, which the user slot base depends on.
 skin_texture_block_len :: proc() -> u32 {
     return u32(len(Skin_Element_Type)) + u32(len(window.skin_frame_textures))
 }

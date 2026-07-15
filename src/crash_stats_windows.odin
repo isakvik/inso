@@ -5,7 +5,8 @@ import win "core:sys/windows"
 import "core:fmt"
 import gl "vendor:OpenGL"
 
-CRASH_STATS_ARENAS :: 8 // must match len(Memory_Arena_Type)
+CRASH_STATS_ARENAS :: 9
+#assert(CRASH_STATS_ARENAS == len(Memory_Arena_Type))
 CRASH_STATS_LAYERS :: 8
 #assert(CRASH_STATS_LAYERS == len(Layer))
 

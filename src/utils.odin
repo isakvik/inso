@@ -197,11 +197,13 @@ guarding_allocator_proc :: proc(
     data := (^Guarding_Allocator)(allocator_data)
     
     when ODIN_OS == .Windows {
-        buffer_guard := int(get_free_phys_memory()) - gigabytes(1)
-        assert(int(data.alloc.current_memory_allocated) + size < buffer_guard, "memory guard triggered: less than 1GB memory left on computer")
-        if int(data.alloc.current_memory_allocated) + size >= buffer_guard {
-            log.error("memory guard triggered: less than 1GB memory left on computer")
-            return nil, mem.Allocator_Error.Out_Of_Memory
+        is_allocation := mode == .Alloc || mode == .Alloc_Non_Zeroed || mode == .Resize || mode == .Resize_Non_Zeroed
+        if is_allocation {
+            buffer_guard := int(get_free_phys_memory()) - gigabytes(1)
+            if int(data.alloc.current_memory_allocated) + size >= buffer_guard {
+                log.error("memory guard triggered: less than 1GB memory left on computer")
+                return nil, mem.Allocator_Error.Out_Of_Memory
+            }
         }
     }
     return mem.tracking_allocator_proc(allocator_data, mode, size, alignment, old_memory, old_size, loc)

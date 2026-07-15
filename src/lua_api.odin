@@ -22,7 +22,7 @@ import sdl "vendor:sdl3"
 //     odin-side version check at the call site
 
 // @beta
-// todo(isak): expose scoring state to lua (combo, score, accuracy)
+// todo(isak): expose score (the points number) once stable score v1 is implemented
 // todo(isak): z-index within a layer (currently insertion-order only)
 
 Lua_Class_Type :: enum {
@@ -426,10 +426,15 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
   { "get_cs", luaapi_hitobject_get_cs,
     "float hitobject:get_cs( void )",
     "the object's circle size, derived from its radius." },
+  { "get_cs_radius", luaapi_hitobject_get_cs_radius,
+    "float hitobject:get_cs_radius( void )",
+    "the object's circle size radius in osupx." },
   { "set_cs", luaapi_hitobject_set_cs,
     "self hitobject:set_cs( float cs )",
     "overrides the object's circle size (converted to a radius)." },
-
+  { "set_cs_radius", luaapi_hitobject_set_cs_radius,
+    "self hitobject:set_cs_radius( float radius )",
+    "overrides the object's circle size radius in osupx." },
   { "get_slider_distance", luaapi_hitobject_get_slider_distance,
     "float hitobject:get_slider_distance( void )",
     "the slider's path length in osupx (0 for non-sliders)." },
@@ -873,10 +878,26 @@ luaapi_hitobject_get_cs :: proc "c" (L: ^lua.State) -> (result: i32) {
     })
 }
 
+luaapi_hitobject_get_cs_radius :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        r := f64(hobj.custom_radius_osupx if hobj.custom_radius_osupx != 0 else game.beatmap.circle_radius_osupx)
+        lua.pushnumber(L, lua.Number(r))
+        return 1
+    })
+}
+
 luaapi_hitobject_set_cs :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         cs := f64(lua_number(2))
         hobj.custom_radius_osupx = f32((54.4 - 4.48 * cs) * 1.00041)
+        return 0
+    })
+}
+
+luaapi_hitobject_set_cs_radius :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        cs_radius := f64(lua_number(2))
+        hobj.custom_radius_osupx = f32(cs_radius)
         return 0
     })
 }
@@ -2173,6 +2194,24 @@ luaapi_beatmap_static_funcs := []Lua_Function {
   { "add_post_pass", luaapi_beatmap_add_post_pass,
     "void Beatmap.add_post_pass{ shader=, src=, dst=, Layer after }",
     "queues a fullscreen shader pass sampling src (string or table) into dst, running after the 'after' layer (default HITOBJECTS). src/dst names may be a render target, 'screen' (the window), or 'backbuffer' (the whole-frame capture; requires [General] Backbuffer: 1)." },
+  { "get_accuracy", luaapi_beatmap_get_accuracy,
+    "float Beatmap.get_accuracy( void )",
+    "the running accuracy from 0 to 1 over objects judged so far. 1 before anything is judged." },
+  { "get_combo", luaapi_beatmap_get_combo,
+    "int Beatmap.get_combo( void )",
+    "the current combo." },
+  { "get_max_combo", luaapi_beatmap_get_max_combo,
+    "int Beatmap.get_max_combo( void )",
+    "the highest combo reached this play." },
+  { "get_hit_counts", luaapi_beatmap_get_hit_counts,
+    "(int marvelous, int good, int ok, int miss) Beatmap.get_hit_counts( void )",
+    "per-result totals over objects judged so far." },
+  { "get_unstable_rate", luaapi_beatmap_get_unstable_rate,
+    "float Beatmap.get_unstable_rate( void )",
+    "unstable rate over hits so far: 10x the standard deviation of hit timing errors. samples circle and slider head hits only." },
+  { "get_hit_error_mean", luaapi_beatmap_get_hit_error_mean,
+    "float Beatmap.get_hit_error_mean( void )",
+    "the mean signed hit timing error in ms over hits so far. negative = early, positive = late." },
   { "get_timing_windows", luaapi_beatmap_get_timing_windows,
     "(float marvelous, float good, float ok, float miss) Beatmap.get_timing_windows( void )",
     "the current hit window half-widths in ms." },
@@ -2357,6 +2396,46 @@ luaapi_beatmap_add_post_pass :: proc "c" (L: ^lua.State) -> i32 {
 
     append(&mapset.post_passes, pass)
     return 0
+}
+
+luaapi_beatmap_get_accuracy :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua.pushnumber(L, lua.Number(score_accuracy(&game.beatmap.score)))
+    return 1
+}
+
+luaapi_beatmap_get_combo :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua.pushinteger(L, lua.Integer(game.beatmap.score.combo))
+    return 1
+}
+
+luaapi_beatmap_get_max_combo :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua.pushinteger(L, lua.Integer(game.beatmap.score.max_combo))
+    return 1
+}
+
+luaapi_beatmap_get_hit_counts :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    score := &game.beatmap.score
+    lua.pushinteger(L, lua.Integer(score.hit_counts[.MARVELOUS]))
+    lua.pushinteger(L, lua.Integer(score.hit_counts[.GOOD]))
+    lua.pushinteger(L, lua.Integer(score.hit_counts[.OK]))
+    lua.pushinteger(L, lua.Integer(score.hit_counts[.MISS]))
+    return 4
+}
+
+luaapi_beatmap_get_unstable_rate :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua.pushnumber(L, lua.Number(score_hit_error_stats().unstable_rate))
+    return 1
+}
+
+luaapi_beatmap_get_hit_error_mean :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua.pushnumber(L, lua.Number(score_hit_error_stats().mean))
+    return 1
 }
 
 luaapi_beatmap_get_timing_windows :: proc "c" (L: ^lua.State) -> i32 {

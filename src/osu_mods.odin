@@ -5,13 +5,12 @@ Osu_Mod :: enum {
     HIDDEN,
     HARD_ROCK,
     DOUBLE_TIME,
+
+    DIFFICULTY_ADJUST,
 }
 
 Osu_Mods :: distinct bit_set[Osu_Mod]
 
-// note(isak): mods hook into two points of beatmap_on_init: apply_to_map runs before the
-// diff_* -> radius/preempt/window conversions and slider instance baking, apply_to_graphics
-// after create_default_elements
 Osu_Mod_Info :: struct {
     name: cstring,
     apply_to_map: proc(),
@@ -19,36 +18,78 @@ Osu_Mod_Info :: struct {
 }
 
 osu_mod_table := [Osu_Mod]Osu_Mod_Info {
-    .EASY        = { name = "Easy",        apply_to_map = easy_apply_to_difficulty },
+    .EASY        = { name = "Easy",        apply_to_map = easy_apply_to_map },
     .HIDDEN      = { name = "Hidden",      apply_to_graphics = hidden_apply_to_graphics },
     .HARD_ROCK   = { name = "Hard rock",   apply_to_map = hard_rock_apply_to_map },
     .DOUBLE_TIME = { name = "Double time", apply_to_map = double_time_apply_to_map },
+    
+    .DIFFICULTY_ADJUST = { name = "Difficulty adjust", apply_to_map = difficulty_adjust_apply_to_map },
 }
 
+// note(isak): runs before the diff_* -> radius/preempt/window conversions and slider instance baking
 mods_apply_to_map :: proc() {
     for mod in game.mods {
         if apply := osu_mod_table[mod].apply_to_map; apply != nil do apply()
     }
 }
 
+// note(isak): runs after create_default_elements
 mods_apply_to_graphics :: proc() {
     for mod in game.mods {
         if apply := osu_mod_table[mod].apply_to_graphics; apply != nil do apply()
     }
 }
 
-easy_apply_to_difficulty :: proc() {
-    game.active_map.diff_circle_size        *= 0.5
-    game.active_map.diff_approach_rate      *= 0.5
-    game.active_map.diff_hp_drain           *= 0.5
-    game.active_map.diff_overall_difficulty *= 0.5
+Difficulty_Setting :: enum {
+    CIRCLE_SIZE,
+    APPROACH_RATE,
+    HP_DRAIN,
+    OVERALL_DIFFICULTY,
+}
+
+difficulty_setting_names := [Difficulty_Setting]cstring {
+    .CIRCLE_SIZE        = "Circle size",
+    .APPROACH_RATE      = "Approach rate",
+    .HP_DRAIN           = "HP drain",
+    .OVERALL_DIFFICULTY = "Overall difficulty",
+}
+
+map_difficulty_setting :: proc(osu_map: ^Osu_Map, setting: Difficulty_Setting) -> ^f64 {
+    switch setting {
+    case .CIRCLE_SIZE:        return &osu_map.diff_circle_size
+    case .APPROACH_RATE:      return &osu_map.diff_approach_rate
+    case .HP_DRAIN:           return &osu_map.diff_hp_drain
+    case .OVERALL_DIFFICULTY: return &osu_map.diff_overall_difficulty
+    }
+    unreachable()
+}
+
+difficulty_adjust_settings: [Difficulty_Setting]f64
+map_difficulty_defaults:    [Difficulty_Setting]f64
+
+difficulty_adjust_apply_to_map :: proc() {
+    for setting in Difficulty_Setting {
+        map_difficulty_setting(game.active_map, setting)^ = difficulty_adjust_settings[setting]
+    }
+}
+
+easy_apply_to_map :: proc() {
+    for setting in Difficulty_Setting {
+        map_difficulty_setting(game.active_map, setting)^ *= 0.5
+    }
 }
 
 hard_rock_apply_to_map :: proc() {
-    game.active_map.diff_circle_size        = min(game.active_map.diff_circle_size * 1.3, 10)
-    game.active_map.diff_approach_rate      = min(game.active_map.diff_approach_rate * 1.4, 10)
-    game.active_map.diff_hp_drain           = min(game.active_map.diff_hp_drain * 1.4, 10)
-    game.active_map.diff_overall_difficulty = min(game.active_map.diff_overall_difficulty * 1.4, 10)
+    factors := [Difficulty_Setting]f64 {
+        .CIRCLE_SIZE        = 1.3,
+        .APPROACH_RATE      = 1.4,
+        .HP_DRAIN           = 1.4,
+        .OVERALL_DIFFICULTY = 1.4,
+    }
+    for setting in Difficulty_Setting {
+        stat := map_difficulty_setting(game.active_map, setting)
+        stat^ = min(stat^ * factors[setting], 10)
+    }
 
     for &hobj in game.active_map.hitobjects {
         hobj.pos.y = 384 - hobj.pos.y
@@ -89,7 +130,7 @@ hidden_apply_to_graphics :: proc() {
 
     // note(isak): animation times are normalized against the circle drawable lifetime
     // (preempt + ok window), so per-object custom preempts from scripts get proportionally
-    // scaled fades rather than exact stable timing
+    // scaled fades rather than the same timing
     preempt  := game.beatmap.preempt_ms
     lifetime := preempt + game.beatmap.timing_windows.ok
     fade_in_end  := preempt * 0.4 / lifetime

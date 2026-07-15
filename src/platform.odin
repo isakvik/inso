@@ -2,7 +2,6 @@ package inso
 
 import "base:intrinsics"
 import "core:c"
-import "core:fmt"
 import "core:log"
 import "core:mem"
 import os "core:os"
@@ -135,11 +134,21 @@ Input_Event :: struct {
     key_is_down: bool,
 }
 
-// button_flags transition bits, numerically identical to win32's RI_MOUSE_*
+// button_flags transition bits, numerically identical to win32's RI_MOUSE_*. every consumer of
+// Input_Event.button_flags reads these; only the producing thread touches the RI_* names
 INPUT_M1_DOWN: u16 : 0x0001
 INPUT_M1_UP:   u16 : 0x0002
 INPUT_M2_DOWN: u16 : 0x0004
 INPUT_M2_UP:   u16 : 0x0008
+INPUT_M3_DOWN: u16 : 0x0010
+INPUT_M3_UP:   u16 : 0x0020
+
+// motion delta a raw event contributes to an integrated cursor position. zero while the cursor is
+// outside the window or for absolute motion (tablets), so callers can add unconditionally
+raw_mouse_motion_delta :: proc(event: ^Input_Event) -> vec2 {
+    if !window.mouse_inside || event.absolute_motion do return {}
+    return {f32(event.motion_x), f32(event.motion_y)} * game.user_config.cursor_sensitivity
+}
 
 Mouse_ID :: enum {
     PRIMARY,
@@ -267,13 +276,6 @@ keyboard_next_frame :: proc() {
     num_keys: i32
     sdl_state := sdl.GetKeyboardState(&num_keys)
     mem.copy(keyboard.buttons, sdl_state, len(Keyboard_State))
-}
-
-keyboard_rebind_input :: proc(event: sdl.Event, rebind: ^sdl.Scancode) {
-    if (event.type == sdl.EventType.KEY_DOWN) {
-        rebind^ = event.key.scancode //TODO(yokes): this doesn't work, game.input.k1_key = event.key.scancode works
-        fmt.printfln("key set to {}", event.key.scancode)
-    }
 }
 
 input_validate_mouse_hwid :: proc(id: Mouse_ID, hwid: string) -> bool {

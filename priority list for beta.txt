@@ -13,8 +13,6 @@ old features
     sliderball tint
 
 skinning
-    cursormiddle element + smooth interpolated trail for cursormiddle skins (osu.odin cursor_trail_draw)
-    cursor expand on click, CursorExpand/CursorRotate/CursorCentre ini keys
     skin.ini AnimationFramerate (sliderball hardcoded to 1s loop; judgements/followpoints use own timing)
     remaining ini keys: SliderBallFlip, HitCircleOverlayAboveNumber, LayeredHitSounds
     score/combo number fonts (ScorePrefix, ComboPrefix, default-x/dot/percent glyphs) - scorescreen uses none of these yet

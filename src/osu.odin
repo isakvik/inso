@@ -5,6 +5,7 @@ import sb "swap_buffer"
 import "slotmap"
 
 import "core:math"
+import "core:math/linalg"
 import "core:strings"
 
 import sdl "vendor:sdl3"
@@ -798,11 +799,15 @@ cursor_expand_update :: proc() {
     transition_update(&cursor_expand, pressed && game.active_skin.cursor_expand, CURSOR_EXPAND_ANIM_S)
 }
 
-// note(isak): mcosu's non-smooth trail timing (osu_cursor_trail_length / _spacing); the smooth
-// interpolated variant for cursormiddle-less skins is not implemented yet
-CURSOR_TRAIL_LENGTH_S  :: 0.17
-CURSOR_TRAIL_SPACING_S :: 0.015
-CURSOR_TRAIL_MAX_PARTS :: 32
+// note(isak): stable/mcosu run two entirely different trails. a plain skin (no cursormiddle) gets
+// the unsmooth trail: one part dropped every SPACING seconds, faded over the short LENGTH. a skin
+// with cursormiddle instead earns the smooth trail, a long additive ribbon of parts interpolated
+// along the cursor's motion at a fixed pixel pitch, faded over the much longer SMOOTH_LENGTH.
+CURSOR_TRAIL_LENGTH_S        :: 0.17
+CURSOR_TRAIL_SPACING_S       :: 0.015
+CURSOR_TRAIL_SMOOTH_LENGTH_S :: 0.5
+CURSOR_TRAIL_SMOOTH_DIV      :: 4.0
+CURSOR_TRAIL_MAX_PARTS       :: 2048
 
 Cursor_Trail_Part :: struct {
     pos: vec2,
@@ -816,42 +821,102 @@ Cursor_Trail :: struct {
 
 cursor_trails: [2]Cursor_Trail
 
-// note(isak): spawns at most one part per SPACING interval; an unmoved cursor refreshes the newest
-// part instead of stacking duplicates. parts fade linearly over LENGTH and are drawn oldest-first
-// so fresher parts blend on top, all behind the cursor itself.
+cursor_trail_newest :: proc(trail: ^Cursor_Trail) -> ^Cursor_Trail_Part {
+    return &trail.parts[(trail.head + trail.count - 1) %% CURSOR_TRAIL_MAX_PARTS]
+}
+
+cursor_trail_push :: proc(trail: ^Cursor_Trail, part: Cursor_Trail_Part) {
+    if trail.count == CURSOR_TRAIL_MAX_PARTS {
+        trail.head = (trail.head + 1) %% CURSOR_TRAIL_MAX_PARTS
+        trail.count -= 1
+    }
+    trail.parts[(trail.head + trail.count) %% CURSOR_TRAIL_MAX_PARTS] = part
+    trail.count += 1
+}
+
+// note(isak): drops at most one part per SPACING interval; an unmoved cursor refreshes the newest
+// part instead of stacking duplicates, so a held-still trail lingers.
+cursor_trail_add_spaced :: proc(trail: ^Cursor_Trail, pos: vec2, now: f64) {
+    if trail.count > 0 {
+        newest := cursor_trail_newest(trail)
+        spawned_at := newest.expires_at_s - CURSOR_TRAIL_LENGTH_S
+        if now <= spawned_at + CURSOR_TRAIL_SPACING_S do return
+        if newest.pos == pos {
+            newest.expires_at_s = now + CURSOR_TRAIL_LENGTH_S
+            return
+        }
+    }
+    cursor_trail_push(trail, {pos, now + CURSOR_TRAIL_LENGTH_S})
+}
+
+// note(isak): fills the gap since the last part with evenly pitched interpolated parts, their expiry
+// lerped across the same span so the ribbon fades uniformly along its length. a stationary cursor
+// adds nothing and the ribbon simply ages out.
+cursor_trail_add_smooth :: proc(trail: ^Cursor_Trail, pos: vec2, trail_width: f32, now: f64) {
+    expires := now + CURSOR_TRAIL_SMOOTH_LENGTH_S
+    if trail.count == 0 {
+        cursor_trail_push(trail, {pos, expires})
+        return
+    }
+
+    newest := cursor_trail_newest(trail)
+    prev_pos := newest.pos
+    prev_expires := newest.expires_at_s
+
+    pitch := trail_width / CURSOR_TRAIL_SMOOTH_DIV
+    delta := pos - prev_pos
+    dist := linalg.length(delta)
+    part_count := int(dist / pitch)
+    if part_count <= 0 do return
+
+    step := (delta / dist) * pitch
+    time_step := (expires - prev_expires) / f64(part_count)
+    start := max(0, part_count - CURSOR_TRAIL_MAX_PARTS / 2)
+    for i in start..<part_count {
+        cursor_trail_push(trail, {
+            prev_pos + step * f32(i + 1),
+            prev_expires + time_step * f64(i + 1),
+        })
+    }
+}
+
+// note(isak): parts drawn oldest-first behind the cursor. the smooth ribbon is additive, so its dense
+// overlaps sum into a glow rather than muddying; the unsmooth trail stays straight alpha.
 cursor_trail_draw :: proc(trail: ^Cursor_Trail, pos: vec2) {
     if window.skin_textures[.CURSOR_TRAIL].tex_id == 0 do return
     now := time_s_since_beginning_of_program()
 
-    newest := &trail.parts[(trail.head + trail.count - 1) %% CURSOR_TRAIL_MAX_PARTS]
-    spawned_at := newest.expires_at_s - CURSOR_TRAIL_LENGTH_S
-    if trail.count == 0 || now > spawned_at + CURSOR_TRAIL_SPACING_S {
-        if trail.count > 0 && newest.pos == pos {
-            newest.expires_at_s = now + CURSOR_TRAIL_LENGTH_S
-        } else {
-            if trail.count == CURSOR_TRAIL_MAX_PARTS {
-                trail.head = (trail.head + 1) %% CURSOR_TRAIL_MAX_PARTS
-                trail.count -= 1
-            }
-            trail.parts[(trail.head + trail.count) %% CURSOR_TRAIL_MAX_PARTS] = {pos, now + CURSOR_TRAIL_LENGTH_S}
-            trail.count += 1
-        }
+    size := cursor_companion_size_px(.CURSOR_TRAIL)
+    smooth := window.skin_textures[.CURSOR_MIDDLE].tex_id != 0
+
+    if smooth {
+        cursor_trail_add_smooth(trail, pos, size.x, now)
+    } else {
+        cursor_trail_add_spaced(trail, pos, now)
     }
 
-    for trail.count > 0 && trail.parts[trail.head].expires_at_s <= now {
+    // note(isak): leave one expired part to anchor the next smooth interpolation from where the cursor was
+    for trail.count > 1 && trail.parts[trail.head].expires_at_s <= now {
         trail.head = (trail.head + 1) %% CURSOR_TRAIL_MAX_PARTS
         trail.count -= 1
     }
 
-    size := cursor_companion_size_px(.CURSOR_TRAIL)
+    length := CURSOR_TRAIL_SMOOTH_LENGTH_S if smooth else CURSOR_TRAIL_LENGTH_S
+    if smooth {
+        r_bind_pipeline({ pipeline = builtin_pipeline_slot(.QUAD_ADDITIVE) })
+    }
 
     for i in 0..<trail.count {
         part := trail.parts[(trail.head + i) %% CURSOR_TRAIL_MAX_PARTS]
-        alpha := f32(clamp((part.expires_at_s - now) / CURSOR_TRAIL_LENGTH_S, 0, 1))
+        alpha := f32(clamp((part.expires_at_s - now) / length, 0, 1))
         if alpha <= 0 do continue
         r_draw_layout_rect(&window.renderer.quad_geometry,
             {part.pos.x, part.pos.y, size.x, size.y}, .CENTER,
             with_alpha(color_white, alpha), skin_texture(.CURSOR_TRAIL))
+    }
+
+    if smooth {
+        r_bind_pipeline({ pipeline = builtin_pipeline_slot(.QUAD) })
     }
 }
 

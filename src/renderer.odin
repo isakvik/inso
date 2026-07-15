@@ -218,6 +218,7 @@ renderer_init :: proc() {
         queue.push(&window.pipelines, sg.make_pipeline(quad_pipeline_desc()))
         queue.push(&window.pipelines, sg.make_pipeline(quad_pipeline_desc(.PREMULTIPLIED)))
         queue.push(&window.pipelines, sg.make_pipeline(quad_pipeline_desc(.PREMULTIPLIED_OVER)))
+        queue.push(&window.pipelines, sg.make_pipeline(quad_pipeline_desc(.ADDITIVE_ALPHA)))
     }
     {
         slider_shader, err := shader_init(slider_vs_path, slider_fs_path, context.temp_allocator)

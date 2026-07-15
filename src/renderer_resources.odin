@@ -45,6 +45,7 @@ Builtin_Pipeline_Slot :: enum {
     QUAD,
     QUAD_PREMULTIPLIED,
     QUAD_PREMULTIPLIED_OVER,
+    QUAD_ADDITIVE,
     SLIDER,
     TEXT,
     TEXT_PREMULTIPLIED,
@@ -190,6 +191,7 @@ Blend_Mode :: enum {
     NONE,
     ALPHA,
     ADDITIVE,
+    ADDITIVE_ALPHA,
     MAX,
     PREMULTIPLIED,
     PREMULTIPLIED_OVER,
@@ -209,10 +211,8 @@ blend_state_for_mode :: proc(mode: Blend_Mode) -> (blend: sg.Blend_State) {
             dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
         }
     case .PREMULTIPLIED:
-        // note(isak): takes straight-alpha shader output and accumulates a correctly premultiplied
-        // result: rgb = src.rgb*src.a + dst.rgb*(1-src.a), a = src.a + dst.a*(1-src.a). unlike
-        // .ALPHA's screen-tuned alpha, this produces a coverage alpha valid for re-sampling. draw
-        // the resulting texture back with premultiplied-over (src factor ONE) to composite it.
+        // note(isak): straight-alpha in, premultiplied out with a coverage alpha valid for re-sampling; 
+        // draw it back with premultiplied-over
         blend = {
             enabled          = true,
             op_rgb           = .ADD,
@@ -223,9 +223,7 @@ blend_state_for_mode :: proc(mode: Blend_Mode) -> (blend: sg.Blend_State) {
             dst_factor_alpha = .ONE_MINUS_SRC_ALPHA,
         }
     case .PREMULTIPLIED_OVER:
-        // note(isak): composites an already-premultiplied source (e.g. a captured render target)
-        // over the destination: rgb = src.rgb + dst.rgb*(1-src.a). the src rgb is taken as-is
-        // (factor ONE) rather than re-multiplied by alpha, which is what .ALPHA would wrongly do.
+        // note(isak): composites an already-premultiplied source over dest, taking src rgb as-is (factor ONE)
         blend = {
             enabled          = true,
             op_rgb           = .ADD,
@@ -245,6 +243,18 @@ blend_state_for_mode :: proc(mode: Blend_Mode) -> (blend: sg.Blend_State) {
             dst_factor_alpha = .ONE,
             op_alpha         = .ADD,
         }
+    case .ADDITIVE_ALPHA:
+        // note(isak): additive weighted by source alpha, so transparent texels contribute nothing instead of 
+        // adding opaque squares
+        blend = {
+            enabled          = true,
+            src_factor_rgb   = .SRC_ALPHA,
+            dst_factor_rgb   = .ONE,
+            op_rgb           = .ADD,
+            src_factor_alpha = .SRC_ALPHA,
+            dst_factor_alpha = .ONE,
+            op_alpha         = .ADD,
+        }
     case .MAX: 
         blend = {
             enabled          = true,
@@ -261,9 +271,7 @@ blend_state_for_mode :: proc(mode: Blend_Mode) -> (blend: sg.Blend_State) {
 //////////////////////////////////////////////////////
 // note(isak): pipeline definitions
 
-// note(isak): flat quads all sit at z=0, so writing depth every fragment is pure bandwidth with no
-// painter's-order benefit - default off. mesh shaders reuse this desc and DO need a real z-buffer,
-// so they opt back in via depth_write (see the [Shader] DepthWrite key).
+// note(isak): depth_write is read from [Shader] DepthWrite key
 quad_pipeline_desc :: proc(blend: Blend_Mode = .ALPHA, depth_write := false) -> sg.Pipeline_Desc {
     return {
         label = "builtin.quad",

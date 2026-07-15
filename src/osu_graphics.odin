@@ -529,8 +529,8 @@ slider_atlas_reset :: proc "contextless" () {
     atlas.generation += 1
 }
 
-// w and h must each fit the atlas minus the gutter; callers guarantee that by clamping their
-// texel density. allocation therefore always succeeds after at most one reset.
+// note(isak): w and h must each fit the atlas minus the gutter; callers guarantee that by
+// clamping their texel density. allocation therefore always succeeds after at most one reset.
 slider_atlas_alloc :: proc(w, h: i32) -> (content: Rect) {
     atlas := &window.slider_atlas
     atlas_w := i32(window.rect.w)
@@ -575,8 +575,8 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
         slider.bounds_max.y - slider.bounds_min.y + r * 2,
     }
 
-    // bake at the on-screen texel density so static playfields sample the field 1:1; bodies
-    // larger than the atlas bake at whatever density fits (banding stays sharp regardless
+    // bake at the texel density so static playfields sample the field 1:1; bodies larger
+    // than the atlas bake at whatever density fits (banding stays sharp regardless
     // since the thresholds run on the sampled field)
     texels_per_osupx := min(
         playfield_px_per_osupx(),
@@ -625,7 +625,7 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
         r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
 
         if window.intel_gpu {
-            // note(isak): on intel igpus, a scissored glClear ignores ClipControl(UPPER_LEFT)
+            // note(isak): on intel opengl drivers, a scissored glClear ignores ClipControl(UPPER_LEFT)
             r_set_scissor_mode(
                 i32(slot_rect.x),
                 i32(window.rect.h - slot_rect.y - slot_rect.h),

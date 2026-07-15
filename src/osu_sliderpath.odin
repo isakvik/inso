@@ -5,11 +5,11 @@ import "core:math/linalg"
 import "core:slice"
 
 // spacing between emitted slider instances
-slider_point_dist_osupx : f64 = 2.5
+SLIDER_POINT_DIST_OSUPX: f64 : 2.5
 // how far a flattened bezier may deviate from the true curve before it's subdivided further in osupx
-bezier_tolerance : f32 = 0.25
+SLIDER_BEZIER_TOLERANCE : f32 : 0.25
 // how finely circular arcs are tessellated in osupx
-circular_arc_tol : f32 = 0.1
+SLIDER_CIRCULAR_ARC_TOLERANCE : f32 : 0.1
 
 /*
     note(isak): builds the equidistant slider instances for `path` and appends them to `instance_buf`.
@@ -132,8 +132,8 @@ flatten_arc_into :: proc(out: ^[dynamic]vec2, control: []vec2) {
     }
 
     point_count := 2
-    if 2 * pr.radius > circular_arc_tol {
-        point_count = max(2, int(math.ceil(f32(pr.theta_range) / (2 * math.acos_f32(1 - circular_arc_tol / pr.radius)))))
+    if 2 * pr.radius > SLIDER_CIRCULAR_ARC_TOLERANCE {
+        point_count = max(2, int(math.ceil(f32(pr.theta_range) / (2 * math.acos_f32(1 - SLIDER_CIRCULAR_ARC_TOLERANCE / pr.radius)))))
     }
 
     for i in 0 ..< point_count {
@@ -153,7 +153,7 @@ flatten_arc_into :: proc(out: ^[dynamic]vec2, control: []vec2) {
 write_equidistant_resampling :: proc(instance_buf: ^Buffer(vec2), raw: []vec2, target_distance: f64) {
     if len(raw) == 0 do return
 
-    step    := f64(clamp(slider_point_dist_osupx, 1.0, 100.0))
+    step    := f64(clamp(SLIDER_POINT_DIST_OSUPX, 1.0, 100.0))
     samples := max(i32(target_distance / step), 1)
 
     seg       := 0   // index of the polyline vertex we've consumed up to
@@ -216,7 +216,7 @@ polyline_end_tangent :: proc(raw: []vec2) -> vec2 {
 bezier_is_flat_enough :: proc(curve: []vec2) -> bool {
     for i in 1 ..< len(curve) - 1 {
         deviation := linalg.vector_length2(curve[i - 1] - 2 * curve[i] + curve[i + 1])
-        if deviation > bezier_tolerance * bezier_tolerance * 4 {
+        if deviation > SLIDER_BEZIER_TOLERANCE * SLIDER_BEZIER_TOLERANCE * 4 {
             return false
         }
     }

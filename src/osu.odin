@@ -202,13 +202,6 @@ Slider_Flag :: enum {
     FINALIZED, // note(isak): scoring done at end_time; the slider lingers for its fade-out tail
 }
 
-Slider_Handles :: struct {
-    ball, follow:                           Drawable_Handle,
-    end_circle, end_overlay, end_repeat:    Drawable_Handle, // tail position
-    head_circle, head_overlay, head_repeat: Drawable_Handle, // head turnaround position
-    ticks: []Drawable_Handle,
-}
-
 // note(isak): exposed to lua
 Slider_Part :: enum u8 {
     BALL,
@@ -252,7 +245,13 @@ Slider_State :: struct {
     slide_sound: slotmap.Handle,
     whistle_sound: slotmap.Handle,
 
-    gfx: Slider_Handles,
+    gfx: struct {
+        ball, follow:                           Drawable_Handle,
+        end_circle, end_overlay, end_repeat:    Drawable_Handle, // tail position
+        head_circle, head_overlay, head_repeat: Drawable_Handle, // head turnaround position
+        clicked_circle, clicked_overlay:        Drawable_Handle, // head click animation, owner-drawn under the ball
+        ticks: []Drawable_Handle,
+    },
     // note(isak): per-part element override set from lua (0 = use the builtin slot)
     custom_elements: [Slider_Part]Element_ID,
 }
@@ -672,6 +671,7 @@ osu_on_update :: proc(dt: f64) {
     if !lua_beatmap.hide_skin_cursor {
         r_bind_layer_and_push_current_state(.CURSOR, transform = window.screenspace_transform)
 
+        cursor_expand_update()
         cursor_trail_draw(&cursor_trails[0], mouse.pos)
         cursor_draw(mouse.pos, skin_texture(.CURSOR))
         if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {
@@ -709,11 +709,14 @@ osu_on_update :: proc(dt: f64) {
 hitobjects_draw :: proc(visible_hobjs: []Hitobject, map_time: f64) {
     // note(isak): objects overlapping in gameplay time ([start, end]) form clusters. visible_hobjs is
     // start-sorted, so clusters are contiguous runs split where an object starts after the running max
-    // end time. within a cluster every object's gfx draws above every slider path (2B: heads landing
-    // during a slider sit on its body); whole clusters stack by time, so a slider that ends before an
-    // object begins keeps its path above that object. both strata draw earliest start on top, like osu.
-    // chained overlaps merge clusters, which can lift an object's gfx above the path of a slider that
-    // ended before it began - accepted approximation, the chain is concurrent through the middle object.
+    // end time. within a cluster three strata draw in order: every slider path, then every object's gfx
+    // (2B: heads landing during a slider sit on its body), then every slider's tracking gfx (ball,
+    // follow, head click animation - so the ball rides above the heads). whole clusters stack by time,
+    // so a slider that ends before an object begins keeps its path above that object. each stratum draws
+    // earliest start on top, like osu. keeping the ball lift per-cluster (not global like mcosu's draw2)
+    // is what stops a stale ball from covering a later cluster's objects. chained overlaps merge
+    // clusters, which can lift an object's gfx above the path of a slider that ended before it began -
+    // accepted approximation, the chain is concurrent through the middle object.
     cluster_bounds := make([dynamic]int, 0, len(visible_hobjs) + 1, context.temp_allocator)
     running_end_ms := math.inf_f64(-1)
     for &hobj, i in visible_hobjs {
@@ -753,18 +756,52 @@ hitobjects_draw :: proc(visible_hobjs: []Hitobject, map_time: f64) {
                 }
             }
         }
+
+        #reverse for &hobj in cluster {
+            if hobj.type != .SLIDER do continue
+            r_check_and_bind_layer(.HITOBJECTS)
+            slider_render_tracking_gfx(&hobj, map_time)
+        }
     }
 }
 
 cursor_draw :: proc(pos: vec2, tex_index: u32) {
-    cursor_size := cursor_size_px()
+    cursor_size := cursor_size_px() * transition_mix(cursor_expand, 1, CURSOR_EXPAND_FACTOR)
     cursor_rect: Rect = { f32(pos.x), f32(pos.y), cursor_size, cursor_size }
+    angle := f32(time_s_since_beginning_of_program()) if game.active_skin.cursor_rotate else 0
     r_draw_layout_rect(&window.renderer.quad_geometry, cursor_rect, .CENTER, color_white,
-        tex_index, f32(time_s_since_beginning_of_program()))
+        tex_index, angle)
+
+    // note(isak): cursormiddle sits centered on top and neither rotates nor expands, like stable
+    if window.skin_textures[.CURSOR_MIDDLE].tex_id != 0 {
+        size := cursor_companion_size_px(.CURSOR_MIDDLE)
+        r_draw_layout_rect(&window.renderer.quad_geometry,
+            { f32(pos.x), f32(pos.y), size.x, size.y }, .CENTER,
+            color_white, skin_texture(.CURSOR_MIDDLE))
+    }
 }
 
 cursor_size_px :: proc() -> f32 {
     return 160 * (window.rect.h / 1440) * game.user_config.cursor_size_multiplier
+}
+
+cursor_companion_size_px :: proc(el: Skin_Element_Type) -> vec2 {
+    cursor_metrics := game.active_skin.elements[.CURSOR].metrics
+    if cursor_metrics.x <= 0 do return {cursor_size_px(), cursor_size_px()}
+    return game.active_skin.elements[el].metrics * (cursor_size_px() / cursor_metrics.x)
+}
+
+CURSOR_EXPAND_FACTOR :: 1.3
+CURSOR_EXPAND_ANIM_S :: 0.1
+
+cursor_expand: Transition
+
+cursor_expand_update :: proc() {
+    pressed := button_is_down(mouse.buttons[.LEFT]) || button_is_down(mouse.buttons[.RIGHT])
+    if game.mode == .PLAY {
+        pressed = pressed || controller_key_down(1) || controller_key_down(2)
+    }
+    transition_update(&cursor_expand, pressed && game.active_skin.cursor_expand, CURSOR_EXPAND_ANIM_S)
 }
 
 // note(isak): mcosu's non-smooth trail timing (osu_cursor_trail_length / _spacing); the smooth
@@ -812,14 +849,7 @@ cursor_trail_draw :: proc(trail: ^Cursor_Trail, pos: vec2) {
         trail.count -= 1
     }
 
-    // note(isak): the cursor is drawn as a fixed-size square, so the trail derives its size from the
-    // images' natural size ratio - a skin's small trail dot stays small relative to its cursor
-    cursor_metrics := game.active_skin.elements[.CURSOR].metrics
-    trail_metrics  := game.active_skin.elements[.CURSOR_TRAIL].metrics
-    size := vec2{cursor_size_px(), cursor_size_px()}
-    if cursor_metrics.x > 0 {
-        size = trail_metrics * (cursor_size_px() / cursor_metrics.x)
-    }
+    size := cursor_companion_size_px(.CURSOR_TRAIL)
 
     for i in 0..<trail.count {
         part := trail.parts[(trail.head + i) %% CURSOR_TRAIL_MAX_PARTS]

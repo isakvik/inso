@@ -33,8 +33,8 @@ HIT_COLOR_GOOD :: color_lime_green
 HIT_COLOR_MARVELOUS :: color_light_blue
 
 Hit_Error_Entry :: struct {
-    error_ms:    f64, // click_time - object_time; negative = early, positive = late
-    time_at:     f64, // music time when recorded, for fade-out
+    error_ms:    f64, // note(isak): click_time - object_time; negative = early, positive = late
+    time_at:     f64,
     judgement:   Judgement_Type,
 }
 
@@ -103,7 +103,7 @@ hit_error_bar_draw_screenspace :: proc(hit_error_bar: ^Hit_Error_Bar) {
         shown += 1
     }
 
-    /* todo(isak): show mean error text - UR should be exposed through a config instead
+    /* todo(isak): this shows mean error text - UR should be exposed through a config instead
     if shown > 0 {
         mean := sum / f64(shown)
         sign := mean >= 0 ? "+" : ""
@@ -280,28 +280,46 @@ render_timeline_clipspace :: proc(ui: ^UI_Timeline) {
 //////////////////////////////////////////////////////
 // note(isak): input display
 
+INPUT_DISPLAY_PRESS_SCALE :: 0.8
+INPUT_DISPLAY_ANIM_S      :: 0.15
+
+input_display_transitions: [6]Transition
+
 input_display_draw_screenspace :: proc() {
     r_push_transform(window.screenspace_transform)
-    
-    render_input_key :: proc(key: Button_State, rect: Rect, lit_color: Color) {
-        display_color := key.is_down ? lit_color : color_dark_gray
-        r_draw_layout_rect(&window.renderer.quad_geometry, rect, .BOTTOM_RIGHT, display_color, builtin_texture(.WHITE))
+
+    render_input_key :: proc(key: Button_State, tr: ^Transition, rect: Rect, lit_color: Color) {
+        transition_update(tr, key.is_down, INPUT_DISPLAY_ANIM_S)
+        scale := transition_mix(tr^, 1, INPUT_DISPLAY_PRESS_SCALE)
+
+        // note(isak): (rect.x, rect.y) anchors the bottom-right corner, so shrinking about the
+        // key's center pulls the corner inward by half the size delta
+        scaled := Rect{
+            rect.x - rect.w * (1 - scale) / 2,
+            rect.y - rect.h * (1 - scale) / 2,
+            rect.w * scale,
+            rect.h * scale,
+        }
+        display_color := key.is_down ? lit_color : color_white
+        r_draw_layout_rect(&window.renderer.quad_geometry, scaled, .BOTTOM_RIGHT, display_color, builtin_texture(.WHITE))
     }
 
+    tr := &input_display_transitions
     key := to_ui_scale(30)
+    ypos := to_ui_scale(5) + key
     half := to_ui_scale(15)
     cy := window.rect.h / 2
 
-    render_input_key(game.input.k1, { window.rect.w, cy - key,   key, key }, color_dim_yellow)
-    render_input_key(game.input.k2, { window.rect.w, cy,         key, key }, color_dim_yellow)
+    render_input_key(game.input.k1, &tr[0], { window.rect.w, cy - ypos,   key, key }, color_dim_yellow)
+    render_input_key(game.input.k2, &tr[1], { window.rect.w, cy,          key, key }, color_dim_yellow)
 
     lit_color := app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT ? color_sky_blue :  color_magenta
-    render_input_key(game.input.m1, { window.rect.w, cy + key,   key, key }, lit_color)
-    render_input_key(game.input.m2, { window.rect.w, cy + 2*key, key, key }, lit_color)
+    render_input_key(game.input.m1, &tr[2], { window.rect.w, cy + ypos,   key, key }, lit_color)
+    render_input_key(game.input.m2, &tr[3], { window.rect.w, cy + 2*ypos, key, key }, lit_color)
 
     if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {
-        render_input_key(game.input.ms1, { window.rect.w, cy + key,   key, half }, color_dim_orange)
-        render_input_key(game.input.ms2, { window.rect.w, cy + 2*key, key, half }, color_dim_orange)
+        render_input_key(game.input.ms1, &tr[4], { window.rect.w, cy + ypos,   key, half }, color_dim_orange)
+        render_input_key(game.input.ms2, &tr[5], { window.rect.w, cy + 2*ypos, key, half }, color_dim_orange)
     }
 }
 

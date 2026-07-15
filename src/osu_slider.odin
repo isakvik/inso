@@ -3,8 +3,6 @@ package inso
 import "core:log"
 import "core:math"
 
-//////////////////////////////////////////////////////
-// note(isak): slider logic core
 
 SLIDER_FOLLOW_CIRCLE_DEFAULT_RADIUS_MULT :: 2.4
 SLIDER_FOLLOW_CIRCLE_POP_MS :: 200
@@ -12,8 +10,10 @@ SLIDER_TICK_POP_MS :: 150 // note(isak): how long an individual tick's scale/fad
 SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS :: 3 // note(isak) don't make ticks within n ms of the sliderend
 SLIDER_END_LENIENCY_MS :: 36
 
+SLIDER_SLIDE_VOLUME :: f32(0.5)
+
 // note(isak): the sliderball animates at up to 60fps, scaled down proportionally for sliders
-// slower than 0.15 osu!px/ms (matches stable via lazer's LegacySliderBall)
+// slower than 0.15 osu!px/ms (based on lazer's LegacySliderBall)
 SLIDER_BALL_BASE_FRAME_MS :: f64(1000.0 / 60.0)
 SLIDER_BALL_FULL_SPEED_VELOCITY :: f64(0.15) // osu!px per ms
 
@@ -24,8 +24,6 @@ slider_ball_frame_delay_ms :: proc(hobj: ^Hitobject) -> f64 {
     return max(SLIDER_BALL_FULL_SPEED_VELOCITY / velocity * SLIDER_BALL_BASE_FRAME_MS, SLIDER_BALL_BASE_FRAME_MS)
 }
 
-// note(isak): the looping slide sound is attenuated below the section volume so it doesn't drown out hits
-SLIDER_SLIDE_VOLUME :: f32(0.5)
 
 // note(isak): how far the body has grown out of the head during the approach, 0 to 1.
 // 1 outright when snaking in is disabled, so dependent gfx (end circles, repeats) appear immediately
@@ -310,8 +308,6 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
     should_slide := .HEAD_CHECKED in slider.flags && is_tracking && !game.paused
     if should_slide {
         if slider.slide_sound == {} {
-            // note(isak): re-tracking mid-slider isn't a beat-snapped event, so the live timing point
-            // is the right one - no hitsound leniency involved
             slider_start_slide_sounds(hobj, &game.active_map.timing_points[game.beatmap.current_timing_point_index_inherited])
         }
         slider_renew_slide_sounds(slider, map_time)
@@ -365,12 +361,12 @@ slider_play_tick_hitsound :: proc(hobj: ^Hitobject, traversal: int, tick_ordinal
 }
 
 // note(isak): play the hitsound for one slider edge (head/repeat/tail). normal hit comes from the edge's
-// normal set, the whistle/finish/clap additions from its addition set. falls back to a plain hit from the
-// timing point set if the slider has no parsed edge data.
+// normal set, the whistle/finish/clap additions from its addition set
 slider_play_edge_hitsound :: proc(hobj: ^Hitobject, edge_index: int) {
     if game.paused || game.ui_timeline.dragging || game.ui_timeline.released do return
 
     if edge_index < 0 || edge_index >= len(hobj.slider_edge_hitsounds) {
+        // note(isak): falls back to a plain hit from the timing point set
         timing_point := &game.active_map.timing_points[hobj.hitsound_timing_point_index]
         play_hit_hitsounds(timing_point, timing_point.sample_set, timing_point.sample_set, {})
         return

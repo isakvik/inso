@@ -239,7 +239,7 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
 
     in_visible_phase := phase == .PREEMPT || phase == .POSTEMPT
 
-    digits: [4]int
+    digits: [6]int
     num_digits: int
     if .HIDE_COMBO_NUMBERS not_in hobj.flags && in_visible_phase {
         num_digits = write_combo_digits(&digits, int(hobj.combo_number))
@@ -390,10 +390,16 @@ hitcircle_create_default_hit_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_
 
     combo_color := hitobject_combo_color(hobj)
 
+    // note(isak): a slider head's click animation must stack under its own ball/follow, so the
+    // slider takes draw ownership (slider_render_tracking_gfx); the buffer keeps the lifetime
+    slider_head := !sliderend && hobj.type == .SLIDER
+    flags := Drawable_Flags{.ACTIVE}
+    if slider_head do flags |= {.OWNER_DRAWN}
+
     // note(isak): expiring gfx render in insertion order, so the circle goes first and the overlay
     // draws on top of it - same stacking as the preempt drawables (which render #reverse'd)
-    drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
-        flags = {.ACTIVE},
+    circle_handle := drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
+        flags = flags,
         element = builtin_element_slot(el_circle),
         layer = .HITOBJECTS,
         pos = pos,
@@ -404,9 +410,10 @@ hitcircle_create_default_hit_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_
         end_time_ms = map_time + OSU_HIT_ANIMATION_LENGTH,
         hobj_index = hobj.index + 1,
     })
+    overlay_handle: Drawable_Handle
     if draw_overlay {
-        drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
-            flags = {.ACTIVE},
+        overlay_handle = drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
+            flags = flags,
             element = builtin_element_slot(el_overlay),
             layer = .HITOBJECTS,
             pos = pos,
@@ -417,6 +424,10 @@ hitcircle_create_default_hit_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_
             end_time_ms = map_time + OSU_HIT_ANIMATION_LENGTH,
             hobj_index = hobj.index + 1,
         })
+    }
+    if slider_head {
+        hobj.slider_state.gfx.clicked_circle = circle_handle
+        hobj.slider_state.gfx.clicked_overlay = overlay_handle
     }
 }
 
@@ -543,7 +554,7 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     }
 
     border_rgb := game.active_skin.slider_border.a != 0 ? game.active_skin.slider_border : color_white
-    body_rgb   := game.active_skin.slider_track_override.a != 0 ? game.active_skin.slider_track_override : color_white
+    body_rgb   := game.active_skin.slider_track_override.a != 0 ? game.active_skin.slider_track_override : hitobject_combo_color(hobj)
 
     r_push_draw_slider(Slider_Params{
         transform          = slider_pf_transform,
@@ -642,6 +653,11 @@ slider_create_gfx :: proc(hobj: ^Hitobject) {
     ball_color := game.active_skin.slider_ball
     if game.active_skin.allow_slider_ball_tint do ball_color = combo
     gfx.ball = slider_drawable_new(hobj, .BALL, ball_size, ball_color)
+
+    // note(isak): the head click animation is created on hit, not here; clear stale handles so a
+    // respawn (seek + replay) never renders a recycled slot before the head is clicked again
+    gfx.clicked_circle = {}
+    gfx.clicked_overlay = {}
 
     if len(gfx.ticks) != slider.tick_count {
         gfx.ticks = make([]Drawable_Handle, slider.tick_count, memory.allocators[.DRAWABLES])
@@ -788,9 +804,22 @@ slider_render_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
     }
     ordered := [?]Drawable_Handle{
         gfx.end_circle, gfx.end_overlay, gfx.head_circle, gfx.head_overlay,
-        gfx.end_repeat, gfx.head_repeat, gfx.follow, gfx.ball,
+        gfx.end_repeat, gfx.head_repeat,
     }
-        
+    for handle in ordered {
+        d, ok := slotmap.get(&game.beatmap.drawables, handle)
+        if ok && .ACTIVE in d.flags {
+            render_drawable(d, map_time)
+        }
+    }
+}
+
+// note(isak): the tracking gfx (head click animation, follow circle, ball) draws after the object's
+// gfx_handles so it stacks above the sliderhead, while staying inside the object's cluster slot -
+// concurrent sliders keep their cluster ordering, unlike stable's global ball lift
+slider_render_tracking_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
+    gfx := &hobj.slider_state.gfx
+    ordered := [?]Drawable_Handle{gfx.clicked_circle, gfx.clicked_overlay, gfx.follow, gfx.ball}
     for handle in ordered {
         d, ok := slotmap.get(&game.beatmap.drawables, handle)
         if ok && .ACTIVE in d.flags {
@@ -801,9 +830,9 @@ slider_render_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
 
 
 // note(isak): extracts up to 4 decimal digits of n into buf (most-significant first), returns count
-write_combo_digits :: proc(buf: ^[4]int, n: int) -> (count: int) {
+write_combo_digits :: proc(buf: ^[6]int, n: int) -> (count: int) {
     v := max(n, 1)
-    for v > 0 && count < 4 {
+    for v > 0 && count < 6 {
         buf[count] = v % 10
         v /= 10
         count += 1

@@ -54,11 +54,29 @@ tween_apply :: proc(tween: Tween, t: f32) -> f32 {
     return t
 }
 
+// note(isak): a 0..1 value that chases a bool target over duration_s. t stays linear and tweens
+// apply at sample time, so a mid-flight reversal retraces the same eased curve with no extra state
+Transition :: struct {
+    t: f32,
+}
+
+transition_update :: proc(tr: ^Transition, on: bool, duration_s: f32) {
+    step := f32(game.dt) / 1000 / duration_s
+    tr.t = clamp(tr.t + (step if on else -step), 0, 1)
+}
+
+transition_value :: proc(tr: Transition, tween: Tween = .LINEAR) -> f32 {
+    return tween_apply(tween, tr.t)
+}
+
+transition_mix :: proc(tr: Transition, from, to: f32, tween: Tween = .LINEAR) -> f32 {
+    return math.lerp(from, to, transition_value(tr, tween))
+}
+
 // note(isak): how an Animation_Color result is applied against the drawable's current color.
 // REPLACE:  output = animated_color. ignores drawable.color entirely
 // MULTIPLY: output = drawable.color * animated_color / 255 per channel.
-//           useful for tint/dim effects that should work regardless of the base color -
-//           e.g. dimming approach circles before click time while preserving their combo color
+//           useful for tint/dim effects that should work regardless of the base color
 Color_Blend_Type :: enum u8 {
     REPLACE,
     MULTIPLY,
@@ -242,6 +260,11 @@ Drawable_Flag :: enum u32 {
 
     // note(isak): visibility flag
     HIDDEN,
+
+    // note(isak): lifetime stays with its expiring buffer, but the draw happens elsewhere (e.g. a
+    // slider's click animation renders in the object's cluster slot so the ball can stack above it).
+    // the expiring pass only checks liveness for these
+    OWNER_DRAWN,
 
     // note(isak): scales size up to BEAT_PULSE_MAX_SCALE on every beat, easing back down before the
     // next one (osu's reverse arrow pulse). syncs to the current uninherited timing point.
@@ -504,7 +527,12 @@ process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Dr
     map_time := beatmap_music_time_ms(&game.beatmap)
     for handle in expiring_gfx_refs.current {
         e := slotmap.get(&game.beatmap.drawables, handle) or_continue
-        still_alive := .ACTIVE in e.flags && render_drawable(e, map_time)
+        still_alive: bool
+        if .OWNER_DRAWN in e.flags {
+            still_alive = .ACTIVE in e.flags && map_time <= e.end_time_ms
+        } else {
+            still_alive = .ACTIVE in e.flags && render_drawable(e, map_time)
+        }
         if still_alive {
             sb.append_next(expiring_gfx_refs, handle)
         } else {

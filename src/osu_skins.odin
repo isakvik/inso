@@ -21,6 +21,9 @@ Skin :: struct {
         slider_ball: Color,
         allow_slider_ball_tint: bool,
 
+        cursor_expand: bool,
+        cursor_rotate: bool,
+
         font_hit_circle_prefix: string,
         font_hit_circle_overlap: f32,
 
@@ -82,6 +85,7 @@ Skin_Element_Type :: enum u32 {
     CURSOR_TRAIL,
     SLIDER_START_CIRCLE,
     SLIDER_START_CIRCLE_OVERLAY,
+    CURSOR_MIDDLE,
 }
 
 Skin_Element :: struct {
@@ -113,6 +117,7 @@ skin_element_optional := #partial [Skin_Element_Type]bool {
     .SLIDER_END_OVERLAY          = true,
     .SLIDER_START_CIRCLE         = true,
     .SLIDER_START_CIRCLE_OVERLAY = true,
+    .CURSOR_MIDDLE               = true,
 }
 
 skin_element_names := [Skin_Element_Type]string {
@@ -152,6 +157,7 @@ skin_element_names := [Skin_Element_Type]string {
     .CURSOR_TRAIL         = "cursortrail",
     .SLIDER_START_CIRCLE         = "sliderstartcircle",
     .SLIDER_START_CIRCLE_OVERLAY = "sliderstartcircleoverlay",
+    .CURSOR_MIDDLE        = "cursormiddle",
 }
 
 // note(isak): resolves a "skin:" texture expression suffix (e.g. "cursor", "sliderb") to its element
@@ -309,6 +315,9 @@ skin_handle_ini :: proc(skin: ^Skin) {
         slider_border = color_white,
         slider_track_override = 0,
         slider_ball = color_white,
+
+        cursor_expand = true,
+        cursor_rotate = true,
     }
 
     src, read_err := read_entire_file_to_string("skin.ini", context.temp_allocator)
@@ -343,6 +352,12 @@ skin_handle_ini :: proc(skin: ^Skin) {
     }
     if v, ok := get(sections, "General", "AllowSliderBallTint"); ok {
         skin.allow_slider_ball_tint = v == "1"
+    }
+    if v, ok := get(sections, "General", "CursorExpand"); ok {
+        skin.cursor_expand = v == "1"
+    }
+    if v, ok := get(sections, "General", "CursorRotate"); ok {
+        skin.cursor_rotate = v == "1"
     }
 
     max_combo := 0

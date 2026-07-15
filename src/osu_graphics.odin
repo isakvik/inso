@@ -504,18 +504,22 @@ slider_body_alpha :: proc(hobj: ^Hitobject, map_time: f64) -> f32 {
 }
 
 SLIDER_ATLAS_PAD :: 2
+SLIDER_ATLAS_SIZE :: 8192 // clamped to GL_MAX_TEXTURE_SIZE at init
 
-// note(isak): the SLIDERS framebuffer is a window-sized atlas of cached body distance fields.
-// slots are bump-allocated in rows; when the atlas fills up we reset the whole thing and bump
-// the generation, which lazily regenerates every visible body over the following frames - one
+// note(isak): the SLIDERS framebuffer is a big fixed atlas of cached body distance fields,
+// reserved once up front (R16F, 2 B/texel) so it never reallocates mid-map. slots are
+// bump-allocated in rows; when the atlas fills up we reset the whole thing and bump the
+// generation, which lazily regenerates every visible body over the following frames - one
 // frame of regeneration costs what every frame cost before caching, so resets are cheap.
 Slider_Atlas :: struct {
+    w, h: i32,
     cur_x, cur_y, row_h: i32,
     generation: u32, // starts at 1 so zero-value Slider_Body_Caches are never valid
 }
 
 Slider_Body_Cache :: struct {
     content_rect: Rect, // atlas texels, excluding the cleared gutter around the slot
+    baked_bbox: Rect,   // slider-local osupx actually baked (full bbox clipped to visibility)
     texels_per_osupx: f32,
     baked_first, baked_last: i32,
     generation: u32,
@@ -533,8 +537,8 @@ slider_atlas_reset :: proc "contextless" () {
 // clamping their texel density. allocation therefore always succeeds after at most one reset.
 slider_atlas_alloc :: proc(w, h: i32) -> (content: Rect) {
     atlas := &window.slider_atlas
-    atlas_w := i32(window.rect.w)
-    atlas_h := i32(window.rect.h)
+    atlas_w := atlas.w
+    atlas_h := atlas.h
     padded_w := w + 2 * SLIDER_ATLAS_PAD
     padded_h := h + 2 * SLIDER_ATLAS_PAD
 
@@ -568,26 +572,47 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     }
 
     r := hitobject_radius_osupx(hobj)
-    bbox_osupx := Rect{
+    full_bbox := Rect{
         slider.bounds_min.x - r,
         slider.bounds_min.y - r,
         slider.bounds_max.x - slider.bounds_min.x + r * 2,
         slider.bounds_max.y - slider.bounds_min.y + r * 2,
     }
 
+    // only bake the part the playfield transform can currently show: the visible screen region
+    // mapped back to this slider's local osupx (minus its script translation), padded by a radius
+    // so edges/AA never clip. a moved camera re-bakes via the baked_bbox staleness key below
+    translation := hobj.script_pos_translation
+    visible := playfield_visible_osupx_bounds()
+    visible.x -= translation.x + r
+    visible.y -= translation.y + r
+    visible.w += 2 * r
+    visible.h += 2 * r
+    bbox_osupx, on_screen := rect_intersect(full_bbox, visible)
+    if !on_screen {
+        return
+    }
+
+    atlas := &window.slider_atlas
+
     // bake at the texel density so static playfields sample the field 1:1; bodies larger
     // than the atlas bake at whatever density fits (banding stays sharp regardless
     // since the thresholds run on the sampled field)
     texels_per_osupx := min(
         playfield_px_per_osupx(),
-        (window.rect.w - 2 * SLIDER_ATLAS_PAD) / bbox_osupx.w,
-        (window.rect.h - 2 * SLIDER_ATLAS_PAD) / bbox_osupx.h)
+        (f32(atlas.w) - 2 * SLIDER_ATLAS_PAD) / bbox_osupx.w,
+        (f32(atlas.h) - 2 * SLIDER_ATLAS_PAD) / bbox_osupx.h)
 
     cache := &hobj.slider_state.body_cache
+    clip_tol := 0.5 / texels_per_osupx // half a texel of camera drift before we re-bake the clip
     stale := cache.generation != window.slider_atlas.generation ||
              cache.baked_first != first_instance ||
              cache.baked_last  != last_instance ||
-             abs(cache.texels_per_osupx - texels_per_osupx) > texels_per_osupx * 0.005
+             abs(cache.texels_per_osupx - texels_per_osupx) > texels_per_osupx * 0.005 ||
+             abs(cache.baked_bbox.x - bbox_osupx.x) > clip_tol ||
+             abs(cache.baked_bbox.y - bbox_osupx.y) > clip_tol ||
+             abs(cache.baked_bbox.w - bbox_osupx.w) > clip_tol ||
+             abs(cache.baked_bbox.h - bbox_osupx.h) > clip_tol
 
     if stale {
         content_w := i32(math.ceil(bbox_osupx.w * texels_per_osupx))
@@ -597,6 +622,7 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
             cache.content_rect = slider_atlas_alloc(content_w, content_h)
         }
         cache.texels_per_osupx = texels_per_osupx
+        cache.baked_bbox = bbox_osupx
         cache.baked_first = first_instance
         cache.baked_last = last_instance
         cache.generation = window.slider_atlas.generation
@@ -611,7 +637,10 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
             0, 0, 1,
         }
         cs_to_osupx := mat3{r, 0, 0, 0, r, 0, 0, 0, 1}
-        bake_transform := mat3_to_transform(transform_to_mat3(window.screenspace_transform) * place_atlas_px * cs_to_osupx)
+        // the atlas is its own render target, so slot pixels map to NDC through an atlas-sized
+        // screenspace transform, not the window's
+        atlas_screenspace := transform_from_bounds({0, 0, f32(atlas.w), f32(atlas.h)}, 1)
+        bake_transform := mat3_to_transform(transform_to_mat3(atlas_screenspace) * place_atlas_px * cs_to_osupx)
 
         slot_rect := Rect{
             cache.content_rect.x - SLIDER_ATLAS_PAD,
@@ -625,10 +654,11 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
         r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
 
         if window.intel_gpu {
-            // note(isak): on intel opengl drivers, a scissored glClear ignores ClipControl(UPPER_LEFT)
+            // note(isak): on intel opengl drivers, a scissored glClear ignores ClipControl(UPPER_LEFT).
+            // pre-flip against the atlas height so the command's own y-flip cancels back to top-left
             r_set_scissor_mode(
                 i32(slot_rect.x),
-                i32(window.rect.h - slot_rect.y - slot_rect.h),
+                atlas.h - i32(slot_rect.y) - i32(slot_rect.h),
                 i32(slot_rect.w),
                 i32(slot_rect.h))
             r_clear(with_alpha(color_black, 0.0))
@@ -647,7 +677,6 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
 
     // note(isak): the body composite bypasses render_drawable, so we have to resolve the HITOBJECTS
     // target through r_layer_framebuffer to match the rest of the layer
-    translation := hobj.script_pos_translation
     slider_write_target := r_layer_framebuffer(.HITOBJECTS).write
     r_bind_framebuffer({ read = builtin_framebuffer(.SLIDERS), write = slider_write_target })
     r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
@@ -661,18 +690,23 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
     r_bind_pipeline({ pipeline = builtin_pipeline_slot(.SLIDER_PRESENT) })
     r_reset_scissor_mode()
 
+    // present exactly what's in the slot: a reused cache may have drifted within tolerance from
+    // this frame's live clip/density, so the quad and uvs track the baked values, not the live ones
+    baked_bbox := cache.baked_bbox
+    baked_density := cache.texels_per_osupx
+
     // uvs cover the exact fractional field extent, not the ceil'd slot, so texels map 1:1
     atlas_uvs := Rect{
-        cache.content_rect.x / window.rect.w,
-        cache.content_rect.y / window.rect.h,
-        bbox_osupx.w * texels_per_osupx / window.rect.w,
-        bbox_osupx.h * texels_per_osupx / window.rect.h,
+        cache.content_rect.x / f32(atlas.w),
+        cache.content_rect.y / f32(atlas.h),
+        baked_bbox.w * baked_density / f32(atlas.w),
+        baked_bbox.h * baked_density / f32(atlas.h),
     }
     body_rect := Rect{
-        bbox_osupx.x + translation.x,
-        bbox_osupx.y + translation.y,
-        bbox_osupx.w,
-        bbox_osupx.h,
+        baked_bbox.x + translation.x,
+        baked_bbox.y + translation.y,
+        baked_bbox.w,
+        baked_bbox.h,
     }
 
     // note(isak): the band's body samples this per-slider color; border stays skin-global. track

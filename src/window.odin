@@ -3,6 +3,7 @@ package inso
 import q "core:container/queue"
 import "core:fmt"
 import "core:log"
+import "core:math"
 
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
@@ -58,8 +59,8 @@ window: struct {
 
     shader_global_buffer: GL_Uniform_Buffer(Shader_Globals),
     slider_param_store: GL_Triple_Buffer(Slider_Params_Slot),
-    // note(isak): the SLIDERS framebuffer doubles as a window-sized atlas of cached slider
-    // body distance fields; this is the allocator state (see slider_render_path)
+    // note(isak): the SLIDERS framebuffer is a big fixed atlas of cached slider body distance
+    // fields; this is the allocator state (see slider_render_path)
     slider_atlas: Slider_Atlas,
     user_param_buffer: GL_Uniform_Buffer(User_Shader_Params),
     post_param_buffer: GL_Uniform_Buffer(Post_Pass_Params),
@@ -190,9 +191,8 @@ window_on_resize :: proc(new_w, new_h: i32) {
     game.playfield_transform = playfield_build_transform()
     game.playfield_dirty_transform = false
     
-    fbo_reinit(&window.framebuffers[.SLIDERS], new_w, new_h)
     fbo_reinit(&window.framebuffers[.BACKBUFFER], new_w, new_h)
-    slider_atlas_reset()
+    slider_atlas_reset() // fixed-size atlas survives resize; reset just re-bakes at the new density
 
     if game.active_mapset != nil {
         for &rt in game.active_mapset.render_targets.data {
@@ -262,6 +262,34 @@ window_cycle_mode :: proc(current_mode: Window_Mode) {
 
 window_apply_vsync :: proc(enabled: bool) {
     sdl.GL_SetSwapInterval(1 if enabled else 0)
+}
+
+window_refresh_interval_ms :: proc() -> f64 {
+    mode := sdl.GetCurrentDisplayMode(sdl.GetDisplayForWindow(window.handle))
+    if mode == nil do return 0
+
+    if mode.refresh_rate_numerator > 0 && mode.refresh_rate_denominator > 0 {
+        return 1000 * f64(mode.refresh_rate_denominator) / f64(mode.refresh_rate_numerator)
+    }
+    if mode.refresh_rate > 0 do return 1000 / f64(mode.refresh_rate)
+    return 0
+}
+
+FRAME_SNAP_TOLERANCE_MS :: 1.0
+
+// note(isak): a vsynced frame is shown for a whole number of refresh intervals; only the clock read
+// that measures it jitters. advancing by that jitter causes extra roughness in frame timings.
+window_snap_frame_delta_ms :: proc(dt_ms: f64) -> f64 {
+    if !game.user_config.vsync_enabled do return dt_ms
+
+    refresh_ms := window_refresh_interval_ms()
+    if refresh_ms <= 0 do return dt_ms
+
+    refreshes := math.round(dt_ms / refresh_ms)
+    if refreshes < 1 do return dt_ms // note(isak): rounding to zero would stop the clock
+
+    snapped_ms := refreshes * refresh_ms
+    return snapped_ms if abs(snapped_ms - dt_ms) <= FRAME_SNAP_TOLERANCE_MS else dt_ms
 }
 
 window_set_resizable :: proc(enabled: bool) {

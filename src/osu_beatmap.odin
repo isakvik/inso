@@ -465,7 +465,7 @@ beatmap_music_position_interpolated_ms :: proc(beatmap: ^Beatmap) -> (result: f6
         return beatmap.music_time_ms
     }
 
-    real_time := time_s_since_beginning_of_program()
+    real_time := game.frame_clock_s
     song_time := sound_get_position_ms(&beatmap.music)
     
     if sound_is_playing(&beatmap.music) {
@@ -478,23 +478,24 @@ beatmap_music_position_interpolated_ms :: proc(beatmap: ^Beatmap) -> (result: f6
         
         ip_pos_to_reach_ms := beatmap.music_time_ms + interpolation_delta_ms
         delta := ip_pos_to_reach_ms - song_time
-        
+
         ip_pos_to_reach_ms -= delta / 8
-        
+        delta = ip_pos_to_reach_ms - song_time
+
         if abs(delta) > interpolation_delta_limit * 2 {
             // big time discrepancy, defer to song_time
             result = song_time
-            
+
         } else if delta < -interpolation_delta_limit {
             // undershooting, try to catch up
-            result = ip_pos_to_reach_ms + interpolation_delta_ms
+            result = beatmap.music_time_ms + interpolation_delta_ms * 2
             beatmap.last_accurate_music_position_set_time = real_time
         } else if delta < interpolation_delta_limit {
             // on pace
             result = ip_pos_to_reach_ms
         } else {
             // overshooting, slow down
-            result = ip_pos_to_reach_ms - interpolation_delta_ms * 0.5
+            result = beatmap.music_time_ms + interpolation_delta_ms * 0.5
             beatmap.last_accurate_music_position_set_time = real_time
         }
         
@@ -545,11 +546,8 @@ beatmap_get_visible_hitobjects :: proc(beatmap: ^Beatmap, map_time: f64) -> (res
     return result
 }
 
-// note(isak): the cached visible range widened to cover the endpoints of every currently-active followpoint
-// connection. read-only - it never advances the visibility cursor, so it can't disturb phase transitions or
-// hittesting. the active connections form a contiguous index band (they link consecutive, time-ordered
-// objects), so the union stays a single [lo, hi) range. it extends both directions: a far-spaced
-// connection's source can have faded from the normal range while its outgoing line is still drawn.
+// note(isak): the cached visible range widened to cover the endpoints of every active followpoint
+// connection
 // todo(isak): @speed - scans every connection each call, same as the followpoint render pass.
 beatmap_visible_incl_followpoints_bounds :: proc(beatmap: ^Beatmap, map_time: f64) -> (lo, hi: int) {
     state := beatmap.visible_hitobject_state

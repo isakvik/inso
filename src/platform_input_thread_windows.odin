@@ -142,7 +142,7 @@ input_thread_apply_events :: proc(events: []Input_Event) {
 }
 
 apply_raw_mouse_event :: proc(target: ^Mouse, event: ^Input_Event) {
-    target.pos += raw_mouse_motion_delta(event)
+    target.pos = raw_cursor_integrate(target.pos, event)
 
     flags := event.button_flags
     if flags & INPUT_M1_DOWN != 0 do target.buttons[.LEFT].is_down   = true
@@ -209,33 +209,32 @@ _input_thread_proc :: proc "system" (param: rawptr) -> windows.DWORD {
     // never see the same event twice. batched events share one QPC stamp (error <= the pace tick)
     msg: windows.MSG
     for windows.GetMessageW(&msg, nil, 0, 0) > 0 {
-        if msg.message == windows.WM_INPUT_DEVICE_CHANGE {
-            intrinsics.atomic_store_explicit(&input_thread.device_change_pending, true, .Relaxed)
-            continue
-        }
-        if msg.message != windows.WM_INPUT {
-            windows.DispatchMessageW(&msg)
-            continue
-        }
-
-        _input_thread_on_wm_input(msg.lParam)
+        _input_thread_handle_message(&msg)
+        if msg.message != windows.WM_INPUT do continue
 
         for _input_thread_drain_raw_input_buffer() > 0 {
             // non-input messages would starve while we pace, pump them between drains
-            for windows.PeekMessageW(&msg, nil, 0, 0, windows.PM_REMOVE) != windows.FALSE {
-                switch msg.message {
-                case windows.WM_INPUT_DEVICE_CHANGE:
-                    intrinsics.atomic_store_explicit(&input_thread.device_change_pending, true, .Relaxed)
-                case windows.WM_INPUT:
-                    _input_thread_on_wm_input(msg.lParam)
-                case:
-                    windows.DispatchMessageW(&msg)
-                }
+            pending: windows.MSG
+            for windows.PeekMessageW(&pending, nil, 0, 0, windows.PM_REMOVE) != windows.FALSE {
+                _input_thread_handle_message(&pending)
             }
             windows.Sleep(1)
         }
     }
     return 0
+}
+
+// note(isak): every message ends at DefWindowProc, WM_INPUT included: win32 keeps the raw data
+// behind each WM_INPUT alive until the default handler retires it, so a pump that reads the data
+// and swallows the message leaks that data for the lifetime of the process
+_input_thread_handle_message :: proc "system" (msg: ^windows.MSG) {
+    switch msg.message {
+    case windows.WM_INPUT:
+        _input_thread_on_wm_input(msg.lParam)
+    case windows.WM_INPUT_DEVICE_CHANGE:
+        intrinsics.atomic_store_explicit(&input_thread.device_change_pending, true, .Relaxed)
+    }
+    windows.DispatchMessageW(msg)
 }
 
 // reads everything queued right now, in bulk. returns the number of events consumed
@@ -253,6 +252,10 @@ _input_thread_drain_raw_input_buffer :: proc "system" () -> (total: int) {
         raw := cast(^windows.RAWINPUT)&buffer[0]
         for _ in 0..<count {
             _input_thread_queue_raw_event(raw, qpc)
+            // buffered reads bypass the message pump, so they retire through DefRawInputProc
+            // instead of DefWindowProc - same bookkeeping, same leak if it never happens
+            entry := cast(windows.PRAWINPUT)raw
+            windows.DefRawInputProc(&entry, 1, size_of(windows.RAWINPUTHEADER))
             // NEXTRAWINPUTBLOCK: entries are variable-size, each aligned to pointer size
             raw = cast(^windows.RAWINPUT)((uintptr(raw) + uintptr(raw.header.dwSize) + 7) & ~uintptr(7))
         }
@@ -261,11 +264,11 @@ _input_thread_drain_raw_input_buffer :: proc "system" () -> (total: int) {
     return
 }
 
+// the pump reads WM_INPUT before dispatching it, so by the time anything arrives here it has
+// already been queued and only needs retiring
 _input_thread_wndproc :: proc "system" (
     hwnd: windows.HWND, msg: windows.UINT, wparam: windows.WPARAM, lparam: windows.LPARAM
 ) -> windows.LRESULT {
-    // WM_INPUT and WM_INPUT_DEVICE_CHANGE are posted, never sent, so the pump intercepts them
-    // before dispatch ever reaches this
     return windows.DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 

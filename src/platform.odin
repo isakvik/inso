@@ -134,8 +134,7 @@ Input_Event :: struct {
     key_is_down: bool,
 }
 
-// button_flags transition bits, numerically identical to win32's RI_MOUSE_*. every consumer of
-// Input_Event.button_flags reads these; only the producing thread touches the RI_* names
+// redeclaration of win32's RI_MOUSE_*
 INPUT_M1_DOWN: u16 : 0x0001
 INPUT_M1_UP:   u16 : 0x0002
 INPUT_M2_DOWN: u16 : 0x0004
@@ -148,6 +147,19 @@ INPUT_M3_UP:   u16 : 0x0020
 raw_mouse_motion_delta :: proc(event: ^Input_Event) -> vec2 {
     if !window.mouse_inside || event.absolute_motion do return {}
     return {f32(event.motion_x), f32(event.motion_y)} * game.user_config.cursor_sensitivity
+}
+
+// note(isak): advances an integrated raw cursor, confined to the window like osu does. the
+// confinement is load-bearing: the os cursor is warped to follow this every frame and SetCursorPos
+// clamps to the desktop, so a position allowed past the edge desyncs from the real cursor and every
+// later warp pins the real one against that edge until the overshoot is walked back by hand. a
+// fullscreen window never gets the mouse-leave that would resync it, so the pin is permanent there
+raw_cursor_integrate :: proc(pos: vec2, event: ^Input_Event) -> vec2 {
+    moved := pos + raw_mouse_motion_delta(event)
+    return {
+        clamp(moved.x, 0, window.rect.w - 1),
+        clamp(moved.y, 0, window.rect.h - 1),
+    }
 }
 
 Mouse_ID :: enum {

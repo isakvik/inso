@@ -99,16 +99,12 @@ process_hitobject_hittesting :: proc(visible_hobjs: []Hitobject, map_time: f64) 
         return
     }
 
-    // frame-quantized fallback: non-play modes, and platforms without the raw input thread.
-    // every press this frame judges at the same map_time and frame-end cursor position
     for valid_controller_press() {
         consume_controller_press()
         check_controller_press(visible_hobjs, map_time, game.input.mouse_pos)
     }
 }
 
-// resolves a single controller press against the hittable heads: notelock front-checking,
-// judgement, and phase transitions. press_time is the map time the press happened at
 check_controller_press :: proc(visible_hobjs: []Hitobject, press_time: f64, cursor_osupx: vec2) {
     game.input.last_valid_press_at = press_time
 
@@ -189,8 +185,7 @@ process_expiring_hitobjects :: proc(expiring_hitobjects: ^sb.Swap_Buffer(int)) {
     sb.swap(expiring_hitobjects)
 }
 
-// note(isak): spinners are unsupported for now - they take no input and post no judgements,
-// so they don't exist to scoring. they expire silently at their end time
+// todo(isak): spinners are unsupported for now
 spinner_process_expiry :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
     if hobj.end_time_ms < map_time {
         hobj.flags &~= {.VISIBLE}
@@ -213,9 +208,6 @@ hitcircle_process_expiry :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: b
     return expired
 }
 
-// note(isak): the play path mutates object state forward-only (phase, expiry, drawables), so seeking backward
-// leaves finished objects deleted. these rewind only the transient render/gameplay state; map data (combo,
-// hitsounds) and baked geometry/timing stay, so the normal spawn logic re-evaluates the object from scratch.
 hitobject_reset_transient :: proc(hobj: ^Hitobject) {
     hitobject_clear_drawables(hobj)
     if hobj.type == .SLIDER do slider_reset_transient(hobj)
@@ -304,8 +296,8 @@ followpoint_emit :: proc(beatmap: ^Beatmap, conn: ^Followpoint_Connection, map_t
         alpha    := f32(min(fade_in, fade_out))
 
         // todo(isak): unused leadin animation (like the osu default skin. not sure if this is versioned...)
-        move_t := tween_apply(.QUAD_OUT, f32(clamp((map_time - fade_in_time) / FOLLOWPOINT_MOVE_MS, 0, 1)))
-        slot   := fraction + FOLLOWPOINT_LEAD_FRACTION * 1 //(move_t - 1)
+        //move_t := tween_apply(.QUAD_OUT, f32(clamp((map_time - fade_in_time) / FOLLOWPOINT_MOVE_MS, 0, 1)))
+        slot   := fraction + FOLLOWPOINT_LEAD_FRACTION // * (move_t - 1)
         scale  := f32(0.58)
 
         // note(isak): handle animation frames
@@ -334,5 +326,3 @@ followpoint_emit :: proc(beatmap: ^Beatmap, conn: ^Followpoint_Connection, map_t
         render_drawable(&point, map_time)
     }
 }
-
-

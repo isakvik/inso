@@ -29,7 +29,11 @@ playfield_base_translation_osupx :: vec2{0, 72} // (512-384)/2 + 8
 
 // note(isak): state struct. keep it lean, put large data fields in arenas and point to it here
 game: struct {
-    dt: f64, 
+    dt: f64,
+    // note(isak): accumulated dt, so it advances in the steps the display actually presents in.
+    // everything time-based rides this instead of reading the wall clock itself, so it agrees on when
+    // "now" is no matter where in the frame it asks, and never inherits the wobble of that read
+    frame_clock_s: f64,
     active_mapset: ^Mapset,
     active_inso_map: ^Inso_Map,
     active_map: ^Osu_Map,
@@ -556,6 +560,7 @@ osu_on_init :: proc() {
 
 osu_on_update :: proc(dt: f64) {
     game.dt = dt
+    game.frame_clock_s += dt / 1000
 
     window_set_resizable(game.mode != .PLAY)
     windows_key_set_disabled(game.mode == .PLAY && window.focused)
@@ -969,6 +974,21 @@ playfield_osupx_to_screenspace :: proc(pos: vec2) -> vec2 {
         transform_to_mat3(game.playfield_transform),
         transform_to_mat3(window.screenspace_transform)
     )
+}
+
+// note(isak): the window's four corners mapped back through the playfield transform, as an
+// axis-aligned osupx cover (conservative under rotation). used to clip slider body bakes to
+// what the camera can currently show
+playfield_visible_osupx_bounds :: proc() -> Rect {
+    lo := screenspace_to_playfield_osupx({0, 0})
+    hi := lo
+    corners := [3]vec2{{window.rect.w, 0}, {0, window.rect.h}, {window.rect.w, window.rect.h}}
+    for corner in corners {
+        p := screenspace_to_playfield_osupx(corner)
+        lo = {min(lo.x, p.x), min(lo.y, p.y)}
+        hi = {max(hi.x, p.x), max(hi.y, p.y)}
+    }
+    return Rect{lo.x, lo.y, hi.x - lo.x, hi.y - lo.y}
 }
 
 // note(isak): the uniform pixels-per-osupx factor of the playfield transform (no rotation/translation).

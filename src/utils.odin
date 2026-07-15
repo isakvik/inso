@@ -233,6 +233,17 @@ rect_from_points :: proc "contextless" (from, to: vec2) -> Rect {
     }
 }
 
+rect_intersect :: proc "contextless" (a, b: Rect) -> (Rect, bool) {
+    x0 := max(a.x, b.x)
+    y0 := max(a.y, b.y)
+    x1 := min(a.x + a.w, b.x + b.w)
+    y1 := min(a.y + a.h, b.y + b.h)
+    if x1 <= x0 || y1 <= y0 {
+        return {}, false
+    }
+    return Rect{x0, y0, x1 - x0, y1 - y0}, true
+}
+
 //////////////////////////////////////////////////////
 // note(isak): math utils
 

@@ -241,7 +241,12 @@ renderer_init :: proc() {
         queue.push(&window.pipelines, sg.make_pipeline(slider_present_pipeline_desc(.PREMULTIPLIED)))
     }
 
-    window.framebuffers[.SLIDERS] = fbo_init(1, 0, i32(window.rect.w), i32(window.rect.h), gl.R16F)
+    max_texture_size: i32
+    gl.GetIntegerv(gl.MAX_TEXTURE_SIZE, &max_texture_size)
+    atlas_size := min(i32(SLIDER_ATLAS_SIZE), max_texture_size)
+    window.slider_atlas.w = atlas_size
+    window.slider_atlas.h = atlas_size
+    window.framebuffers[.SLIDERS] = fbo_init(1, 0, atlas_size, atlas_size, gl.R16F)
     window.slider_atlas.generation = 1
     window.framebuffers[.BACKBUFFER] = fbo_init(1, 1, i32(window.rect.w), i32(window.rect.h), gl.RGBA8)
     
@@ -987,6 +992,10 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
     bound_pipeline: Pipeline_ID = builtin_pipeline_slot(.QUAD)
     write_offscreen: bool
 
+    // note(isak): viewport and the scissor y-flip both track the bound draw target's size, so a
+    // target larger than the window (the slider atlas) bakes into the right pixels
+    draw_fb_height := i32(window.rect.h)
+
     for layer in Layer {
         command_queue := renderer.layer_command_queues[layer]
 
@@ -999,6 +1008,8 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
             // target, so pin the default framebuffer (and straight-alpha pipeline) before replaying.
             if layer == .PLATFORM {
                 fbo_bind(0, 0)
+                gl.Viewport(0, 0, i32(window.rect.w), i32(window.rect.h))
+                draw_fb_height = i32(window.rect.h)
                 write_offscreen = false
                 sg.apply_pipeline(window.pipelines.data[_r_effective_pipeline(bound_pipeline, write_offscreen)])
             }
@@ -1091,6 +1102,14 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                     write_id := write.id if write_ok else 0
                     fbo_bind(read.id if read_ok else 0, write_id)
 
+                    if write_ok && write_id != 0 {
+                        gl.Viewport(0, 0, write.w, write.h)
+                        draw_fb_height = write.h
+                    } else {
+                        gl.Viewport(0, 0, i32(window.rect.w), i32(window.rect.h))
+                        draw_fb_height = i32(window.rect.h)
+                    }
+
                     // note(isak): a fb change alone can flip the premultiplied routing (render_drawable
                     // binds its pipeline before its target), so re-apply the bound pipeline here.
                     write_offscreen = write_id != 0
@@ -1113,7 +1132,7 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                 case .SCISSOR_MODE: {
                     cmd := _command_consume(&command_queue, Command_Scissor_Mode)
                     // note(isak): GL expects y=0 to be the bottom, but our convention is the top, so we transform
-                    gl.Scissor(cmd.x, i32(window.rect.h) - cmd.y - cmd.h, max(cmd.w, 0), max(cmd.h, 0))
+                    gl.Scissor(cmd.x, draw_fb_height - cmd.y - cmd.h, max(cmd.w, 0), max(cmd.h, 0))
 
                     if (trace) { fmt.println("  scissor", cmd.x, cmd.y, cmd.w, cmd.h) }
                 }
@@ -1146,6 +1165,7 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                         tbo_bind(&window.quad_store, u32(Shader_SSBO_Bind_Slot.VERTEX_BUFFER))
                         fbo_bind(0, 0)
                         gl.Viewport(0, 0, i32(window.rect.w), i32(window.rect.h))
+                        draw_fb_height = i32(window.rect.h)
 
                         // note(isak): the post pass set its own pipeline + restored the default
                         // target out from under our trackers; keep them in sync for the next bind.

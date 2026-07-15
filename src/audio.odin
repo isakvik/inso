@@ -102,7 +102,7 @@ when ODIN_OS == .Windows {
         flags = 0,
         buffer = 0.02,
         period = 0,
-        _proc = _bass_wasapi_proc,
+        _proc = _bass_wasapi_output_proc,
         user = nil
     */
     _wasapi_output_init :: proc() -> (info: bass.WASAPI_INFO, ok: bool) {

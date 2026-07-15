@@ -396,8 +396,8 @@ main :: proc() {
                 discover_skins("skins/")
             }
             
-            dt_ms := (time_current_frame - time_last_frame) * 1000
-            
+            dt_ms := window_snap_frame_delta_ms((time_current_frame - time_last_frame) * 1000)
+
             r_bind_layer_and_push_current_state(.BACKGROUND, transform = window.screenspace_transform)
             osu_on_update(dt_ms)
 

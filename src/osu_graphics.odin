@@ -675,6 +675,13 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
         bbox_osupx.h,
     }
 
+    // note(isak): the band's body samples this per-slider color; border stays skin-global. track
+    // override wins when set, otherwise the body takes the object's combo color
+    body_rgb := hitobject_combo_color(hobj)
+    if game.active_skin != nil && game.active_skin.slider_track_override.a != 0 {
+        body_rgb = game.active_skin.slider_track_override
+    }
+
     // note(isak): dimming the composite tint dims border and body together, mirroring HITOBJECT_DIM
     // the same way slider_body_alpha mirrors FADE_IN/FADE_OUT
     body_tint := color_scale_rgb(color_white, hitobject_dim_factor(hobj.start_time_ms, map_time))
@@ -683,7 +690,8 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
                         body_rect,
                         atlas_uvs,
                         with_alpha(body_tint, slider_body_alpha(hobj, map_time)),
-                        builtin_texture(.SLIDER_FRAMEBUFFER))
+                        builtin_texture(.SLIDER_FRAMEBUFFER),
+                        body_color = with_alpha(body_rgb, 0.7))
 }
 
 slider_part_element :: proc(hobj: ^Hitobject, part: Slider_Part) -> Element_ID {

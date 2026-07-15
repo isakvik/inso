@@ -23,6 +23,7 @@ layout (binding = 3, std140) uniform globalData {
 in vec3 uv; // xy = tex coords, z = array layer index
 in vec4 color;
 flat in uint texIndex;
+in vec4 bodyColor; // per-slider combo/track color; border stays skin-global
 
 out vec4 frag_color;
 
@@ -51,9 +52,9 @@ vec4 getOuterBodyColor(vec4 bodyColor) {
 }
 
 // field: 0 = outside/edge, 1 = path spine
-vec4 bandColor(float field) {
-    vec4 inner_body = vec4(getInnerBodyColor(sliderBodyColor).rgb, sliderBodyColor.a);
-    vec4 outer_body = vec4(getOuterBodyColor(sliderBodyColor).rgb, sliderBodyColor.a);
+vec4 bandColor(float field, vec4 body) {
+    vec4 inner_body = vec4(getInnerBodyColor(body).rgb, body.a);
+    vec4 outer_body = vec4(getOuterBodyColor(body).rgb, body.a);
 
     if (field < SHADOW_WIDTH - BORDER_TRANSITION_WIDTH) {
         float delta = field / (SHADOW_WIDTH - BORDER_TRANSITION_WIDTH);
@@ -79,5 +80,5 @@ vec4 bandColor(float field) {
 
 void main() {
     float field = texture(textures[texIndex], uv).r;
-    frag_color = bandColor(field) * color;
+    frag_color = bandColor(field, bodyColor) * color;
 }

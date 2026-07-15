@@ -54,7 +54,7 @@ Quad :: struct {
     tex_index: u32,
     angle:     f32,
     transform_index: u32, // slot in the frame's transform ring (TRANSFORMS bind slot)
-    __padding: u32, // note(isak): std430 rounds the struct to vec2 alignment (56 bytes)
+    body_color: u32, // note(isak): per-quad slider body color, read only by slider_present.fs; 0 elsewhere
 }
 
 Slider_Vertex :: struct {
@@ -1166,7 +1166,7 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
 // note(isak): draw api - PS: we use our nice global window.renderer here to make the api easier
 
 r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2,
-                          color: Color, tex_index: u32, angle: f32 = 0, layer: f32 = 0) {
+                          color: Color, tex_index: u32, angle: f32 = 0, layer: f32 = 0, body_color: Color = {}) {
     assert(window.renderer.current_draw != nil)
 
     if geometry.count + 1 > MAX_BATCH_VERTICES {
@@ -1213,6 +1213,7 @@ r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, u
             tex_index = resolved_tex_index,
             angle = angle,
             transform_index = window.renderer.current_transform_index,
+            body_color = transmute(u32)body_color,
         }
 
         geometry.count += 1
@@ -1232,9 +1233,9 @@ r_draw_rect :: proc(geometry: ^Buffer(Quad), r: Rect,
 }
 
 r_draw_rect_with_uv :: proc(geometry: ^Buffer(Quad), r, uv: Rect,
-                            color: Color, tex_index: u32 = 0, angle: f32 = 0, layer: f32 = 0) {
+                            color: Color, tex_index: u32 = 0, angle: f32 = 0, layer: f32 = 0, body_color: Color = {}) {
     r_draw_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h},
-                                {uv.x, uv.y}, {uv.x + uv.w, uv.y + uv.h}, color, tex_index, angle, layer)
+                                {uv.x, uv.y}, {uv.x + uv.w, uv.y + uv.h}, color, tex_index, angle, layer, body_color)
 }
 
 r_draw_layout_rect :: proc(geometry: ^Buffer(Quad), rect: Rect, anchor: Layout_Anchor,

@@ -18,7 +18,7 @@ struct Quad {
     uint texIndex;
     float angle;
     uint transformIndex;
-    uint _pad;
+    uint bodyColor;
 };
 
 layout(binding = 1, std430) readonly buffer vertexData {
@@ -34,6 +34,7 @@ layout(binding = 17, std430) readonly buffer transformData {
 out vec4 color;
 out vec3 uv;
 flat out uint texIndex;
+out vec4 bodyColor;
 
 const uint instanceToIndex[] = {0, 2, 1, 1, 2, 3};
 
@@ -56,6 +57,7 @@ void main() {
 
     uv = vec3(q_uvs[right].x, 1.0 - q_uvs[bottom].y, q.tex_layer);
     color = unpackUnorm4x8(q.color);
+    bodyColor = unpackUnorm4x8(q.bodyColor);
     texIndex = q.texIndex;
 
     vec3 pos = transforms[q.transformIndex] * vec3(rotatedPos, 1.0);

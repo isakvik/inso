@@ -9,15 +9,31 @@ known discrepancies
 
 old features
     cursor ripple
-    slider body color from combo color
-    sliderball tint
+    sliderfollowcircle animation (fade/scale)
+
+scripting
+    validate_judgement()
+    
+
+YEAST mode
+    screen capture must work
+        consider an FPS cap option
+    parse and apply settings from osu install (specify with path loaded from config), to allow warmup
+        the osu config just takes straight precedence over the inso config, and is not saved to file
+    thepoon request:
+        open map across all clients with keyboard input (enter, anything that works with stable)
+    opening map into tournament mode from starting inso
+        cmd line argument
+        needs to find and apply config
+        intro screen ("Waiting for map start...")
+    score posting
+        asynchronously posting to score server via curl library
 
 skinning
-    skin.ini AnimationFramerate (sliderball hardcoded to 1s loop; judgements/followpoints use own timing)
+    we can test players' submitted skins for unhandled functionality
     remaining ini keys: SliderBallFlip, HitCircleOverlayAboveNumber, LayeredHitSounds
-    score/combo number fonts (ScorePrefix, ComboPrefix, default-x/dot/percent glyphs) - scorescreen uses none of these yet
-    beatmap skin images
-    followpoint leadin animation (tween written but disabled, osu_hitobjects.odin followpoint_emit)
+
+--
 
 extra features
     rotate slider from head
@@ -28,7 +44,6 @@ scripting
 
 TEST
     custom buffers
-    limit testing
     
 gameplay
     non-scalar playfield scale
@@ -48,10 +63,3 @@ platform
     file watch parity across platforms
         linux recursive watch support
         windows unicode filename conversion
-
-YEAST mode
-    screen capture must work
-    parse and apply settings from osu install (specify with path?), to allow warmup
-
-    thepoon request:
-    open map across all clients with keyboard input (enter, anything that works with stable)

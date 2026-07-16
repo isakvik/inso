@@ -26,7 +26,7 @@ Beatmap :: struct {
     current_kiai: bool,
     
     last_music_position_interpolation_check_time: f64,
-    last_accurate_music_position_set_time: f64,
+    music_time_interpolating: bool,
 
     // note(isak): on_fixed_update + scheduled events step on this, decoupled from render framerate,
     // so forward catch-up and backward replay are deterministic
@@ -452,62 +452,66 @@ beatmap_game_time_to_music_time :: proc(beatmap: ^Beatmap, game_time: f64) -> f6
 }
 
 
-// note(isak): this function tries to minimize the discrepancy between the audio library's reported music position and
-// the running real time clock, pretty much exactly as implemented before me in McOsu. 
-// (it's not as much interpolation as it is a dynamic extrapolation of music time based on real time...)
-//
-// i can't help but feel like there's a simpler solution because even on a good setup it's routinely "off" by a 
-// millisecond, but maybe i just don't understand the problem that deeply?
+// note(isak): the audio library reports play position in buffer-sized steps, so we extrapolate a smooth
+// playhead from the frame clock and let the reported position pull it back into line.
+// ported from InterpolatingFramedClock in lazer, thanks peppy
+
+MUSIC_TIME_DRIFT_HALF_LIFE_MS :: 50.0
+
+// note(isak): two 60fps frames. past this the extrapolation is worse than the raw reading
+MUSIC_TIME_ALLOWABLE_ERROR_MS :: 1000.0 / 60 * 2
+
 beatmap_music_position_interpolated_ms :: proc(beatmap: ^Beatmap) -> (result: f64) {
     // note(isak): no output device right now (see audio_handle_device_change); position queries
-    // report 0, so freeze time instead. recovery lands in the big-discrepancy branch below
+    // report 0, so freeze time instead. recovery lands in the allowable-error branch below
     if !audio.ready {
         return beatmap.music_time_ms
     }
 
+    last_time := beatmap.music_time_ms
     real_time := game.frame_clock_s
     song_time := sound_get_position_ms(&beatmap.music)
-    
-    if sound_is_playing(&beatmap.music) {
-        
-        // note(isak): thanks peppy(tm) for the magic numbers
-        time_rate := f64(game.time_rate)
-        interpolation_delta_ms := (real_time - beatmap.last_music_position_interpolation_check_time) * 1000 * time_rate
-        interpolation_delta_limit: f64 = 
-            (real_time - beatmap.last_accurate_music_position_set_time < 1.5 || game.time_rate < 1.0 ? 11 : 33)
-        
-        ip_pos_to_reach_ms := beatmap.music_time_ms + interpolation_delta_ms
-        delta := ip_pos_to_reach_ms - song_time
 
-        ip_pos_to_reach_ms -= delta / 8
-        delta = ip_pos_to_reach_ms - song_time
+    elapsed_ms := (real_time - beatmap.last_music_position_interpolation_check_time) * 1000
+    song_elapsed_ms := song_time - beatmap.music_time_uninterpolated_ms
 
-        if abs(delta) > interpolation_delta_limit * 2 {
-            // big time discrepancy, defer to song_time
-            result = song_time
-
-        } else if delta < -interpolation_delta_limit {
-            // undershooting, try to catch up
-            result = beatmap.music_time_ms + interpolation_delta_ms * 2
-            beatmap.last_accurate_music_position_set_time = real_time
-        } else if delta < interpolation_delta_limit {
-            // on pace
-            result = ip_pos_to_reach_ms
-        } else {
-            // overshooting, slow down
-            result = beatmap.music_time_ms + interpolation_delta_ms * 0.5
-            beatmap.last_accurate_music_position_set_time = real_time
-        }
-        
-    } else {
-        // note(isak): no interpolation
-        result = song_time
-        beatmap.last_accurate_music_position_set_time = real_time
+    defer {
+        beatmap.music_time_uninterpolated_ms = song_time
+        beatmap.last_music_position_interpolation_check_time = real_time
     }
-    
-    beatmap.music_time_uninterpolated_ms = song_time
-    beatmap.last_music_position_interpolation_check_time = real_time
-    
+
+    if !sound_is_playing(&beatmap.music) {
+        // note(isak): hold the extrapolated playhead while stopped, so pausing doesn't snap back to the
+        // reported position. a seek moves the source even while stopped, and that we do follow
+        if song_elapsed_ms == 0 {
+            return last_time
+        }
+        beatmap.music_time_interpolating = false
+        return song_time
+    }
+
+    time_rate := f64(game.time_rate)
+
+    if beatmap.music_time_interpolating {
+        result = damp_continuously(last_time + elapsed_ms * time_rate, song_time,
+            MUSIC_TIME_DRIFT_HALF_LIFE_MS, elapsed_ms)
+
+        if abs(song_time - result) > MUSIC_TIME_ALLOWABLE_ERROR_MS * time_rate {
+            result = song_time
+            beatmap.music_time_interpolating = false
+        }
+    } else {
+        // note(isak): the frame the source starts or lands a seek reports a position there's nothing to
+        // extrapolate from yet, so take it as-is and only resume once it's moving again
+        result = song_time
+        beatmap.music_time_interpolating = song_elapsed_ms != 0
+    }
+
+    // note(isak): prevent a backwards seek when syncing to the reported position
+    if song_elapsed_ms >= 0 {
+        result = max(last_time, result)
+    }
+
     return result
 }
 

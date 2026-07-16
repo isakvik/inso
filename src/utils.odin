@@ -324,3 +324,9 @@ fullscreen_transform :: Transform {
 f64_within :: proc(a, b, within: f64) -> bool {
     return abs(b - a) < within
 }
+
+// note(isak): approaches target so that the remaining distance halves every half_life, no matter how
+// often this is called
+damp_continuously :: proc "contextless" (current, target, half_life, elapsed: f64) -> f64 {
+    return math.lerp(current, target, 1 - math.pow(0.5, elapsed / half_life))
+}

@@ -5,7 +5,7 @@ import "core:math"
 //////////////////////////////////////////////////////
 // note(isak): editor mode stuff
 
-// note(isak): jumps to the nearest bookmark strictly past the playhead in the given direction
+// note(isak): jumps to the nearest bookmark past the playhead in the given direction
 editor_seek_bookmark :: proc(beatmap: ^Beatmap, direction: int) {
     bookmarks := game.active_map.bookmarks_ms
     eps := 1.0

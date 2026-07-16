@@ -274,6 +274,7 @@ tbo_cleanup :: proc(buf: ^GL_Triple_Buffer($T)) {
 GL_Framebuffer :: struct {
     id: u32,
     color_format: u32,
+    color_filter: Texture_Filter,
     color_textures: [4]u32,
     color_texture_handles: [4]Texture_Handle,
     color_texture_count: u32,
@@ -285,19 +286,21 @@ GL_Framebuffer :: struct {
     w, h: i32,
 }
 
-fbo_init :: proc(color_texture_count, depth_texture_count: u32, w, h: i32, color_format: u32) -> GL_Framebuffer {
+fbo_init :: proc(color_texture_count, depth_texture_count: u32, w, h: i32, color_format: u32,
+                 color_filter: Texture_Filter = .LINEAR) -> GL_Framebuffer {
     result := GL_Framebuffer{
         color_texture_count = color_texture_count,
         depth_texture_count = depth_texture_count,
         w = w,
         h = h,
-        color_format = color_format
+        color_format = color_format,
+        color_filter = color_filter
     }
     gl.CreateFramebuffers(1, &result.id)
-    
+
     assert(color_texture_count <= 4)
     for i in 0..<color_texture_count {
-        t := texture_create(.REPEAT)
+        t := texture_create(.REPEAT, color_filter)
         result.color_textures[i] = t
         gl.TextureStorage3D(t, 1, color_format, w, h, 1)
         gl.NamedFramebufferTextureLayer(result.id, gl.COLOR_ATTACHMENT0 + i, t, 0, 0)
@@ -342,7 +345,7 @@ fbo_reinit :: proc(fb: ^GL_Framebuffer, new_w, new_h: i32) {
     if fb.id > 0 {
         fbo_cleanup(fb)
     }
-    fb^ = fbo_init(fb.color_texture_count, fb.depth_texture_count, new_w, new_h, fb.color_format)
+    fb^ = fbo_init(fb.color_texture_count, fb.depth_texture_count, new_w, new_h, fb.color_format, fb.color_filter)
 }
 
 fbo_cleanup :: proc(fb: ^GL_Framebuffer) {

@@ -1755,9 +1755,21 @@ luaapi_animation_instance_funcs := []Lua_Function {
   { "move", luaapi_animation_move,
     "self animation:move( float start, float end, float from_x, float from_y, float to_x, float to_y, Tween tween = 0 )",
     "appends a positional tween from (from_x, from_y) to (to_x, to_y) over [start, end]." },
+  { "move_x", luaapi_animation_move_x,
+    "self animation:move_x( float start, float end, float from, float to, Tween tween = 0 )",
+    "appends a horizontal tween from from to to over [start, end], leaving the y position alone." },
+  { "move_y", luaapi_animation_move_y,
+    "self animation:move_y( float start, float end, float from, float to, Tween tween = 0 )",
+    "appends a vertical tween from from to to over [start, end], leaving the x position alone." },
   { "scale", luaapi_animation_scale,
     "self animation:scale( float start, float end, float from_x, float from_y, float to_x, float to_y, Tween tween = 0 )",
     "appends a scale tween from (from_x, from_y) to (to_x, to_y) over [start, end]." },
+  { "scale_x", luaapi_animation_scale_x,
+    "self animation:scale_x( float start, float end, float from, float to, Tween tween = 0 )",
+    "appends a horizontal scale tween from from to to over [start, end], leaving the height alone." },
+  { "scale_y", luaapi_animation_scale_y,
+    "self animation:scale_y( float start, float end, float from, float to, Tween tween = 0 )",
+    "appends a vertical scale tween from from to to over [start, end], leaving the width alone." },
   { "rotate", luaapi_animation_rotate,
     "self animation:rotate( float start, float end, float from, float to, Tween tween = 0 )",
     "appends a rotation tween in radians from from to to over [start, end]." },
@@ -1816,6 +1828,46 @@ luaapi_animation_move :: proc "c" (L: ^lua.State) -> i32 {
     return lua_return_self()
 }
 
+luaapi_animation_move_x :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+
+    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
+    _lua_check_animation_list_and_potentially_relocate(anim_list)
+
+    start, end := lua_number(2), lua_number(3)
+    from, to   := f32(lua_number(4)), f32(lua_number(5))
+    tween      := Tween(lua.L_optinteger(L, 6, 0))
+    q.append(&game.beatmap.animations, Animation_Translate_X{
+        tween      = tween,
+        start_time = f64(start),
+        end_time   = f64(end),
+        start_x    = from,
+        end_x      = to,
+    })
+    anim_list.num_animations += 1
+    return lua_return_self()
+}
+
+luaapi_animation_move_y :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+
+    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
+    _lua_check_animation_list_and_potentially_relocate(anim_list)
+
+    start, end := lua_number(2), lua_number(3)
+    from, to   := f32(lua_number(4)), f32(lua_number(5))
+    tween      := Tween(lua.L_optinteger(L, 6, 0))
+    q.append(&game.beatmap.animations, Animation_Translate_Y{
+        tween      = tween,
+        start_time = f64(start),
+        end_time   = f64(end),
+        start_y    = from,
+        end_y      = to,
+    })
+    anim_list.num_animations += 1
+    return lua_return_self()
+}
+
 luaapi_animation_scale :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     
@@ -1832,6 +1884,46 @@ luaapi_animation_scale :: proc "c" (L: ^lua.State) -> i32 {
         end_time    = f64(end),
         start_scale = from,
         end_scale   = to,
+    })
+    anim_list.num_animations += 1
+    return lua_return_self()
+}
+
+luaapi_animation_scale_x :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+
+    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
+    _lua_check_animation_list_and_potentially_relocate(anim_list)
+
+    start, end := lua_number(2), lua_number(3)
+    from, to   := f32(lua_number(4)), f32(lua_number(5))
+    tween      := Tween(lua.L_optinteger(L, 6, 0))
+    q.append(&game.beatmap.animations, Animation_Scale_X{
+        tween         = tween,
+        start_time    = f64(start),
+        end_time      = f64(end),
+        start_scale_x = from,
+        end_scale_x   = to,
+    })
+    anim_list.num_animations += 1
+    return lua_return_self()
+}
+
+luaapi_animation_scale_y :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+
+    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
+    _lua_check_animation_list_and_potentially_relocate(anim_list)
+
+    start, end := lua_number(2), lua_number(3)
+    from, to   := f32(lua_number(4)), f32(lua_number(5))
+    tween      := Tween(lua.L_optinteger(L, 6, 0))
+    q.append(&game.beatmap.animations, Animation_Scale_Y{
+        tween         = tween,
+        start_time    = f64(start),
+        end_time      = f64(end),
+        start_scale_y = from,
+        end_scale_y   = to,
     })
     anim_list.num_animations += 1
     return lua_return_self()

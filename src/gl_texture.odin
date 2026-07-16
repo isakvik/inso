@@ -17,6 +17,11 @@ Texture_Wrap :: enum {
     REPEAT,
 }
 
+Texture_Filter :: enum {
+    LINEAR,
+    NEAREST,
+}
+
 _gl_wrap :: proc(wrap: Texture_Wrap) -> i32 {
     switch wrap {
     case .CLAMP:  return gl.CLAMP_TO_EDGE
@@ -25,11 +30,19 @@ _gl_wrap :: proc(wrap: Texture_Wrap) -> i32 {
     return gl.CLAMP_TO_EDGE
 }
 
-texture_create :: proc(wrap: Texture_Wrap = .CLAMP) -> u32 {
+_gl_filter :: proc(filter: Texture_Filter) -> i32 {
+    switch filter {
+    case .LINEAR:  return gl.LINEAR
+    case .NEAREST: return gl.NEAREST
+    }
+    return gl.LINEAR
+}
+
+texture_create :: proc(wrap: Texture_Wrap = .CLAMP, filter: Texture_Filter = .LINEAR) -> u32 {
     texture: u32
     gl.CreateTextures(gl.TEXTURE_2D_ARRAY, 1, &texture)
-    gl.TextureParameteri(texture, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-    gl.TextureParameteri(texture, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.TextureParameteri(texture, gl.TEXTURE_MAG_FILTER, _gl_filter(filter))
+    gl.TextureParameteri(texture, gl.TEXTURE_MIN_FILTER, _gl_filter(filter))
     gl.TextureParameteri(texture, gl.TEXTURE_WRAP_S, _gl_wrap(wrap))
     gl.TextureParameteri(texture, gl.TEXTURE_WRAP_T, _gl_wrap(wrap))
     return texture

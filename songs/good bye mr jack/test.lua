@@ -54,8 +54,8 @@ function crt_init()
     Shader.set_param(6,  0.5)  -- SCANLINE_THINNESS
     Shader.set_param(7,  2.5)  -- SCAN_BLUR
     Shader.set_param(8,  0.02) -- CURVATURE
-    Shader.set_param(9,  0.0)  -- TRINITRON_CURVE (0 = curved)
-    Shader.set_param(10, 3.0)  -- CORNER rounding
+    Shader.set_param(9,  1.0)  -- TRINITRON_CURVE (0 = curved)
+    Shader.set_param(10, 10.0)  -- CORNER rounding
     Shader.set_param(11, 2.4)  -- CRT_GAMMA
     Shader.set_param(12, 0.5) -- INPUT_SCALE: virtual res ~1/3 of output -> chunky scanlines
 end

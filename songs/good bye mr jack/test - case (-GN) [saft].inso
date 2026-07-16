@@ -53,9 +53,9 @@ Depth: 1
 Depth: 1
 
 [[bloom_a]]
-Scale: 0.5
+Size: 50%
 
 [[bloom_b]]
-Scale: 0.5
+Size: 50%
 
 [HitObjectExtraBits]

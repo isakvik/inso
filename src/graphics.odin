@@ -84,7 +84,11 @@ Color_Blend_Type :: enum u8 {
 
 Animation_Variant :: enum {
     TRANSLATE,
+    TRANSLATE_X,
+    TRANSLATE_Y,
     SCALE,
+    SCALE_X,
+    SCALE_Y,
     ROTATE,
     COLOR,
     ALPHA,
@@ -93,12 +97,16 @@ Animation_Variant :: enum {
 
 animation_variant :: proc(anim: Animation) -> (result: Animation_Variant) {
     switch v in anim {
-    case Animation_Translate: result = .TRANSLATE
-    case Animation_Scale:     result = .SCALE
-    case Animation_Rotate:    result = .ROTATE
-    case Animation_Color:     result = .COLOR
-    case Animation_Alpha:     result = .ALPHA
-    case Animation_Texture:   result = .TEXTURE
+    case Animation_Translate:   result = .TRANSLATE
+    case Animation_Translate_X: result = .TRANSLATE_X
+    case Animation_Translate_Y: result = .TRANSLATE_Y
+    case Animation_Scale:       result = .SCALE
+    case Animation_Scale_X:     result = .SCALE_X
+    case Animation_Scale_Y:     result = .SCALE_Y
+    case Animation_Rotate:      result = .ROTATE
+    case Animation_Color:       result = .COLOR
+    case Animation_Alpha:       result = .ALPHA
+    case Animation_Texture:     result = .TEXTURE
     }
     return result
 }
@@ -110,7 +118,11 @@ Base_Animation :: struct {
 
 Animation :: union #align(4) {
     Animation_Translate,
+    Animation_Translate_X,
+    Animation_Translate_Y,
     Animation_Scale,
+    Animation_Scale_X,
+    Animation_Scale_Y,
     Animation_Rotate,
     Animation_Color,
     Animation_Alpha,
@@ -121,9 +133,25 @@ Animation_Translate :: struct {
     using base: Base_Animation,
     start_pos, end_pos: vec2,
 }
+Animation_Translate_X :: struct {
+    using base: Base_Animation,
+    start_x, end_x: f32,
+}
+Animation_Translate_Y :: struct {
+    using base: Base_Animation,
+    start_y, end_y: f32,
+}
 Animation_Scale :: struct {
     using base: Base_Animation,
     start_scale, end_scale: vec2,
+}
+Animation_Scale_X :: struct {
+    using base: Base_Animation,
+    start_scale_x, end_scale_x: f32,
+}
+Animation_Scale_Y :: struct {
+    using base: Base_Animation,
+    start_scale_y, end_scale_y: f32,
 }
 Animation_Rotate :: struct {
     using base: Base_Animation,
@@ -428,9 +456,23 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
                 rect.x = pos_x + parent_pos.x + phys_x + offset.x
                 rect.y = pos_y + parent_pos.y + phys_y + offset.y
 
+            case Animation_Translate_X:
+                offset_x := linalg.lerp(anim.start_x, anim.end_x, t) * current_radius
+                rect.x = pos_x + parent_pos.x + phys_x + offset_x
+
+            case Animation_Translate_Y:
+                offset_y := linalg.lerp(anim.start_y, anim.end_y, t) * current_radius
+                rect.y = pos_y + parent_pos.y + phys_y + offset_y
+
             case Animation_Scale:
                 rect.w = d.size.x * current_radius * linalg.lerp(anim.start_scale.x, anim.end_scale.x, t)
                 rect.h = d.size.y * current_radius * linalg.lerp(anim.start_scale.y, anim.end_scale.y, t)
+
+            case Animation_Scale_X:
+                rect.w = d.size.x * current_radius * linalg.lerp(anim.start_scale_x, anim.end_scale_x, t)
+
+            case Animation_Scale_Y:
+                rect.h = d.size.y * current_radius * linalg.lerp(anim.start_scale_y, anim.end_scale_y, t)
 
             case Animation_Rotate:
                 angle = linalg.lerp(anim.start_angle, anim.end_angle, t)

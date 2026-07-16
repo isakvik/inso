@@ -34,12 +34,37 @@ todo(isak): missing functionality:
 */
 Mapset_Buffer :: distinct GL_Buffer(u8)
 
-// note(isak): scale > 0 means the target tracks the window size, fbo is reinitialized on resize.
-// scale == 0 means a fixed pixel size that survives resizes untouched.
 Render_Target :: struct {
     fbo:               GL_Framebuffer,
-    scale:             f32,
+    size:              Render_Target_Size,
     clear_every_frame: bool,
+}
+
+// note(isak): the declared size of a render target. scale > 0 means it tracks the window size and its
+// fbo is reinitialized on resize; scale == 0 means fixed pixels that survive resizes untouched
+Render_Target_Size :: struct {
+    scale: f32,
+    w, h:  i32,
+}
+
+// note(isak): "50%" tracks the window, "1280x720" is fixed pixels
+render_target_size_from_string :: proc(value: string) -> (result: Render_Target_Size, ok: bool) {
+    if strings.has_suffix(value, "%") {
+        percent := strconv.parse_f32(strings.trim_space(value[:len(value) - 1])) or_return
+        return { scale = percent / 100 }, percent > 0
+    }
+
+    w_str, h_str := get_key_value(value, 'x')
+    w := strconv.parse_int(strings.trim_space(w_str)) or_return
+    h := strconv.parse_int(strings.trim_space(h_str)) or_return
+    return { w = i32(w), h = i32(h) }, w > 0 && h > 0
+}
+
+render_target_size_resolve :: proc(size: Render_Target_Size) -> (w, h: i32) {
+    if size.scale > 0 {
+        return max(i32(window.rect.w * size.scale), 1), max(i32(window.rect.h * size.scale), 1)
+    }
+    return max(size.w, 1), max(size.h, 1)
 }
 
 // note(isak): a fullscreen shader pass. emitted into the "after" layer's command queue each
@@ -636,15 +661,16 @@ mapset_parse_inso :: proc(mapset: ^Mapset, inso_file: string) -> Inso_Map {
             rt_params: struct {
                 name:              string,
                 format:            u32,
-                scale:             f32,
-                fixed_w, fixed_h:  i32,
+                filter:            Texture_Filter,
+                size:              Render_Target_Size,
                 depth:             bool,
                 clear_every_frame: bool,
             }
             reset_rt_params :: proc(p: ^$T) {
                 p^ = {}
                 p.format = gl.RGBA8
-                p.scale = 1.0
+                p.filter = .LINEAR
+                p.size = { scale = 1 }
                 p.clear_every_frame = true
             }
             reset_rt_params(&rt_params)
@@ -652,7 +678,7 @@ mapset_parse_inso :: proc(mapset: ^Mapset, inso_file: string) -> Inso_Map {
             for i in 1..<len(lines) {
                 line := lines[i]
                 if line[0:2] == "[[" && line[len(line)-2:] == "]]" {
-                    mapset_load_render_target_entry(mapset, rt_params.name, rt_params.format, rt_params.scale, rt_params.fixed_w, rt_params.fixed_h, rt_params.depth, rt_params.clear_every_frame)
+                    mapset_load_render_target_entry(mapset, rt_params.name, rt_params.format, rt_params.filter, rt_params.size, rt_params.depth, rt_params.clear_every_frame)
                     reset_rt_params(&rt_params)
                     rt_params.name = line[2:len(line)-2]
                 } else {
@@ -666,18 +692,23 @@ mapset_parse_inso :: proc(mapset: ^Mapset, inso_file: string) -> Inso_Map {
                             log.errorf("mapset render target '{}': unknown Format '{}', defaulting to rgba8", rt_params.name, value)
                             notify_warn("mapset render target '%s': unknown Format '%s'", rt_params.name, value)
                         }
-                    case "Scale":
-                        parsed, ok := strconv.parse_f32(value)
-                        if ok do rt_params.scale = parsed
-                        else do notify_warn("mapset render target '%s': invalid Scale '%s'", rt_params.name, value)
+                    case "Filter":
+                        switch value {
+                        case "linear":  rt_params.filter = .LINEAR
+                        case "nearest": rt_params.filter = .NEAREST
+                        case:
+                            log.errorf("mapset render target '{}': unknown Filter '{}', defaulting to linear", rt_params.name, value)
+                            notify_warn("mapset render target '%s': unknown Filter '%s'", rt_params.name, value)
+                        }
                     case "Size":
-                        w_str, h_str := get_key_value(value, 'x')
-                        w, w_ok := strconv.parse_int(strings.trim_space(w_str))
-                        h, h_ok := strconv.parse_int(strings.trim_space(h_str))
-                        if w_ok && h_ok {
-                            rt_params.fixed_w, rt_params.fixed_h = i32(w), i32(h)
-                            rt_params.scale = 0
-                        } else do notify_warn("mapset render target '%s': invalid Size '%s', expected WxH", rt_params.name, value)
+                        parsed, ok := render_target_size_from_string(value)
+                        if ok do rt_params.size = parsed
+                        else do notify_warn("mapset render target '%s': invalid Size '%s', expected WxH or N%%", rt_params.name, value)
+                    case "Scale":
+                        // note(isak): superseded by "Size: N%"
+                        parsed, ok := strconv.parse_f32(value)
+                        if ok && parsed > 0 do rt_params.size = { scale = parsed }
+                        else do notify_warn("mapset render target '%s': invalid Scale '%s'", rt_params.name, value)
                     case "Depth":
                         rt_params.depth = value != "0"
                     case "ClearEveryFrame":
@@ -688,11 +719,11 @@ mapset_parse_inso :: proc(mapset: ^Mapset, inso_file: string) -> Inso_Map {
                     }
                 }
             }
-            mapset_load_render_target_entry(mapset, rt_params.name, rt_params.format, rt_params.scale, rt_params.fixed_w, rt_params.fixed_h, rt_params.depth, rt_params.clear_every_frame)
+            mapset_load_render_target_entry(mapset, rt_params.name, rt_params.format, rt_params.filter, rt_params.size, rt_params.depth, rt_params.clear_every_frame)
 
         case .HIT_OBJECT_EXTRA_BITS:
             // note(isak): each row is "<hitobject time>,<bits>". bits may be decimal, hex (0x) or binary (0b);
-            // strconv.parse_u64 infers the base from the prefix. applied to hitobjects post-walk.
+            // strconv.parse_u64 infers the base from the prefix
             result.hitobject_extra_bits = make([dynamic]Hitobject_Extra_Bits, 0, len(lines) - 1, context.allocator)
             for i in 1..<len(lines) {
                 line := lines[i]
@@ -1130,27 +1161,23 @@ mapset_load_buffer_entry :: proc(mapset: ^Mapset, name, source: string, size: in
     log.infof("mapset buffer '{}' loaded (size: {} bytes, writable: {})", name, buf.size, buf.data != nil)
 }
 
-mapset_load_render_target_entry :: proc(mapset: ^Mapset, name: string, format: u32, scale: f32, fixed_w, fixed_h: i32, depth, clear_every_frame: bool) {
+mapset_load_render_target_entry :: proc(mapset: ^Mapset, name: string, format: u32, filter: Texture_Filter,
+                                        size: Render_Target_Size, depth, clear_every_frame: bool) {
     if name == "" do return
 
-    w, h := fixed_w, fixed_h
-    if scale > 0 {
-        w = i32(window.rect.w * scale)
-        h = i32(window.rect.h * scale)
-    }
-    w, h = max(w, 1), max(h, 1)
+    w, h := render_target_size_resolve(size)
 
     depth_count: u32 = 1 if depth else 0
     rt := Render_Target{
-        fbo               = fbo_init(1, depth_count, w, h, format),
-        scale             = scale,
+        fbo               = fbo_init(1, depth_count, w, h, format, filter),
+        size              = size,
         clear_every_frame = clear_every_frame,
     }
 
     name_key := strings.clone(name)
     mapset.render_target_by_name[name_key] = u32(mapset.render_targets.len)
     queue.push_back(&mapset.render_targets, rt)
-    log.infof("mapset render target '{}' loaded ({}x{}, clear: {})", name, w, h, clear_every_frame)
+    log.infof("mapset render target '{}' loaded ({}x{}, filter: {}, clear: {})", name, w, h, filter, clear_every_frame)
 }
 
 // note(isak): osu applies timing point hitsound settings (sample set/index, volume) up to 5ms ahead of the

@@ -196,8 +196,8 @@ window_on_resize :: proc(new_w, new_h: i32) {
 
     if game.active_mapset != nil {
         for &rt in game.active_mapset.render_targets.data {
-            if rt.scale > 0 {
-                fbo_reinit(&rt.fbo, i32(window.rect.w * rt.scale), i32(window.rect.h * rt.scale))
+            if rt.size.scale > 0 {
+                fbo_reinit(&rt.fbo, render_target_size_resolve(rt.size))
             }
         }
     }

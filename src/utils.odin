@@ -28,8 +28,8 @@ tsc_to_s :: proc(tsc: u64) -> f64 {
 current_time_ms :: proc() -> f64 {
     return tsc_to_ms(sdl.GetPerformanceCounter())
 }
-current_time_s :: proc() -> f64 {
-    return tsc_to_s(sdl.GetPerformanceCounter())
+current_time_tsc :: proc() -> u64 {
+    return sdl.GetPerformanceCounter()
 }
 
 time_s_since_beginning_of_program :: proc() -> f64 {

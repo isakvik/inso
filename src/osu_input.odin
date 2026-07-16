@@ -5,15 +5,12 @@ import sdl "vendor:sdl3"
 
 
 // note(isak): walks this frame's raw input events in arrival order and judges every controller
-// press at its own timestamp, instead of collapsing the frame into available_presses. motion
-// events re-integrate the primary cursor alongside, so each press is hit-tested at the position
-// the cursor actually had when it happened - not where it ended up at frame end.
+// press at its own timestamp.
 //
 // raw keyboard reports autorepeat makes and INPUTSINK delivers input while unfocused, so
 // game.input.raw_held tracks physical state through everything while presses only fire on real
 // down-edges in a focused window
 process_hittesting_event_walk :: proc(visible_hobjs: []Hitobject, map_time_now: f64) {
-    tsc_now := input_tsc_now()
     tsc_to_ms := 1000.0 / f64(input_tsc_frequency())
 
     raw_cursor := app.mouse_input_mode == .RAW_SINGLE_MOUSE_INPUT ||
@@ -27,7 +24,8 @@ process_hittesting_event_walk :: proc(visible_hobjs: []Hitobject, map_time_now: 
         // meaningless - everything judges at the frozen now, same as the fallback path
         press_time := map_time_now
         if !game.paused {
-            press_time = min(map_time_now, map_time_now - f64(tsc_now - event.tsc) * tsc_to_ms * f64(game.time_rate))
+            age_ms := f64(game.frame_clock_tsc - event.tsc) * tsc_to_ms
+            press_time = map_time_now - age_ms * f64(game.time_rate)
         }
 
         switch event.kind {

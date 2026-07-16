@@ -768,8 +768,10 @@ parse_f64_strict :: proc(value, what: string) -> (result: f64, ok: bool) {
     if !ok {
         log.errorf("map parse :: bad {} '{}'", what, value)
         notify_error("map parse: bad %s '%s'", what, value)
+    } else if math.is_nan(result) {
+        result = 0
     }
-    return
+    return result, ok
 }
 
 @(require_results)
@@ -778,8 +780,10 @@ parse_f32_strict :: proc(value, what: string) -> (result: f32, ok: bool) {
     if !ok {
         log.errorf("map parse :: bad {} '{}'", what, value)
         notify_error("map parse: bad %s '%s'", what, value)
+    } else if math.is_nan(result) {
+        result = 0
     }
-    return
+    return result, ok
 }
 
 @(require_results)
@@ -789,7 +793,7 @@ parse_u64_strict :: proc(value, what: string) -> (result: u64, ok: bool) {
         log.errorf("map parse :: bad {} '{}'", what, value)
         notify_error("map parse: bad %s '%s'", what, value)
     }
-    return
+    return result, ok
 }
 
 @(require_results)
@@ -799,7 +803,7 @@ parse_int_strict :: proc(value, what: string) -> (result: int, ok: bool) {
         log.errorf("map parse :: bad {} '{}'", what, value)
         notify_error("map parse: bad %s '%s'", what, value)
     }
-    return
+    return result, ok
 }
 
 mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> (result: Osu_Map, ok: bool) {

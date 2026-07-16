@@ -1003,7 +1003,7 @@ create_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Ha
             }),
             layer = .BACKGROUND,
     
-            pos = vec2{256, 256} - playfield_base_translation_osupx,
+            pos = vec2{256, 256} - PLAYFIELD_BASE_TRANSLATION_OSUPX,
             size = bg_size,
             anchor = .CENTER,
             color = {255, 255, 255, 255},

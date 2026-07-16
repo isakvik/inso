@@ -208,7 +208,8 @@ main :: proc() {
     
     notify_info("Press F8 to view previous notifications")
 
-    time_current_frame := current_time_s()
+    time_current_frame_tsc := current_time_tsc()
+    time_current_frame := tsc_to_s(time_current_frame_tsc)
     time_first_frame := time_current_frame
     time_last_frame := time_current_frame
     frame_count: u64
@@ -357,7 +358,8 @@ main :: proc() {
             profiler_block_begin(.PREPARE_FRAME); defer profiler_block_end()
 
             time_last_frame = time_current_frame
-            time_current_frame = current_time_s()
+            time_current_frame_tsc = current_time_tsc()
+            time_current_frame = tsc_to_s(time_current_frame_tsc)
 
             max_frame_time_s :: 1.0
             if time_current_frame - time_last_frame > max_frame_time_s {
@@ -372,7 +374,6 @@ main :: proc() {
                 imgui.GetIO().WantCaptureMouse = false
             }
             app.ui_enabled = game.mode == .EDITOR
-
             if window.resized && game.mode == .EDITOR {
                 beatmap_open(game.beatmap.map_reference, true)
             }
@@ -399,7 +400,7 @@ main :: proc() {
             dt_ms := window_snap_frame_delta_ms((time_current_frame - time_last_frame) * 1000)
 
             r_bind_layer_and_push_current_state(.BACKGROUND, transform = window.screenspace_transform)
-            osu_on_update(dt_ms)
+            osu_on_update(dt_ms, i64(time_current_frame_tsc))
 
             if app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY {
                 r_check_and_bind_layer(.PLATFORM)        

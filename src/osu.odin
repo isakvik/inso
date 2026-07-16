@@ -24,16 +24,16 @@ NOTELOCK_SHAKE_OSCILLATIONS :: f64(3)
 
 // note(isak): osu!'s actual play area is 512x384 within the 512x512 osupx coordinate space,
 // with a small vertical offset for the HUD
-playfield_base_scale :: f32(512.0 / 480.0)
-playfield_base_translation_osupx :: vec2{0, 72} // (512-384)/2 + 8
+PLAYFIELD_BASE_sCALE :: f32(512.0 / 480.0)
+PLAYFIELD_BASE_TRANSLATION_OSUPX :: vec2{0, 72} // (512-384)/2 + 8
 
 // note(isak): state struct. keep it lean, put large data fields in arenas and point to it here
 game: struct {
+
     dt: f64,
-    // note(isak): accumulated dt, so it advances in the steps the display actually presents in.
-    // everything time-based rides this instead of reading the wall clock itself, so it agrees on when
-    // "now" is no matter where in the frame it asks, and never inherits the wobble of that read
     frame_clock_s: f64,
+    frame_clock_tsc: i64,
+    
     active_mapset: ^Mapset,
     active_inso_map: ^Inso_Map,
     active_map: ^Osu_Map,
@@ -58,12 +58,12 @@ game: struct {
         available_presses: int,
         last_hit_at, last_valid_press_at: f64,
 
-        // note(isak): per-event judgement state (see process_hittesting_event_walk).
-        // frame_events is this frame's drained slice from the input thread, valid until the next
-        // drain. raw_held tracks physical controller state across frames so keyboard autorepeat
-        // makes and stale releases can't fabricate presses
+        // note(isak): per-event judgement state (see osu_input)
+        
         frame_events: []Input_Event,
         frame_start_mouse_screen: vec2,
+        // note(isak): tracks physical controller state across frames so keyboard autorepeat
+        // makes and stale releases can't fabricate presses
         raw_held: struct { k1, k2, m1, m2: bool },
     },
 
@@ -126,8 +126,8 @@ Hitobject_Flag :: enum {
     HIDE_COMBO_NUMBERS,
     HIDDEN_BY_SCRIPT,
 
-    NO_FOLLOWPOINT_IN,  // note(isak): suppress the followpoint arriving at this object
-    NO_FOLLOWPOINT_OUT, // note(isak): suppress the followpoint leaving this object
+    NO_FOLLOWPOINT_IN,
+    NO_FOLLOWPOINT_OUT,
 
     SLIDER_SNAKE_IN,
     SLIDER_SNAKE_OUT,
@@ -558,9 +558,10 @@ osu_on_init :: proc() {
     game.input.keys = game.user_config.keys
 }
 
-osu_on_update :: proc(dt: f64) {
+osu_on_update :: proc(dt: f64, frame_tsc: i64) {
     game.dt = dt
     game.frame_clock_s += dt / 1000
+    game.frame_clock_tsc = frame_tsc
 
     window_set_resizable(game.mode != .PLAY)
     windows_key_set_disabled(game.mode == .PLAY && window.focused)
@@ -933,8 +934,8 @@ cursor_trail_draw :: proc(trail: ^Cursor_Trail, pos: vec2) {
 // and playfield_rotation_rad. maps osupx -> NDC with full affine support (translate, scale, rotate). 
 // the inverse correctly maps window pixels back to osupx without extra adjustment.
 playfield_build_transform :: proc "contextless" () -> Transform {
-    effective_scale       := playfield_base_scale * game.beatmap.playfield_scale
-    effective_translation := playfield_base_translation_osupx + game.beatmap.playfield_translation_osupx
+    effective_scale       := PLAYFIELD_BASE_sCALE * game.beatmap.playfield_scale
+    effective_translation := PLAYFIELD_BASE_TRANSLATION_OSUPX + game.beatmap.playfield_translation_osupx
 
     k  := effective_scale * window.rect.h / PLAYFIELD_SIZE_OSUPX
     cx := window.rect.w * 0.5 + effective_translation.x * k
@@ -994,7 +995,7 @@ playfield_visible_osupx_bounds :: proc() -> Rect {
 // note(isak): the uniform pixels-per-osupx factor of the playfield transform (no rotation/translation).
 // for converting sizes/extents between the two spaces; positions should round-trip the full transform.
 playfield_px_per_osupx :: proc "contextless" () -> f32 {
-    return playfield_base_scale * game.beatmap.playfield_scale * window.rect.h / PLAYFIELD_SIZE_OSUPX
+    return PLAYFIELD_BASE_sCALE * game.beatmap.playfield_scale * window.rect.h / PLAYFIELD_SIZE_OSUPX
 }
 
 //////////////////////////////////////////////////////

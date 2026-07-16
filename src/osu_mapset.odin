@@ -1191,6 +1191,7 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
     current_timing_point_index_inherited: int
     
     combo_index := 0
+    combo_color_index := 0
     combo_number := 1
     
     last_non_spinner_hobj_i := 0
@@ -1281,16 +1282,18 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
         // note(isak): combo colors and number.
         // color mirrors osu logic - we do a preincrement and start at the second combo color...
         if .NEW_COMBO in hobj.flags || i == 0 {
-            combo_index = (combo_index + 1 + int(hobj.combo_color_skip_offset))
+            combo_index += 1
+            combo_color_index += 1 + int(hobj.combo_color_skip_offset)
             combo_number = 1
-            
+
             if i > 0 {
                 prev_hobj := &osu_map.hitobjects[last_non_spinner_hobj_i]
                 prev_hobj.flags |= {.LAST_IN_COMBO}
             }
         }
-        
+
         hobj.combo_index = combo_index
+        hobj.combo_color_index = combo_color_index
         hobj.combo_number = u16(combo_number)
         combo_number += 1
         
@@ -1515,12 +1518,7 @@ mapset_check_system_file_watch :: proc(watch: ^Directory_Watch) -> [Inso_Map_Sys
         case ".glsl":   updated_systems[.SHADERS]   = true
         case ".lua":    updated_systems[.SCRIPTS]   = true
         case ".inso":   updated_systems[.INSO_FILE] = true
-        }
-        for img_ext in supported_image_extensions {
-            if extension == img_ext {
-                updated_systems[.ASSETS] = true
-                break
-            }
+        case:           updated_systems[.ASSETS]    = true
         }
     }
     return updated_systems

@@ -253,7 +253,7 @@ handle_editor_input_events :: proc() {
         beatmap_play(&game.beatmap, !key_is_down(.LSHIFT))
     }
     if key_is_pressed(.R) {
-        beatmap_open(game.beatmap.map_reference, !key_is_down(.LSHIFT))
+        beatmap_open(game.beatmap.map_reference, keep_position = true, reload_assets = !key_is_down(.LSHIFT))
     }
     
     if key_is_pressed(.HOME) {

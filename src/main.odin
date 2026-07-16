@@ -694,11 +694,14 @@ imgui_update :: proc() {
         }
 
         if imgui.Checkbox("Use beatmap skin", &game.user_config.use_beatmap_skin) {
-            beatmap_open(game.beatmap.map_reference, true)
+            beatmap_open(game.beatmap.map_reference, keep_position = true, reload_assets = false)
         }
 
         imgui.Checkbox("Use beatmap hitsounds", &game.user_config.use_beatmap_hitsounds)
-        
+        if imgui.Checkbox("Use beatmap combo color skips", &game.user_config.use_beatmap_combo_color_skips) {
+            beatmap_open(game.beatmap.map_reference, keep_position = true, reload_assets = false)
+        }
+
         imgui.Checkbox("Snaking in sliders", &game.user_config.snaking_in_sliders_enabled)
         imgui.Checkbox("Snaking out sliders", &game.user_config.snaking_out_sliders_enabled)
 

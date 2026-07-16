@@ -25,6 +25,8 @@ User_Configuration :: struct {
     use_beatmap_skin: bool,
     use_beatmap_hitsounds: bool,
 
+    use_beatmap_combo_color_skips: bool,
+
     window_width: f32,
     window_height: f32,
     window_mode: Window_Mode,
@@ -83,6 +85,9 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         }
         if v, ok := get(gen, "use_beatmap_hitsounds"); ok {
             result.use_beatmap_hitsounds = v == "true"
+        }
+        if v, ok := get(gen, "use_beatmap_combo_color_skips"); ok {
+            result.use_beatmap_combo_color_skips = v == "true"
         }
         if v, ok := get(gen, "window_width"); ok {
             if f, ok2 := strconv.parse_f32(v); ok2 do result.window_width = f
@@ -146,6 +151,7 @@ config_save :: proc(path: string) {
     ini.write_pair(w, "skin_path",                game.user_config.skin_path)
     ini.write_pair(w, "use_beatmap_skin",         game.user_config.use_beatmap_skin)
     ini.write_pair(w, "use_beatmap_hitsounds",    game.user_config.use_beatmap_hitsounds)
+    ini.write_pair(w, "use_beatmap_combo_color_skips", game.user_config.use_beatmap_combo_color_skips)
     ini.write_pair(w, "window_width",             game.user_config.window_width)
     ini.write_pair(w, "window_height",            game.user_config.window_height)
     ini.write_pair(w, "window_mode",              window_mode_keys[game.user_config.window_mode])
@@ -186,6 +192,7 @@ config_supply_default :: proc() -> (result: User_Configuration) {
         skin_path                = "skins/gn/",
         use_beatmap_skin         = true,
         use_beatmap_hitsounds    = true,
+        use_beatmap_combo_color_skips = true,
         window_width             = 1280,
         window_height            = 720,
         window_mode              = .WINDOWED,

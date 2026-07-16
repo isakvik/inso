@@ -175,6 +175,7 @@ Hitobject :: struct {
     hitsound_flags: Hitsound_Flags,
     extra_bits: u64, // note(isak): from the inso file
     combo_index: int, // note(isak): 1-indexed combo within the current map
+    combo_color_index: int, // note(isak): combo_index plus every preceding combo's skip offset
     combo_number: u16,
     combo_color_skip_offset: u8, // note(isak): how many combo colors to skip on new combo
 
@@ -341,23 +342,21 @@ DEFAULT_COMBO_COLORS := [4]Color {
 }
 
 hitobject_combo_color :: proc(hobj: ^Hitobject) -> (result: Color) {
+    combo := hobj.combo_color_index if game.user_config.use_beatmap_combo_color_skips else hobj.combo_index
+
     if game.user_config.use_beatmap_skin {
         if game.active_map.num_combo_colors > 0 {
-            color_index := hobj.combo_index % game.active_map.num_combo_colors    
-            result = game.active_map.combo_colors[color_index]
+            result = game.active_map.combo_colors[combo % game.active_map.num_combo_colors]
         } else {
-            color_index := hobj.combo_index % len(DEFAULT_COMBO_COLORS)
-            result = DEFAULT_COMBO_COLORS[color_index]
+            result = DEFAULT_COMBO_COLORS[combo % len(DEFAULT_COMBO_COLORS)]
         }
         return result
     }
     else {
         if game.active_skin.num_combo_colors > 0 {
-            color_index := hobj.combo_index % game.active_skin.num_combo_colors    
-            result = game.active_skin.combo_colors[color_index]
+            result = game.active_skin.combo_colors[combo % game.active_skin.num_combo_colors]
         } else {
-            color_index := hobj.combo_index % len(DEFAULT_COMBO_COLORS)
-            result = DEFAULT_COMBO_COLORS[color_index]
+            result = DEFAULT_COMBO_COLORS[combo % len(DEFAULT_COMBO_COLORS)]
         }
         return result
     }
@@ -568,14 +567,16 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
     platform_set_scheduling_priority(game.mode == .PLAY)
 
     if game.mode != .PLAY {
-        updated_systems := mapset_check_system_file_watch(&game.active_mapset.watch)
-        if updated_systems[.OSU_FILE] || updated_systems[.INSO_FILE] || updated_systems[.SCRIPTS] {
-            // note(isak): the .inso allocates into the MAPSET arena (render targets, extra bits),
-            // so its changes need the full asset reload; .osu/script changes regen in place
-            beatmap_open(game.beatmap.map_reference, true, reload_assets = updated_systems[.INSO_FILE])
-        }
-        if updated_systems[.SHADERS] {
-            mapset_reinit_custom_shaders(game.active_mapset)
+        updated_file := mapset_check_system_file_watch(&game.active_mapset.watch)
+        if updated_file != {} {
+            if updated_file[.SHADERS] {
+                mapset_reinit_custom_shaders(game.active_mapset)
+            } else {
+                // note(isak): the .inso allocates into the MAPSET arena (render targets, extra bits),
+                // so its changes need the full asset reload; .osu/script changes regen in place
+                beatmap_open(game.beatmap.map_reference, true, 
+                    reload_assets = updated_file[.INSO_FILE] || updated_file[.ASSETS])
+            }
         }
     }
     

@@ -125,11 +125,7 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
             return
         }
 
-        pos := hitobject_pos(hobj)
-        if hobj.type == .SLIDER {
-            path := &game.beatmap.slider_paths[hobj.slider_path_index]
-            pos = path.pos if hobj.slider_state.path_travel_count % 2 == 0 else path.end_pos
-        }
+        pos := hitobject_tail_pos(hobj) if hobj.type == .SLIDER else hitobject_pos(hobj)
 
         if .LAST_IN_COMBO in hobj.flags {
             el_type = judgement_resolve_combo_end_type(hobj, judgement.result, el_type)

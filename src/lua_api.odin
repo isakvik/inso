@@ -401,7 +401,7 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
     "the object's current lifecycle phase." },
   { "add_element_for_phase", luaapi_hitobject_add_element_for_phase,
     "self hitobject:add_element_for_phase( Phase phase, Element element )",
-    "adds a custom element to draw while the object is in the given phase, replacing the default graphics." },
+    "adds a custom element to draw while the object is in the given phase, replacing the default graphics. max 16 elements per phase." },
   { "clear_drawables", luaapi_hitobject_clear_drawables,
     "self hitobject:clear_drawables( void )",
     "removes all of the object's current drawables." },
@@ -791,17 +791,21 @@ luaapi_hitobject_clear_drawables :: proc "c" (L: ^lua.State) -> (result: i32) {
 
 luaapi_hitobject_add_element_for_phase :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        context = lua_beatmap.odin_context
         phase := Hitobject_Phase(lua_int(2))
         el_id := (cast(^Element_ID)lua.L_checkudata(L, 3, lua_classes[.ELEMENT].name))^
 
         if hobj.custom_elements[phase] == nil {
-            context = lua_beatmap.odin_context
             hobj.custom_elements[phase] = hitobject_reserve_phase_elements(hobj, phase)
         }
 
-        el_index := hobj.custom_element_nums[phase]
-        hobj.custom_elements[phase][el_index] = el_id
-        hobj.custom_element_nums[phase] += 1
+        if hobj.custom_element_nums[phase] < 16 {
+            el_index := hobj.custom_element_nums[phase]
+            hobj.custom_elements[phase][el_index] = el_id
+            hobj.custom_element_nums[phase] += 1
+        } else {
+            notify_warn("add_element_for_phase: too many elements")
+        }
         return 0
     })
 }

@@ -331,7 +331,7 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
         }
     }
 
-    if game.active_map.audio_filepath != old_audio_filepath {
+    if old_audio_filepath != {} && game.active_map.audio_filepath != old_audio_filepath {
         sound_destroy(&music)
         music = nil
     }

@@ -2321,6 +2321,12 @@ luaapi_beatmap_static_funcs := []Lua_Function {
   { "free_layers", luaapi_beatmap_free_layers,
     "void Beatmap.free_layers( table layers )",
     "stops redirecting the given layers into a render target." },
+  { "set_skin_override", luaapi_beatmap_set_skin_override,
+    "void Beatmap.set_skin_override( string skin_name )",
+    "force loads a skin by folder name, as listed in the skin dropdown (e.g. \"gn\"). the override lasts as long as the map: it never touches the configured skin, and opening any map restores it. hitobjects already on screen keep the old skin's sizes until they expire." },
+  { "clear_skin_override", luaapi_beatmap_clear_skin_override,
+    "void Beatmap.clear_skin_override( void )",
+    "restores the configured skin, dropping a set_skin_override. a no-op if nothing was overridden. opening a map does this on its own." },
   { "add_post_pass", luaapi_beatmap_add_post_pass,
     "void Beatmap.add_post_pass{ shader=, src=, dst=, Layer after }",
     "queues a fullscreen shader pass sampling src (string or table) into dst, running after the 'after' layer (default HITOBJECTS). src/dst names may be a render target, 'screen' (the window), or 'backbuffer' (the whole-frame capture; requires [General] Backbuffer: 1)." },
@@ -2399,6 +2405,27 @@ luaapi_beatmap_is_paused :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     lua.pushboolean(L, b32(game.paused))
     return 1
+}
+
+luaapi_beatmap_set_skin_override :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    name := lua_string(1)
+
+    index, found := skin_reference_find_by_name(name)
+    if !found {
+        log.warn("User error - skin not found:", name)
+        notify_warn("lua: Beatmap.set_skin_override no skin named '%s'", name)
+        return 0
+    }
+
+    skin_rebind(app.skin_references[index].folder_path)
+    return 0
+}
+
+luaapi_beatmap_clear_skin_override :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    skin_clear_override()
+    return 0
 }
 
 luaapi_beatmap_capture_layers :: proc "c" (L: ^lua.State) -> i32 {

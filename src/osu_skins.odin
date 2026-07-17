@@ -606,16 +606,29 @@ skin_unload :: proc(skin: ^Skin) {
     free_all(memory.allocators[.SKIN])
 }
 
-skin_reload :: proc(skin: ^Skin) {
-    temp_path := strings.clone(skin.path, context.temp_allocator)
+skin_rebind_graphics :: proc() {
+    if game.beatmap.elements.len < len(Element_Type) do return
 
-    // note(isak): reload is called midframe, so we need to make all our handles nonresident to free GPU memory
-    // todo(isak): @speed: should be able to free only skin textures
+    build_default_elements(&game.beatmap.elements, &game.beatmap.animations, &game.beatmap.animation_lists)
+    mods_apply_to_graphics()
+}
+
+// todo(isak): @speed: should be able to free only skin textures
+skin_set_active :: proc(skin_path: string) {
     cleanup_textures_for_rendering()
-
-    skin_unload(skin)
-    game.active_skin = skin_load(temp_path)
+    skin_unload(game.active_skin)
+    game.active_skin = skin_load(skin_path)
     prepare_textures_for_rendering()
+}
+
+skin_rebind :: proc(skin_path: string) {
+    skin_set_active(skin_path)
+    skin_rebind_graphics()
+}
+
+skin_clear_override :: proc() {
+    if game.active_skin.path == game.user_config.skin_path do return
+    skin_rebind(game.user_config.skin_path)
 }
 
 // note(isak): register every skin directory found in skins_dir. also uses temp_allocator
@@ -672,6 +685,14 @@ discover_skins :: proc(skins_dir: string, alloc: runtime.Allocator = context.all
 skin_reference_find :: proc(folder_path: string) -> (index: int, found: bool) {
     for ref, i in app.skin_references {
         if ref.folder_path == folder_path do return i, true
+    }
+    return -1, false
+}
+
+// note(isak): matches the display name the skin dropdown shows, which is the skin's folder name
+skin_reference_find_by_name :: proc(name: string) -> (index: int, found: bool) {
+    for display_name, i in app.skin_reference_names {
+        if strings.equal_fold(name, string(display_name)) do return i, true
     }
     return -1, false
 }

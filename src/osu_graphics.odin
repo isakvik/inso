@@ -63,7 +63,14 @@ skin_element_size_radius_units :: proc(el_type: Element_Type) -> vec2 {
 create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Animation), lists: ^q.Queue(Animation_List)) {
     q.reserve(elements, len(Element_Type))
     elements.len += len(Element_Type)
-    
+    build_default_elements(elements, anims, lists)
+}
+
+build_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Animation), lists: ^q.Queue(Animation_List)) {
+    for el_type in Element_Type {
+        elements.data[el_type] = {}
+    }
+
     for el_type in Element_Type {
         elements.data[el_type].type = el_type
         elements.data[el_type].tex = 

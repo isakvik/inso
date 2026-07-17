@@ -1,6 +1,7 @@
 package inso
 
 import "core:math"
+import "core:strings"
 import sdl "vendor:sdl3"
 
 
@@ -301,7 +302,8 @@ handle_editor_input_events :: proc() {
 handle_menu_input_events :: proc() {
     if key_is_pressed(.S) {
         if key_is_down(.LCTRL) && key_is_down(.LSHIFT) && key_is_down(.LALT) {
-            skin_reload(game.active_skin)
+            skin_path := strings.clone(game.active_skin.path, context.temp_allocator)
+            skin_rebind(skin_path)
         }
     }
 }

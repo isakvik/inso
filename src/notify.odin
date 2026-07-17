@@ -27,10 +27,11 @@ Notification :: struct {
 }
 
 notify: struct {
-    ring:     [NOTIFY_RING_CAP]Notification,
-    head:     int,
-    count:    int,
-    show_all: bool,
+    ring:         [NOTIFY_RING_CAP]Notification,
+    head:         int,
+    count:        int,
+    hidden_count: int,
+    show_all:     bool,
 }
 
 _notify_alpha :: 255
@@ -38,6 +39,25 @@ _notify_level_rgb := [Notify_Level][3]u8 {
     .INFO  = {220, 220, 220},
     .WARN  = {255, 200, 60},
     .ERROR = {255, 80,  80},
+}
+
+_notify_is_hidden :: proc() -> bool {
+    return game.mode == .PLAY
+}
+
+// note(isak): i counts back from the newest entry
+_notify_nth_newest :: proc(i: int) -> ^Notification {
+    idx := ((notify.head - 1 - i) + NOTIFY_RING_CAP * 2) % NOTIFY_RING_CAP
+    return &notify.ring[idx]
+}
+
+// note(isak): entries pushed while hidden start their display time when they first reach the screen
+_notify_reveal_hidden :: proc() {
+    now := time_s_since_beginning_of_program()
+    for i in 0..<notify.hidden_count {
+        _notify_nth_newest(i).time_s = now
+    }
+    notify.hidden_count = 0
 }
 
 _notify_push :: proc(level: Notify_Level, fmt_str: string, args: ..any) {
@@ -48,6 +68,10 @@ _notify_push :: proc(level: Notify_Level, fmt_str: string, args: ..any) {
     entry.len = len(written)
     notify.head  = (notify.head + 1) % NOTIFY_RING_CAP
     notify.count = min(notify.count + 1, NOTIFY_RING_CAP)
+
+    if _notify_is_hidden() {
+        notify.hidden_count = min(notify.hidden_count + 1, NOTIFY_RING_CAP)
+    }
 }
 
 notify_info  :: proc(fmt_str: string, args: ..any) { _notify_push(.INFO,  fmt_str, ..args) }
@@ -55,15 +79,16 @@ notify_warn  :: proc(fmt_str: string, args: ..any) { _notify_push(.WARN,  fmt_st
 notify_error :: proc(fmt_str: string, args: ..any) { _notify_push(.ERROR, fmt_str, ..args) }
 
 notify_draw_notifications :: proc(renderer: ^Renderer) {
+    if _notify_is_hidden() do return
+    _notify_reveal_hidden()
+
     now         := time_s_since_beginning_of_program()
     line_height := to_ui_scale(NOTIFY_LINE_HEIGHT)
     base_y      := window.rect.h - to_ui_scale(NOTIFY_MARGIN_Y)
     drawn       := 0
 
     for i in 0..<notify.count {
-        // walk ring newest-first
-        idx   := ((notify.head - 1 - i) + NOTIFY_RING_CAP * 2) % NOTIFY_RING_CAP
-        entry := &notify.ring[idx]
+        entry := _notify_nth_newest(i)
         age   := now - entry.time_s
 
         alpha: u8

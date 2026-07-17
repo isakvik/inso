@@ -799,9 +799,11 @@ parse_f64_strict :: proc(value, what: string) -> (result: f64, ok: bool) {
     if !ok {
         log.errorf("map parse :: bad {} '{}'", what, value)
         notify_error("map parse: bad %s '%s'", what, value)
-    } else if math.is_nan(result) {
-        result = 0
     }
+    // todo(isak): this breaks xnor, but octopus dance breaks if it's not there
+    //else if math.is_nan(result) {
+    //    result = 0
+    //}
     return result, ok
 }
 

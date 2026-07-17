@@ -614,19 +614,9 @@ open_external_skin :: proc(external_skin_path: string) -> (success: bool) {
     if _, found := skin_reference_find(folder_path); !found {
         skin_reference_add_external(folder_path)
     }
-    skin_switch(folder_path)
+    skin_rebind(folder_path)
+    game.user_config.skin_path = folder_path
     return true
-}
-
-skin_switch :: proc(skin_path: string) {
-    cleanup_textures_for_rendering()
-    skin_unload(game.active_skin)
-
-    game.active_skin = skin_load(skin_path)
-    game.user_config.skin_path = skin_path
-    prepare_textures_for_rendering()
-
-    beatmap_open(game.beatmap.map_reference, true)
 }
 
 imgui_update :: proc() {
@@ -877,7 +867,8 @@ handle_debug_ui_events :: proc() {
     skin_dropdown := &app.skin_dropdown
     if skin_dropdown.changed && skin_dropdown.selected < len(app.skin_references) {
         skin_ref := app.skin_references[skin_dropdown.selected]
-        skin_switch(skin_ref.folder_path)
+        skin_rebind(skin_ref.folder_path)
+        game.user_config.skin_path = skin_ref.folder_path
     }
     
     if key_is_pressed(.F1) {

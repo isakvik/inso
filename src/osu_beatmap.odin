@@ -245,17 +245,12 @@ beatmap_rewind_timeline :: proc(beatmap: ^Beatmap) {
     beatmap.last_fixed_tick_ms = now_ms
 }
 
-// note(isak): the music stream deliberately survives teardown - beatmap_open owns its lifetime
-// so an unchanged audio file can keep streaming across reloads
+// note(isak): beatmap_open owns the lifetime of the music stream so we don't need to reload assets on reopen
 beatmap_on_destroy :: proc(beatmap: ^Beatmap) {
     lua_cleanup()
     game_sounds_clear()
-
-    for &hobj in beatmap.hitobjects {
-        hobj.gfx_handles = {}
-        hobj.gfx_handles_backing = {}
-        hobj.slider_state.gfx.ticks = {}
-    }
+    game.beatmap.hitobjects = {}
+    game.beatmap.slider_paths = {}
     
     delete(beatmap.followpoint_connections)
     sb.destroy(&beatmap.phase_transitions)
@@ -337,12 +332,17 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
         music = nil
     }
 
+    if game.active_skin.path != game.user_config.skin_path {
+        skin_set_active(game.user_config.skin_path)
+    }
+
     beatmap_on_init(ref, &game.beatmap, music)
     sound_set_speed(&game.beatmap.music, game.time_rate)
     game.beatmap_active = true
     window.transparent = false
 
-    notify_info("%sloaded beatmap in %.3vs", "re" if fast_reload_path else "", time_s_since_beginning_of_program() - load_start)
+    notify_info("%sloaded beatmap in %.3vs", "re" if fast_reload_path else "", 
+        time_s_since_beginning_of_program() - load_start)
 
     if keep_position {
         if music_time_before_load >= 0 {
@@ -455,19 +455,18 @@ beatmap_game_time_to_music_time :: proc(beatmap: ^Beatmap, game_time: f64) -> f6
 }
 
 
-// note(isak): the audio library reports play position in buffer-sized steps, so we extrapolate a smooth
-// playhead from the frame clock and let the reported position pull it back into line.
+// note(isak): BASS reports play position in buffer-sized steps, so we extrapolate a smooth playhead
+// from the frame clock, while syncing to further position reports (using a dampen function).
 // ported from InterpolatingFramedClock in lazer, thanks peppy
-
 MUSIC_TIME_DRIFT_HALF_LIFE_MS :: 50.0
 
 // note(isak): two 60fps frames. past this the extrapolation is worse than the raw reading
 MUSIC_TIME_ALLOWABLE_ERROR_MS :: 1000.0 / 60 * 2
 
 beatmap_music_position_interpolated_ms :: proc(beatmap: ^Beatmap) -> (result: f64) {
-    // note(isak): no output device right now (see audio_handle_device_change); position queries
-    // report 0, so freeze time instead. recovery lands in the allowable-error branch below
     if !audio.ready {
+        // note(isak): no output device right now (see audio_handle_device_change); position queries
+        // report 0, so freeze time instead
         return beatmap.music_time_ms
     }
 

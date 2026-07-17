@@ -111,13 +111,14 @@ double_time_apply_to_map :: proc() {
 hidden_apply_to_graphics :: proc() {
     elements := &game.beatmap.elements
     anims    := &game.beatmap.animations
+    lists    := &game.beatmap.animation_lists
 
-    invisible := animation_new(anims, Animation_Alpha{
+    invisible := animation_new(anims, lists, Animation_Alpha{
         start_time = 0, end_time = 1,
         start_alpha = 0, end_alpha = 0,
     })
 
-    elements.data[builtin_element_slot(.APPROACH_CIRCLE)].animations = invisible
+    elements.data[builtin_element_slot(.APPROACH_CIRCLE)].animation_list = invisible
 
     hit_pop_elements := [?]Element_Type{
         .CLICKED_HIT_CIRCLE, .CLICKED_HIT_CIRCLE_OVERLAY,
@@ -125,7 +126,7 @@ hidden_apply_to_graphics :: proc() {
         .FINISHED_SLIDER_END_CIRCLE, .FINISHED_SLIDER_END_CIRCLE_OVERLAY,
     }
     for el in hit_pop_elements {
-        elements.data[builtin_element_slot(el)].animations = invisible
+        elements.data[builtin_element_slot(el)].animation_list = invisible
     }
 
     // note(isak): animation times are normalized against the circle drawable lifetime
@@ -136,7 +137,7 @@ hidden_apply_to_graphics :: proc() {
     fade_in_end  := preempt * 0.4 / lifetime
     fade_out_end := preempt * 0.7 / lifetime
 
-    fade := animation_new(anims,
+    fade := animation_new(anims, lists,
         Animation_Alpha{
             start_time = 0, end_time = fade_in_end,
             start_alpha = 0, end_alpha = 1,
@@ -152,10 +153,10 @@ hidden_apply_to_graphics :: proc() {
         .SLIDER_START_CIRCLE, .SLIDER_START_CIRCLE_OVERLAY,
     }
     for el in fading_elements {
-        elements.data[builtin_element_slot(el)].animations = fade
+        elements.data[builtin_element_slot(el)].animation_list = fade
     }
     for digit in 0..<10 {
         digit_el := Element_Type(int(Element_Type.COMBO_DIGIT_0) + digit)
-        elements.data[builtin_element_slot(digit_el)].animations = fade
+        elements.data[builtin_element_slot(digit_el)].animation_list = fade
     }
 }

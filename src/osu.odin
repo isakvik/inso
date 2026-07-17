@@ -783,8 +783,12 @@ cursor_draw :: proc(pos: vec2, tex_index: u32) {
     }
 }
 
+// note(isak): stable scales the cursor texture against a 768px reference height
+CURSOR_SPRITE_RES :: 768
+
 cursor_size_px :: proc() -> f32 {
-    return 160 * (window.rect.h / 1440) * game.user_config.cursor_size_multiplier
+    cursor_width := game.active_skin.elements[.CURSOR].metrics.x
+    return cursor_width * (window.rect.h / CURSOR_SPRITE_RES) * game.user_config.cursor_size_multiplier
 }
 
 cursor_companion_size_px :: proc(el: Skin_Element_Type) -> vec2 {

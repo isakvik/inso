@@ -60,7 +60,7 @@ skin_element_size_radius_units :: proc(el_type: Element_Type) -> vec2 {
 }
 
 
-create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Animation)) {
+create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Animation), lists: ^q.Queue(Animation_List)) {
     q.reserve(elements, len(Element_Type))
     elements.len += len(Element_Type)
     
@@ -86,7 +86,7 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
         tex = skin_texture(.APPROACHCIRCLE),
         flags = {.USE_COMBO_COLOR},
 
-        animations = animation_new(anims, Animation_Scale{
+        animation_list = animation_new(anims, lists, Animation_Scale{
             start_time = 0,
             end_time = 1,
             start_scale = {4, 4},
@@ -94,19 +94,19 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
         })
     }
     
-    judgement_fade_in_end    :: 120.0 / JUDGEMENT_DISPLAY_DURATION
-    judgement_fade_out_start :: 500.0 / JUDGEMENT_DISPLAY_DURATION
+    judgement_fade_in_end    :: 120.0
+    judgement_fade_out_start :: 500.0
 
     judgement_fade_in := Animation_Alpha{
         start_time  = 0, end_time  = judgement_fade_in_end,
         start_alpha = 0, end_alpha = 1,
     }
     judgement_fade_out := Animation_Alpha{
-        start_time  = judgement_fade_out_start, end_time = 1,
+        start_time  = judgement_fade_out_start, end_time = JUDGEMENT_DISPLAY_DURATION,
         start_alpha = 1, end_alpha = 0,
     }
 
-    default_anim_judgement := animation_new(anims,
+    default_anim_judgement := animation_new_in_domain(anims, lists, .MILLISECONDS,
         Animation_Scale{
             start_time  = 0, end_time = judgement_fade_in_end * 0.8,
             start_scale = {0.6, 0.6}, end_scale = {1.1, 1.1},
@@ -122,21 +122,21 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
         judgement_fade_in,
         judgement_fade_out,
     )
-    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS)].animations = default_anim_judgement
-    elements.data[builtin_element_slot(.JUDGEMENT_GOOD)].animations      = default_anim_judgement
-    elements.data[builtin_element_slot(.JUDGEMENT_OK)].animations        = default_anim_judgement
-    elements.data[builtin_element_slot(.JUDGEMENT_GOOD_KATU)].animations      = default_anim_judgement
-    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS_KATU)].animations = default_anim_judgement
-    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS_GEKI)].animations = default_anim_judgement
+    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS)].animation_list = default_anim_judgement
+    elements.data[builtin_element_slot(.JUDGEMENT_GOOD)].animation_list      = default_anim_judgement
+    elements.data[builtin_element_slot(.JUDGEMENT_OK)].animation_list        = default_anim_judgement
+    elements.data[builtin_element_slot(.JUDGEMENT_GOOD_KATU)].animation_list      = default_anim_judgement
+    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS_KATU)].animation_list = default_anim_judgement
+    elements.data[builtin_element_slot(.JUDGEMENT_MARVELOUS_GEKI)].animation_list = default_anim_judgement
 
-    elements.data[builtin_element_slot(.JUDGEMENT_MISS)].animations = animation_new(anims,
+    elements.data[builtin_element_slot(.JUDGEMENT_MISS)].animation_list = animation_new_in_domain(anims, lists, .MILLISECONDS,
         Animation_Scale{
             start_time  = 0, end_time = judgement_fade_in_end,
             start_scale = {2, 2}, end_scale = {1, 1},
         },
         Animation_Translate{
             tween = .CUBIC_IN,
-            start_time = 0, end_time = 1,
+            start_time = 0, end_time = JUDGEMENT_DISPLAY_DURATION,
             start_pos = {0, -5}, end_pos = {0, 40},
         },
         judgement_fade_in,
@@ -152,24 +152,24 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
         frame_count := game.active_skin.elements[skin_el].frame_count
         if frame_count <= 1 do continue
         
+        // note(isak): these are 60fps animations. i don't think i've seen anything else for these
+        frame_ms :: 1000.0 / 60
+
         frames := make([]Animation, 2 + frame_count, context.temp_allocator)
         for frame in 0..<frame_count {
-            // note(isak): this is a 60fps animation. i don't think i've seen anything else for these
-            fps_factor: f64 = 60 / (1000.0 / JUDGEMENT_DISPLAY_DURATION)
-            
             frames[frame] = Animation_Texture{
-                start_time = f64(frame)     / fps_factor,
-                end_time   = f64(frame + 1) / fps_factor,
+                start_time = f64(frame)     * frame_ms,
+                end_time   = f64(frame + 1) * frame_ms,
                 texture_id = skin_frame_texture(skin_el, frame),
             }
         }
         frames[frame_count]     = judgement_fade_in
         frames[frame_count + 1] = judgement_fade_out
-        elements.data[builtin_element_slot(el_type)].animations = animation_new(anims, ..frames)
+        elements.data[builtin_element_slot(el_type)].animation_list = animation_new_in_domain(anims, lists, .MILLISECONDS, ..frames)
     }
 
 
-    anim_hit := animation_new(anims, 
+    anim_hit := animation_new(anims, lists, 
         Animation_Scale{
             start_time = 0,
             end_time = 1,
@@ -189,26 +189,26 @@ create_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Ani
         .CLICKED_SLIDER_START_CIRCLE, .CLICKED_SLIDER_START_CIRCLE_OVERLAY,
     }
     for el in clickables {
-        elements.data[builtin_element_slot(el)].animations = anim_hit
+        elements.data[builtin_element_slot(el)].animation_list = anim_hit
     }
 
-    elements.data[builtin_element_slot(.SLIDER_TICK)].animations = animation_new(anims,
+    elements.data[builtin_element_slot(.SLIDER_TICK)].animation_list = animation_new_in_domain(anims, lists, .MILLISECONDS,
         Animation_Scale{
             tween = .LINEAR,
-            start_time = 0, end_time = 0.5,
+            start_time = 0, end_time = SLIDER_TICK_POP_MS * 0.5,
             start_scale = {0, 0}, end_scale = {1.1, 1.1},
         },
         Animation_Scale{
             tween = .LINEAR,
-            start_time = 0.5, end_time = 1,
+            start_time = SLIDER_TICK_POP_MS * 0.5, end_time = SLIDER_TICK_POP_MS,
             start_scale = {1.1, 1.1}, end_scale = {1, 1},
         },
     )
-    
-    elements.data[builtin_element_slot(.SLIDER_FOLLOW_CIRCLE)].animations = animation_new(anims,
+
+    elements.data[builtin_element_slot(.SLIDER_FOLLOW_CIRCLE)].animation_list = animation_new_in_domain(anims, lists, .MILLISECONDS,
         Animation_Scale{
             tween = .QUAD_OUT,
-            start_time = 0, end_time = 1,
+            start_time = 0, end_time = SLIDER_FOLLOW_CIRCLE_POP_MS,
             start_scale = {1/2.4, 1/2.4}, end_scale = {1, 1},
         },
     )
@@ -871,9 +871,7 @@ slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
             slider_drawable_update(d, active, tick_pos)
             if active {
                 // note(isak): we reuse the tick graphics from the current travel for the next one to emulate osu
-                pop_at := slider_tick_popin_time(hobj, tick_i + 1, span)
-                d.start_time_ms = pop_at
-                d.animation_rate = (d.end_time_ms - pop_at) / SLIDER_TICK_POP_MS
+                d.start_time_ms = slider_tick_popin_time(hobj, tick_i + 1, span)
             }
         }
     }
@@ -917,7 +915,6 @@ slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
         slider_drawable_update(d_follow, ball_active && .TRACKING in slider.flags, ball_pos)
         if .TRACKING in slider.flags {
             d_follow.start_time_ms = slider.tracked_timestamp_at
-            d_follow.animation_rate = (d_follow.end_time_ms - slider.tracked_timestamp_at) / SLIDER_FOLLOW_CIRCLE_POP_MS
         }
     }
     
@@ -1013,4 +1010,11 @@ create_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Ha
         })
     }
     return result
+}
+
+// note(isak): threshold is in map-time ms, doesn't adjust for beatmap rate (for osu parity)
+hitobject_dim_factor :: proc(hit_time_ms, at_time: f64) -> f32 {
+    undim_start := hit_time_ms - OSU_HITOBJECT_DIM_UNTIL_MS
+    t := f32(clamp((at_time - undim_start) / OSU_HITOBJECT_DIM_FADE_MS, 0, 1))
+    return math.lerp(OSU_HITOBJECT_DIM_FACTOR, 1, t)
 }

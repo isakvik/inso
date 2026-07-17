@@ -172,8 +172,26 @@ Animation_Texture :: struct {
     layer: f32, // note(isak): array layer index; 0 for single-layer textures
 }
 
-Script_Animation_List :: struct {
+Animation_Time_Domain :: enum {
+    NORMALIZED,       // note(isak): [0,1] across the drawable's lifetime
+    MILLISECONDS,     // note(isak): ms since the drawable's start
+    MAP_MILLISECONDS, // note(isak): absolute map time, like an osu storyboard
+}
+
+Animation_List_ID :: distinct u32 // note(isak): 0 = none, resolving to the empty list kept at slot 0
+
+// note(isak): indexes game.beatmap.animations instead of slicing it, so a list stays valid when the
+// animation queue grows. one list is shared by every drawable of an element, so anything describing
+// how the times were authored belongs here rather than on the drawable
+Animation_List :: struct {
     at, num_animations: uint,
+    time_domain: Animation_Time_Domain,
+    loop_period_ms: f64, // note(isak): 0 = loop over extent instead
+    extent: f64,         // note(isak): highest end_time in the list, in time_domain units
+}
+
+Script_Animation_List :: struct {
+    id: Animation_List_ID,
 }
 
 
@@ -250,7 +268,7 @@ Element :: struct {
 
     tex: u32,
     uv: Rect, // note(isak): UV sub-rect in [0,1] space; {0,0,1,1} = full texture
-    animations: []Animation,
+    animation_list: Animation_List_ID,
 }
 
 builtin_element_slot :: proc(el_type: Element_Type) -> Element_ID {
@@ -327,7 +345,7 @@ Drawable :: struct {
     
     start_time_ms, end_time_ms: f64,
 
-    animations: []Animation, // note(isak): animation override
+    animation_list: Animation_List_ID, // note(isak): element override
     uv: Rect, // note(isak): element override. UV sub-rect in [0,1] space; {0,0,1,1} = full texture
     tex: u32, // note(isak): element override
 
@@ -340,10 +358,40 @@ Drawable :: struct {
 //////////////////////////////////////////////////////
 // note(isak): animation api
 
-animation_new :: proc(buf: ^q.Queue(Animation), elems: ..Animation) -> []Animation {
-    temp := buf.len
-    q.append_elems(buf, ..elems)
-    return buf.data[temp:buf.len]
+animation_new :: proc(anims: ^q.Queue(Animation), lists: ^q.Queue(Animation_List), elems: ..Animation) -> Animation_List_ID {
+    return animation_new_in_domain(anims, lists, .NORMALIZED, ..elems)
+}
+
+animation_new_in_domain :: proc(anims: ^q.Queue(Animation), lists: ^q.Queue(Animation_List), domain: Animation_Time_Domain, elems: ..Animation) -> Animation_List_ID {
+    at := anims.len
+    q.append_elems(anims, ..elems)
+
+    list := Animation_List{ at = at, num_animations = anims.len - at, time_domain = domain }
+    for &elem in elems {
+        list.extent = max(list.extent, (cast(^Base_Animation)&elem).end_time)
+    }
+    q.append(lists, list)
+    return Animation_List_ID(lists.len - 1)
+}
+
+// note(isak): normalized timings always loop over its whole [0,1] range, so loop_period_ms (being ms) has
+// nothing to say there
+animation_loop_period :: proc(list: ^Animation_List) -> (result: f64) {
+    switch list.time_domain {
+    case .NORMALIZED:
+        result = 1
+    case .MILLISECONDS, .MAP_MILLISECONDS:
+        result = list.loop_period_ms if list.loop_period_ms != 0 else list.extent
+    }
+    return result
+}
+
+animation_list :: proc(id: Animation_List_ID) -> ^Animation_List {
+    return q.get_ptr(&game.beatmap.animation_lists, uint(id))
+}
+
+animation_list_entries :: proc(list: ^Animation_List) -> []Animation {
+    return game.beatmap.animations.data[list.at:list.at + list.num_animations]
 }
 
 //////////////////////////////////////////////////////
@@ -384,14 +432,7 @@ beat_proximity_factor :: proc(at_time_ms: f64, tween: Tween = .QUAD_OUT) -> f32 
     return 1 - tween_apply(tween, f32(beat_progress))
 }
 
-// note(isak): threshold is in map-time ms, doesn't adjust for beatmap rate (for osu parity)
-hitobject_dim_factor :: proc(hit_time_ms, at_time: f64) -> f32 {
-    undim_start := hit_time_ms - OSU_HITOBJECT_DIM_UNTIL_MS
-    t := f32(clamp((at_time - undim_start) / OSU_HITOBJECT_DIM_FADE_MS, 0, 1))
-    return math.lerp(OSU_HITOBJECT_DIM_FACTOR, 1, t)
-}
-
-render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) -> bool {
+render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) -> (alive: bool) {
     if at_time < d.start_time_ms {
         return true
     }
@@ -399,7 +440,7 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
         return false
     }
     if .HIDDEN in d.flags {
-        return true // note(isak): alive, just not drawn this frame
+        return true
     }
     relative_time_at := at_time - d.start_time_ms
 
@@ -431,14 +472,27 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
     angle := d.angle_rad + d.angle_vel * t_sec
     color := d.color
 
+    list := animation_list(d.animation_list)
+    if list.num_animations == 0 {
+        list = animation_list(element.animation_list)
+    }
+    animations := animation_list_entries(list)
+
     duration := d.end_time_ms - d.start_time_ms
     effective_rate := d.animation_rate if d.animation_rate != 0 else 1.0
-    anim_time_at := relative_time_at / duration * effective_rate
+    anim_time_at: f64
+    switch list.time_domain {
+    case .NORMALIZED:       anim_time_at = relative_time_at / duration * effective_rate
+    case .MILLISECONDS:     anim_time_at = relative_time_at * effective_rate
+    case .MAP_MILLISECONDS: anim_time_at = at_time
+    }
     if .LOOP_ANIMATION in d.flags {
-        anim_time_at = math.mod(anim_time_at, 1.0)
+        period := animation_loop_period(list)
+        if period > 0 {
+            anim_time_at = math.mod(anim_time_at, period)
+        }
     }
 
-    animations := d.animations if len(d.animations) > 0 else element.animations
     seen_animation_of_type: [Animation_Variant]bool
     #reverse for &animation in animations {
         base := cast(^Base_Animation)&animation

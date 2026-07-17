@@ -47,6 +47,7 @@ luaapi_enum_constants := [?]struct { t: typeid, name: cstring }{
     { Tween, "Tween" },
     { Hitobject_Phase, "Phase" },
     { Slider_Part, "SliderPart" },
+    { Animation_Time_Domain, "TimeDomain" },
 }
 
 
@@ -1467,8 +1468,8 @@ luaapi_drawable_set_element :: proc "c" (L: ^lua.State) -> (result: i32) {
 luaapi_drawable_set_animation :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
         context = lua_beatmap.odin_context
-        list := cast(^Script_Animation_List)lua.L_checkudata(L, 2, lua_classes[.ANIMATION].name)
-        d.animations = game.beatmap.animations.data[list.at:list.at + list.num_animations]
+        handle := cast(^Script_Animation_List)lua.L_checkudata(L, 2, lua_classes[.ANIMATION].name)
+        d.animation_list = handle.id
         return 0
     })
 }
@@ -1689,7 +1690,7 @@ luaapi_element_set_animation :: proc "c" (L: ^lua.State) -> (result: i32) {
 
     if el_id < game.beatmap.elements.len {
         el := q.get_ptr(&game.beatmap.elements, el_id)
-        el.animations = game.beatmap.animations.data[list.at:list.at + list.num_animations]
+        el.animation_list = list.id
     }
     return lua_return_self()
 }
@@ -1747,8 +1748,8 @@ luaapi_element_use_combo_color :: proc "c" (L: ^lua.State) -> (result: i32) {
 
 luaapi_animation_static_funcs := []Lua_Function {
   { "new", luaapi_animation_new,
-    "Animation Animation.new( void )",
-    "creates an empty animation list to attach to an element." },
+    "Animation Animation.new( TimeDomain domain = 0 )",
+    "creates an empty animation list to attach to an element. domain says what keyframe times mean, defaulting to TimeDomain.NORMALIZED." },
 }
 
 luaapi_animation_instance_funcs := []Lua_Function {
@@ -1785,207 +1786,244 @@ luaapi_animation_instance_funcs := []Lua_Function {
   { "frames", luaapi_animation_frames,
     "self animation:frames( float start, float end, string texture_name )",
     "spreads every layer of a texture array as evenly-spaced frames over [start, end]." },
+  { "set_time_domain", luaapi_animation_set_time_domain,
+    "self animation:set_time_domain( TimeDomain domain )",
+    "sets what this list's keyframe times mean. NORMALIZED is [0,1] across the drawable's lifetime, MILLISECONDS counts from the drawable's start, MAP_MILLISECONDS is absolute map time like an osu storyboard. MAP_MILLISECONDS ignores the drawable's animation rate." },
+  { "set_loop_period", luaapi_animation_set_loop_period,
+    "self animation:set_loop_period( float ms )",
+    "sets the loop period in ms for drawables flagged LOOP_ANIMATION. 0 (default) loops over the list's own extent. ignored in the NORMALIZED domain, which always loops over [0,1]." },
 }
 
-_lua_check_animation_list_and_potentially_relocate :: proc(anim_list: ^Script_Animation_List) {
-    if (anim_list.at + anim_list.num_animations) != game.beatmap.animations.len {
-        prev_at := anim_list.at
-        anim_list.at = game.beatmap.animations.len
-        if anim_list.num_animations > 0 {
-            // note(isak): we relocate the slice to the end of the animation list if it's not at the end.
-            // this leaves holes, but is the best we can do given the stable pointer requirement
-            unfinished_anim_list := game.beatmap.animations.data[prev_at:prev_at + anim_list.num_animations]
+_lua_animation_list :: proc(L: ^lua.State) -> ^Animation_List {
+    handle := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
+    return animation_list(handle.id)
+}
+
+// note(isak): an out-of-range domain matches no case in render_drawable, freezing the whole list at
+// t=0, so we'd rather fall back loudly than trust the script
+_lua_check_time_domain :: proc(L: ^lua.State, arg: i32) -> Animation_Time_Domain {
+    domain := Animation_Time_Domain(lua.L_optinteger(L, arg, 0))
+    if domain < min(Animation_Time_Domain) || domain > max(Animation_Time_Domain) {
+        log.warn("User error - invalid animation time domain:", int(domain))
+        notify_warn("lua: invalid Animation time domain, using NORMALIZED")
+        domain = .NORMALIZED
+    }
+    return domain
+}
+
+_lua_animation_append :: proc(list: ^Animation_List, anim: Animation) {
+    anim := anim
+    q.append(&game.beatmap.animations, anim)
+    list.num_animations += 1
+    list.extent = max(list.extent, (cast(^Base_Animation)&anim).end_time)
+}
+
+// note(isak): appends from separate lists interleave in the shared animation queue, so a list that
+// no longer ends at the tail has to be copied there before it can grow. this leaves holes, but is
+// the best we can do while entries stay contiguous
+_lua_animation_list_for_append :: proc(L: ^lua.State) -> ^Animation_List {
+    list := _lua_animation_list(L)
+    if (list.at + list.num_animations) != game.beatmap.animations.len {
+        prev_at := list.at
+        list.at = game.beatmap.animations.len
+        if list.num_animations > 0 {
+            unfinished_anim_list := game.beatmap.animations.data[prev_at:prev_at + list.num_animations]
             q.push_back_elems(&game.beatmap.animations, ..unfinished_anim_list)
-            log.warn("Lua warning: relocated animation list to index:", anim_list.at)
+            log.warn("Lua warning: relocated animation list to index:", list.at)
         }
     }
+    return list
 }
 
 luaapi_animation_new :: proc "c" (L: ^lua.State) -> i32 {
-    handle := Script_Animation_List{ at = game.beatmap.animations.len }
+    context = lua_beatmap.odin_context
+
+    q.append(&game.beatmap.animation_lists, Animation_List{
+        at          = game.beatmap.animations.len,
+        time_domain = _lua_check_time_domain(L, 1),
+    })
+    handle := Script_Animation_List{ id = Animation_List_ID(game.beatmap.animation_lists.len - 1) }
     lua_create_userdata(L, handle, lua_classes[.ANIMATION].name)
     return 1
+}
+
+luaapi_animation_set_time_domain :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+
+    list := _lua_animation_list(L)
+    list.time_domain = _lua_check_time_domain(L, 2)
+    return lua_return_self()
+}
+
+luaapi_animation_set_loop_period :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+
+    list := _lua_animation_list(L)
+    list.loop_period_ms = f64(lua_number(2))
+    return lua_return_self()
 }
 
 luaapi_animation_move :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     
-    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
-    _lua_check_animation_list_and_potentially_relocate(anim_list)
+    list := _lua_animation_list_for_append(L)
     
     start, end     := lua_number(2), lua_number(3)
     from_x, from_y := lua_number(4), lua_number(5)
     to_x, to_y     := lua_number(6), lua_number(7)
     tween          := Tween(lua.L_optinteger(L, 8, 0))
-    q.append(&game.beatmap.animations, Animation_Translate{
+    _lua_animation_append(list, Animation_Translate{
         tween      = tween,
         start_time = f64(start),
         end_time   = f64(end),
         start_pos  = {f32(from_x), f32(from_y)},
         end_pos    = {f32(to_x), f32(to_y)}
     })
-    anim_list.num_animations += 1
     return lua_return_self()
 }
 
 luaapi_animation_move_x :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
 
-    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
-    _lua_check_animation_list_and_potentially_relocate(anim_list)
+    list := _lua_animation_list_for_append(L)
 
     start, end := lua_number(2), lua_number(3)
     from, to   := f32(lua_number(4)), f32(lua_number(5))
     tween      := Tween(lua.L_optinteger(L, 6, 0))
-    q.append(&game.beatmap.animations, Animation_Translate_X{
+    _lua_animation_append(list, Animation_Translate_X{
         tween      = tween,
         start_time = f64(start),
         end_time   = f64(end),
         start_x    = from,
         end_x      = to,
     })
-    anim_list.num_animations += 1
     return lua_return_self()
 }
 
 luaapi_animation_move_y :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
 
-    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
-    _lua_check_animation_list_and_potentially_relocate(anim_list)
+    list := _lua_animation_list_for_append(L)
 
     start, end := lua_number(2), lua_number(3)
     from, to   := f32(lua_number(4)), f32(lua_number(5))
     tween      := Tween(lua.L_optinteger(L, 6, 0))
-    q.append(&game.beatmap.animations, Animation_Translate_Y{
+    _lua_animation_append(list, Animation_Translate_Y{
         tween      = tween,
         start_time = f64(start),
         end_time   = f64(end),
         start_y    = from,
         end_y      = to,
     })
-    anim_list.num_animations += 1
     return lua_return_self()
 }
 
 luaapi_animation_scale :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     
-    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
-    _lua_check_animation_list_and_potentially_relocate(anim_list)
+    list := _lua_animation_list_for_append(L)
     
     start, end := lua_number(2), lua_number(3)
     from       := vec2{f32(lua_number(4)), f32(lua_number(5))}
     to         := vec2{f32(lua_number(6)), f32(lua_number(7))}
     tween      := Tween(lua.L_optinteger(L, 8, 0))
-    q.append(&game.beatmap.animations, Animation_Scale{
+    _lua_animation_append(list, Animation_Scale{
         tween       = tween,
         start_time  = f64(start),
         end_time    = f64(end),
         start_scale = from,
         end_scale   = to,
     })
-    anim_list.num_animations += 1
     return lua_return_self()
 }
 
 luaapi_animation_scale_x :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
 
-    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
-    _lua_check_animation_list_and_potentially_relocate(anim_list)
+    list := _lua_animation_list_for_append(L)
 
     start, end := lua_number(2), lua_number(3)
     from, to   := f32(lua_number(4)), f32(lua_number(5))
     tween      := Tween(lua.L_optinteger(L, 6, 0))
-    q.append(&game.beatmap.animations, Animation_Scale_X{
+    _lua_animation_append(list, Animation_Scale_X{
         tween         = tween,
         start_time    = f64(start),
         end_time      = f64(end),
         start_scale_x = from,
         end_scale_x   = to,
     })
-    anim_list.num_animations += 1
     return lua_return_self()
 }
 
 luaapi_animation_scale_y :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
 
-    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
-    _lua_check_animation_list_and_potentially_relocate(anim_list)
+    list := _lua_animation_list_for_append(L)
 
     start, end := lua_number(2), lua_number(3)
     from, to   := f32(lua_number(4)), f32(lua_number(5))
     tween      := Tween(lua.L_optinteger(L, 6, 0))
-    q.append(&game.beatmap.animations, Animation_Scale_Y{
+    _lua_animation_append(list, Animation_Scale_Y{
         tween         = tween,
         start_time    = f64(start),
         end_time      = f64(end),
         start_scale_y = from,
         end_scale_y   = to,
     })
-    anim_list.num_animations += 1
     return lua_return_self()
 }
 
 luaapi_animation_rotate :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     
-    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
-    _lua_check_animation_list_and_potentially_relocate(anim_list)
+    list := _lua_animation_list_for_append(L)
     
     start, end := lua_number(2), lua_number(3)
     from, to   := f32(lua_number(4)), f32(lua_number(5))
     tween      := Tween(lua.L_optinteger(L, 6, 0))
-    q.append(&game.beatmap.animations, Animation_Rotate{
+    _lua_animation_append(list, Animation_Rotate{
         tween       = tween,
         start_time  = f64(start),
         end_time    = f64(end),
         start_angle = from,
         end_angle   = to
     })
-    anim_list.num_animations += 1
     return lua_return_self()
 }
 
 luaapi_animation_color :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     
-    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
-    _lua_check_animation_list_and_potentially_relocate(anim_list)
+    list := _lua_animation_list_for_append(L)
     
     start, end := lua_number(2), lua_number(3)
     from, to   := color_from_pixel(u32(lua_int(4))), color_from_pixel(u32(lua_int(5)))
     tween      := Tween(lua.L_optinteger(L, 6, 0))
-    q.append(&game.beatmap.animations, Animation_Color{
+    _lua_animation_append(list, Animation_Color{
         tween       = tween,
         start_time  = f64(start),
         end_time    = f64(end),
         start_color = from,
         end_color   = to
     })
-    anim_list.num_animations += 1
     return lua_return_self()
 }
 
 luaapi_animation_alpha :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     
-    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
-    _lua_check_animation_list_and_potentially_relocate(anim_list)
+    list := _lua_animation_list_for_append(L)
     
     start, end := lua_number(2), lua_number(3)
     from, to   := f32(lua_number(4)), f32(lua_number(5))
     tween      := Tween(lua.L_optinteger(L, 6, 0))
-    q.append(&game.beatmap.animations, Animation_Alpha{
+    _lua_animation_append(list, Animation_Alpha{
         tween       = tween,
         start_time  = f64(start),
         end_time    = f64(end),
         start_alpha = from,
         end_alpha   = to
     })
-    anim_list.num_animations += 1
     return lua_return_self()
 }
 
@@ -1994,8 +2032,7 @@ luaapi_animation_alpha :: proc "c" (L: ^lua.State) -> i32 {
 luaapi_animation_texture :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
 
-    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
-    _lua_check_animation_list_and_potentially_relocate(anim_list)
+    list := _lua_animation_list_for_append(L)
 
     start, end := lua_number(2), lua_number(3)
     tex_name := lua_string(4)
@@ -2007,13 +2044,12 @@ luaapi_animation_texture :: proc "c" (L: ^lua.State) -> i32 {
         tex_id = builtin_texture(.WHITE)
     }
 
-    q.append(&game.beatmap.animations, Animation_Texture{
+    _lua_animation_append(list, Animation_Texture{
         start_time = f64(start),
         end_time   = f64(end),
         texture_id = tex_id,
         layer      = layer,
     })
-    anim_list.num_animations += 1
     return lua_return_self()
 }
 
@@ -2023,8 +2059,7 @@ luaapi_animation_texture :: proc "c" (L: ^lua.State) -> i32 {
 luaapi_animation_frames :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
 
-    anim_list := cast(^Script_Animation_List)lua.L_checkudata(L, 1, lua_classes[.ANIMATION].name)
-    _lua_check_animation_list_and_potentially_relocate(anim_list)
+    list := _lua_animation_list_for_append(L)
 
     start    := f64(lua_number(2))
     end      := f64(lua_number(3))
@@ -2046,13 +2081,12 @@ luaapi_animation_frames :: proc "c" (L: ^lua.State) -> i32 {
     for frame := 0; frame < n; frame += 1 {
         frame_start := start + span * (f64(frame)   / f64(n))
         frame_end   := start + span * (f64(frame+1) / f64(n))
-        q.append(&game.beatmap.animations, Animation_Texture{
+        _lua_animation_append(list, Animation_Texture{
             start_time = frame_start,
             end_time   = frame_end,
             texture_id = tex_id,
             layer      = f32(frame),
         })
-        anim_list.num_animations += 1
     }
     return lua_return_self()
 }

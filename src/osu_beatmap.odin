@@ -78,6 +78,7 @@ Beatmap :: struct {
     // the final quad. the given element of an drawable can be overridden mid-map by scripts for effects
     elements: queue.Queue(Element),
     animations: queue.Queue(Animation),
+    animation_lists: queue.Queue(Animation_List),
 }
 
 beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap, kept_music: Sound = nil) {
@@ -138,7 +139,7 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap, kept_mu
     
     // map graphics init
     
-    create_default_elements(&beatmap.elements, &beatmap.animations)
+    create_default_elements(&beatmap.elements, &beatmap.animations, &beatmap.animation_lists)
     mods_apply_to_graphics()
 
     beatmap.bg_handle = create_bg_drawable(game.active_map.bg_filename, game.active_inso_map.bg_pipeline_name)
@@ -387,6 +388,8 @@ _beatmap_allocate_internals :: proc(beatmap: ^Beatmap, kept_music: Sound = nil) 
     queue.init(&beatmap.elements, 1024, memory.allocators[.MAP_DATA])
     queue.append(&beatmap.elements, null_element)
     queue.init(&beatmap.animations, 1024, memory.allocators[.MAP_DATA])
+    queue.init(&beatmap.animation_lists, 256, memory.allocators[.MAP_DATA])
+    queue.append(&beatmap.animation_lists, Animation_List{})
     
     sb.init(&beatmap.phase_transitions, 256, memory.allocators[.DRAWABLES])
 

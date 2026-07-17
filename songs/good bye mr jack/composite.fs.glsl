@@ -11,7 +11,7 @@ uniform sampler2DArray textures[16];
 
 // note: multi-input passes read their src texture slots here instead of the quad's texIndex.
 // srcSlots.x = first src ("scene"), srcSlots.y = second ("bloom_b").
-layout(std140, binding = 16) uniform PostParams {
+layout(std140, binding = 14) uniform PostParams {
     uvec4 srcSlots;
 };
 

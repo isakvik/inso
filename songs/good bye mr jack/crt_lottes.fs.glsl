@@ -12,7 +12,7 @@ layout(binding = 4, std430) readonly buffer textureHandles {
 uniform sampler2DArray textures[16];
 #endif
 
-layout(std140, binding = 16) uniform PostParams {
+layout(std140, binding = 14) uniform PostParams {
     uvec4 srcSlots;
 };
 

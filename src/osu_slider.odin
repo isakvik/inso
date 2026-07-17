@@ -195,7 +195,9 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
         slider.flags &= ~{.TRACKING}
     } 
     
-    if is_tracking && map_time >= hobj.end_time_ms - SLIDER_END_LENIENCY_MS {
+    // note(isak): for sliders shorter than twice the leniency, the end check moves up to the halfway point
+    end_check_time := max(hobj.end_time_ms - SLIDER_END_LENIENCY_MS, (hobj.start_time_ms + hobj.end_time_ms) / 2)
+    if is_tracking && map_time >= end_check_time {
         slider.flags |= {.END_TRACKED}
     }
 

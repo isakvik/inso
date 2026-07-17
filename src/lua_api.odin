@@ -2103,7 +2103,7 @@ luaapi_buffer_static_funcs := []Lua_Function {
 luaapi_buffer_instance_funcs := []Lua_Function {
   { "bind", luaapi_buffer_bind,
     "void buffer:bind( int user_slot )",
-    "binds the buffer to a user SSBO slot (0-7, mapping to USER_0..USER_7)." },
+    "binds the buffer to a user SSBO slot (0-5, mapping to USER_0..USER_5)." },
   { "write_f32s", luaapi_buffer_write_f32s,
     "void buffer:write_f32s( int byte_offset, float value, ... )",
     "writes one or more f32s at byte_offset (must be 4-byte aligned)." },
@@ -2131,13 +2131,12 @@ luaapi_buffer_get :: proc "c" (L: ^lua.State) -> i32 {
     return 1
 }
 
-// buffer:bind(user_slot) -- user_slot is 0-7, maps to USER_0..USER_7
 luaapi_buffer_bind :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     slot_index := cast(^u32)lua.L_checkudata(L, 1, lua_classes[.BUFFER].name)
     user_slot  := int(lua_int(2))
-    if user_slot < 0 || user_slot > 7 {
-        return lua.L_error(L, "Buffer:bind: user_slot must be 0-7")
+    if user_slot < 0 || user_slot >= USER_SSBO_SLOT_COUNT {
+        return lua.L_error(L, "Buffer:bind: user_slot must be 0-%d", i32(USER_SSBO_SLOT_COUNT - 1))
     }
     buf := q.get_ptr(&game.active_mapset.buffers, uint(slot_index^))
     bind_slot := Shader_SSBO_Bind_Slot(int(Shader_SSBO_Bind_Slot.USER_0) + user_slot)

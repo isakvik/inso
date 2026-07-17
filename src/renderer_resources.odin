@@ -96,17 +96,19 @@ Shader_SSBO_Bind_Slot :: enum u32 {
     INSTANCE_BUFFER,
     SLIDER_PARAMS, // todo(isak): this is implemented as a UBO, should use its own slot namespace
     USER_PARAMS,   // user-accessible f32[64] UBO, always bound; binding 7
-    USER_0,        // user-bindable SSBO slots; binding 8-15
+    USER_0,        // user-bindable SSBO slots; binding 8-13
     USER_1,
     USER_2,
     USER_3,
     USER_4,
     USER_5,
-    USER_6,
-    USER_7,
-    POST_PARAMS,   // post-pass src texture slots UBO; binding 16
-    TRANSFORMS,    // per-frame transform ring SSBO, indexed by Quad/Glyph_Quad transform_index; binding 17
+    POST_PARAMS,   // post-pass src texture slots UBO; binding 14
+    TRANSFORMS,    // per-frame transform ring SSBO, indexed by Quad/Glyph_Quad transform_index; binding 15
 }
+
+// note(isak): some platforms cap SSBO bindings at 16, so the whole slot space must stay within 0-15
+USER_SSBO_SLOT_COUNT :: int(Shader_SSBO_Bind_Slot.POST_PARAMS) - int(Shader_SSBO_Bind_Slot.USER_0)
+#assert(len(Shader_SSBO_Bind_Slot) <= 16)
 
 // note(isak): always-bound UBO for Lua-accessible shader params (Shader.set_param / set_vec4).
 // the 64 floats are tightly packed here; in std140 a `float[]` array has a 16-byte stride, so
@@ -118,7 +120,7 @@ User_Shader_Params :: struct #align(16) {
 }
 
 // note(isak): per-pass src texture slots for post passes.
-// shaders access it as: layout(std140, binding=16) uniform PostParams { uvec4 srcSlots; };
+// shaders access it as: layout(std140, binding=14) uniform PostParams { uvec4 srcSlots; };
 Post_Pass_Params :: struct #align(16) {
     src: [4]u32,
 }

@@ -27,7 +27,7 @@ layout(binding = 1, std430) readonly buffer vertexData {
 layout(binding = 2, std430) readonly buffer indexData {
     uint indices[];
 };
-layout(binding = 17, std430) readonly buffer transformData {
+layout(binding = 15, std430) readonly buffer transformData {
     mat3 transforms[];
 };
 

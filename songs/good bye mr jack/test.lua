@@ -20,6 +20,13 @@ function on_init()
         :set_size(100, 100)
 
     crt_init()
+
+    schedule_at(5000, function() 
+        Beatmap.set_skin_override("osu! default")
+    end)
+    schedule_at(8000, function() 
+        Beatmap.clear_skin_override()
+    end)
 end
 
 function crt_init()

@@ -2103,7 +2103,7 @@ luaapi_buffer_static_funcs := []Lua_Function {
 luaapi_buffer_instance_funcs := []Lua_Function {
   { "bind", luaapi_buffer_bind,
     "void buffer:bind( int user_slot )",
-    "binds the buffer to a user SSBO slot (0-5, mapping to USER_0..USER_5)." },
+    "binds the buffer to a user SSBO slot (0-7, mapping to USER_0..USER_7)." },
   { "write_f32s", luaapi_buffer_write_f32s,
     "void buffer:write_f32s( int byte_offset, float value, ... )",
     "writes one or more f32s at byte_offset (must be 4-byte aligned)." },

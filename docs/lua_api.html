@@ -40,7 +40,7 @@
 </head>
 <body>
 
-<h1>Lua API for inso v0.2.5-dev+d08ade2</h1>
+<h1>Lua API for inso v0.2.5-dev+a294ef7</h1>
 <p class="note">documentation automatically generated from the engine's API registration tables</p>
 <p class="note">a method with return type <span class="sig s">self</span> returns its own object, so calls can be chained.</p>
 <nav class="toc">
@@ -250,7 +250,7 @@
 <thead><tr><th>Method</th></tr></thead>
 <tbody>
 <tr><td><code class="sig"><span class="type">Buffer</span> <span class="receiver">Buffer</span><span class="punctuation">.</span><span class="function">get</span><span class="punctuation">(</span> <span class="type">string</span> <span class="argument">name</span> <span class="punctuation">)</span></code><div class="desc">looks up a mapset buffer (SSBO) by name; returns nil if not found.</div></td></tr>
-<tr><td><code class="sig"><span class="type">void</span> <span class="receiver">buffer</span><span class="punctuation">:</span><span class="function">bind</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">user_slot</span> <span class="punctuation">)</span></code><div class="desc">binds the buffer to a user SSBO slot (0-5, mapping to USER_0..USER_5).</div></td></tr>
+<tr><td><code class="sig"><span class="type">void</span> <span class="receiver">buffer</span><span class="punctuation">:</span><span class="function">bind</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">user_slot</span> <span class="punctuation">)</span></code><div class="desc">binds the buffer to a user SSBO slot (0-7, mapping to USER_0..USER_7).</div></td></tr>
 <tr><td><code class="sig"><span class="type">void</span> <span class="receiver">buffer</span><span class="punctuation">:</span><span class="function">write_f32s</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">byte_offset</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">value</span><span class="punctuation">,</span> <span class="punctuation">.</span><span class="punctuation">.</span><span class="punctuation">.</span> <span class="punctuation">)</span></code><div class="desc">writes one or more f32s at byte_offset (must be 4-byte aligned).</div></td></tr>
 <tr><td><code class="sig"><span class="type">void</span> <span class="receiver">buffer</span><span class="punctuation">:</span><span class="function">write_vec4</span><span class="punctuation">(</span> <span class="type">int</span> <span class="argument">vec4_index</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">x</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">y</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">z</span><span class="punctuation">,</span> <span class="type">float</span> <span class="argument">w</span> <span class="punctuation">)</span></code><div class="desc">writes four f32s at vec4_index * 16 bytes.</div></td></tr>
 <tr><td><code class="sig"><span class="type">int</span> <span class="receiver">buffer</span><span class="punctuation">:</span><span class="function">size</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the buffer's size in bytes.</div></td></tr>

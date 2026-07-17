@@ -24,10 +24,7 @@ struct Quad {
 layout(binding = 1, std430) readonly buffer vertexData {
     Quad vertices[];
 };
-layout(binding = 2, std430) readonly buffer indexData {
-    uint indices[];
-};
-layout(binding = 15, std430) readonly buffer transformData {
+layout(binding = 2, std430) readonly buffer transformData {
     mat3 transforms[];
 };
 

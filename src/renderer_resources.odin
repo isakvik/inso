@@ -61,21 +61,6 @@ user_pipeline_slot :: proc(s: u32) -> u32 {
     return len(Builtin_Pipeline_Slot) + s
 }
 
-// note(isak): the CLEAR handler forces the depth mask on, then restores it to whatever the bound
-// pipeline wants - only mesh shaders (DepthWrite) actually write depth.
-pipeline_writes_depth :: proc(id: Pipeline_ID) -> bool {
-    if int(id) < len(Builtin_Pipeline_Slot) {
-        return false
-    }
-    if game.active_mapset != nil {
-        user_idx := int(id) - len(Builtin_Pipeline_Slot)
-        if user_idx >= 0 && user_idx < len(game.active_mapset.shader_depth_writes) {
-            return game.active_mapset.shader_depth_writes[user_idx]
-        }
-    }
-    return false
-}
-
 Framebuffer_ID :: u32
 
 Builtin_Framebuffer_Slot :: enum u32 {
@@ -89,32 +74,37 @@ user_framebuffer :: proc(i: u32) -> Framebuffer_ID { return i + len(Builtin_Fram
 
 Shader_SSBO_Bind_Slot :: enum u32 {
     NONE,
-    VERTEX_BUFFER,
-    INDEX_BUFFER,
-    TRANSFORM,
-    TEXTURES,
-    INSTANCE_BUFFER,
-    SLIDER_PARAMS, // todo(isak): this is implemented as a UBO, should use its own slot namespace
-    USER_PARAMS,   // user-accessible f32[64] UBO, always bound; binding 7
-    USER_0,        // user-bindable SSBO slots; binding 8-13
+    VERTEX_BUFFER,   // quad batch / circle geometry / user mesh geometry; binding 1
+    TRANSFORMS,      // per-frame transform ring, indexed by Quad/Glyph_Quad transform_index; binding 2
+    RESERVED_3,
+    TEXTURES,        // bindless texture handles; binding 4
+    INSTANCE_BUFFER, // slider instances; binding 5
+    RESERVED_6,
+    RESERVED_7,
+    USER_0,          // user-bindable SSBO slots; binding 8-15
     USER_1,
     USER_2,
     USER_3,
     USER_4,
     USER_5,
-    POST_PARAMS,   // post-pass src texture slots UBO; binding 14
-    TRANSFORMS,    // per-frame transform ring SSBO, indexed by Quad/Glyph_Quad transform_index; binding 15
+    USER_6,
+    USER_7,
 }
 
-// note(isak): some platforms cap SSBO bindings at 16, so the whole slot space must stay within 0-15
-USER_SSBO_SLOT_COUNT :: int(Shader_SSBO_Bind_Slot.POST_PARAMS) - int(Shader_SSBO_Bind_Slot.USER_0)
+USER_SSBO_SLOT_COUNT :: len(Shader_SSBO_Bind_Slot) - int(Shader_SSBO_Bind_Slot.USER_0)
 #assert(len(Shader_SSBO_Bind_Slot) <= 16)
+
+Shader_UBO_Bind_Slot :: enum u32 {
+    GLOBALS       = 3,  // shader_global_buffer, declared as globalData in shaders
+    SLIDER_PARAMS = 6,  // per-draw slider params ring, bound via BindBufferRange
+    USER_PARAMS   = 7,  // user-accessible f32[64], always bound
+    POST_PARAMS   = 14, // post-pass src texture slots
+}
 
 // note(isak): always-bound UBO for Lua-accessible shader params (Shader.set_param / set_vec4).
 // the 64 floats are tightly packed here; in std140 a `float[]` array has a 16-byte stride, so
 // shaders must read them as a vec4 array to match this layout:
 //   layout(std140, binding=7) uniform UserParams { vec4 params[16]; };
-// the i-th float written by Shader.set_param(i, v) is then params[i/4][i%4].
 User_Shader_Params :: struct #align(16) {
     data: [64]f32,
 }
@@ -464,4 +454,20 @@ populate_slider_circle_vertices :: proc(geometry: ^Buffer(Slider_Vertex)) {
 
         geometry.count = 2 + UNIT_CIRCLE_VERTEX_COUNT
     }
+}
+
+
+// note(isak): the CLEAR handler forces the depth mask on, then restores it to whatever the bound
+// pipeline wants - only mesh shaders (DepthWrite) actually write depth.
+pipeline_writes_depth :: proc(id: Pipeline_ID) -> bool {
+    if int(id) < len(Builtin_Pipeline_Slot) {
+        return false
+    }
+    if game.active_mapset != nil {
+        user_idx := int(id) - len(Builtin_Pipeline_Slot)
+        if user_idx >= 0 && user_idx < len(game.active_mapset.shader_depth_writes) {
+            return game.active_mapset.shader_depth_writes[user_idx]
+        }
+    }
+    return false
 }

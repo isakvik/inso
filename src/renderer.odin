@@ -69,11 +69,6 @@ Mesh_Vertex :: struct {
 }
 
 
-Geometry_Buffer :: struct(T: typeid) {
-    vertices: Buffer(T),
-    indices: Buffer(u32),
-}
-
 Draw_Call :: struct {
     index_offset: u32,
     index_count: i32,
@@ -950,9 +945,9 @@ batch_end :: proc(renderer: ^Renderer) {
         // note(isak): finalize the last in-flight texture bind before processing commands
         texture_unit_map_finalize(renderer)
     }
-    ubo_bind(&window.shader_global_buffer, u32(Shader_SSBO_Bind_Slot.TRANSFORM))
+    ubo_bind(&window.shader_global_buffer, u32(Shader_UBO_Bind_Slot.GLOBALS))
     sbo_bind(&window.slider_instance_store, u32(Shader_SSBO_Bind_Slot.INSTANCE_BUFFER))
-    ubo_bind(&window.user_param_buffer, u32(Shader_SSBO_Bind_Slot.USER_PARAMS))
+    ubo_bind(&window.user_param_buffer, u32(Shader_UBO_Bind_Slot.USER_PARAMS))
     tbo_bind(&window.transform_store, u32(Shader_SSBO_Bind_Slot.TRANSFORMS))
 
     batch_process_command_buffer(renderer)
@@ -1073,7 +1068,7 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                     slot_offset := store.buffers[store.current_index].offset + int(cmd.param_index) * size_of(Slider_Params_Slot)
                     gl.BindBufferRange(
                         gl.UNIFORM_BUFFER,
-                        u32(Shader_SSBO_Bind_Slot.SLIDER_PARAMS),
+                        u32(Shader_UBO_Bind_Slot.SLIDER_PARAMS),
                         store.id,
                         slot_offset,
                         size_of(Slider_Params))
@@ -1153,7 +1148,7 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
                             }
                         }
                         gl.NamedBufferSubData(window.post_param_buffer.id, 0, size_of(Post_Pass_Params), &post_params)
-                        ubo_bind(&window.post_param_buffer, u32(Shader_SSBO_Bind_Slot.POST_PARAMS))
+                        ubo_bind(&window.post_param_buffer, u32(Shader_UBO_Bind_Slot.POST_PARAMS))
 
                         sbo_bind(&window.fullscreen_store, u32(Shader_SSBO_Bind_Slot.VERTEX_BUFFER))
                         sg.apply_pipeline(window.pipelines.data[cmd.pipeline])

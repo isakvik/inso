@@ -178,17 +178,14 @@ Animation_Time_Domain :: enum {
     MAP_MILLISECONDS, // note(isak): absolute map time, like an osu storyboard
 }
 
-Animation_List_ID :: distinct u32 // note(isak): 0 = none, resolving to the empty list kept at slot 0
-
-// note(isak): indexes game.beatmap.animations instead of slicing it, so a list stays valid when the
-// animation queue grows. one list is shared by every drawable of an element, so anything describing
-// how the times were authored belongs here rather than on the drawable
 Animation_List :: struct {
     at, num_animations: uint,
     time_domain: Animation_Time_Domain,
     loop_period_ms: f64, // note(isak): 0 = loop over extent instead
     extent: f64,         // note(isak): highest end_time in the list, in time_domain units
 }
+
+Animation_List_ID :: distinct u32 // note(isak): 0 = none, resolving to the empty list kept at slot 0
 
 Script_Animation_List :: struct {
     id: Animation_List_ID,
@@ -257,7 +254,7 @@ Element_Flag :: enum u32 {
 
 Element_ID :: u32
 Element :: struct {
-    type: Element_Type, // note(isak): this is just for debug purposes
+    type: Element_Type, // note(isak): just for debug purposes
     flags: Element_Flags,
 
     shader: Pipeline_ID,
@@ -286,8 +283,7 @@ Drawable_Flag :: enum u32 {
     LOOP_ANIMATION,
     
     // note(isak): when hobj_index is set, also scales d.pos by the hitobject's current radius. 
-    // use for child drawables (e.g. digits) whose pos is an offset in radius units, not for world-space 
-    // positioned drawables
+    // use for child drawables (e.g. digits) whose pos is an offset in radius units
     SCALE_POS_BY_RADIUS, 
 
     // note(isak): fades alpha from 0 to 1 over the first 40% of the drawable's lifetime (capped at 400ms).
@@ -432,15 +428,12 @@ beat_proximity_factor :: proc(at_time_ms: f64, tween: Tween = .QUAD_OUT) -> f32 
     return 1 - tween_apply(tween, f32(beat_progress))
 }
 
-render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) -> (alive: bool) {
-    if at_time < d.start_time_ms {
-        return true
-    }
-    if d.end_time_ms < at_time {
-        return false
+render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) {
+    if at_time < d.start_time_ms || d.end_time_ms < at_time {
+        return
     }
     if .HIDDEN in d.flags {
-        return true
+        return
     }
     relative_time_at := at_time - d.start_time_ms
 
@@ -615,21 +608,17 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) ->
             rect_translate_by_anchor(rect, d.anchor),
             uv_rect, color, tex, angle, uv_layer)
     }
-
-    return true
 }
 
 process_and_draw_expiring_gfx_refs :: proc(expiring_gfx_refs: ^sb.Swap_Buffer(Drawable_Handle)) {
     map_time := beatmap_music_time_ms(&game.beatmap)
     for handle in expiring_gfx_refs.current {
         e := slotmap.get(&game.beatmap.drawables, handle) or_continue
-        still_alive: bool
-        if .OWNER_DRAWN in e.flags {
-            still_alive = .ACTIVE in e.flags && map_time <= e.end_time_ms
-        } else {
-            still_alive = .ACTIVE in e.flags && render_drawable(e, map_time)
-        }
+        still_alive := .ACTIVE in e.flags && map_time <= e.end_time_ms
         if still_alive {
+            if .OWNER_DRAWN not_in e.flags {
+                render_drawable(e, map_time)
+            }
             sb.append_next(expiring_gfx_refs, handle)
         } else {
             slotmap.remove(&game.beatmap.drawables, handle)

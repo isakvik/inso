@@ -162,27 +162,36 @@ Texture_Index :: struct {
     index: u32
 }
 
-skin_texture_block_len :: proc() -> u32 {
-    return u32(len(Skin_Element_Type)) + u32(len(window.skin_frame_textures))
-}
+/*
+    note(isak): these return indices into the bindless texture buffer.
 
-// note(isak): map textures and render targets share the global slot space after the builtin and skin
-// slots, so this is how many of them can coexist before we run out of texture handles.
-max_user_textures :: proc() -> int {
-    return MAX_TEXTURE_HANDLES - len(Builtin_Texture_Slot) - int(skin_texture_block_len())
-}
+        builtins | skin elements | map textures | render targets | skin frames
 
-// note(isak): these return indices into the bindless texture buffer
+    the layout is positional - a block's base is the sum of every block before it - so a block may only
+    precede slots that get re-resolved whenever it resizes. map and render target slots are baked (into
+    Element.tex by lua, see mapset_texture_slot) and only re-resolve on mapset reload, so nothing that
+    resizes on a skin swap may sit in front of them. the skin frame block is the one that does, hence
+    the tail. the skin element block keeps its base because the enum fixes its size.
+*/
 builtin_texture :: proc(slot: Builtin_Texture_Slot) -> u32 { return u32(slot) }
 skin_texture :: proc(skin_el: Skin_Element_Type) -> u32 { return u32(skin_el) + len(Builtin_Texture_Slot) }
-user_texture :: proc(tex_id: u32) -> u32 { return tex_id + len(Builtin_Texture_Slot) + skin_texture_block_len() }
+user_texture :: proc(tex_id: u32) -> u32 { return tex_id + len(Builtin_Texture_Slot) + len(Skin_Element_Type) }
 
-// note(isak): frame 0 samples the element's own slot; frames 1.. sit in the appended frame block,
-// contiguous per element from frame_slot_base. frame is clamped against the element's frame_count.
+skin_frame_block_base :: proc() -> u32 {
+    return user_texture(u32(game.active_mapset.textures.len) + u32(game.active_mapset.render_targets.len))
+}
+
+// note(isak): frame 0 samples the element's own slot; frames 1.. sit in the frame block, contiguous per
+// element from frame_slot_base. callers bound frame against the element's frame_count themselves.
 skin_frame_texture :: proc(skin_el: Skin_Element_Type, frame: int) -> u32 {
     if frame <= 0 do return skin_texture(skin_el)
-    block_base := u32(len(Builtin_Texture_Slot)) + u32(len(Skin_Element_Type))
-    return block_base + game.active_skin.elements[skin_el].frame_slot_base + u32(frame - 1)
+    return skin_frame_block_base() + game.active_skin.elements[skin_el].frame_slot_base + u32(frame - 1)
+}
+
+// note(isak): map textures, render targets and skin frames all share the tail of the slot space, so a
+// frame-heavy skin eats into what a map can load
+max_user_textures :: proc() -> int {
+    return MAX_TEXTURE_HANDLES - len(Builtin_Texture_Slot) - len(Skin_Element_Type) - len(window.skin_frame_textures)
 }
 
 
@@ -367,11 +376,6 @@ prepare_textures_for_rendering :: proc() {
             textures[num_elements] = window.skin_textures[skin_el].tex_handle
             num_elements += 1
         }
-        for &frame in window.skin_frame_textures {
-            if num_elements >= MAX_TEXTURE_HANDLES do break
-            textures[num_elements] = frame.tex_handle
-            num_elements += 1
-        }
         for i in 0..<int(game.active_mapset.textures.len) {
             if num_elements >= MAX_TEXTURE_HANDLES do break
             textures[num_elements] = queue.get_ptr(&game.active_mapset.textures, uint(i)).tex_handle
@@ -381,6 +385,11 @@ prepare_textures_for_rendering :: proc() {
             if num_elements >= MAX_TEXTURE_HANDLES do break
             rt := queue.get_ptr(&game.active_mapset.render_targets, uint(i))
             textures[num_elements] = rt.fbo.color_texture_handles[0]
+            num_elements += 1
+        }
+        for &frame in window.skin_frame_textures {
+            if num_elements >= MAX_TEXTURE_HANDLES do break
+            textures[num_elements] = frame.tex_handle
             num_elements += 1
         }
         for i in 0..<num_elements {
@@ -401,11 +410,6 @@ prepare_textures_for_rendering :: proc() {
             ids[num_elements] = window.skin_textures[skin_el].tex_id
             num_elements += 1
         }
-        for &frame in window.skin_frame_textures {
-            if num_elements >= MAX_TEXTURE_HANDLES do break
-            ids[num_elements] = frame.tex_id
-            num_elements += 1
-        }
         for i in 0..<int(game.active_mapset.textures.len) {
             if num_elements >= MAX_TEXTURE_HANDLES do break
             ids[num_elements] = queue.get_ptr(&game.active_mapset.textures, uint(i)).tex_id
@@ -417,6 +421,11 @@ prepare_textures_for_rendering :: proc() {
             ids[num_elements] = rt.fbo.color_textures[0]
             num_elements += 1
         }
+        for &frame in window.skin_frame_textures {
+            if num_elements >= MAX_TEXTURE_HANDLES do break
+            ids[num_elements] = frame.tex_id
+            num_elements += 1
+        }
     }
 }
 
@@ -424,7 +433,7 @@ cleanup_textures_for_rendering :: proc() {
     if !window.bindless_supported do return
 
     textures := &window.texture_buffer.data
-    num_elements := min(len(Builtin_Texture_Slot) + int(skin_texture_block_len()) + int(game.active_mapset.textures.len) + int(game.active_mapset.render_targets.len), MAX_TEXTURE_HANDLES)
+    num_elements := min(int(skin_frame_block_base()) + len(window.skin_frame_textures), MAX_TEXTURE_HANDLES)
     for i in 0..<num_elements {
         if textures[i] > 0 {
             gl.MakeTextureHandleNonResidentARB(textures[i])

@@ -77,8 +77,8 @@ window: struct {
     font_atlas_texture: Texture,
 
     skin_textures: [Skin_Element_Type]Texture,
-    // note(isak): animation frames 1.. for animatable elements, appended right after the per-element
-    // skin block in the texture slot space; frame 0 stays in skin_textures. see skin_frame_texture.
+    // note(isak): animation frames 1.. for animatable elements; frame 0 stays in skin_textures. this
+    // block sits at the tail of the texture slot space and resizes per skin. see skin_frame_texture.
     skin_frame_textures: [dynamic]Texture,
     is_high_resolution: [Skin_Element_Type]bool
 }

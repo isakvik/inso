@@ -22,6 +22,7 @@ lua_beatmap: struct {
     event_registrations: [dynamic]Lua_Event_Registration,
     scheduled_events: [dynamic]Scheduled_Event,
     in_init: bool,
+    in_judgement_dispatch: bool,
 
     last_callback: cstring,
 

@@ -18,6 +18,7 @@ Lua_Beatmap_Event_Type :: enum {
     ON_KEY_UP,
     ON_CURSOR_MOVED,
     ON_JUDGEMENT,
+    VALIDATE_JUDGEMENT,
     ON_KIAI_CHANGE,
     ON_COMBO_BREAK,
     ON_MAP_COMPLETE,
@@ -35,6 +36,7 @@ lua_beatmap_event_names := [Lua_Beatmap_Event_Type]cstring {
     .ON_KEY_UP = "on_key_released",
     .ON_CURSOR_MOVED = "on_cursor_moved",
     .ON_JUDGEMENT = "on_judgement",
+    .VALIDATE_JUDGEMENT = "validate_judgement",
     .ON_KIAI_CHANGE = "on_kiai_change",
     .ON_COMBO_BREAK = "on_combo_break",
     .ON_MAP_COMPLETE = "on_map_complete",
@@ -92,7 +94,11 @@ lua_beatmap_event_docs := [Lua_Beatmap_Event_Type]Lua_Beatmap_Event_Doc {
     },
     .ON_JUDGEMENT = {
         "void on_judgement( Hitobject hitobject, Judgement judgement, float timing_error_ms )",
-        "called when an object is judged. judgement is a Judgement enum value; timing_error_ms is signed (hit time minus perfect time).",
+        "called when an object is judged. judgement is a Judgement enum value; timing_error_ms is signed (hit time minus perfect time). hitobject is nil for judgements spawned via judgement_spawn without one.",
+    },
+    .VALIDATE_JUDGEMENT = {
+        "(Judgement|nil, float|nil) validate_judgement( Hitobject hitobject, Judgement judgement, float timing_error_ms )",
+        "called before a judgement is committed. return nothing to let it pass, or return a Judgement value (and optionally a replacement timing error) to overwrite it - score, combo, hitsounds, animations and the judgement graphic all follow the overwritten result. Judgement.NONE is rejected; a judgement cannot be cancelled, overwrite to Judgement.IGNORED_HIT instead. judgements from judgement_spawn are not filtered.",
     },
     .ON_KIAI_CHANGE = {
         "void on_kiai_change( bool kiai )",
@@ -238,7 +244,11 @@ lua_beatmap_on_judgement :: proc(hobj_index: int, judgement: Judgement_Type, tim
         }
         lua_call_beatmap_func(lua_beatmap_event_names[.ON_JUDGEMENT], Lua_Judgement_Result{hobj_index, judgement, timing_error_ms},
             proc(result: Lua_Judgement_Result) -> i32 {
-                lua_create_userdata(lua_beatmap.state, result.hobj_index, lua_classes[.HITOBJECT].name)
+                if result.hobj_index >= 0 {
+                    lua_create_userdata(lua_beatmap.state, result.hobj_index, lua_classes[.HITOBJECT].name)
+                } else {
+                    lua.pushnil(lua_beatmap.state)
+                }
                 lua.pushinteger(lua_beatmap.state, cast(lua.Integer)result.judgement)
                 lua.pushnumber(lua_beatmap.state, lua.Number(result.timing_error_ms))
                 return 3
@@ -247,6 +257,34 @@ lua_beatmap_on_judgement :: proc(hobj_index: int, judgement: Judgement_Type, tim
     }
 
     _lua_dispatch_judgement_events(hobj_index, judgement, timing_error_ms)
+}
+
+// note(isak): asks the script to validate a pending judgement before it commits. nil/no return
+// passes it through; a Judgement value (with an optional replacement timing error) overwrites it.
+// NONE and out-of-range values are rejected - a judgement can be rewritten, never cancelled
+lua_beatmap_validate_judgement :: proc(hobj_index: int, type: Judgement_Type, time_error_ms: f64) -> (Judgement_Type, f64) {
+    if !lua_cares_about_event(.VALIDATE_JUDGEMENT) do return type, time_error_ms
+
+    L := lua_beatmap.state
+    lua_beatmap.last_callback = lua_beatmap_event_names[.VALIDATE_JUDGEMENT]
+    lua.getglobal(L, lua_beatmap_event_names[.VALIDATE_JUDGEMENT])
+    lua_create_userdata(L, hobj_index, lua_classes[.HITOBJECT].name)
+    lua.pushinteger(L, cast(lua.Integer)type)
+    lua.pushnumber(L, lua.Number(time_error_ms))
+    if !lua_pcall_with_watchdog(L, 3, 2, "judgement validation error:") {
+        return type, time_error_ms
+    }
+    defer lua.pop(L, 2)
+
+    if !lua.isnumber(L, -2) do return type, time_error_ms
+    replacement := lua.tointeger(L, -2)
+    if replacement <= cast(lua.Integer)Judgement_Type.NONE || replacement > cast(lua.Integer)max(Judgement_Type) {
+        return type, time_error_ms
+    }
+
+    error_ms := time_error_ms
+    if lua.isnumber(L, -1) do error_ms = f64(lua.tonumber(L, -1))
+    return Judgement_Type(replacement), error_ms
 }
 
 

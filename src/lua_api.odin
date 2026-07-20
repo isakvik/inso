@@ -144,6 +144,35 @@ luaapi_global_funcs := []Lua_Function {
   { "register_global_event", luaapi_register_global_event,
     "void register_global_event( string name, fn callback )",
     "registers a callback not tied to any object; it receives only the extra args from trigger_event." },
+  { "judgement_spawn", luaapi_judgement_spawn,
+    "void judgement_spawn( Judgement judgement, float time_error_ms = 0, Hitobject hitobject = nil )",
+    "creates a judgement as if the game had posted it, but no graphic is created and validate_judgement is skipped. an attached hitobject attributes the judgement (per-object callbacks fire, slider combo rules apply) without counting as that object's own final judgement. calling this while a judgement is dispatching (on_judgement/validate_judgement) is an error." },
+}
+
+luaapi_judgement_spawn :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    if lua_beatmap.in_judgement_dispatch {
+        return lua.L_error(L, "judgement_spawn: cannot spawn while a judgement is dispatching (on_judgement/validate_judgement)")
+    }
+
+    type_int := lua.L_checkinteger(L, 1)
+    if type_int <= cast(lua.Integer)Judgement_Type.NONE || type_int > cast(lua.Integer)max(Judgement_Type) {
+        return lua.L_error(L, "judgement_spawn: invalid Judgement value")
+    }
+    time_error_ms := f64(lua.L_optnumber(L, 2, 0))
+
+    hobj_index := -1
+    hobj_type := Hitobject_Type.CIRCLE
+    if i32(lua.gettop(L)) >= 3 && !lua.isnil(L, 3) {
+        handle := cast(^int)lua.L_checkudata(L, 3, lua_classes[.HITOBJECT].name)
+        if handle^ >= 0 && handle^ < len(game.beatmap.hitobjects) {
+            hobj_index = handle^
+            hobj_type = game.beatmap.hitobjects[hobj_index].type
+        }
+    }
+
+    judgement_spawn_scripted(Judgement_Type(type_int), time_error_ms, hobj_index, hobj_type)
+    return 0
 }
 
 
@@ -331,6 +360,15 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
   { "register_event", luaapi_hitobject_register_event,
     "self hitobject:register_event( string name, fn callback )",
     "registers callback to run when name is triggered for this object; it receives (self, ...)." },
+  { "is_hitcircle", luaapi_hitobject_is_hitcircle,
+    "bool hitobject:is_hitcircle( void )",
+    "true if this object is a hitcircle." },
+  { "is_slider", luaapi_hitobject_is_slider,
+    "bool hitobject:is_slider( void )",
+    "true if this object is a slider." },
+  { "is_spinner", luaapi_hitobject_is_spinner,
+    "bool hitobject:is_spinner( void )",
+    "true if this object is a spinner." },
   { "hide", luaapi_hitobject_hide,
     "self hitobject:hide( void )",
     "stops the object (and its slider body) from rendering until unhide(). persists across phase transitions; still hittable." },
@@ -591,6 +629,27 @@ luaapi_hitobject_get_with_any_bits :: proc "c" (L: ^lua.State) -> i32 {
 
 _luaapi_hitobject_op  :: proc "c" (L: ^lua.State, op: proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32) -> i32 { return _lua_op (L, _lua_resolve_hitobject, op) }
 _luaapi_hitobject_get :: proc "c" (L: ^lua.State, op: proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32) -> i32 { return _lua_get(L, _lua_resolve_hitobject, op) }
+
+luaapi_hitobject_is_hitcircle :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        lua.pushboolean(L, b32(hobj.type == .CIRCLE))
+        return 1
+    })
+}
+
+luaapi_hitobject_is_slider :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        lua.pushboolean(L, b32(hobj.type == .SLIDER))
+        return 1
+    })
+}
+
+luaapi_hitobject_is_spinner :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        lua.pushboolean(L, b32(hobj.type == .SPINNER))
+        return 1
+    })
+}
 
 luaapi_hitobject_hide :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
@@ -1234,7 +1293,7 @@ _lua_resolve_drawable :: proc "c" (L: ^lua.State) -> (^Drawable, bool) {
 
 _lua_resolve_hitobject :: proc "c" (L: ^lua.State) -> (^Hitobject, bool) {
     handle := cast(^int)lua.L_checkudata(L, 1, lua_classes[.HITOBJECT].name)
-    if handle^ < len(game.beatmap.hitobjects) {
+    if handle^ >= 0 && handle^ < len(game.beatmap.hitobjects) {
         return &game.beatmap.hitobjects[handle^], true
     }
     return nil, false

@@ -63,14 +63,17 @@ hitobject_on_click :: proc(hobj: ^Hitobject, click_time: f64) -> (result: Judgem
     }
     
     if result != .NONE {
-        hit_error_bar_record(&game.hit_error_bar, time_error_ms, result)
-
         if hobj.type == .SLIDER {
-            slider_on_click(hobj, result, time_error_ms)
+            result = slider_on_click(hobj, result, time_error_ms)
         } else {
-            judgement_new(hobj, result, time_error_ms)
+            result = judgement_new(hobj, result, time_error_ms)
             hobj.flags |= {.HIT, .EXPIRED}
         }
+
+        // note(isak): the error bar reads the committed judgement back so a filter-replaced
+        // timing error shows what was actually scored
+        committed := queue.get(&game.beatmap.judgements, hobj.judgement_index)
+        hit_error_bar_record(&game.hit_error_bar, committed.time_error_ms, result)
 
         if result != .MISS {
             if hobj.type == .SLIDER {
@@ -198,9 +201,9 @@ spinner_process_expiry :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: boo
 hitcircle_process_expiry :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
     end_time := hobj.end_time_ms + game.beatmap.timing_windows.ok
     if end_time < map_time {
-        judgement_new(hobj, .MISS, end_time - hobj.end_time_ms)
+        final := judgement_new(hobj, .MISS, end_time - hobj.end_time_ms)
         judgement_new_drawable(hobj)
-        hitobject_emit_phase_transition(hobj, .MISS)
+        hitobject_emit_phase_transition(hobj, final == .MISS ? .MISS : .HIT)
         hobj.flags &~= {.VISIBLE}
         hobj.flags |= {.EXPIRED}
         expired = true

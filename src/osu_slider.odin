@@ -94,7 +94,10 @@ slider_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
     }
     else if .HEAD_CHECKED not_in slider.flags && map_time > hobj.start_time_ms + game.beatmap.timing_windows.ok {
         slider.flags |= {.HEAD_CHECKED}
-        judgement_new(hobj, .SLIDER_HEAD_MISS, game.beatmap.timing_windows.ok)
+        final_head := judgement_new(hobj, .SLIDER_HEAD_MISS, game.beatmap.timing_windows.ok)
+        if final_head != .SLIDER_HEAD_MISS && final_head != .MISS {
+            slider.flags |= {.HEAD_HIT}
+        }
     }
 
     if map_time >= hobj.start_time_ms && .FINALIZED not_in slider.flags {
@@ -116,18 +119,11 @@ slider_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
     return expired
 }
 
-// note(isak): slider head click is recorded, final judgement is deferred to slider_finalize
-slider_on_click :: proc(hobj: ^Hitobject, result: Judgement_Type, timing_error_ms: f64) {
+// note(isak): slider head click is recorded, final judgement is deferred to slider_finalize.
+// the judgement commits before head state is set so the flags and slide sounds follow a
+// filter-overwritten result; the return value is mapped back to circle-space for the caller
+slider_on_click :: proc(hobj: ^Hitobject, result: Judgement_Type, timing_error_ms: f64) -> Judgement_Type {
     slider := &hobj.slider_state
-
-    if result != .MISS {
-        slider.flags |= {.HEAD_HIT, .HEAD_CHECKED}
-        slider_start_slide_sounds(hobj, &game.active_map.timing_points[hobj.hitsound_timing_point_index])
-    } else {
-        slider.flags |= {.HEAD_CHECKED}
-    }
-    
-    slider.down_key = pressed_controller_key()
 
     slider_head_judgement := result
     #partial switch result {
@@ -136,7 +132,36 @@ slider_on_click :: proc(hobj: ^Hitobject, result: Judgement_Type, timing_error_m
     case .GOOD: slider_head_judgement = .SLIDER_HEAD_GOOD
     case .MARVELOUS: slider_head_judgement = .SLIDER_HEAD_MARVELOUS
     }
-    judgement_new(hobj, slider_head_judgement, timing_error_ms)
+    final := judgement_new(hobj, slider_head_judgement, timing_error_ms)
+
+    if final != .SLIDER_HEAD_MISS && final != .MISS {
+        slider.flags |= {.HEAD_HIT, .HEAD_CHECKED}
+        slider_start_slide_sounds(hobj, &game.active_map.timing_points[hobj.hitsound_timing_point_index])
+    } else {
+        slider.flags |= {.HEAD_CHECKED}
+    }
+
+    slider.down_key = pressed_controller_key()
+
+    #partial switch final {
+    case .SLIDER_HEAD_MISS: return .MISS
+    case .SLIDER_HEAD_OK: return .OK
+    case .SLIDER_HEAD_GOOD: return .GOOD
+    case .SLIDER_HEAD_MARVELOUS: return .MARVELOUS
+    }
+    return final
+}
+
+// note(isak): commits a scorepoint judgement and reports whether one actually landed - the lua
+// filter can overturn it in either direction, so hit feedback keys off the committed result
+slider_scorepoint_judge :: proc(hobj: ^Hitobject, intended: Judgement_Type) -> (hit: bool) {
+    final := judgement_new(hobj, intended, 0)
+    #partial switch final {
+    case .SLIDER_SMALL_SCOREPOINT, .SLIDER_LARGE_SCOREPOINT:
+        hobj.slider_state.hit_judgement_count += 1
+        return true
+    }
+    return false
 }
 
 slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
@@ -210,23 +235,23 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
             for i in 0..<slider.contingency_window_scorepoint_count {
                 is_repeat := slider.contingency_window_scorepoints & {i} > {}
                 if is_repeat {
-                    judgement_new(hobj, .SLIDER_LARGE_SCOREPOINT, 0)
-                    slider.hit_judgement_count += 1
-                    slider_play_edge_hitsound(hobj, contingency_repeat_edge)
+                    if slider_scorepoint_judge(hobj, .SLIDER_LARGE_SCOREPOINT) {
+                        slider_play_edge_hitsound(hobj, contingency_repeat_edge)
+                    }
                     contingency_repeat_edge += 1
                 } else {
-                    judgement_new(hobj, .SLIDER_SMALL_SCOREPOINT, 0)
-                    slider.hit_judgement_count += 1
-                    slider.tick_hits[contingency_tick_index - 1] = true
-                    // note(isak): contingency ticks fit inside the head timing window, so they're all
-                    // on the first (forward) traversal
-                    slider_play_tick_hitsound(hobj, 0, contingency_tick_index)
+                    if slider_scorepoint_judge(hobj, .SLIDER_SMALL_SCOREPOINT) {
+                        slider.tick_hits[contingency_tick_index - 1] = true
+                        // note(isak): contingency ticks fit inside the head timing window, so they're all
+                        // on the first (forward) traversal
+                        slider_play_tick_hitsound(hobj, 0, contingency_tick_index)
+                    }
                     contingency_tick_index += 1
                 }
             }
         } else {
             for i in 0..<slider.contingency_window_scorepoint_count {
-                judgement_new(hobj, .SLIDER_SCOREPOINT_MISS, 0)
+                slider_scorepoint_judge(hobj, .SLIDER_SCOREPOINT_MISS)
             }
         }
         slider.contingency_window_scorepoint_count = 0
@@ -269,18 +294,18 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
             slider.checked_path_ticks_count += 1
             
             if is_tracking && .HEAD_CHECKED in slider.flags {
-                judgement_new(hobj, .SLIDER_SMALL_SCOREPOINT, 0)
-                slider.hit_judgement_count += 1
-                tick_geometric := heading_back ? slider.tick_count + 1 - slider.checked_path_ticks_count : slider.checked_path_ticks_count
-                slider.tick_hits[tick_geometric - 1] = true
-                slider_play_tick_hitsound(hobj, slider.checked_repeats_count, slider.checked_path_ticks_count)
+                if slider_scorepoint_judge(hobj, .SLIDER_SMALL_SCOREPOINT) {
+                    tick_geometric := heading_back ? slider.tick_count + 1 - slider.checked_path_ticks_count : slider.checked_path_ticks_count
+                    slider.tick_hits[tick_geometric - 1] = true
+                    slider_play_tick_hitsound(hobj, slider.checked_repeats_count, slider.checked_path_ticks_count)
+                }
             } else if .HEAD_CONTINGENCY_WINDOW_PASSED not_in slider.flags {
                 if slider.contingency_window_scorepoint_count >= 64 {
                     notify_warn("contingency window included more than 64 scorepoints: %d", slider.contingency_window_scorepoint_count)
                 }
                 slider.contingency_window_scorepoint_count += 1
             } else {
-                judgement_new(hobj, .SLIDER_SCOREPOINT_MISS, 0)
+                slider_scorepoint_judge(hobj, .SLIDER_SCOREPOINT_MISS)
             }
         }
         
@@ -291,9 +316,9 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
             for &hit in slider.tick_hits do hit = false
 
             if is_tracking && .HEAD_CHECKED in slider.flags  {
-                judgement_new(hobj, .SLIDER_LARGE_SCOREPOINT, 0)
-                slider.hit_judgement_count += 1
-                slider_play_edge_hitsound(hobj, slider.checked_repeats_count)
+                if slider_scorepoint_judge(hobj, .SLIDER_LARGE_SCOREPOINT) {
+                    slider_play_edge_hitsound(hobj, slider.checked_repeats_count)
+                }
             } else if .HEAD_CONTINGENCY_WINDOW_PASSED not_in slider.flags {
                 if slider.contingency_window_scorepoint_count >= 64 {
                     log.warn("contingency window included more than 64 scorepoints!", slider.contingency_window_scorepoint_count)
@@ -302,11 +327,11 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
                 }
                 slider.contingency_window_scorepoint_count += 1
             } else {
-                judgement_new(hobj, .SLIDER_SCOREPOINT_MISS, 0)
+                slider_scorepoint_judge(hobj, .SLIDER_SCOREPOINT_MISS)
             }
         }
     }
-    
+
     should_slide := .HEAD_CHECKED in slider.flags && is_tracking && !game.paused
     if should_slide {
         if slider.slide_sound == {} {
@@ -322,12 +347,12 @@ slider_finalize :: proc(hobj: ^Hitobject) {
     slider := &hobj.slider_state
 
     if .END_TRACKED in slider.flags {
-        // note(isak): the tail is the last edge, index path_travel_count
-        slider_play_edge_hitsound(hobj, slider.path_travel_count)
-        judgement_new(hobj, .SLIDER_LARGE_SCOREPOINT, 0)
-        slider.hit_judgement_count += 1
+        if slider_scorepoint_judge(hobj, .SLIDER_LARGE_SCOREPOINT) {
+            // note(isak): the tail is the last edge, index path_travel_count
+            slider_play_edge_hitsound(hobj, slider.path_travel_count)
+        }
     } else {
-        judgement_new(hobj, .SLIDER_END_MISS, 0)
+        slider_scorepoint_judge(hobj, .SLIDER_END_MISS)
     }
 
     slider_stop_slide_sounds(slider)
@@ -346,9 +371,9 @@ slider_finalize :: proc(hobj: ^Hitobject) {
     case:              result = .MISS
     }
 
-    judgement_new(hobj, result, 0)
+    final := judgement_new(hobj, result, 0)
     judgement_new_drawable(hobj)
-    hitobject_emit_phase_transition(hobj, result == .MISS ? .MISS : .HIT)
+    hitobject_emit_phase_transition(hobj, final == .MISS ? .MISS : .HIT)
     slider.flags |= {.FINALIZED}
 }
 

@@ -7,24 +7,45 @@ import "core:math"
 // note(isak): judgements
 
 JUDGEMENT_DISPLAY_DURATION :: 1100
-LIGHTING_DISPLAY_DURATION  :: 600
 
-judgement_new :: proc(hobj: ^Hitobject, type: Judgement_Type, time_error_ms: f64) {
+// note(isak): the returned judgement is what actually landed - the lua filter may have overwritten
+// it, and callers must key their feedback (hitsounds, flags, phase transitions) off the return value
+judgement_new :: proc(hobj: ^Hitobject, type: Judgement_Type, time_error_ms: f64) -> Judgement_Type {
+    lua_beatmap.in_judgement_dispatch = true
+    defer lua_beatmap.in_judgement_dispatch = false
+
+    result, error_ms := lua_beatmap_validate_judgement(hobj.index, type, time_error_ms)
+
     time := beatmap_music_time_ms(&game.beatmap)
     hobj.judgement_index = int(game.beatmap.judgements.len)
-    queue.append(&game.beatmap.judgements, Judgement{ type, time, time_error_ms, hobj.index })
+    queue.append(&game.beatmap.judgements, Judgement{ result, time, error_ms, hobj.index })
 
-    score_apply_judgement(hobj, type, time_error_ms)
-    lua_beatmap_on_judgement(hobj.index, type, time_error_ms)
+    score_apply_judgement(hobj.type, result, error_ms)
+    lua_beatmap_on_judgement(hobj.index, result, error_ms)
+    return result
+}
+
+// note(isak): scripted judgements skip the filter (the script already had full control) and never
+// become a hitobject's own judgement_index - attribution via hobj_index is informational only,
+// so completion gating and combo-end resolution stay derived from real object state
+judgement_spawn_scripted :: proc(type: Judgement_Type, time_error_ms: f64, hobj_index: int, hobj_type: Hitobject_Type) {
+    lua_beatmap.in_judgement_dispatch = true
+    defer lua_beatmap.in_judgement_dispatch = false
+
+    time := beatmap_music_time_ms(&game.beatmap)
+    queue.append(&game.beatmap.judgements, Judgement{ type, time, time_error_ms, hobj_index })
+
+    score_apply_judgement(hobj_type, type, time_error_ms)
+    lua_beatmap_on_judgement(hobj_index, type, time_error_ms)
 }
 
 COMBOBREAK_SOUND_MIN_COMBO :: 20
 
-score_apply_judgement :: proc(hobj: ^Hitobject, type: Judgement_Type, time_error_ms: f64) {
+score_apply_judgement :: proc(hobj_type: Hitobject_Type, type: Judgement_Type, time_error_ms: f64) {
     score := &game.beatmap.score
     score.hit_counts[type] += 1
 
-    if judgement_carries_hit_error(hobj.type, type) {
+    if judgement_carries_hit_error(hobj_type, type) {
         errors := &score.hit_errors
         errors.sum += time_error_ms
         errors.sum_squares += time_error_ms * time_error_ms
@@ -40,7 +61,7 @@ score_apply_judgement :: proc(hobj: ^Hitobject, type: Judgement_Type, time_error
 
     // note(isak): a slider's final MISS/OK/GOOD/MARVELOUS is its accuracy judgement only -
     // combo was already counted by its head, ticks, repeats and tail as they happened
-    slider_aggregate := hobj.type == .SLIDER
+    slider_aggregate := hobj_type == .SLIDER
 
     switch type {
     case .OK, .GOOD, .MARVELOUS:
@@ -117,11 +138,10 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
         case .OK:        el_type = .JUDGEMENT_OK
         case .GOOD:      el_type = .JUDGEMENT_GOOD
         case .MARVELOUS: el_type = .JUDGEMENT_MARVELOUS
-        case .SLIDER_SMALL_SCOREPOINT:  el_type = .LIGHTING
-        case .SLIDER_LARGE_SCOREPOINT:  el_type = .LIGHTING
 
         case .NONE, .COMBO_BREAK, .IGNORED_HIT, .SLIDER_SCOREPOINT_MISS, .SLIDER_END_MISS,
-            .SLIDER_HEAD_MISS, .SLIDER_HEAD_OK, .SLIDER_HEAD_GOOD, .SLIDER_HEAD_MARVELOUS:
+            .SLIDER_HEAD_MISS, .SLIDER_HEAD_OK, .SLIDER_HEAD_GOOD, .SLIDER_HEAD_MARVELOUS,
+            .SLIDER_SMALL_SCOREPOINT, .SLIDER_LARGE_SCOREPOINT:
             return
         }
 
@@ -135,8 +155,6 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
         element_scale := (cs * 2) / SKIN_CIRCLE_REFERENCE_PX
         skin_el := skin_element_for_type_table[el_type]
 
-        duration: f64 = el_type == .LIGHTING ? LIGHTING_DISPLAY_DURATION : JUDGEMENT_DISPLAY_DURATION
-
         drawable_new_expiring(&game.beatmap.judgement_expiring_gfx, {
             flags         = {.ACTIVE},
             element       = builtin_element_slot(el_type),
@@ -147,7 +165,7 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
             color         = color_white,
 
             start_time_ms = judgement.time,
-            end_time_ms   = judgement.time + duration,
+            end_time_ms   = judgement.time + JUDGEMENT_DISPLAY_DURATION,
         })
     }
     

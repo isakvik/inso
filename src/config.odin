@@ -19,7 +19,7 @@ User_Configuration :: struct {
     vsync_enabled: bool,
     fps_limiter: i32, // 0 = uncapped
 
-    // note(isak): escape hatch for drivers that mishandle GL query objects; costs ~µs when on
+    // note(isak): escape hatch for drivers that mishandle GL query objects
     gpu_profiler_enabled: bool,
 
     skin_path: string,

@@ -10,14 +10,10 @@ known discrepancies
 old features
     cursor ripple
     sliderfollowcircle animation (fade/scale)
-
-scripting
-    validate_judgement()
-    
+    repeat arrow fadein/out animation
 
 YEAST mode
     screen capture must work
-        consider an FPS cap option
     parse and apply settings from osu install (specify with path loaded from config), to allow warmup
         the osu config just takes straight precedence over the inso config, and is not saved to file
     thepoon request:

@@ -344,10 +344,11 @@ main :: proc() {
             game.input.frame_start_mouse_screen = mouse.pos
             game.input.frame_events = input_thread_drain()
             input_thread_apply_events(game.input.frame_events)
+            window_handle_mouse_restore_from_os()
 
             keyboard_next_frame()
 
-            // the press that landed a rebind must not double as that key's first press edge
+            // note(isak): disable keybind from rebind
             if game.input.rebind_captured_code != .UNKNOWN {
                 keyboard.buttons_prev_frame[game.input.rebind_captured_code] = true
                 game.input.rebind_captured_code = .UNKNOWN
@@ -357,8 +358,7 @@ main :: proc() {
                 // note(isak): this ensures cursor movement updates despite not receiving raw input messages 
                 mouse.pos = mouse_get_position_relative_to_window()
             }
-            raw_mouse_active := app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT || app.mouse_input_mode == .RAW_SINGLE_MOUSE_INPUT
-            if window.focused && window.mouse_inside && raw_mouse_active {
+            if window.focused && window.mouse_inside && is_raw_input_enabled() {
                 sdl.WarpMouseInWindow(window.handle, mouse.pos.x, mouse.pos.y)
             }
 
@@ -413,37 +413,6 @@ main :: proc() {
 
             r_bind_layer_and_push_current_state(.BACKGROUND, transform = window.screenspace_transform)
             osu_on_update(dt_ms, i64(time_current_frame_tsc))
-
-            if app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY {
-                r_check_and_bind_layer(.PLATFORM)        
-                r_push_transform(fullscreen_transform)
-                r_draw_quad(&renderer.quad_geometry,
-                    vec2{0,0}, vec2{1,1},
-                    vec2{0,0}, vec2{1,1},
-                    with_alpha(color_black, 0.5))
-                    
-                push_text(renderer, "waiting for primary mouse input",
-                    pos = {window.rect.w / 2, window.rect.h / 2},
-                    size = 16,
-                    color = {255, 255, 255, 150},
-                    align_h = .Center,
-                    align_v = .Middle)
-                
-            } else if app.mouse_input_mode == .REBINDING_MOUSE_SECONDARY {
-                r_check_and_bind_layer(.PLATFORM)
-                r_push_transform(fullscreen_transform)
-                r_draw_quad(&renderer.quad_geometry,
-                    vec2{0,0}, vec2{1,1},
-                    vec2{0,0}, vec2{1,1},
-                    with_alpha(color_black, 0.5))
-
-                push_text(renderer, "waiting for secondary mouse input",
-                    pos = {window.rect.w / 2, window.rect.h / 2},
-                    size = 16,
-                    color = {255, 255, 255, 150},
-                    align_h = .Center,
-                    align_v = .Middle)
-            }
         }
         
         {

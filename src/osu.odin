@@ -694,29 +694,7 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
     }
 
     results_screen_draw()
-
-    if game.input.rebinding_key != .NONE {
-        r_check_and_bind_layer(.PLATFORM)
-        r_push_transform(fullscreen_transform)
-        r_draw_quad(&window.renderer.quad_geometry,
-            vec2{0,0}, vec2{1,1},
-            vec2{0,0}, vec2{1,1},
-            with_alpha(color_black, 0.7))
-            
-        prompt := strings.concatenate({"Rebinding: ", rebindable_input_key_names[game.input.rebinding_key]}, context.temp_allocator)
-        push_text(&window.renderer, prompt,
-            pos = {window.rect.w / 2, window.rect.h / 2 - to_ui_scale(24)},
-            size = to_ui_scale(32),
-            color = {255, 255, 255, 150},
-            align_h = .Center,
-            align_v = .Middle)
-        push_text(&window.renderer, "Press any key...",
-            pos = {window.rect.w / 2, window.rect.h / 2 + to_ui_scale(24)},
-            size = to_ui_scale(32),
-            color = {255, 255, 255, 150},
-            align_h = .Center,
-            align_v = .Middle)
-    }
+    rebind_screen_draw()
 }
 
 hitobjects_draw :: proc(visible_hobjs: []Hitobject, map_time: f64) {

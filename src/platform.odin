@@ -101,6 +101,12 @@ Mouse_Input_Mode :: enum {
     REBINDING_MOUSE_SECONDARY,
 }
 
+is_raw_input_enabled :: proc() -> bool {
+    return !app.disable_raw_input && 
+        (app.mouse_input_mode == .RAW_SINGLE_MOUSE_INPUT ||
+        app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT)
+}
+
 Mouse_Button :: enum {
     LEFT,
     RIGHT,

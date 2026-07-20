@@ -478,3 +478,60 @@ score_write_results_file :: proc() {
     }
     log.infof("results written to %s", path)
 }
+
+rebind_screen_draw :: proc() {
+    if game.input.rebinding_key != .NONE {
+        r_check_and_bind_layer(.PLATFORM)
+        r_push_transform(fullscreen_transform)
+        r_draw_quad(&window.renderer.quad_geometry,
+            vec2{0,0}, vec2{1,1},
+            vec2{0,0}, vec2{1,1},
+            with_alpha(color_black, 0.7))
+            
+        prompt := strings.concatenate({"Rebinding: ", rebindable_input_key_names[game.input.rebinding_key]}, context.temp_allocator)
+        push_text(&window.renderer, prompt,
+            pos = {window.rect.w / 2, window.rect.h / 2 - to_ui_scale(24)},
+            size = to_ui_scale(32),
+            color = {255, 255, 255, 150},
+            align_h = .Center,
+            align_v = .Middle)
+        push_text(&window.renderer, "Press any key...",
+            pos = {window.rect.w / 2, window.rect.h / 2 + to_ui_scale(24)},
+            size = to_ui_scale(32),
+            color = {255, 255, 255, 150},
+            align_h = .Center,
+            align_v = .Middle)
+        
+    }
+    
+    if app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY {
+        r_check_and_bind_layer(.PLATFORM)        
+        r_push_transform(fullscreen_transform)
+        r_draw_quad(&window.renderer.quad_geometry,
+            vec2{0,0}, vec2{1,1},
+            vec2{0,0}, vec2{1,1},
+            with_alpha(color_black, 0.5))
+            
+        push_text(&window.renderer, "Waiting for primary mouse input...",
+            pos = {window.rect.w / 2, window.rect.h / 2},
+            size = 16,
+            color = {255, 255, 255, 150},
+            align_h = .Center,
+            align_v = .Middle)
+        
+    } else if app.mouse_input_mode == .REBINDING_MOUSE_SECONDARY {
+        r_check_and_bind_layer(.PLATFORM)
+        r_push_transform(fullscreen_transform)
+        r_draw_quad(&window.renderer.quad_geometry,
+            vec2{0,0}, vec2{1,1},
+            vec2{0,0}, vec2{1,1},
+            with_alpha(color_black, 0.5))
+
+        push_text(&window.renderer, "Waiting for secondary mouse input...",
+            pos = {window.rect.w / 2, window.rect.h / 2},
+            size = 16,
+            color = {255, 255, 255, 150},
+            align_h = .Center,
+            align_v = .Middle)
+    }
+}

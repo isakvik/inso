@@ -21,11 +21,12 @@ lua_beatmap: struct {
     registered_events: bit_set[Lua_Beatmap_Event_Type],
     event_registrations: [dynamic]Lua_Event_Registration,
     scheduled_events: [dynamic]Scheduled_Event,
-    in_init: bool, // true only while on_init runs; events scheduled now become replayable timeline events
+    in_init: bool,
 
-    last_callback: cstring, // last event name dispatched, for crash diagnostics
+    last_callback: cstring,
 
-    hide_skin_cursor: bool, // note(isak): set by set_cursor_visible(false) so a script can draw its own cursor
+    hide_skin_cursor: bool,
+    cursor_layer: Layer,
 }
 
 Lua_Function :: struct {

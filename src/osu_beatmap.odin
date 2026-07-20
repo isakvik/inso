@@ -33,8 +33,6 @@ Beatmap :: struct {
     fixed_update_dt_ms: f64,
     last_fixed_tick_ms: f64,
 
-    // note(isak): editor auto-hit tracks the previous frame's time so it only hits objects whose start
-    // crossed on the current frame; seeks snap it to the landing time so jumped-over objects are skipped.
     auto_last_hit_time_ms: f64,
     
     hitobjects: []Hitobject,
@@ -583,6 +581,7 @@ beatmap_pause :: proc(beatmap: ^Beatmap, pause: bool) {
             sound_pause(&beatmap.music)
         } else {
             sound_resume(&beatmap.music)
+            game.beatmap.auto_last_hit_time_ms = beatmap_music_time_ms(beatmap)
         }
         game.paused = pause
         

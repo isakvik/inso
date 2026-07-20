@@ -34,7 +34,6 @@ input_thread: struct {
     raw_window: uintptr, // the message-only hwnd owning our registrations; set once by the thread
 }
 
-// event timestamps and the walk's "now" come from the same clock, so offsets stay comparable
 input_tsc_now :: proc "contextless" () -> (result: i64) {
     windows.QueryPerformanceCounter(cast(^windows.LARGE_INTEGER)&result)
     return
@@ -46,9 +45,8 @@ input_tsc_frequency :: proc() -> i64 {
 
 // note(isak): RIDEV_NOHOTKEYS turns off win32k's own win key hotkey handling (the start menu)
 // while one of our windows is foreground. this acts a layer above the LL keyboard hook and covers
-// the case the hook provably cannot see on this machine: a win key pressed while raw mouse input
-// is streaming (see the winkey investigation). re-registering the same usage updates the flags in
-// place. returns false until the input thread's window exists - callers should retry
+// a win key pressed while raw mouse input is streaming.
+// returns false until the input thread's window exists - callers should retry
 input_thread_set_win_hotkeys_disabled :: proc(disabled: bool) -> bool {
     hwnd := windows.HWND(intrinsics.atomic_load_explicit(&input_thread.raw_window, .Acquire))
     if hwnd == nil do return false
@@ -172,13 +170,11 @@ _input_thread_proc :: proc "system" (param: rawptr) -> windows.DWORD {
         return 1
     }
 
-    // note(isak): INPUTSINK delivers input regardless of focus (gated at the consumer), DEVNOTIFY
-    // gives us WM_INPUT_DEVICE_CHANGE for unplug/replug. NOLEGACY must stay off - it would suppress
-    // the normal mouse/keyboard messages sdl and imgui live on
     rid: [2]windows.RAWINPUTDEVICE
     rid[0].usUsagePage = windows.HID_USAGE_PAGE_GENERIC
     rid[0].usUsage = windows.HID_USAGE_GENERIC_MOUSE
-    rid[0].dwFlags = windows.RIDEV_INPUTSINK | windows.RIDEV_DEVNOTIFY
+    rid[0].dwFlags = windows.RIDEV_INPUTSINK | // note(isak): get input when unfocused
+        windows.RIDEV_DEVNOTIFY // note(isak): get device change events
     rid[0].hwndTarget = hwnd
     rid[1].usUsagePage = windows.HID_USAGE_PAGE_GENERIC
     rid[1].usUsage = windows.HID_USAGE_GENERIC_KEYBOARD
@@ -191,29 +187,23 @@ _input_thread_proc :: proc "system" (param: rawptr) -> windows.DWORD {
     }
     intrinsics.atomic_store_explicit(&input_thread.raw_window, uintptr(hwnd), .Release)
 
-    // note(isak): Sleep(1) below needs 1ms timer resolution to actually pace at ~1khz
+    // note(isak): prepare for single-ms sleep calls
     windows.timeBeginPeriod(1)
 
-    // mmcss registration is per-thread and must run here. CRITICAL sits above the main thread's
-    // AVRT_PRIORITY_HIGH in the same "Games" class, keeping the QPC stamp ahead of a busy frame
+    // mmcss registration is per-thread and must run here
     mmcss_index: windows.DWORD
     if mmcss := AvSetMmThreadCharacteristicsW(windows.L("Games"), &mmcss_index); mmcss != nil {
         AvSetMmThreadPriority(mmcss, AVRT_PRIORITY_CRITICAL)
     }
 
-    // the pump has two gears. idle/low-rate: block in GetMessageW and read each event's data
-    // directly - zero cpu while nothing moves, exact per-event QPC stamps. hot stream (8khz mice):
-    // after the waking event, drain the whole backlog with GetRawInputBuffer at a ~1ms pace until
-    // the stream goes quiet. buffered reads also remove the drained events' WM_INPUT messages from
-    // the queue, and GetMessageW dequeues the waking event's data with it, so the two read paths
-    // never see the same event twice. batched events share one QPC stamp (error <= the pace tick)
     msg: windows.MSG
     for windows.GetMessageW(&msg, nil, 0, 0) > 0 {
         _input_thread_handle_message(&msg)
         if msg.message != windows.WM_INPUT do continue
 
         for _input_thread_drain_raw_input_buffer() > 0 {
-            // non-input messages would starve while we pace, pump them between drains
+            // note(isak): if we have remaining messages, we process the rest in a single batch that
+            // shares the timestamp counter value
             pending: windows.MSG
             for windows.PeekMessageW(&pending, nil, 0, 0, windows.PM_REMOVE) != windows.FALSE {
                 _input_thread_handle_message(&pending)
@@ -237,8 +227,7 @@ _input_thread_handle_message :: proc "system" (msg: ^windows.MSG) {
     windows.DispatchMessageW(msg)
 }
 
-// reads everything queued right now, in bulk. returns the number of events consumed
-_input_thread_drain_raw_input_buffer :: proc "system" () -> (total: int) {
+_input_thread_drain_raw_input_buffer :: proc "system" () -> (events_consumed: int) {
     // 8-byte aligned scratch; a mouse event is 48 bytes on x64, so ~85 events per read
     buffer: [512]u64
 
@@ -259,7 +248,7 @@ _input_thread_drain_raw_input_buffer :: proc "system" () -> (total: int) {
             // NEXTRAWINPUTBLOCK: entries are variable-size, each aligned to pointer size
             raw = cast(^windows.RAWINPUT)((uintptr(raw) + uintptr(raw.header.dwSize) + 7) & ~uintptr(7))
         }
-        total += int(count)
+        events_consumed += int(count)
     }
     return
 }

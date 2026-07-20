@@ -343,6 +343,7 @@ Drawable :: struct {
 
     animation_list: Animation_List_ID, // note(isak): element override
     uv: Rect, // note(isak): element override. UV sub-rect in [0,1] space; {0,0,1,1} = full texture
+    uv_angle_rad: f32,
     tex: u32, // note(isak): element override
 
     // note(isak): index+1 into game.beatmap.hitobjects. 0 = no associated hitobject.
@@ -426,6 +427,12 @@ beat_proximity_factor :: proc(at_time_ms: f64, tween: Tween = .QUAD_OUT) -> f32 
     beat_progress := math.mod(at_time_ms - timing_point.time, beat_length) / beat_length
     if beat_progress < 0 do beat_progress += 1
     return 1 - tween_apply(tween, f32(beat_progress))
+}
+
+// note(isak): back/elastic tweens overshoot [0,1] on purpose; clamping here keeps the u8 cast
+// from wrapping (u8(285.0) == 29) while geometric animations keep their overshoot
+lerp_color_channel :: proc(from, to: u8, t: f32) -> u8 {
+    return u8(clamp(linalg.lerp(f32(from), f32(to), t), 0, 255))
 }
 
 render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) {
@@ -526,10 +533,10 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) {
 
             case Animation_Color:
                 lerped := Color{
-                    u8(linalg.lerp(f32(anim.start_color.r), f32(anim.end_color.r), t)),
-                    u8(linalg.lerp(f32(anim.start_color.g), f32(anim.end_color.g), t)),
-                    u8(linalg.lerp(f32(anim.start_color.b), f32(anim.end_color.b), t)),
-                    u8(linalg.lerp(f32(anim.start_color.a), f32(anim.end_color.a), t)),
+                    lerp_color_channel(anim.start_color.r, anim.end_color.r, t),
+                    lerp_color_channel(anim.start_color.g, anim.end_color.g, t),
+                    lerp_color_channel(anim.start_color.b, anim.end_color.b, t),
+                    lerp_color_channel(anim.start_color.a, anim.end_color.a, t),
                 }
                 switch anim.blend {
                 case .REPLACE:
@@ -542,7 +549,7 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) {
                 }
                 
             case Animation_Alpha:
-                color.a = u8(linalg.lerp(anim.start_alpha, anim.end_alpha, t) * 0xFF)
+                color.a = u8(clamp(linalg.lerp(anim.start_alpha, anim.end_alpha, t), 0, 1) * 0xFF)
                 
             case Animation_Texture:
                 tex = anim.texture_id
@@ -560,8 +567,12 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) {
         color = color_scale_rgb(color, hitobject_dim_factor(fade_ref_ms, at_time))
     }
     if .FADE_IN in d.flags {
+        // note(isak): fade_ref_ms can precede start_time_ms (hitobject starting before the
+        // drawable); a non-positive window means there's nothing to fade over, so skip it
         fade_in_ms := min((fade_ref_ms - d.start_time_ms) * 0.4, 400.0)
-        color.a = u8(f32(color.a) * f32(clamp(relative_time_at / fade_in_ms, 0, 1)))
+        if fade_in_ms > 0 {
+            color.a = u8(f32(color.a) * f32(clamp(relative_time_at / fade_in_ms, 0, 1)))
+        }
     }
     if .FADE_OUT in d.flags {
         fade_out_ms := f64(OSU_HIT_ANIMATION_LENGTH)
@@ -606,7 +617,7 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) {
         }
         r_draw_rect_with_uv(&window.renderer.quad_geometry,
             rect_translate_by_anchor(rect, d.anchor),
-            uv_rect, color, tex, angle, uv_layer)
+            uv_rect, color, tex, angle, uv_layer, uv_angle = d.uv_angle_rad)
     }
 }
 

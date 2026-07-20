@@ -114,6 +114,9 @@ luaapi_global_funcs := []Lua_Function {
   { "set_cursor_visible", luaapi_set_cursor_visible,
     "void set_cursor_visible( bool visible )",
     "shows or hides the built-in skin cursor. hide it to draw your own from a Drawable." },
+  { "set_cursor_layer", luaapi_set_cursor_layer,
+    "void set_cursor_layer( Layer layer )",
+    "moves the built-in skin cursor (trail, click expand and all) to the given render layer. put it on a captured layer to warp it with the scene, or on Layer.PLATFORM to keep it above post-processing. default is Layer.CURSOR." },
   { "controller_is_down", luaapi_controller_is_down,
     "bool controller_is_down( string key )",
     "true if the named gameplay key is held. key is one of \"k1\", \"k2\", \"m1\", \"m2\"." },
@@ -241,6 +244,12 @@ luaapi_get_cursor_pos :: proc "c" (L: ^lua.State) -> i32 {
 luaapi_set_cursor_visible :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     lua_beatmap.hide_skin_cursor = !lua_boolean(1)
+    return 0
+}
+
+luaapi_set_cursor_layer :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    lua_beatmap.cursor_layer = Layer(lua_int(1))
     return 0
 }
 
@@ -1038,6 +1047,12 @@ luaapi_drawable_instance_funcs := []Lua_Function {
   { "set_uv", luaapi_drawable_set_uv,
     "self drawable:set_uv( float x, float y, float w, float h )",
     "sets the uv sub-rect in [0,1] space, picking a region of the texture." },
+  { "get_uv_angle", luaapi_drawable_get_uv_angle,
+    "float drawable:get_uv_angle( void )",
+    "the uv sub-rect's rotation in radians." },
+  { "set_uv_angle", luaapi_drawable_set_uv_angle,
+    "self drawable:set_uv_angle( float angle_rad )",
+    "rotates the uv sub-rect around its center. set it equal to the drawable's angle and a rotated quad samples the screen region it covers with the content upright - the basis for angled scene cuts." },
   { "get_pos", luaapi_drawable_get_pos,
     "(float x, float y) drawable:get_pos( void )",
     "the drawable's position." },
@@ -1335,6 +1350,19 @@ luaapi_drawable_set_uv :: proc "c" (L: ^lua.State) -> (result: i32) {
         w := f32(lua_number(4))
         h := f32(lua_number(5))
         d.uv = {x, y, w, h}
+        return 0
+    })
+}
+
+luaapi_drawable_get_uv_angle :: proc "c" (L: ^lua.State) -> i32 {
+    return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        lua.pushnumber(L, lua.Number(d.uv_angle_rad))
+        return 1
+    })
+}
+luaapi_drawable_set_uv_angle :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        d.uv_angle_rad = f32(lua_number(2))
         return 0
     })
 }

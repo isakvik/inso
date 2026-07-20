@@ -14,12 +14,12 @@ Map_Reference :: struct {
     folder_path:  string,
     osu_filename: string, // note(isak): which .osu file to load within the folder
     hash: u64,
-    external: bool, // note(isak): opened from outside songs/; survives a songs-folder rediscovery
+    external: bool, // note(isak): kept on folder rediscover
 }
 
 Skin_Reference :: struct {
     folder_path: string,
-    external: bool, // note(isak): opened from outside skins/; survives a skins-folder rediscovery
+    external: bool, // note(isak): kept on folder rediscover
 }
 
 app: struct {
@@ -81,7 +81,6 @@ app_init :: proc() {
         os.set_working_directory(app.base_dir)
     }
 
-    // note(isak): logger is created after the working-dir fixup so a file logger lands in the app root
     app.logger = logging_create_logger()
     crash_stats_init()
 }
@@ -142,20 +141,16 @@ INPUT_M2_UP:   u16 : 0x0008
 INPUT_M3_DOWN: u16 : 0x0010
 INPUT_M3_UP:   u16 : 0x0020
 
-// motion delta a raw event contributes to an integrated cursor position. zero while the cursor is
-// outside the window or for absolute motion (tablets), so callers can add unconditionally
-raw_mouse_motion_delta :: proc(event: ^Input_Event) -> vec2 {
-    if !window.mouse_inside || event.absolute_motion do return {}
-    return {f32(event.motion_x), f32(event.motion_y)} * game.user_config.cursor_sensitivity
-}
-
 // note(isak): advances an integrated raw cursor, confined to the window like osu does. the
 // confinement is load-bearing: the os cursor is warped to follow this every frame and SetCursorPos
 // clamps to the desktop, so a position allowed past the edge desyncs from the real cursor and every
 // later warp pins the real one against that edge until the overshoot is walked back by hand. a
-// fullscreen window never gets the mouse-leave that would resync it, so the pin is permanent there
+// fullscreen window never gets the mouse-leave that would resync it, so the pin is permanent there.
+// ignores motion while the cursor is outside the window and for absolute motion (tablets)
 raw_cursor_integrate :: proc(pos: vec2, event: ^Input_Event) -> vec2 {
-    moved := pos + raw_mouse_motion_delta(event)
+    if !window.mouse_inside || event.absolute_motion do return pos
+
+    moved := pos + {f32(event.motion_x), f32(event.motion_y)} * game.user_config.cursor_sensitivity
     return {
         clamp(moved.x, 0, window.rect.w - 1),
         clamp(moved.y, 0, window.rect.h - 1),

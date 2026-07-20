@@ -678,7 +678,9 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
     }
 
     if !lua_beatmap.hide_skin_cursor {
-        r_bind_layer_and_push_current_state(.CURSOR, transform = window.screenspace_transform)
+        cursor_layer := lua_beatmap.cursor_layer
+        if cursor_layer == .BACKGROUND do cursor_layer = .CURSOR
+        r_bind_layer_and_push_current_state(cursor_layer, transform = window.screenspace_transform)
 
         cursor_expand_update()
         cursor_trail_draw(&cursor_trails[0], mouse.pos)

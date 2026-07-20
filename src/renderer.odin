@@ -54,7 +54,9 @@ Quad :: struct {
     tex_index: u32,
     angle:     f32,
     transform_index: u32, // slot in the frame's transform ring (TRANSFORMS bind slot)
-    body_color: u32, // note(isak): per-quad slider body color, read only by slider_present.fs; 0 elsewhere
+    body_color: u32, // only used by slider_present.fs
+    uv_angle:  f32, // rotates the uv sub-rect around its center; equal to angle = content stays upright
+    __padding: u32, // round up to vec2 alignment (std430)
 }
 
 Slider_Vertex :: struct {
@@ -83,9 +85,8 @@ Shader_Globals :: struct {
     circle_size_osupx: f32,
     cursor_pos: [2]f32,
     resolution: [2]f32,
-    _pad: [2]f32, // std140: the vec4s below align to 16
+    _pad: [2]f32, // std140: the vec4 below aligns to 16
     slider_border_color: vec4,
-    slider_body_color: vec4,
 }
 
 Layer_State_Field :: enum { FRAMEBUFFER, PIPELINE, SCISSOR }
@@ -1182,7 +1183,8 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
 // note(isak): draw api - PS: we use our nice global window.renderer here to make the api easier
 
 r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, uv_max: vec2,
-                          color: Color, tex_index: u32, angle: f32 = 0, layer: f32 = 0, body_color: Color = {}) {
+                          color: Color, tex_index: u32, angle: f32 = 0, layer: f32 = 0, body_color: Color = {},
+                          uv_angle: f32 = 0) {
     assert(window.renderer.current_draw != nil)
 
     if geometry.count + 1 > MAX_BATCH_VERTICES {
@@ -1230,6 +1232,7 @@ r_draw_quad_with_uv :: proc(geometry: ^Buffer(Quad), pos_min, pos_max, uv_min, u
             angle = angle,
             transform_index = window.renderer.current_transform_index,
             body_color = transmute(u32)body_color,
+            uv_angle = uv_angle,
         }
 
         geometry.count += 1
@@ -1249,9 +1252,10 @@ r_draw_rect :: proc(geometry: ^Buffer(Quad), r: Rect,
 }
 
 r_draw_rect_with_uv :: proc(geometry: ^Buffer(Quad), r, uv: Rect,
-                            color: Color, tex_index: u32 = 0, angle: f32 = 0, layer: f32 = 0, body_color: Color = {}) {
+                            color: Color, tex_index: u32 = 0, angle: f32 = 0, layer: f32 = 0, body_color: Color = {},
+                            uv_angle: f32 = 0) {
     r_draw_quad_with_uv(geometry, {r.x, r.y}, {r.x + r.w, r.y + r.h},
-                                {uv.x, uv.y}, {uv.x + uv.w, uv.y + uv.h}, color, tex_index, angle, layer, body_color)
+                                {uv.x, uv.y}, {uv.x + uv.w, uv.y + uv.h}, color, tex_index, angle, layer, body_color, uv_angle)
 }
 
 r_draw_layout_rect :: proc(geometry: ^Buffer(Quad), rect: Rect, anchor: Layout_Anchor,

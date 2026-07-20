@@ -196,7 +196,7 @@ guarding_allocator_proc :: proc(
 ) -> (result: []byte, err: mem.Allocator_Error) {
     data := (^Guarding_Allocator)(allocator_data)
     
-    when ODIN_OS == .Windows {
+    when ODIN_OS == .Windows && ODIN_DEBUG {
         is_allocation := mode == .Alloc || mode == .Alloc_Non_Zeroed || mode == .Resize || mode == .Resize_Non_Zeroed
         if is_allocation {
             buffer_guard := int(get_free_phys_memory()) - gigabytes(1)

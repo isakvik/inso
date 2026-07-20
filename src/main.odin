@@ -143,6 +143,10 @@ main :: proc() {
     game.user_config = config_load("user.ini")
     defer config_save("user.ini")
 
+    if game.user_config.osu_install_path != "" {
+        config_import_from_osu(game.user_config.osu_install_path)
+    }
+
     window_init({w = game.user_config.window_width, h = game.user_config.window_height}, mode = game.user_config.window_mode)
     app.ui_enabled = true
     defer window_cleanup()
@@ -819,10 +823,6 @@ imgui_update :: proc() {
         }
     }
     if imgui.CollapsingHeader("Input") {
-        if imgui.Button("x##sensitivity_reset") do game.user_config.cursor_sensitivity = 1.0
-        imgui.SameLine()
-        imgui.SliderFloat("Cursor sensitivity##mouse", &game.user_config.cursor_sensitivity, 0.1, 5.0)
-
         if !app.disable_raw_input {
             raw_input := app.mouse_input_mode == .RAW_SINGLE_MOUSE_INPUT
             if imgui.Checkbox("Raw input", &raw_input) {
@@ -835,6 +835,16 @@ imgui_update :: proc() {
             }
         } else {
             imgui.Text("Raw input disabled")
+        }
+                
+        raw_active := app.mouse_input_mode != .SDL_INPUT
+        imgui.BeginDisabled(!raw_active)
+        if imgui.Button("x##sensitivity_reset") do game.user_config.cursor_sensitivity = 1.0
+        imgui.SameLine()
+        imgui.SliderFloat("Cursor sensitivity##mouse", &game.user_config.cursor_sensitivity, 0.1, 5.0)
+        imgui.EndDisabled()
+        if !raw_active {
+            imgui.TextDisabled("(cursor sensitivity requires raw input)")
         }
         
         imgui.Text("\nKey bindings (click to rebind)")

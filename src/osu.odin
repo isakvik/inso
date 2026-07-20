@@ -556,6 +556,7 @@ osu_on_init :: proc() {
     ui_init_timeline(&game.ui_timeline)
 
     game.input.keys = game.user_config.keys
+    game.input.mouse_keys_enabled = game.user_config.mouse_keys_enabled
 }
 
 osu_on_update :: proc(dt: f64, frame_tsc: i64) {

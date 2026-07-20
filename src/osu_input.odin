@@ -311,6 +311,7 @@ handle_menu_input_events :: proc() {
 handle_universal_input_events :: proc() {
     if key_is_pressed(.F10) {
         game.input.mouse_keys_enabled = !game.input.mouse_keys_enabled
+        game.user_config.mouse_keys_enabled = game.input.mouse_keys_enabled
         notify_warn("mouse keys enabled" if game.input.mouse_keys_enabled else "mouse keys disabled")
     }
 }

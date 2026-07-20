@@ -19,8 +19,10 @@ User_Configuration :: struct {
     vsync_enabled: bool,
     fps_limiter: i32, // 0 = uncapped
 
-    // note(isak): escape hatch for drivers that mishandle GL query objects
     gpu_profiler_enabled: bool,
+
+    // note(isak): config_importer resolve path
+    osu_install_path: string,
 
     skin_path: string,
     use_beatmap_skin: bool,
@@ -37,6 +39,7 @@ User_Configuration :: struct {
     cursor_size_multiplier: f32,
     cursor_sensitivity: f32,
     raw_input_enabled: bool,
+    mouse_keys_enabled: bool,
     
     bg_dim: f32, // note(isak): 0 = background fully visible, 1 = fully black
     playfield_border_opacity: f32,
@@ -81,6 +84,9 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         if v, ok := get(gen, "gpu_profiler_enabled"); ok {
             result.gpu_profiler_enabled = v == "true"
         }
+        if v, ok := get(gen, "osu_install_path"); ok {
+            result.osu_install_path = strings.clone(v)
+        }
         if v, ok := get(gen, "skin_path"); ok {
             result.skin_path = strings.clone(v)
         }
@@ -117,6 +123,9 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         if v, ok := get(gen, "raw_input_enabled"); ok {
             result.raw_input_enabled = v == "true"
         }
+        if v, ok := get(gen, "mouse_keys_enabled"); ok {
+            result.mouse_keys_enabled = v == "true"
+        }
         if v, ok := get(gen, "bg_dim"); ok {
             if f, ok2 := strconv.parse_f32(v); ok2 do result.bg_dim = f
         }
@@ -146,30 +155,32 @@ config_save :: proc(path: string) {
     sb := strings.builder_make(context.temp_allocator)
     w  := strings.to_writer(&sb)
 
-    ini.write_pair(w, "universal_offset_ms",      game.user_config.universal_offset_ms)
-    ini.write_pair(w, "vsync_enabled",            game.user_config.vsync_enabled)
-    ini.write_pair(w, "fps_limiter",                  game.user_config.fps_limiter)
-    ini.write_pair(w, "gpu_profiler_enabled",     game.user_config.gpu_profiler_enabled)
-    ini.write_pair(w, "master_volume",            game.user_config.master_volume)
-    ini.write_pair(w, "music_volume",             game.user_config.music_volume)
-    ini.write_pair(w, "hitsound_volume",          game.user_config.hitsound_volume)
-    ini.write_pair(w, "skin_path",                game.user_config.skin_path)
-    ini.write_pair(w, "use_beatmap_skin",         game.user_config.use_beatmap_skin)
-    ini.write_pair(w, "use_beatmap_hitsounds",    game.user_config.use_beatmap_hitsounds)
+    ini.write_pair(w, "universal_offset_ms",           game.user_config.universal_offset_ms)
+    ini.write_pair(w, "vsync_enabled",                 game.user_config.vsync_enabled)
+    ini.write_pair(w, "fps_limiter",                   game.user_config.fps_limiter)
+    ini.write_pair(w, "gpu_profiler_enabled",          game.user_config.gpu_profiler_enabled)
+    ini.write_pair(w, "master_volume",                 game.user_config.master_volume)
+    ini.write_pair(w, "music_volume",                  game.user_config.music_volume)
+    ini.write_pair(w, "hitsound_volume",               game.user_config.hitsound_volume)
+    ini.write_pair(w, "osu_install_path",              game.user_config.osu_install_path)
+    ini.write_pair(w, "skin_path",                     game.user_config.skin_path)
+    ini.write_pair(w, "use_beatmap_skin",              game.user_config.use_beatmap_skin)
+    ini.write_pair(w, "use_beatmap_hitsounds",         game.user_config.use_beatmap_hitsounds)
     ini.write_pair(w, "use_beatmap_combo_color_skips", game.user_config.use_beatmap_combo_color_skips)
-    ini.write_pair(w, "window_width",             game.user_config.window_width)
-    ini.write_pair(w, "window_height",            game.user_config.window_height)
-    ini.write_pair(w, "window_mode",              window_mode_keys[game.user_config.window_mode])
-    ini.write_pair(w, "primary_mouse_hwid",       game.user_config.primary_mouse_hwid)
-    ini.write_pair(w, "secondary_mouse_hwid",     game.user_config.secondary_mouse_hwid)
-    ini.write_pair(w, "cursor_size_multiplier",   game.user_config.cursor_size_multiplier)
-    ini.write_pair(w, "cursor_sensitivity",       game.user_config.cursor_sensitivity)
-    ini.write_pair(w, "raw_input_enabled",        game.user_config.raw_input_enabled)
-    ini.write_pair(w, "bg_dim",                   game.user_config.bg_dim)
-    ini.write_pair(w, "playfield_border_opacity", game.user_config.playfield_border_opacity)
-    ini.write_pair(w, "ui_scale",                 game.user_config.ui_scale)
-    ini.write_pair(w, "snaking_in_sliders_enabled",  game.user_config.snaking_in_sliders_enabled)
-    ini.write_pair(w, "snaking_out_sliders_enabled", game.user_config.snaking_out_sliders_enabled)
+    ini.write_pair(w, "window_width",                  game.user_config.window_width)
+    ini.write_pair(w, "window_height",                 game.user_config.window_height)
+    ini.write_pair(w, "window_mode",                   window_mode_keys[game.user_config.window_mode])
+    ini.write_pair(w, "primary_mouse_hwid",            game.user_config.primary_mouse_hwid)
+    ini.write_pair(w, "secondary_mouse_hwid",          game.user_config.secondary_mouse_hwid)
+    ini.write_pair(w, "cursor_size_multiplier",        game.user_config.cursor_size_multiplier)
+    ini.write_pair(w, "cursor_sensitivity",            game.user_config.cursor_sensitivity)
+    ini.write_pair(w, "raw_input_enabled",             game.user_config.raw_input_enabled)
+    ini.write_pair(w, "mouse_keys_enabled",            game.user_config.mouse_keys_enabled)
+    ini.write_pair(w, "bg_dim",                        game.user_config.bg_dim)
+    ini.write_pair(w, "playfield_border_opacity",      game.user_config.playfield_border_opacity)
+    ini.write_pair(w, "ui_scale",                      game.user_config.ui_scale)
+    ini.write_pair(w, "snaking_in_sliders_enabled",    game.user_config.snaking_in_sliders_enabled)
+    ini.write_pair(w, "snaking_out_sliders_enabled",   game.user_config.snaking_out_sliders_enabled)
     for key in Rebindable_Input_Key {
         if key == .NONE do continue
         ini.write_pair(w, rebindable_input_key_names[key], int(game.user_config.keys[key]))

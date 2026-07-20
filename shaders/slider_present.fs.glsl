@@ -17,7 +17,6 @@ layout (binding = 3, std140) uniform globalData {
     vec2 cursorPos;
     vec2 resolution;
     vec4 sliderBorderColor;
-    vec4 sliderBodyColor;
 };
 
 in vec3 uv; // xy = tex coords, z = array layer index

@@ -19,6 +19,8 @@ struct Quad {
     float angle;
     uint transformIndex;
     uint bodyColor;
+    float uvAngle;
+    float _padding;
 };
 
 layout(binding = 1, std430) readonly buffer vertexData {
@@ -52,7 +54,18 @@ void main() {
     mat2 rot = mat2(c, s, -s, c);
     vec2 rotatedPos = center + rot * (localPos - center);
 
-    uv = vec3(q_uvs[right].x, 1.0 - q_uvs[bottom].y, q.tex_layer);
+    vec2 texUV = vec2(q_uvs[right].x, q_uvs[bottom].y);
+    if (q.uvAngle != 0.0) {
+        vec2 uvCenter = (q.uv_min + q.uv_max) * 0.5;
+        vec2 quadSize = q.pos_max - q.pos_min;
+        vec2 uvSize = q.uv_max - q.uv_min;
+        float k = (uvSize.y * quadSize.x) / (uvSize.x * quadSize.y);
+        float uc = cos(q.uvAngle);
+        float us = sin(q.uvAngle);
+        vec2 duv = texUV - uvCenter;
+        texUV = uvCenter + vec2(uc * duv.x - us * duv.y / k, us * duv.x * k + uc * duv.y);
+    }
+    uv = vec3(texUV.x, 1.0 - texUV.y, q.tex_layer);
     color = unpackUnorm4x8(q.color);
     bodyColor = unpackUnorm4x8(q.bodyColor);
     texIndex = q.texIndex;

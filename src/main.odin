@@ -212,6 +212,7 @@ main :: proc() {
     time_current_frame := tsc_to_s(time_current_frame_tsc)
     time_first_frame := time_current_frame
     time_last_frame := time_current_frame
+    fps_limiter_target_s := time_current_frame
     frame_count: u64
 
     running := true
@@ -296,6 +297,7 @@ main :: proc() {
 
                         game.input.keys[game.input.rebinding_key] = event.key.scancode
                         game.user_config.keys[game.input.rebinding_key] = event.key.scancode
+                        game.input.rebind_captured_code = event.key.scancode
                     }
                     
                 case sdl.EventType.KEY_UP:
@@ -340,6 +342,12 @@ main :: proc() {
             input_thread_apply_events(game.input.frame_events)
 
             keyboard_next_frame()
+
+            // the press that landed a rebind must not double as that key's first press edge
+            if game.input.rebind_captured_code != .UNKNOWN {
+                keyboard.buttons_prev_frame[game.input.rebind_captured_code] = true
+                game.input.rebind_captured_code = .UNKNOWN
+            }
 
             if app.mouse_input_mode == .SDL_INPUT || !window.mouse_inside || !window.focused {
                 // note(isak): this ensures cursor movement updates despite not receiving raw input messages 
@@ -459,6 +467,11 @@ main :: proc() {
             profiler_block_begin(.SLEEP); defer profiler_block_end()
             if !window.focused && game.paused {
                 sdl.Delay(30) // note(isak): ~30fps cap
+            } else if game.user_config.fps_limiter > 0 {
+                now_s := tsc_to_s(current_time_tsc())
+                fps_limiter_target_s = max(fps_limiter_target_s + 1.0 / f64(game.user_config.fps_limiter), now_s)
+                remaining_s := fps_limiter_target_s - now_s
+                if remaining_s > 0 do sdl.DelayPrecise(u64(remaining_s * 1e9))
             }
         }
         
@@ -704,53 +717,65 @@ imgui_update :: proc() {
             }
         }*/
         
-        for mod in Osu_Mod {
-            enabled := mod in game.mods
-            if imgui.Checkbox(osu_mod_table[mod].name, &enabled) {
-                game.mods ~= {mod}
-                
-                if mod == .DOUBLE_TIME && !enabled {
-                    game.time_rate = 1.0
+        if imgui.BeginTable("mods", 2, imgui.TableFlags_RowBg | imgui.TableFlags_SizingFixedFit) {
+            for mod in Osu_Mod {
+                enabled := mod in game.mods
+
+                imgui.TableNextRow()
+                imgui.TableSetColumnIndex(0)
+                if imgui.Selectable(osu_mod_table[mod].name, enabled, {.SpanAllColumns}) {
+                    game.mods ~= {mod}
+
+                    if mod == .DOUBLE_TIME && enabled {
+                        game.time_rate = 1.0
+                    }
+                    beatmap_open(game.beatmap.map_reference, true)
                 }
-                beatmap_open(game.beatmap.map_reference, true)
+                imgui.TableSetColumnIndex(1)
+                if enabled {
+                    imgui.TextColored({0.4, 1.0, 0.55, 1.0}, "on")
+                } else {
+                    imgui.TextDisabled("off")
+                }
+            }
+            imgui.EndTable()
+        }
+        
+        if .DIFFICULTY_ADJUST in game.mods {
+            DIFFICULTY_ADJUST_RELOAD_DELAY_S :: 0.25
+            @static reload_deadline_s: f64
+
+            difficulty_adjust_touch :: proc() {
+                reload_deadline_s = time_s_since_beginning_of_program() + DIFFICULTY_ADJUST_RELOAD_DELAY_S
+            }
+            difficulty_adjust_reload_when_settled :: proc(reload_deadline_s: f64) -> (reloaded: bool) {
+                if reload_deadline_s != 0 && time_s_since_beginning_of_program() >= reload_deadline_s {
+                    beatmap_open(game.beatmap.map_reference, true)
+                    return true
+                }
+                return false
+            }
+
+            temp_settings := difficulty_adjust_settings
+            for &setting, i in difficulty_adjust_settings {
+                if imgui.Button(fmt.ctprint("x##", difficulty_setting_names[i])) {
+                    setting = map_difficulty_defaults[i]
+                    difficulty_adjust_touch()
+                }
+                imgui.SameLine()
+                setting_slider: f32 = f32(setting)
+                if imgui.SliderFloat(fmt.ctprint(difficulty_setting_names[i]), &setting_slider, -10, 10) {
+                    setting = f64(setting_slider)
+                    difficulty_adjust_touch()
+                }
+                // a held slider postpones a pending reload even while the value sits still
+                if reload_deadline_s != 0 && imgui.IsItemActive() {
+                    difficulty_adjust_touch()
+                }
             }
             
-            if mod == .DIFFICULTY_ADJUST {
-                DIFFICULTY_ADJUST_RELOAD_DELAY_S :: 0.5
-                @static reload_deadline_s: f64
-
-                difficulty_adjust_touch :: proc() {
-                    reload_deadline_s = time_s_since_beginning_of_program() + DIFFICULTY_ADJUST_RELOAD_DELAY_S
-                }
-                difficulty_adjust_reload_when_settled :: proc(reload_deadline_s: f64) -> (reloaded: bool) {
-                    if reload_deadline_s != 0 && time_s_since_beginning_of_program() >= reload_deadline_s {
-                        beatmap_open(game.beatmap.map_reference, true)
-                        return true
-                    }
-                    return false
-                }
-
-                temp_settings := difficulty_adjust_settings
-                for &setting, i in difficulty_adjust_settings {
-                    if imgui.Button(fmt.ctprint("x##", difficulty_setting_names[i])) {
-                        setting = map_difficulty_defaults[i]
-                        difficulty_adjust_touch()
-                    }
-                    imgui.SameLine()
-                    setting_slider: f32 = f32(setting)
-                    if imgui.SliderFloat(fmt.ctprint(difficulty_setting_names[i]), &setting_slider, -10, 10) {
-                        setting = f64(setting_slider)
-                        difficulty_adjust_touch()
-                    }
-                    // a held slider postpones a pending reload even while the value sits still
-                    if reload_deadline_s != 0 && imgui.IsItemActive() {
-                        difficulty_adjust_touch()
-                    }
-                }
-                
-                if difficulty_adjust_reload_when_settled(reload_deadline_s) {
-                    reload_deadline_s = 0
-                }
+            if difficulty_adjust_reload_when_settled(reload_deadline_s) {
+                reload_deadline_s = 0
             }
         }
     }
@@ -768,6 +793,16 @@ imgui_update :: proc() {
         if imgui.Checkbox("VSync", &game.user_config.vsync_enabled) {
             window_apply_vsync(game.user_config.vsync_enabled)
         }
+        
+        @static fps_limiter_field: i32
+        imgui.InputInt("FPS limiter (0 = off)", &fps_limiter_field, 0, 0, {.CharsDecimal})
+        if imgui.IsItemDeactivatedAfterEdit() {
+            game.user_config.fps_limiter = max(fps_limiter_field, 0)
+        }
+        if !imgui.IsItemActive() {
+            fps_limiter_field = game.user_config.fps_limiter
+        }
+        
         if imgui.SliderFloat("UI scale", &game.user_config.ui_scale, 0.5, 2.0) {
             ui_scale_recompute()
         }

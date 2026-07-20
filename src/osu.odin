@@ -48,6 +48,7 @@ game: struct {
         keys: [Rebindable_Input_Key]sdl.Scancode,
 
         rebinding_key: Rebindable_Input_Key,
+        rebind_captured_code: sdl.Scancode,
 
         mouse_keys_enabled: bool,
         mouse_pos: vec2,
@@ -699,18 +700,18 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
         r_draw_quad(&window.renderer.quad_geometry,
             vec2{0,0}, vec2{1,1},
             vec2{0,0}, vec2{1,1},
-            with_alpha(color_black, 0.5))
+            with_alpha(color_black, 0.7))
             
         prompt := strings.concatenate({"Rebinding: ", rebindable_input_key_names[game.input.rebinding_key]}, context.temp_allocator)
         push_text(&window.renderer, prompt,
-            pos = {window.rect.w / 2, window.rect.h / 2 - to_ui_scale(12)},
-            size = to_ui_scale(16),
+            pos = {window.rect.w / 2, window.rect.h / 2 - to_ui_scale(24)},
+            size = to_ui_scale(32),
             color = {255, 255, 255, 150},
             align_h = .Center,
             align_v = .Middle)
         push_text(&window.renderer, "Press any key...",
-            pos = {window.rect.w / 2, window.rect.h / 2 + to_ui_scale(12)},
-            size = to_ui_scale(16),
+            pos = {window.rect.w / 2, window.rect.h / 2 + to_ui_scale(24)},
+            size = to_ui_scale(32),
             color = {255, 255, 255, 150},
             align_h = .Center,
             align_v = .Middle)

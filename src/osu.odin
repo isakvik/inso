@@ -86,6 +86,7 @@ game: struct {
     
     ui_timeline: UI_Timeline,
     hit_error_bar: Hit_Error_Bar,
+    accuracy_display: f64, // note(isak): eased toward score_accuracy for the rolling HUD counter
     ui_scale: f32,
 
     last_mode_switch_time: f64,
@@ -97,15 +98,18 @@ game: struct {
     expiring_sounds: sb.Swap_Buffer(slotmap.Handle),
 }
 
-GAME_MODE_SWITCH_PRE_FADE_TIMER :: 0.1
-GAME_MODE_SWITCH_POST_FADE_TIMER :: 0.3
-
 Game_Mode :: enum {
     NONE,
     MAIN_MENU,
     PLAY,
     EDITOR,
     TOURNAMENT_WAIT_SCREEN,
+}
+
+game_switch_mode :: proc(mode: Game_Mode, seek_time: f64) {
+    game.mode_switching_to = mode
+    game.mode_seek_time_on_switch = seek_time
+    game.last_mode_switch_time = game.frame_clock_s
 }
 
 // note(isak): we reserve the first slot for safety reasons, and we crash on modification for debug reasons
@@ -553,9 +557,9 @@ Osu_Map :: struct {
 }
 
 
-osu_on_init :: proc() {
+osu_on_init :: proc(startup_mode: Game_Mode) {
     game.time_rate = 1.0
-    game.mode = .EDITOR
+    game.mode = startup_mode
 
     game_sounds_clear()
     ui_init_timeline(&game.ui_timeline)
@@ -572,15 +576,13 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
     window_set_resizable(game.mode != .PLAY)
     windows_key_set_disabled(game.mode == .PLAY && window.focused)
     platform_set_scheduling_priority(game.mode == .PLAY)
-
+    
     if game.mode != .PLAY {
         updated_file := mapset_check_system_file_watch(&game.active_mapset.watch)
         if updated_file != {} {
             if updated_file[.SHADERS] {
                 mapset_reinit_custom_shaders(game.active_mapset)
             } else {
-                // note(isak): the .inso allocates into the MAPSET arena (render targets, extra bits),
-                // so its changes need the full asset reload; .osu/script changes regen in place
                 beatmap_open(game.beatmap.map_reference, true, 
                     reload_assets = updated_file[.INSO_FILE] || updated_file[.ASSETS])
             }
@@ -588,6 +590,8 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
     }
     
     // note(isak): game logic - map
+    
+    osu_handle_mode_switch()
     
     #partial switch game.mode {
         case .PLAY:
@@ -597,7 +601,13 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
             handle_menu_input_events()
             handle_editor_input_events()
 
-        case .MAIN_MENU: handle_menu_input_events()
+        case .MAIN_MENU: 
+            handle_menu_input_events()
+            
+        case .TOURNAMENT_WAIT_SCREEN: 
+            if key_is_pressed(.KP_ENTER) {
+                game_switch_mode(.PLAY, 0)
+            }
     }
     handle_universal_input_events()
     
@@ -628,6 +638,7 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
     process_hitobject_hittesting(visible_hobjs, map_time)
     process_hitobject_phase_transitions()
     game_sounds_process_expiry()
+    
     results_screen_update()
 
     // game render
@@ -682,6 +693,7 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
     if game.mode == .PLAY {
         hit_error_bar_draw_screenspace(&game.hit_error_bar)
         input_display_draw_screenspace()
+        //accuracy_display_draw_screenspace()
     }
 
     if !lua_beatmap.hide_skin_cursor {
@@ -700,8 +712,11 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
 
     results_screen_draw()
     rebind_screen_draw()
-
     
+    fade_transition_draw()
+}
+
+osu_handle_mode_switch :: proc() {
     if game.mode_switching_to != .NONE &&
             game.frame_clock_s >= game.last_mode_switch_time + GAME_MODE_SWITCH_PRE_FADE_TIMER {
         target := game.mode_switching_to
@@ -711,30 +726,28 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
         #partial switch target {
         case .PLAY, .EDITOR:
             beatmap_open(game.beatmap.map_reference)
-            beatmap_seek(&game.beatmap, game.mode_seek_time_on_switch)
-            game.paused = true // a freshly opened map's music starts paused
-            beatmap_pause(&game.beatmap, target == .EDITOR)
+
+            seek_time := game.mode_seek_time_on_switch
+            if seek_time >= 0 {
+                beatmap_seek(&game.beatmap, seek_time)
+            } else {
+                // note(isak): negative time is the empty lead-in; beatmap_on_update counts it up and
+                // resumes the audio once it reaches zero, so we leave the freshly opened stream paused
+                game.beatmap.music_time_ms = seek_time
+                game.beatmap.auto_last_hit_time_ms = beatmap_music_time_ms(&game.beatmap)
+            }
+
+            game.paused = target == .EDITOR
+            if game.paused {
+                sound_pause(&game.beatmap.music)
+            } else if game.beatmap.music_time_ms >= 0 {
+                sound_resume(&game.beatmap.music)
+            }
+            if lua_cares_about_event(.ON_PAUSE_CHANGE) {
+                lua_beatmap_on_pause_change(game.paused)
+            }
         }
     }
-    
-    switch_elapsed := game.frame_clock_s - game.last_mode_switch_time
-    if game.last_mode_switch_time > 0 &&
-            switch_elapsed <= GAME_MODE_SWITCH_PRE_FADE_TIMER + GAME_MODE_SWITCH_POST_FADE_TIMER {
-        fade_in := f32(switch_elapsed / GAME_MODE_SWITCH_PRE_FADE_TIMER)
-        fade_out := f32((GAME_MODE_SWITCH_PRE_FADE_TIMER + GAME_MODE_SWITCH_POST_FADE_TIMER -
-            switch_elapsed) / GAME_MODE_SWITCH_POST_FADE_TIMER)
-        fade_alpha := clamp(min(fade_in, fade_out), 0, 1)
-
-        r_bind_layer_and_push_current_state(.PLATFORM, transform = clipspace_transform)
-        r_draw_quad(&window.renderer.quad_geometry, {0, 0}, {1, 1}, {0, 0}, {1, 1},
-            with_alpha(color_black, fade_alpha))
-    }
-}
-
-game_switch_mode :: proc(mode: Game_Mode, seek_time: f64) {
-    game.mode_switching_to = mode
-    game.mode_seek_time_on_switch = seek_time
-    game.last_mode_switch_time = game.frame_clock_s
 }
 
 hitobjects_draw :: proc(visible_hobjs: []Hitobject, map_time: f64) {
@@ -832,10 +845,10 @@ cursor_expand_update :: proc() {
     transition_update(&cursor_expand, pressed && game.active_skin.cursor_expand, CURSOR_EXPAND_ANIM_S)
 }
 
-// note(isak): stable/mcosu run two entirely different trails. a plain skin (no cursormiddle) gets
-// the unsmooth trail: one part dropped every SPACING seconds, faded over the short LENGTH. a skin
-// with cursormiddle instead earns the smooth trail, a long additive ribbon of parts interpolated
-// along the cursor's motion at a fixed pixel pitch, faded over the much longer SMOOTH_LENGTH.
+// note(isak): 
+// small trail: one part every SPACING_S, faded over LENGTH_S
+// long trail (with cursormiddle.png): long additive trail of parts interpolated
+// along the cursor's motion at a fixed pixel pitch, faded over SMOOTH_LENGTH_S
 CURSOR_TRAIL_LENGTH_S        :: 0.17
 CURSOR_TRAIL_SPACING_S       :: 0.015
 CURSOR_TRAIL_SMOOTH_LENGTH_S :: 0.5
@@ -867,8 +880,6 @@ cursor_trail_push :: proc(trail: ^Cursor_Trail, part: Cursor_Trail_Part) {
     trail.count += 1
 }
 
-// note(isak): drops at most one part per SPACING interval; an unmoved cursor refreshes the newest
-// part instead of stacking duplicates, so a held-still trail lingers.
 cursor_trail_add_spaced :: proc(trail: ^Cursor_Trail, pos: vec2, now: f64) {
     if trail.count > 0 {
         newest := cursor_trail_newest(trail)
@@ -883,8 +894,7 @@ cursor_trail_add_spaced :: proc(trail: ^Cursor_Trail, pos: vec2, now: f64) {
 }
 
 // note(isak): fills the gap since the last part with evenly pitched interpolated parts, their expiry
-// lerped across the same span so the ribbon fades uniformly along its length. a stationary cursor
-// adds nothing and the ribbon simply ages out.
+// lerped across the same span so the ribbon fades uniformly along its length
 cursor_trail_add_smooth :: proc(trail: ^Cursor_Trail, pos: vec2, trail_width: f32, now: f64) {
     expires := now + CURSOR_TRAIL_SMOOTH_LENGTH_S
     if trail.count == 0 {

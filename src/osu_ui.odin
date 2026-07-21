@@ -2,6 +2,7 @@ package inso
 
 import "core:fmt"
 import "core:log"
+import "core:math"
 import "core:math/ease"
 import "core:math/linalg"
 import os "core:os"
@@ -19,6 +20,43 @@ ui_scale_recompute :: proc() {
 
 to_ui_scale :: proc(v: f32) -> f32 {
     return v * game.ui_scale
+}
+
+
+//////////////////////////////////////////////////////
+// note(isak): ui component relevance
+//
+// the interesting part of any hud element is *when* it belongs on screen, not how it draws. that
+// relevance lives here as a single predicate over current game state; each draw proc opens with its
+// own ui_component_visible guard so the call site is pure layering. hitobjects aren't listed - the
+// playfield core is unconditional and doesn't get a vote.
+
+UI_Component :: enum {
+    PLAYFIELD_BORDER,
+    TIMELINE,
+    EDITOR_LABEL,
+    HIT_ERROR_BAR,
+    INPUT_DISPLAY,
+    ACCURACY_COUNTER,
+    RESULTS_SCREEN,
+    REBIND_PROMPT,
+}
+
+ui_component_visible :: proc(c: UI_Component) -> bool {
+    switch c {
+    case .PLAYFIELD_BORDER: return game.mode == .EDITOR && game.user_config.playfield_border_opacity > 0
+    case .TIMELINE:         return game.mode == .EDITOR
+    case .EDITOR_LABEL:     return game.mode == .EDITOR
+    case .HIT_ERROR_BAR:    return game.mode == .PLAY
+    case .INPUT_DISPLAY:    return game.mode == .PLAY
+    case .ACCURACY_COUNTER: return game.mode == .PLAY && game.user_config.accuracy_display_size > 0
+    case .RESULTS_SCREEN:   return game.beatmap.score.completed
+    case .REBIND_PROMPT:
+        return game.input.rebinding_key != .NONE ||
+            app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY ||
+            app.mouse_input_mode == .REBINDING_MOUSE_SECONDARY
+    }
+    return false
 }
 
 //////////////////////////////////////////////////////
@@ -60,8 +98,8 @@ hit_error_bar_record :: proc(hit_error_bar: ^Hit_Error_Bar, error_ms: f64, judge
 }
 
 hit_error_bar_draw_screenspace :: proc(hit_error_bar: ^Hit_Error_Bar) {
-    if game.mode != .PLAY do return
-    
+    if !ui_component_visible(.HIT_ERROR_BAR) do return
+
     tw := game.beatmap.timing_windows
     if tw.ok <= 0 do return
     
@@ -277,6 +315,34 @@ render_timeline_clipspace :: proc(ui: ^UI_Timeline) {
     }
 }
 
+playfield_border_draw :: proc() {
+    if !ui_component_visible(.PLAYFIELD_BORDER) do return
+
+    r_push_transform(game.playfield_transform)
+    cs := game.beatmap.circle_radius_osupx
+    pf_outline := Rect{
+        -cs, -cs, PLAYFIELD_SIZE_OSUPX + 2*cs, (PLAYFIELD_SIZE_OSUPX * 3/4) + 2*cs,
+    }
+    r_draw_rect_outline(&window.renderer.quad_geometry, pf_outline,
+        with_alpha(color_white, game.user_config.playfield_border_opacity), 2)
+}
+
+timeline_draw :: proc() {
+    if !ui_component_visible(.TIMELINE) do return
+    timeline_update(&game.ui_timeline)
+    render_timeline_clipspace(&game.ui_timeline)
+}
+
+edit_mode_label_draw :: proc() {
+    if !ui_component_visible(.EDITOR_LABEL) do return
+    push_text(&window.renderer, "Edit mode",
+        pos     = {window.rect.w / 2, to_ui_scale(30)},
+        size    = to_ui_scale(24),
+        color   = {255, 255, 255, 150},
+        align_h = .Center,
+        align_v = .Bottom)
+}
+
 //////////////////////////////////////////////////////
 // note(isak): input display
 
@@ -286,6 +352,7 @@ INPUT_DISPLAY_ANIM_S      :: 0.15
 input_display_transitions: [6]Transition
 
 input_display_draw_screenspace :: proc() {
+    if !ui_component_visible(.INPUT_DISPLAY) do return
     r_push_transform(window.screenspace_transform)
 
     render_input_key :: proc(key: Button_State, tr: ^Transition, rect: Rect, lit_color: Color) {
@@ -325,6 +392,36 @@ input_display_draw_screenspace :: proc() {
 
 
 //////////////////////////////////////////////////////
+// note(isak): accuracy counter
+
+ACCURACY_ROLL_TAU_MS :: 50 // note(isak): smaller = faster roll toward the true accuracy
+
+accuracy_display_draw_screenspace :: proc() {
+    if !ui_component_visible(.ACCURACY_COUNTER) do return
+
+    target := score_accuracy(&game.beatmap.score)
+    alpha := 1 - math.exp(-game.dt / ACCURACY_ROLL_TAU_MS)
+    game.accuracy_display += (target - game.accuracy_display) * alpha
+
+    r_push_transform(window.screenspace_transform)
+    accuracy_string := fmt.tprintf("%.2f%%", game.accuracy_display * 100)
+    push_text(&window.renderer, accuracy_string,
+        pos     = {window.rect.w / 2, to_ui_scale(12)},
+        size    = to_ui_scale(game.user_config.accuracy_display_size),
+        color   = color_black,
+        blur    = 3,
+        align_h = .Center,
+        align_v = .Top)
+    push_text(&window.renderer, accuracy_string,
+        pos     = {window.rect.w / 2, to_ui_scale(12)},
+        size    = to_ui_scale(game.user_config.accuracy_display_size),
+        color   = color_white,
+        align_h = .Center,
+        align_v = .Top)
+}
+
+
+//////////////////////////////////////////////////////
 // note(isak): results screen
 
 RESULTS_GRACE_PERIOD_MS :: 1000
@@ -351,7 +448,7 @@ results_screen_update :: proc() {
 }
 
 results_screen_draw :: proc() {
-    if !game.beatmap.score.completed do return
+    if !ui_component_visible(.RESULTS_SCREEN) do return
 
     r_check_and_bind_layer(.PLATFORM)
     r_push_transform(fullscreen_transform)
@@ -533,5 +630,24 @@ rebind_screen_draw :: proc() {
             color = {255, 255, 255, 150},
             align_h = .Center,
             align_v = .Middle)
+    }
+}
+
+
+GAME_MODE_SWITCH_PRE_FADE_TIMER :: 0.1
+GAME_MODE_SWITCH_POST_FADE_TIMER :: 0.3
+
+fade_transition_draw :: proc() {
+    switch_elapsed := game.frame_clock_s - game.last_mode_switch_time
+    if game.last_mode_switch_time > 0 &&
+            switch_elapsed <= GAME_MODE_SWITCH_PRE_FADE_TIMER + GAME_MODE_SWITCH_POST_FADE_TIMER {
+        fade_in := f32(switch_elapsed / GAME_MODE_SWITCH_PRE_FADE_TIMER)
+        fade_out := f32((GAME_MODE_SWITCH_PRE_FADE_TIMER + GAME_MODE_SWITCH_POST_FADE_TIMER -
+            switch_elapsed) / GAME_MODE_SWITCH_POST_FADE_TIMER)
+        fade_alpha := clamp(min(fade_in, fade_out), 0, 1)
+
+        r_bind_layer_and_push_current_state(.PLATFORM, transform = clipspace_transform)
+        r_draw_quad(&window.renderer.quad_geometry, {0, 0}, {1, 1}, {0, 0}, {1, 1},
+            with_alpha(color_black, fade_alpha))
     }
 }

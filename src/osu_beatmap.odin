@@ -79,6 +79,19 @@ Beatmap :: struct {
     animation_lists: queue.Queue(Animation_List),
 }
 
+BEATMAP_LEAD_IN_MIN_MS :: 1000.0
+BEATMAP_LEAD_IN_MAX_MS :: 1800.0
+
+// note(isak): empty run-up before the first object. one second minimum, stretching toward 1.8s
+// when the approach circle needs longer to arrive than that
+beatmap_lead_in_ms :: proc(beatmap: ^Beatmap) -> f64 {
+    first_preempt := beatmap.preempt_ms
+    if len(beatmap.hitobjects) > 0 {
+        first_preempt = hitobject_preempt_ms(&beatmap.hitobjects[0])
+    }
+    return clamp(first_preempt, BEATMAP_LEAD_IN_MIN_MS, BEATMAP_LEAD_IN_MAX_MS)
+}
+
 beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap, kept_music: Sound = nil) {
     beatmap^ = { map_reference = map_reference }
     _beatmap_allocate_internals(beatmap, kept_music)
@@ -109,7 +122,7 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap, kept_mu
     beatmap_apply_note_stacking(game.active_map, beatmap.preempt_ms, beatmap.circle_radius_osupx)
     
     beatmap.length_ms = sound_get_length_ms(&beatmap.music)
-    beatmap.start_time_ms = min(beatmap_game_time_to_music_time(beatmap, -beatmap.preempt_ms), -500)
+    beatmap.start_time_ms = -beatmap_lead_in_ms(beatmap)
     beatmap.music_time_ms = beatmap.start_time_ms
     beatmap.auto_last_hit_time_ms = beatmap_music_time_ms(beatmap)
 
@@ -442,6 +455,7 @@ beatmap_reset_object_state :: proc(beatmap: ^Beatmap) {
     queue.clear(&beatmap.judgements)
     queue.append(&beatmap.judgements, null_judgement)
     beatmap.score = {}
+    game.accuracy_display = score_accuracy(&beatmap.score)
 }
 
 beatmap_music_time_ms :: proc(beatmap: ^Beatmap) -> f64 {
@@ -570,7 +584,7 @@ beatmap_visible_incl_followpoints_bounds :: proc(beatmap: ^Beatmap, map_time: f6
 }
 
 beatmap_play :: proc(beatmap: ^Beatmap, keep_position: bool) {
-    seek_time := beatmap_music_time_ms(beatmap) if keep_position else 0
+    seek_time := beatmap.music_time_ms if keep_position else beatmap.start_time_ms
     game_switch_mode(.PLAY, seek_time)
 }
 

@@ -868,13 +868,24 @@ slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
 
     current_span := slider.checked_repeats_count
     last_span := slider.path_travel_count - 1
+    snake_out := slider_snake_out_factor(hobj)
+    final_span_heads_back := slider.path_travel_count % 2 == 0
     for tick, tick_i in gfx.ticks {
         d, ok := slotmap.get(&game.beatmap.drawables, tick)
         if ok {
             span := current_span + (1 if slider.tick_hits[tick_i] else 0)
             active := span <= last_span
+
+            // note(isak): the body retracts behind the ball on the final span, so passed ticks must
+            // vanish with it whether or not they were tracked - a missed tick shouldn't hang in open space
+            if snake_out > 0 {
+                tick_fraction := f64(tick_i + 1) * slider.tick_interval_ms / slider.duration_ms
+                retracted := final_span_heads_back ? tick_fraction > 1 - snake_out : tick_fraction < snake_out
+                if retracted do active = false
+            }
+
             tick_pos := slider_path_pos_at(hobj, hobj.start_time_ms + f64(tick_i + 1) * slider.tick_interval_ms)
-            
+
             slider_drawable_update(d, active, tick_pos)
             if active {
                 // note(isak): we reuse the tick graphics from the current travel for the next one to emulate osu

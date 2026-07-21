@@ -106,6 +106,7 @@ memory_init :: proc() -> runtime.Allocator_Error {
 main :: proc() {
     _program_start_tsc = sdl.GetPerformanceCounter()
 
+    tournament_mode: bool
     for arg in os.args {
         if arg == "--disable-raw-input" {
             app.disable_raw_input = true
@@ -114,11 +115,14 @@ main :: proc() {
             lua_generate_docs()
             return
         }
+        if arg == "--tournament" {
+            tournament_mode = true
+        }
     }
 
     // note(isak): crash handler reruns the process, but doesn't forward the arguments we first launched with
     when #config(WITH_CRASH_HANDLER, false) {
-        if !crash_handler_is_game_process() {
+        if !crash_handler_is_game_process() && !tournament_mode {
             crash_handler_run()
             return
         }
@@ -205,7 +209,8 @@ main :: proc() {
         len(app.map_references) > 0 ? app.map_references[0] : Map_Reference{ folder_path = "songs/test/" }
     //--
 
-    osu_on_init()
+    startup_mode: Game_Mode = .TOURNAMENT_WAIT_SCREEN if tournament_mode else .EDITOR
+    osu_on_init(startup_mode)
     notify_info("inso loaded in %.3vs", inso_load_time)
     
     beatmap_open(initial_map_ref)
@@ -613,17 +618,17 @@ imgui_update :: proc() {
     imgui.Separator()
 
     if imgui.SmallButton("play") {
-        game_switch_mode(.PLAY, beatmap_music_time_ms(&game.beatmap))
+        game_switch_mode(.PLAY, game.beatmap.music_time_ms)
     }
     if imgui.SmallButton("play from beginning") {
-        game_switch_mode(.PLAY, 0)
+        game_switch_mode(.PLAY, game.beatmap.start_time_ms)
     }
     if imgui.SmallButton("play from first object") {
-        time_of_first_obj: f64
+        seek_time := game.beatmap.start_time_ms
         if len(game.beatmap.hitobjects) > 0 {
-            time_of_first_obj = game.beatmap.hitobjects[0].start_time_ms - 1500
+            seek_time = game.beatmap.hitobjects[0].start_time_ms - beatmap_lead_in_ms(&game.beatmap)
         }
-        game_switch_mode(.PLAY, time_of_first_obj)
+        game_switch_mode(.PLAY, seek_time)
     }
     
     imgui.Separator()

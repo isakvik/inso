@@ -44,6 +44,7 @@ User_Configuration :: struct {
     bg_dim: f32, // note(isak): 0 = background fully visible, 1 = fully black
     playfield_border_opacity: f32,
     ui_scale: f32,
+    accuracy_display_size: f32,
     snaking_in_sliders_enabled: bool,
     snaking_out_sliders_enabled: bool,
     
@@ -135,6 +136,9 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         if v, ok := get(gen, "ui_scale"); ok {
             if f, ok2 := strconv.parse_f32(v); ok2 do result.ui_scale = f
         }
+        if v, ok := get(gen, "accuracy_display_size"); ok {
+            if f, ok2 := strconv.parse_f32(v); ok2 do result.accuracy_display_size = f
+        }
         if v, ok := get(gen, "snaking_in_sliders_enabled"); ok {
             result.snaking_in_sliders_enabled = v == "true"
         }
@@ -179,6 +183,7 @@ config_save :: proc(path: string) {
     ini.write_pair(w, "bg_dim",                        game.user_config.bg_dim)
     ini.write_pair(w, "playfield_border_opacity",      game.user_config.playfield_border_opacity)
     ini.write_pair(w, "ui_scale",                      game.user_config.ui_scale)
+    ini.write_pair(w, "accuracy_display_size",         game.user_config.accuracy_display_size)
     ini.write_pair(w, "snaking_in_sliders_enabled",    game.user_config.snaking_in_sliders_enabled)
     ini.write_pair(w, "snaking_out_sliders_enabled",   game.user_config.snaking_out_sliders_enabled)
     for key in Rebindable_Input_Key {
@@ -216,6 +221,7 @@ config_supply_default :: proc() -> (result: User_Configuration) {
         cursor_sensitivity       = 1.0,
         playfield_border_opacity = 0.0,
         ui_scale                 = 1.0,
+        accuracy_display_size    = 48,
         bg_dim                   = 0.5,
         snaking_in_sliders_enabled  = true,
         snaking_out_sliders_enabled = true,

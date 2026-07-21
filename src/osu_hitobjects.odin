@@ -67,7 +67,7 @@ hitobject_on_click :: proc(hobj: ^Hitobject, click_time: f64) -> (result: Judgem
             result = slider_on_click(hobj, result, time_error_ms)
         } else {
             result = judgement_new(hobj, result, time_error_ms)
-            hobj.flags |= {.HIT, .EXPIRED}
+            hobj.flags |= {.HAS_RESULT, .EXPIRED}
         }
 
         // note(isak): the error bar reads the committed judgement back so a filter-replaced
@@ -148,7 +148,7 @@ check_controller_press :: proc(visible_hobjs: []Hitobject, press_time: f64, curs
 editor_auto_hit :: proc(visible_hobjs: []Hitobject, map_time: f64) {
     last_time := game.beatmap.auto_last_hit_time_ms
     for &hobj in visible_hobjs {
-        if hobj.flags & {.HIT, .EXPIRED} != {} do continue
+        if hobj.flags & {.HAS_RESULT, .EXPIRED} != {} do continue
         if !(last_time < hobj.start_time_ms && hobj.start_time_ms <= map_time) do continue
 
         if hitobject_on_click(&hobj, hobj.start_time_ms) == .NONE do continue
@@ -216,7 +216,7 @@ hitobject_reset_transient :: proc(hobj: ^Hitobject) {
     if hobj.type == .SLIDER do slider_reset_transient(hobj)
 
     hobj.phase = .NONE
-    hobj.flags &~= {.VISIBLE, .HIT, .EXPIRED}
+    hobj.flags &~= {.VISIBLE, .HAS_RESULT, .EXPIRED}
     hobj.judgement_index = 0
     hobj.notelock_shake_at_ms = 0
 }

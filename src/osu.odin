@@ -39,7 +39,8 @@ game: struct {
     active_map: ^Osu_Map,
     active_skin: ^Skin,
     
-    mode: Game_Mode,
+    mode, mode_switching_to: Game_Mode,
+    mode_seek_time_on_switch: f64,
     
     user_config: User_Configuration,
     
@@ -87,11 +88,24 @@ game: struct {
     hit_error_bar: Hit_Error_Bar,
     ui_scale: f32,
 
+    last_mode_switch_time: f64,
+
     // note(isak): managed sounds to be used with the game_sound_* api. we create BASS streams
     // from samples, and then BASS handles the rest - not quite sure if we can further reuse sound data
     // instead of creating multiple BASS handles, but i think it's fine.
     sounds: slotmap.Slotmap(Sound),
     expiring_sounds: sb.Swap_Buffer(slotmap.Handle),
+}
+
+GAME_MODE_SWITCH_PRE_FADE_TIMER :: 0.1
+GAME_MODE_SWITCH_POST_FADE_TIMER :: 0.3
+
+Game_Mode :: enum {
+    NONE,
+    MAIN_MENU,
+    PLAY,
+    EDITOR,
+    TOURNAMENT_WAIT_SCREEN,
 }
 
 // note(isak): we reserve the first slot for safety reasons, and we crash on modification for debug reasons
@@ -111,14 +125,13 @@ Hitobject_Type :: enum u32 {
     CIRCLE,
     SLIDER,
     SPINNER,
-    // CUSTOM // note(isak) big plans?
 }
 
 
 Hitobject_Flags :: distinct bit_set[Hitobject_Flag]
 Hitobject_Flag :: enum {
     VISIBLE,
-    HIT, // note(isak): has result
+    HAS_RESULT,
     EXPIRED,
     LAST_IN_COMBO,
 
@@ -424,13 +437,6 @@ Slider_Path :: struct {
     head_angle_rad, end_angle_rad: f32,
 }
 
-Game_Mode :: enum {
-    UNINITIALIZED,
-    MAIN_MENU,
-    PLAY,
-    EDITOR,
-}
-
 Layer :: enum {
     BACKGROUND,
     FOREGROUND,
@@ -496,13 +502,12 @@ Inso_Map :: struct {
     lua_entry_point: string,
     bg_pipeline_name: string,
     double_mouse: bool,
-    use_backbuffer: bool, // note(isak): route the whole frame into the "backbuffer" render target so a post pass can sample it
-    fixed_update_rate_hz: f64, // note(isak): on_fixed_update / scheduled-event tick rate; <= 0 means the default
+    use_backbuffer: bool,
+    fixed_update_rate_hz: f64, // note(isak): on_fixed_update / scheduled-event tick rate
 
     shaders: []Shader,
 
-    // note(isak): parsed [HitObjectExtraBits] rows, applied to hitobjects after the whole mapset is walked
-    // (the .osu and .inso files can be parsed in either order)
+    // note(isak): parsed [HitObjectExtraBits] rows from the .inso
     hitobject_extra_bits: [dynamic]Hitobject_Extra_Bits,
 }
 
@@ -695,6 +700,41 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
 
     results_screen_draw()
     rebind_screen_draw()
+
+    
+    if game.mode_switching_to != .NONE &&
+            game.frame_clock_s >= game.last_mode_switch_time + GAME_MODE_SWITCH_PRE_FADE_TIMER {
+        target := game.mode_switching_to
+        game.mode = target
+        game.mode_switching_to = .NONE
+
+        #partial switch target {
+        case .PLAY, .EDITOR:
+            beatmap_open(game.beatmap.map_reference)
+            beatmap_seek(&game.beatmap, game.mode_seek_time_on_switch)
+            game.paused = true // a freshly opened map's music starts paused
+            beatmap_pause(&game.beatmap, target == .EDITOR)
+        }
+    }
+    
+    switch_elapsed := game.frame_clock_s - game.last_mode_switch_time
+    if game.last_mode_switch_time > 0 &&
+            switch_elapsed <= GAME_MODE_SWITCH_PRE_FADE_TIMER + GAME_MODE_SWITCH_POST_FADE_TIMER {
+        fade_in := f32(switch_elapsed / GAME_MODE_SWITCH_PRE_FADE_TIMER)
+        fade_out := f32((GAME_MODE_SWITCH_PRE_FADE_TIMER + GAME_MODE_SWITCH_POST_FADE_TIMER -
+            switch_elapsed) / GAME_MODE_SWITCH_POST_FADE_TIMER)
+        fade_alpha := clamp(min(fade_in, fade_out), 0, 1)
+
+        r_bind_layer_and_push_current_state(.PLATFORM, transform = clipspace_transform)
+        r_draw_quad(&window.renderer.quad_geometry, {0, 0}, {1, 1}, {0, 0}, {1, 1},
+            with_alpha(color_black, fade_alpha))
+    }
+}
+
+game_switch_mode :: proc(mode: Game_Mode, seek_time: f64) {
+    game.mode_switching_to = mode
+    game.mode_seek_time_on_switch = seek_time
+    game.last_mode_switch_time = game.frame_clock_s
 }
 
 hitobjects_draw :: proc(visible_hobjs: []Hitobject, map_time: f64) {

@@ -432,7 +432,7 @@ beatmap_reset_object_state :: proc(beatmap: ^Beatmap) {
     beatmap.followpoint_cursor = 0
 
     for &hobj in beatmap.hitobjects {
-        if hobj.phase != .NONE || hobj.flags & {.VISIBLE, .HIT, .EXPIRED} != {} {
+        if hobj.phase != .NONE || hobj.flags & {.VISIBLE, .HAS_RESULT, .EXPIRED} != {} {
             hitobject_reset_transient(&hobj)
         }
     }
@@ -570,9 +570,8 @@ beatmap_visible_incl_followpoints_bounds :: proc(beatmap: ^Beatmap, map_time: f6
 }
 
 beatmap_play :: proc(beatmap: ^Beatmap, keep_position: bool) {
-    game.mode = .PLAY
-    beatmap_open(beatmap.map_reference, keep_position)
-    beatmap_pause(beatmap, false)
+    seek_time := beatmap_music_time_ms(beatmap) if keep_position else 0
+    game_switch_mode(.PLAY, seek_time)
 }
 
 beatmap_pause :: proc(beatmap: ^Beatmap, pause: bool) {

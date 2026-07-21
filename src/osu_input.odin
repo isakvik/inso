@@ -166,9 +166,7 @@ rebindable_input_key_code :: proc(key: Rebindable_Input_Key) -> cstring {
 
 handle_play_input_events :: proc() {
     if key_is_pressed(.ESCAPE) {
-        game.mode = .EDITOR
-        beatmap_open(game.beatmap.map_reference, true)
-        beatmap_pause(&game.beatmap, true)
+        game_switch_mode(.EDITOR, beatmap_music_time_ms(&game.beatmap))
     }
     
     if key_is_pressed(.KP_PLUS) {
@@ -251,7 +249,8 @@ handle_editor_input_events :: proc() {
         beatmap_pause(&game.beatmap, !game.paused)
     }
     if key_is_pressed(.F5) && !key_is_down(.LCTRL) {
-        beatmap_play(&game.beatmap, !key_is_down(.LSHIFT))
+        seek_time := 0 if key_is_down(.LSHIFT) else beatmap_music_time_ms(&game.beatmap)
+        game_switch_mode(.PLAY, seek_time)
     }
     if key_is_pressed(.R) {
         beatmap_open(game.beatmap.map_reference, keep_position = true, reload_assets = !key_is_down(.LSHIFT))

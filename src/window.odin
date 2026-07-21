@@ -155,15 +155,10 @@ window_init :: proc(rect: Rect, mode: Window_Mode) {
     window.focused = true
     window.mouse_inside = true
     window.resizable = true
+    
+    sdl.SetEventEnabled(.MOUSE_MOTION, false)
 
     window_set_mode(mode)
-
-    max_vs_ssbo, max_combined_ssbo, max_fs_ssbo: i32
-    gl.GetIntegerv(gl.MAX_VERTEX_SHADER_STORAGE_BLOCKS, &max_vs_ssbo)
-    gl.GetIntegerv(gl.MAX_FRAGMENT_SHADER_STORAGE_BLOCKS, &max_fs_ssbo)
-    gl.GetIntegerv(gl.MAX_COMBINED_SHADER_STORAGE_BLOCKS, &max_combined_ssbo)
-    log.infof("SSBO blocks - vertex: {}, fragment: {}, combined: {}",
-        max_vs_ssbo, max_fs_ssbo, max_combined_ssbo)
 }
 
 window_cleanup :: proc() {

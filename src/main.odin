@@ -613,18 +613,17 @@ imgui_update :: proc() {
     imgui.Separator()
 
     if imgui.SmallButton("play") {
-        beatmap_play(&game.beatmap, true)
+        game_switch_mode(.PLAY, beatmap_music_time_ms(&game.beatmap))
     }
     if imgui.SmallButton("play from beginning") {
-        beatmap_play(&game.beatmap, false)
+        game_switch_mode(.PLAY, 0)
     }
     if imgui.SmallButton("play from first object") {
         time_of_first_obj: f64
         if len(game.beatmap.hitobjects) > 0 {
             time_of_first_obj = game.beatmap.hitobjects[0].start_time_ms - 1500
         }
-        beatmap_seek(&game.beatmap, time_of_first_obj)
-        beatmap_play(&game.beatmap, true)
+        game_switch_mode(.PLAY, time_of_first_obj)
     }
     
     imgui.Separator()

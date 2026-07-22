@@ -158,7 +158,7 @@ judgement_new_drawable :: proc(hobj: ^Hitobject) {
         drawable_new_expiring(&game.beatmap.judgement_expiring_gfx, {
             flags         = {.ACTIVE},
             element       = builtin_element_slot(el_type),
-            layer         = .HITOBJECTS,
+            layer         = layer_id(.HITOBJECTS),
             pos           = pos,
             size          = element_scale * game.active_skin.elements[skin_el].metrics,
             anchor        = .CENTER,

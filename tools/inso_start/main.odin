@@ -12,9 +12,10 @@ import "core:time"
 // client listening on the subnet. wire format mirrors src/tournament_socket.odin; the
 // version field guards against drift between the two.
 
+TOURNAMENT_SYNC_VERSION :: u16(1) // increment this when changing packet format
+
 TOURNAMENT_SYNC_PORT    :: 8727
 TOURNAMENT_SYNC_MAGIC   :: u32(0x4F534E49) // "INSO" little-endian
-TOURNAMENT_SYNC_VERSION :: u16(1)
 
 Sync_Packet :: struct #packed {
     magic:       u32,
@@ -62,11 +63,14 @@ main :: proc() {
         os.exit(1)
     }
 
+    match_id := rand.uint32()
+    if match_id == 0 do match_id = 1
+
     packet := Sync_Packet{
         magic       = TOURNAMENT_SYNC_MAGIC,
         version     = TOURNAMENT_SYNC_VERSION,
         kind        = .START,
-        match_id    = rand.uint32(),
+        match_id    = match_id,
         start_in_ms = slack_ms,
     }
 

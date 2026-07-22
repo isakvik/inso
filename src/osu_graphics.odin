@@ -306,7 +306,7 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
             hobj.gfx_handles[num_digits + i] = drawable_new(Drawable{
                 flags         = drawable_flags,
                 element       = el_id,
-                layer         = .HITOBJECTS,
+                layer         = layer_id(.HITOBJECTS),
                 pos           = rel_pos,
                 size          = {2, 2},
                 anchor        = .CENTER,
@@ -331,7 +331,7 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
             hobj.gfx_handles[num_digits + i] = drawable_new(Drawable{
                 flags         = drawable_flags,
                 element       = el_id,
-                layer         = .HITOBJECTS,
+                layer         = layer_id(.HITOBJECTS),
                 pos           = vec2{0, 0},
                 size          = skin_element_size_radius_units(el_type),
                 anchor        = .CENTER,
@@ -367,7 +367,7 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
             hobj.gfx_handles[di] = drawable_new(Drawable{
                 flags         = {.ACTIVE, .FADE_IN, .SCALE_POS_BY_RADIUS, .HITOBJECT_DIM},
                 element       = builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + digits[di])),
-                layer         = .HITOBJECTS,
+                layer         = layer_id(.HITOBJECTS),
                 pos           = {x_norm + digit_size_norm.x / 2, 0},
                 size          = digit_size_norm,
                 anchor        = .CENTER,
@@ -405,7 +405,7 @@ hitcircle_create_default_hit_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_
     circle_handle := drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
         flags = flags,
         element = builtin_element_slot(el_circle),
-        layer = .HITOBJECTS,
+        layer = layer_id(.HITOBJECTS),
         pos = pos,
         size = skin_element_size_radius_units(el_circle),
         anchor = .CENTER,
@@ -419,7 +419,7 @@ hitcircle_create_default_hit_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_
         overlay_handle = drawable_new_expiring(&game.beatmap.gameplay_expiring_gfx, {
             flags = flags,
             element = builtin_element_slot(el_overlay),
-            layer = .HITOBJECTS,
+            layer = layer_id(.HITOBJECTS),
             pos = pos,
             size = skin_element_size_radius_units(el_overlay),
             anchor = .CENTER,
@@ -756,7 +756,7 @@ slider_drawable_new :: proc(hobj: ^Hitobject, part: Slider_Part, size_radius_uni
     return drawable_new(Drawable{
         flags         = flags,
         element       = slider_part_element(hobj, part),
-        layer         = .HITOBJECTS,
+        layer         = layer_id(.HITOBJECTS),
         size          = size_radius_units,
         anchor        = .CENTER,
         color         = color,
@@ -1016,7 +1016,7 @@ create_bg_drawable :: proc(bg_path, shader_name: string) -> (result: Drawable_Ha
                 tex = mapset_texture_slot_or_else(bg_path, builtin_texture(.WHITE)),
                 shader = mapset_pipeline_slot_or_else(shader_name, builtin_pipeline_slot(.QUAD))
             }),
-            layer = .BACKGROUND,
+            layer = layer_id(.BACKGROUND),
     
             pos = vec2{256, 256} - PLAYFIELD_BASE_TRANSLATION_OSUPX,
             size = bg_size,

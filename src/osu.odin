@@ -82,8 +82,8 @@ game: struct {
     paused: bool,
     time_rate: f32,
 
-    // note(isak): tournament client arms the map paused at a lead-in and waits for a synchronized
-    // start. the start is a plain unpause once frame_clock passes the deadline (see tournament.odin)
+    // note(isak): half-mode construct where we preload a beatmap, wait for a LAN packet, and launch
+    // into play mode using wall-clock time as the beatmap clock mode for synchronization
     tournament_waiting_to_start: bool,
     tournament_start_deadline_s: f64,
     
@@ -339,7 +339,32 @@ Layer :: enum {
     CURSOR,
     TOP,
     PLATFORM, // note(isak): engine/debug overlays; always composited onto the real screen, on top of any post-processing
-    BLANK,
+}
+
+// note(isak): a render layer at runtime is a slot index, not the enum. the built-in Layer values
+// own the low slots identity-first (layer_id(l) == Layer_ID(l)); scripts declare custom layers into
+// the tail via Beatmap.add_layer. every per-layer array is sized LAYER_SLOTS and indexed by id, so a
+// custom layer is a claimed tail slot backed by a command buffer that already exists - see the whole
+// slot/order split in the memory doc.
+Layer_ID :: distinct u16
+
+MAX_CUSTOM_LAYERS :: 24
+LAYER_SLOTS       :: len(Layer) + MAX_CUSTOM_LAYERS
+
+layer_id :: proc(l: Layer) -> Layer_ID { return Layer_ID(l) }
+
+layer_slot_count :: proc() -> int {
+    if game.active_mapset != nil do return len(Layer) + len(game.active_mapset.custom_layers)
+    return len(Layer)
+}
+
+// note(isak): script-declared layer, positioned relative to a built-in anchor. lives on the mapset
+// (MAP_DATA arena), wiped on beatmap change with the rest of the script render state.
+Custom_Layer :: struct {
+    id:     Layer_ID,
+    name:   string,
+    anchor: Layer,
+    above:  bool, // note(isak): after the anchor in draw order when true, before when false
 }
 
 
@@ -520,7 +545,7 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
     #partial switch game.mode {
         case .PLAY:
             if game.tournament_waiting_to_start {
-                if key_is_pressed(.RETURN) do tournament_request_start()
+                if key_is_pressed(.RETURN) && key_is_down(.LCTRL) do tournament_request_start()
             } else {
                 handle_play_input_events()
             }
@@ -587,8 +612,8 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
     
     if !lua_beatmap.hide_skin_cursor {
         cursor_layer := lua_beatmap.cursor_layer
-        if cursor_layer == .BACKGROUND do cursor_layer = .CURSOR
-        r_bind_layer_and_push_current_state(cursor_layer, transform = window.screenspace_transform)
+        if cursor_layer == layer_id(.BACKGROUND) do cursor_layer = layer_id(.CURSOR)
+        r_bind_layer_and_push_current_state_id(cursor_layer, transform = window.screenspace_transform)
     
         cursor_expand_update()
         cursor_trail_draw(&cursor_trails[0], mouse.pos)

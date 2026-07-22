@@ -120,13 +120,19 @@ Renderer :: struct {
     transforms: Buffer(Transform),
     current_transform_index: u32,
 
-    layer_command_queues: [Layer]queue.Queue(u8),
+    layer_command_queues: [LAYER_SLOTS]queue.Queue(u8),
+
+    // note(isak): draw order as a flat slot list, rebuilt whenever custom layers change. built-ins
+    // are always present in enum order; customs splice in at their anchor. the flush walks this
+    // instead of `for layer in Layer` so slot storage stays decoupled from render sequence.
+    render_order:       [LAYER_SLOTS]Layer_ID,
+    render_order_count: int,
 
     current_draw: ^Command_Draw,
     text_draw: Command_Draw, // todo(isak) this makes text rendering pretty nonconfigurable... good for debug tho
 
     new_draw_on_next_push: bool,
-    current_layer: Layer,
+    current_layer: Layer_ID,
     current_global_data: Shader_Globals,
 
     // note(isak): "last value emitted anywhere", used only as inheritance defaults for
@@ -136,7 +142,7 @@ Renderer :: struct {
     current_pipeline: Command_Bind_Pipeline,
     current_ssbo_binds: [Shader_SSBO_Bind_Slot]Command_Bind_SSBO,
 
-    layer_state: [Layer]Layer_Render_State,
+    layer_state: [LAYER_SLOTS]Layer_Render_State,
 
     // note(isak): non-bindless texture unit tracking
     texture_unit_map: Texture_Unit_Map,
@@ -312,11 +318,12 @@ renderer_init :: proc() {
     renderer.slider_params.size = MAX_SLIDER_DRAWS
     renderer.transforms.size = MAX_TRANSFORMS_PER_FRAME
 
-    for layer in Layer {
+    for slot in 0 ..< LAYER_SLOTS {
         alloc_err: runtime.Allocator_Error
-        alloc_err = queue.init(&renderer.layer_command_queues[layer], kilobytes(1), memory.command_buffer_allocators[layer])
+        alloc_err = queue.init(&renderer.layer_command_queues[slot], kilobytes(1), memory.command_buffer_allocators[slot])
         assert(alloc_err == .None, "command queue alloc error")
     }
+    r_rebuild_layer_flush_order()
 
     profiler_gpu_init()
 }
@@ -614,14 +621,14 @@ command_push_post_pass         :: proc(cmd: Command_Post_Pass) -> bool { return 
 
 
 _command_push_header :: proc(type: Command_Type) -> bool {
-    layer := window.renderer.current_layer
+    layer := int(window.renderer.current_layer)
     ok, err := queue.push_back(&window.renderer.layer_command_queues[layer], u8(type))
     assert(err == .None)
     return ok
 }
 
 _command_push :: proc(cmd: $T, type: Command_Type) -> bool {
-    layer := window.renderer.current_layer
+    layer := int(window.renderer.current_layer)
     cmd := cmd
     ok := _command_push_header(type)
     if ok {
@@ -665,7 +672,7 @@ r_push_draw :: proc(index_offset: u32, index_count: i32, instance_count: i32 = 1
         base_instance = base_instance,
         instance_count = instance_count
     })
-    cmds := &window.renderer.layer_command_queues[window.renderer.current_layer]
+    cmds := &window.renderer.layer_command_queues[int(window.renderer.current_layer)]
     window.renderer.current_draw = cast(^Command_Draw)&cmds.data[cmds.len - size_of(Command_Draw)]
 
     // note(isak): append texture unit data right after the draw command (no command header)
@@ -691,7 +698,7 @@ _r_framebuffer_resolve :: proc(id: Framebuffer_ID) -> (^GL_Framebuffer, bool) {
 }
 
 r_bind_framebuffer :: proc(cmd: Command_Bind_Framebuffer) {
-    layer_state := &window.renderer.layer_state[window.renderer.current_layer]
+    layer_state := &window.renderer.layer_state[int(window.renderer.current_layer)]
     if .FRAMEBUFFER in layer_state.emitted && cmd == layer_state.framebuffer do return
     layer_state.framebuffer = cmd
     layer_state.emitted += {.FRAMEBUFFER}
@@ -701,7 +708,7 @@ r_bind_framebuffer :: proc(cmd: Command_Bind_Framebuffer) {
 }
 
 r_bind_pipeline :: proc(cmd: Command_Bind_Pipeline) {
-    layer_state := &window.renderer.layer_state[window.renderer.current_layer]
+    layer_state := &window.renderer.layer_state[int(window.renderer.current_layer)]
     if .PIPELINE in layer_state.emitted && cmd == layer_state.pipeline do return
     layer_state.pipeline = cmd
     layer_state.emitted += {.PIPELINE}
@@ -721,7 +728,7 @@ _r_get_ssbo_cmd_from_tbo :: proc(tbo: ^GL_Triple_Buffer($T), bind_slot: Shader_S
 _r_push_ssbo :: proc(cmd: Command_Bind_SSBO) {
     if cmd.slot == .NONE do return
     
-    layer_state := &window.renderer.layer_state[window.renderer.current_layer]
+    layer_state := &window.renderer.layer_state[int(window.renderer.current_layer)]
     if cmd.slot in layer_state.ssbo_emitted && cmd == layer_state.ssbo[cmd.slot] do return
     layer_state.ssbo[cmd.slot] = cmd
     layer_state.ssbo_emitted += {cmd.slot}
@@ -761,9 +768,23 @@ r_push_draw_slider :: proc(params: Slider_Params, instance_count: i32) {
 
 // note(isak): the fullscreen_store quads ([0,1]) bake TRANSFORM_SLOT_CLIPSPACE at creation,
 // so they span the entire target without any transform state here
-r_post_pass :: proc(pass: Command_Post_Pass, after: Layer) {
-    r_bind_layer(after)
+r_post_pass :: proc(pass: Command_Post_Pass, after: Layer_ID) {
+    r_bind_layer_id(after)
     command_push_post_pass(pass)
+}
+
+// note(isak): flatten built-ins + custom layers into the draw sequence the flush walks. built-ins
+// emit in enum order; each custom splices right before or after its anchor. cheap enough to call on
+// every add_layer since declarations run in on_init.
+r_rebuild_layer_flush_order :: proc(customs: []Custom_Layer = nil) {
+    r := &window.renderer
+    n := 0
+    for l in Layer {
+        for c in customs do if c.anchor == l && !c.above { r.render_order[n] = c.id; n += 1 }
+        r.render_order[n] = layer_id(l); n += 1
+        for c in customs do if c.anchor == l &&  c.above { r.render_order[n] = c.id; n += 1 }
+    }
+    r.render_order_count = n
 }
 
 /*
@@ -803,7 +824,7 @@ r_push_transform :: proc(transform: Transform) {
 }
 
 _r_push_scissor :: proc(cmd: Command_Scissor_Mode) {
-    layer_state := &window.renderer.layer_state[window.renderer.current_layer]
+    layer_state := &window.renderer.layer_state[int(window.renderer.current_layer)]
     if .SCISSOR in layer_state.emitted && cmd == layer_state.scissor do return
     layer_state.scissor = cmd
     layer_state.emitted += {.SCISSOR}
@@ -830,28 +851,33 @@ r_reset_scissor_mode :: proc() {
     window.renderer.new_draw_on_next_push = true
 }
 
-r_bind_layer :: proc(layer: Layer) {
-    window.renderer.current_layer = layer
+// note(isak): the plain names take the built-in enum so `.PLATFORM` and friends resolve at the call
+// site; the `_id` variants take a slot id for the custom-layer paths (drawables, cursor, render order).
+r_bind_layer :: proc(layer: Layer) { r_bind_layer_id(layer_id(layer)) }
+r_bind_layer_id :: proc(id: Layer_ID) {
+    window.renderer.current_layer = id
     window.renderer.new_draw_on_next_push = true
 }
 
-r_check_and_bind_layer :: proc(layer: Layer) {
-    if layer != window.renderer.current_layer {
-        r_bind_layer(layer)
+r_check_and_bind_layer :: proc(layer: Layer) { r_check_and_bind_layer_id(layer_id(layer)) }
+r_check_and_bind_layer_id :: proc(id: Layer_ID) {
+    if id != window.renderer.current_layer {
+        r_bind_layer_id(id)
     }
 }
 
 // note(isak): a layer renders into its capture target (Beatmap.capture_layers) or the screen.
 // deriving the framebuffer from the layer instead of the leaked current_framebuffer keeps an
 // upstream captured layer from dragging later layers (ui, cursor) into its target.
-r_layer_framebuffer :: proc(layer: Layer) -> Command_Bind_Framebuffer {
+r_layer_framebuffer :: proc(layer: Layer) -> Command_Bind_Framebuffer { return r_layer_framebuffer_id(layer_id(layer)) }
+r_layer_framebuffer_id :: proc(id: Layer_ID) -> Command_Bind_Framebuffer {
     if game.active_mapset != nil {
-        fb := game.active_mapset.layer_capture[layer]
+        fb := game.active_mapset.layer_capture[int(id)]
         // note(isak): an uncaptured layer targets DEFAULT; when the map opted into full-frame
         // capture, redirect that to the backbuffer so a post pass can sample the whole frame.
         // the PLATFORM layer is exempt: it always composites onto the real screen, on top of any
         // post-processing.
-        if fb == builtin_framebuffer(.DEFAULT) && layer != .PLATFORM && render_to_backbuffer_active() {
+        if fb == builtin_framebuffer(.DEFAULT) && id != layer_id(.PLATFORM) && render_to_backbuffer_active() {
             fb = builtin_framebuffer(.BACKBUFFER)
         }
         return { write = fb }
@@ -864,8 +890,15 @@ r_bind_layer_and_push_current_state :: proc(layer: Layer,
     transform: Transform = window.renderer.current_global_data.transform,
     scissor_region: Command_Scissor_Mode = window.renderer.current_scissor
 ) {
-    r_bind_layer(layer)
-    r_push_current_state(r_layer_framebuffer(layer), pipeline, transform, scissor_region)
+    r_bind_layer_and_push_current_state_id(layer_id(layer), pipeline, transform, scissor_region)
+}
+r_bind_layer_and_push_current_state_id :: proc(id: Layer_ID,
+    pipeline: Command_Bind_Pipeline = window.renderer.current_pipeline,
+    transform: Transform = window.renderer.current_global_data.transform,
+    scissor_region: Command_Scissor_Mode = window.renderer.current_scissor
+) {
+    r_bind_layer_id(id)
+    r_push_current_state(r_layer_framebuffer_id(id), pipeline, transform, scissor_region)
 }
 
 r_push_current_state :: proc(
@@ -992,8 +1025,9 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
     // target larger than the window (the slider atlas) bakes into the right pixels
     draw_fb_height := i32(window.rect.h)
 
-    for layer in Layer {
-        command_queue := renderer.layer_command_queues[layer]
+    for order_index in 0 ..< renderer.render_order_count {
+        layer := renderer.render_order[order_index]
+        command_queue := renderer.layer_command_queues[int(layer)]
 
         if command_queue.len > 0 {
             profiler_gpu_scope_begin(layer)
@@ -1002,7 +1036,7 @@ batch_process_command_buffer :: proc(renderer: ^Renderer) {
             // note(isak): the platform layer always composites onto the real screen, on top of any
             // post-processing. its overlays sometimes inherit gl state instead of binding their own
             // target, so pin the default framebuffer (and straight-alpha pipeline) before replaying.
-            if layer == .PLATFORM {
+            if layer == layer_id(.PLATFORM) {
                 fbo_bind(0, 0)
                 gl.Viewport(0, 0, i32(window.rect.w), i32(window.rect.h))
                 draw_fb_height = i32(window.rect.h)

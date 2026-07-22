@@ -445,7 +445,7 @@ _CRASH_HANDLER_ARENA_NAMES := [CRASH_STATS_ARENAS]string{
 }
 
 _CRASH_HANDLER_LAYER_NAMES := [CRASH_STATS_LAYERS]string{
-    "background", "foreground", "hitobjects", "overlay", "ui", "cursor", "top", "platform", "blank",
+    "background", "foreground", "hitobjects", "overlay", "ui", "cursor", "top", "platform",
 }
 
 _CRASH_HANDLER_MODE_NAMES := [4]string{

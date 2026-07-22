@@ -77,7 +77,6 @@ memory_arena_names := [?]string {
     "Command buffer[CURSOR]",
     "Command buffer[TOP]",
     "Command buffer[PLATFORM]",
-    "Command buffer[BLANK]",
 }
 
 memory: struct {
@@ -87,8 +86,8 @@ memory: struct {
     backing_alloc: [Memory_Arena_Type]runtime.Allocator,
     tracker: [Memory_Arena_Type]Guarding_Allocator,
     
-    command_buffer_allocators: [Layer]runtime.Allocator,
-    command_buffer_arenas: [Layer]vmem.Arena,
+    command_buffer_allocators: [LAYER_SLOTS]runtime.Allocator,
+    command_buffer_arenas: [LAYER_SLOTS]vmem.Arena,
 }
 
 // note(isak): this should take care of error printing
@@ -99,8 +98,8 @@ memory_init :: proc() -> runtime.Allocator_Error {
     for t in Memory_Arena_Type {
         init_tracked_growing_arena(&arenas[t], &allocators[t], &memory.backing_alloc[t], &memory.tracker[t]) or_return
     } 
-    for layer in Layer {
-        init_growing_arena(&memory.command_buffer_arenas[layer], &memory.command_buffer_allocators[layer]) or_return
+    for slot in 0 ..< LAYER_SLOTS {
+        init_growing_arena(&memory.command_buffer_arenas[slot], &memory.command_buffer_allocators[slot]) or_return
     }
     return .None
 }
@@ -464,8 +463,8 @@ main :: proc() {
             frame_count += 1
 
             free_all(memory.allocators[.FRAME])
-            for layer in Layer {
-                queue.clear(&window.renderer.layer_command_queues[layer])
+            for slot in 0 ..< LAYER_SLOTS {
+                queue.clear(&window.renderer.layer_command_queues[slot])
             }
         }
     }

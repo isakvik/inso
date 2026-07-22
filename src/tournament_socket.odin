@@ -6,9 +6,10 @@ import "core:net"
 // note(isak): receive side only - the go signal comes from the conductor tool in tools/inso_start,
 // which mirrors this wire format. the version field guards against drift between the two.
 
+TOURNAMENT_SYNC_VERSION :: u16(1) // increment this when changing packet format
+
 TOURNAMENT_SYNC_PORT    :: 8727
 TOURNAMENT_SYNC_MAGIC   :: u32(0x4F534E49) // "INSO" little-endian
-TOURNAMENT_SYNC_VERSION :: u16(1)
 
 // note(isak): fixed-width, #packed so the byte layout is identical regardless of how the
 // compiler would otherwise pad it. every box runs x86 binaries from the same compiler so

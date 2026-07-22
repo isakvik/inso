@@ -27,7 +27,7 @@ lua_beatmap: struct {
     last_callback: cstring,
 
     hide_skin_cursor: bool,
-    cursor_layer: Layer,
+    cursor_layer: Layer_ID,
 }
 
 Lua_Function :: struct {

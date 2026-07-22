@@ -678,7 +678,7 @@ fade_transition_draw :: proc() {
             switch_elapsed) / GAME_MODE_SWITCH_POST_FADE_S)
         fade_alpha := clamp(min(fade_in, fade_out), 0, 1)
 
-        r_bind_layer_and_push_current_state(.BLANK, transform = clipspace_transform)
+        r_bind_layer_and_push_current_state(.PLATFORM, transform = clipspace_transform)
         r_draw_quad(&window.renderer.quad_geometry, 
             {0, 0}, {1, 1}, {0, 0}, {1, 1},
             with_alpha(color_black, fade_alpha))

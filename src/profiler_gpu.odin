@@ -16,7 +16,7 @@ GPU_SCOPES_PER_FRAME :: 64
 Gpu_Frame_Queries :: struct {
     time_queries: [GPU_SCOPES_PER_FRAME]u32,
     frag_queries: [GPU_SCOPES_PER_FRAME]u32,
-    scope_layers: [GPU_SCOPES_PER_FRAME]Layer,
+    scope_layers: [GPU_SCOPES_PER_FRAME]Layer_ID,
     scope_count:  int,
 }
 
@@ -27,8 +27,8 @@ gpu_profiler: struct {
     frag_queries_supported: bool,
     initialized: bool,
 
-    layer_time_ns:          [Layer]u64,
-    layer_frag_invocations: [Layer]u64,
+    layer_time_ns:          [LAYER_SLOTS]u64,
+    layer_frag_invocations: [LAYER_SLOTS]u64,
 }
 
 profiler_gpu_init :: proc() {
@@ -61,7 +61,7 @@ profiler_gpu_new_frame :: proc() {
             gp.layer_time_ns = {}
             gp.layer_frag_invocations = {}
             for i in 0..<slot.scope_count {
-                layer := slot.scope_layers[i]
+                layer := int(slot.scope_layers[i])
                 time_ns: u64
                 gl.GetQueryObjectui64v(slot.time_queries[i], gl.QUERY_RESULT, &time_ns)
                 gp.layer_time_ns[layer] += time_ns
@@ -79,7 +79,7 @@ profiler_gpu_new_frame :: proc() {
 
 // note(isak): scopes accumulate per layer across batch_flush replays within one frame, since a
 // flush re-walks every layer. TIME_ELAPSED scopes can't nest, so an already-open scope wins.
-profiler_gpu_scope_begin :: proc(layer: Layer) {
+profiler_gpu_scope_begin :: proc(id: Layer_ID) {
     gp := &gpu_profiler
     if !gp.initialized || gp.scope_open do return
 
@@ -90,7 +90,7 @@ profiler_gpu_scope_begin :: proc(layer: Layer) {
     if gp.frag_queries_supported {
         gl.BeginQuery(gl.FRAGMENT_SHADER_INVOCATIONS, slot.frag_queries[slot.scope_count])
     }
-    slot.scope_layers[slot.scope_count] = layer
+    slot.scope_layers[slot.scope_count] = id
     gp.scope_open = true
 }
 
@@ -111,20 +111,24 @@ profiler_push_gpu_blocks_as_text :: proc(renderer: ^Renderer) {
     if !gp.initialized do return
 
     y_inc: f32 = 24
-    row_count := len(Layer) + 2
+    slot_count := layer_slot_count()
+    row_count := slot_count + 2
     pos_top_left := vec2{ 400, f32(window.rect.h) - f32(row_count) * y_inc }
 
-    row_label :: proc(row: int) -> string {
+    row_label :: proc(row, slot_count: int) -> string {
         if row < len(Layer) {
             return fmt.enum_value_to_string(Layer(row)) or_else unreachable()
         }
-        return "GPU TOTAL" if row == len(Layer) else "TBO WAITS"
+        if row < slot_count {
+            return game.active_mapset.custom_layers[row - len(Layer)].name
+        }
+        return "GPU TOTAL" if row == slot_count else "TBO WAITS"
     }
 
     x_inc: f32
     x_inc_max: f32 = min(f32)
     for row in 0..<row_count {
-        push_text(renderer, row_label(row),
+        push_text(renderer, row_label(row, slot_count),
                   pos_top_left + {0, y_inc * f32(row)},
                   size = y_inc,
                   x_inc = &x_inc)
@@ -134,15 +138,15 @@ profiler_push_gpu_blocks_as_text :: proc(renderer: ^Renderer) {
 
     total_time_ns: u64
     total_frag_invocations: u64
-    for layer in Layer {
-        total_time_ns          += gp.layer_time_ns[layer]
-        total_frag_invocations += gp.layer_frag_invocations[layer]
+    for slot in 0..<slot_count {
+        total_time_ns          += gp.layer_time_ns[slot]
+        total_frag_invocations += gp.layer_frag_invocations[slot]
     }
 
     time_col := pos_top_left.x + x_inc_max + 16
     frag_col := time_col + 110
     for row in 0..<row_count {
-        if row_label(row) == "TBO WAITS" {
+        if row_label(row, slot_count) == "TBO WAITS" {
             push_text(renderer, fmt.tprintf("%.4f", f64(profiler.prev_frame_buffer_wait_ns) / 1_000_000),
                       {time_col, pos_top_left.y + y_inc * f32(row)},
                       size = y_inc)
@@ -152,13 +156,13 @@ profiler_push_gpu_blocks_as_text :: proc(renderer: ^Renderer) {
             continue
         }
 
-        time_ns := gp.layer_time_ns[Layer(row)] if row < len(Layer) else total_time_ns
+        time_ns := gp.layer_time_ns[row] if row < slot_count else total_time_ns
         push_text(renderer, fmt.tprintf("%.4f", f64(time_ns) / 1_000_000),
                   {time_col, pos_top_left.y + y_inc * f32(row)},
                   size = y_inc)
 
         if gp.frag_queries_supported {
-            frags := gp.layer_frag_invocations[Layer(row)] if row < len(Layer) else total_frag_invocations
+            frags := gp.layer_frag_invocations[row] if row < slot_count else total_frag_invocations
             push_text(renderer, fmt.tprintf("%.2fM frag", f64(frags) / 1_000_000),
                       {frag_col, pos_top_left.y + y_inc * f32(row)},
                       size = y_inc)

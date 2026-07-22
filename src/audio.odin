@@ -459,8 +459,7 @@ sound_set_speed :: proc(sound: ^Sound, rate: f32) {
     }
 }
 
-// note: nudges playback rate by a fraction (0.0002 = 0.02%, ~a third of a cent). a continuous
-// resample-ratio change - no waveform discontinuity, so no clicks. the tournament servo's actuator
+// note(isak): nudges playback rate by a fraction. continuous resample-ratio change
 sound_set_rate_trim :: proc(sound: ^Sound, trim: f64) {
     if !audio.ready do return
     base := cast(^Base_Sound)sound

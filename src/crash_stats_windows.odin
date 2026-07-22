@@ -7,7 +7,7 @@ import gl "vendor:OpenGL"
 
 CRASH_STATS_ARENAS :: 9
 #assert(CRASH_STATS_ARENAS == len(Memory_Arena_Type))
-CRASH_STATS_LAYERS :: 9
+CRASH_STATS_LAYERS :: 8
 #assert(CRASH_STATS_LAYERS == len(Layer))
 
 // vendor-specific GL enums for VRAM queries. not in the standard gl package
@@ -160,8 +160,8 @@ crash_stats_write :: proc(frame_count: u64, dt_ms: f64) {
     }
 
     for layer in Layer {
-        s.gpu_layer_time_ns[int(layer)]          = gpu_profiler.layer_time_ns[layer]
-        s.gpu_layer_frag_invocations[int(layer)] = gpu_profiler.layer_frag_invocations[layer]
+        s.gpu_layer_time_ns[int(layer)]          = gpu_profiler.layer_time_ns[int(layer)]
+        s.gpu_layer_frag_invocations[int(layer)] = gpu_profiler.layer_frag_invocations[int(layer)]
     }
 
     switch _gpu_vendor {

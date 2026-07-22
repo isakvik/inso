@@ -72,7 +72,7 @@ render_target_size_resolve :: proc(size: Render_Target_Size) -> (w, h: i32) {
 Post_Pass :: struct {
     pipeline:  Pipeline_ID,
     dst:       Framebuffer_ID,
-    after:     Layer,
+    after:     Layer_ID,
     quad_index: u32,
     src:       [4]u32,
     src_count: u8,
@@ -101,8 +101,9 @@ Mapset :: struct {
 
     render_targets:        queue.Queue(Render_Target),
     render_target_by_name: map[string]u32,
-    layer_capture:         [Layer]Framebuffer_ID,
+    layer_capture:         [LAYER_SLOTS]Framebuffer_ID,
     post_passes:           [dynamic]Post_Pass,
+    custom_layers:         [dynamic]Custom_Layer,
 
     watch: Directory_Watch
 }
@@ -308,7 +309,9 @@ mapset_free :: proc(mapset: ^Mapset) {
 // reset whenever the script context does - otherwise regens stack duplicate passes
 mapset_reset_script_render_state :: proc(mapset: ^Mapset) {
     mapset.post_passes = make([dynamic]Post_Pass, 0, 8, memory.allocators[.MAP_DATA])
+    mapset.custom_layers = make([dynamic]Custom_Layer, 0, MAX_CUSTOM_LAYERS, memory.allocators[.MAP_DATA])
     mapset.layer_capture = {}
+    r_rebuild_layer_flush_order(mapset.custom_layers[:])
 }
 
 // note(isak): mod toggles and retries only invalidate .osu-derived data (mods + stacking mutate

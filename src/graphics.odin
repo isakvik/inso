@@ -322,7 +322,7 @@ Drawable :: struct {
     id: int,
     flags: Drawable_Flags,
     element: Element_ID,
-    layer: Layer,
+    layer: Layer_ID,
 
     // note(isak): quad params
     // todo(isak): implicitly 1 quad vertex, 6 indices that are appended to buffer every draw. this might need 
@@ -579,7 +579,7 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) {
         color.a = u8(f32(color.a) * f32(clamp((d.end_time_ms - at_time) / fade_out_ms, 0, 1)))
     }
 
-    r_check_and_bind_layer(d.layer)
+    r_check_and_bind_layer_id(d.layer)
 
     // note(isak): a drawable can be emitted into any layer's queue from another layer's recording
     // context, so it can't trust inherited state - it re-establishes everything it draws with.
@@ -596,7 +596,7 @@ render_drawable :: proc(d: ^Drawable, at_time: f64, parent_pos: vec2 = {0,0}) {
         // the rest of its layer, including the DEFAULT->BACKBUFFER redirect for full-frame-capture
         // maps. binding layer_capture directly punched drawables straight to the screen, bypassing
         // the backbuffer everything else on the layer draws into.
-        target = r_layer_framebuffer(d.layer).write
+        target = r_layer_framebuffer_id(d.layer).write
     }
     r_bind_framebuffer({ write = target })
 

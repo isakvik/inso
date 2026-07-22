@@ -278,7 +278,10 @@ luaapi_set_cursor_visible :: proc "c" (L: ^lua.State) -> i32 {
 
 luaapi_set_cursor_layer :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
-    lua_beatmap.cursor_layer = Layer(lua_int(1))
+    layer_val := int(lua_int(1))
+    if layer_val >= 0 && layer_val < layer_slot_count() {
+        lua_beatmap.cursor_layer = Layer_ID(layer_val)
+    }
     return 0
 }
 
@@ -1244,7 +1247,7 @@ luaapi_drawable_new :: proc "c" (L: ^lua.State) -> (result: i32) {
 
     start_time := f64(lua.L_optnumber(L, 2, 0))
     end_time   := f64(lua.L_optnumber(L, 3, 0))
-    layer      := Layer(lua.L_optnumber(L, 4, 0)) // note(isak): default is .BACKGROUND
+    layer      := Layer_ID(lua.L_optnumber(L, 4, 0)) // note(isak): default is .BACKGROUND
     
     handle := cast(^Drawable_Handle)lua.newuserdata(L, size_of(Drawable_Handle))
     handle^ = drawable_new_expiring(&game.beatmap.map_expiring_gfx, {
@@ -1308,7 +1311,7 @@ _luaapi_drawable_get :: proc "c" (L: ^lua.State, op: proc "c" (L: ^lua.State, d:
 
 luaapi_drawable_set_layer :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
-        d.layer = Layer(lua_int(2))
+        d.layer = Layer_ID(lua_int(2))
         return 0
     })
 }
@@ -1468,7 +1471,7 @@ luaapi_drawable_get_end_time :: proc "c" (L: ^lua.State) -> i32 {
 }
 luaapi_drawable_get_layer :: proc "c" (L: ^lua.State) -> i32 {
     return _luaapi_drawable_get(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
-        lua.pushinteger(L, lua.Integer(d.layer))
+        lua.pushinteger(L, lua.Integer(int(d.layer)))
         return 1
     })
 }
@@ -2401,6 +2404,9 @@ luaapi_beatmap_static_funcs := []Lua_Function {
   { "is_paused", luaapi_beatmap_is_paused,
     "bool Beatmap.is_paused( void )",
     "true if playback is currently paused." },
+  { "add_layer", luaapi_beatmap_add_layer,
+    "int Beatmap.add_layer( string name, { Layer anchor = Layer.HITOBJECTS, bool above = true } )",
+    "declares a custom render layer positioned relative to a built-in anchor, returning its id. pass the id anywhere a Layer is taken (Drawable.new, set_cursor_layer, capture_layers, add_post_pass after). above=true draws it just after the anchor, false just before; ties among layers on the same anchor resolve in declaration order. capture it with capture_layers to route its drawables through a render target. declare these in on_init." },
   { "capture_layers", luaapi_beatmap_capture_layers,
     "void Beatmap.capture_layers( string render_target_name, table layers )",
     "redirects every drawable in the given layers into the named render target." },
@@ -2514,6 +2520,48 @@ luaapi_beatmap_clear_skin_override :: proc "c" (L: ^lua.State) -> i32 {
     return 0
 }
 
+luaapi_beatmap_add_layer :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    mapset := game.active_mapset
+
+    name := lua_string(1)
+
+    anchor := Layer.HITOBJECTS
+    above  := true
+    if lua.istable(L, 2) {
+        lua.getfield(L, 2, "anchor")
+        if !lua.isnil(L, -1) {
+            v := int(lua.tointeger(L, -1))
+            if v >= 0 && v < len(Layer) do anchor = Layer(v)
+        }
+        lua.pop(L, 1)
+
+        lua.getfield(L, 2, "above")
+        if !lua.isnil(L, -1) do above = bool(lua.toboolean(L, -1))
+        lua.pop(L, 1)
+    }
+    if anchor == .PLATFORM && above {
+        notify_warn("lua: Beatmap.add_layer can't place a layer above PLATFORM")
+        return 0
+    }
+    if len(mapset.custom_layers) >= MAX_CUSTOM_LAYERS {
+        notify_warn("lua: Beatmap.add_layer exceeded MAX_CUSTOM_LAYERS (%d)", MAX_CUSTOM_LAYERS)
+        return 0
+    }
+
+    id := Layer_ID(len(Layer) + len(mapset.custom_layers))
+    append(&mapset.custom_layers, Custom_Layer{
+        id     = id,
+        name   = strings.clone(name, memory.allocators[.MAP_DATA]),
+        anchor = anchor,
+        above  = above,
+    })
+    r_rebuild_layer_flush_order(mapset.custom_layers[:])
+
+    lua.pushinteger(L, lua.Integer(int(id)))
+    return 1
+}
+
 luaapi_beatmap_capture_layers :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     name := lua_string(1)
@@ -2529,8 +2577,8 @@ luaapi_beatmap_capture_layers :: proc "c" (L: ^lua.State) -> i32 {
         lua.rawgeti(L, 2, lua.Integer(i))
         layer_val := int(lua.tointeger(L, -1))
         lua.pop(L, 1)
-        if layer_val >= 0 && layer_val < len(Layer) {
-            game.active_mapset.layer_capture[Layer(layer_val)] = fb
+        if layer_val >= 0 && layer_val < layer_slot_count() {
+            game.active_mapset.layer_capture[layer_val] = fb
         }
     }
     return 0
@@ -2544,8 +2592,8 @@ luaapi_beatmap_free_layers :: proc "c" (L: ^lua.State) -> i32 {
         lua.rawgeti(L, 1, lua.Integer(i))
         layer_val := int(lua.tointeger(L, -1))
         lua.pop(L, 1)
-        if layer_val >= 0 && layer_val < len(Layer) {
-            game.active_mapset.layer_capture[Layer(layer_val)] = builtin_framebuffer(.DEFAULT)
+        if layer_val >= 0 && layer_val < layer_slot_count() {
+            game.active_mapset.layer_capture[layer_val] = builtin_framebuffer(.DEFAULT)
         }
     }
     return 0
@@ -2585,11 +2633,11 @@ luaapi_beatmap_add_post_pass :: proc "c" (L: ^lua.State) -> i32 {
         dst = dfb
     }
 
-    after := Layer.HITOBJECTS
+    after := layer_id(.HITOBJECTS)
     lua.getfield(L, 1, "after")
     if !lua.isnil(L, -1) {
         v := int(lua.tointeger(L, -1))
-        if v >= 0 && v < len(Layer) do after = Layer(v)
+        if v >= 0 && v < layer_slot_count() do after = Layer_ID(v)
     }
     lua.pop(L, 1)
 
@@ -2862,7 +2910,6 @@ luaapi_shader_set_vec4 :: proc "c" (L: ^lua.State) -> i32 {
 //////////////////////////////////////////////////////
 // note(Jacky): Window API
 
-@(private="file")
 luaapi_window_static_funcs := []Lua_Function {
   { "get_size", luaapi_window_get_size,
     "(float x, float y) Window.get_size( void )",

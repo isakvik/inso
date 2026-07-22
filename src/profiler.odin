@@ -27,6 +27,11 @@ profiler: struct {
     prev_frame_command_buffer_lens: [Layer]uint,
     prev_frame_command_buffer_caps: [Layer]int,
 
+    // note(isak): custom script layers share the diag's one row - the built-ins are the fixed cost
+    // worth eyeballing individually, the tail is "how much are the map's own layers costing".
+    prev_frame_custom_command_buffer_len: uint,
+    prev_frame_custom_command_buffer_cap: int,
+
     pixels: [profiler_h]u32,
     frame_pixel_count: i32,
 
@@ -151,10 +156,20 @@ profiler_push_blocks_as_text :: proc(renderer: ^Renderer, frame_count: u64) {
 
 profiler_collect_command_buffer_memory_data :: proc() {
     for layer in Layer {
-        layer_queue := &window.renderer.layer_command_queues[layer]
+        layer_queue := &window.renderer.layer_command_queues[int(layer)]
         profiler.prev_frame_command_buffer_lens[layer] = layer_queue.len
         profiler.prev_frame_command_buffer_caps[layer] = cap(layer_queue.data)
     }
+
+    custom_len: uint
+    custom_cap: int
+    for slot in len(Layer) ..< LAYER_SLOTS {
+        custom_queue := &window.renderer.layer_command_queues[slot]
+        custom_len += custom_queue.len
+        custom_cap += cap(custom_queue.data)
+    }
+    profiler.prev_frame_custom_command_buffer_len = custom_len
+    profiler.prev_frame_custom_command_buffer_cap = custom_cap
 }
 
 profiler_push_memory_diag_text :: proc(renderer: ^Renderer) {
@@ -230,13 +245,44 @@ profiler_push_memory_diag_text :: proc(renderer: ^Renderer) {
         x_inc = 0
     }
 
+    {
+        unit_i: int
+        len_in_units := profiler.prev_frame_custom_command_buffer_len
+        cap_in_units := profiler.prev_frame_custom_command_buffer_cap
+        if profiler.prev_frame_custom_command_buffer_cap > mem.Kilobyte * 10 {
+            unit_i += 1
+            len_in_units /= mem.Kilobyte
+            cap_in_units /= mem.Kilobyte
+        }
+        if profiler.prev_frame_custom_command_buffer_cap > mem.Megabyte * 10 {
+            unit_i += 1
+            len_in_units /= mem.Kilobyte
+            cap_in_units /= mem.Kilobyte
+        }
+
+        push_text(renderer,
+                  fmt.tprintf("%d/%d %s", len_in_units, cap_in_units, size_units_str[unit_i]),
+                  pos_top_right + { 0, f32(len(Layer)) * y_spacing },
+                  size = y_spacing,
+                  align_h = .Right,
+                  x_inc = &x_inc)
+        x_inc_max = max(x_inc, x_inc_max)
+        x_inc = 0
+    }
+
     for layer in Layer {
-        push_text(renderer, 
+        push_text(renderer,
                   fmt.enum_value_to_string(layer) or_else unreachable(),
                   pos_top_right + { -x_inc_max - 16, y_spacing * f32(layer) },
                   size = y_spacing,
                   align_h = .Right)
     }
+
+    push_text(renderer,
+              fmt.tprintf("custom x%d", layer_slot_count() - len(Layer)),
+              pos_top_right + { -x_inc_max - 16, y_spacing * f32(len(Layer)) },
+              size = y_spacing,
+              align_h = .Right)
 }
 
 profiler_write_texture_column :: proc(frame_count: u64, texture: Texture) {

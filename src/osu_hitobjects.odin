@@ -427,7 +427,7 @@ followpoint_emit :: proc(beatmap: ^Beatmap, conn: ^Followpoint_Connection, map_t
         point := Drawable{
             flags         = {.ACTIVE},
             element       = builtin_element_slot(.FOLLOWPOINT),
-            layer         = .HITOBJECTS,
+            layer         = layer_id(.HITOBJECTS),
             pos           = start_pos + delta * slot,
             size          = frame_metrics * scale,
             angle_rad     = math.atan2(delta.y, delta.x),

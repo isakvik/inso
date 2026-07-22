@@ -44,7 +44,7 @@ game: struct {
     
     user_config: User_Configuration,
     tournament_client: bool,
-    tournament_initial_map_path: string,
+    startup_map_path: string,
     
     input: struct {
         k1, k2, m1, m2: Button_State,
@@ -462,21 +462,26 @@ osu_on_init :: proc() {
     game.input.keys = game.user_config.keys
     game.input.mouse_keys_enabled = game.user_config.mouse_keys_enabled
     
+    game.beatmap.map_reference = startup_map_reference()
+
     if game.tournament_client {
         if game.user_config.osu_install_path != "" {
             config_import_from_osu(game.user_config.osu_install_path)
         }
-        
-        if game.tournament_initial_map_path != "" {
-            game.beatmap.map_reference = map_reference_from_path(game.tournament_initial_map_path)
-        }
-    } else {
-        //-- @temp todo(isak): handle this properly when menu mode is a thing
-        initial_map_ref :=
-            len(app.map_references) > 0 ? app.map_references[0] : Map_Reference{ folder_path = "songs/test/" }
-        //--
-        beatmap_open(initial_map_ref)
     }
+    
+    beatmap_open(game.beatmap.map_reference)
+    beatmap_pause(&game.beatmap, game.tournament_client)
+}
+
+startup_map_reference :: proc() -> Map_Reference {
+    if game.startup_map_path != "" {
+        return map_reference_from_path(game.startup_map_path)
+    }
+    //-- @temp todo(isak): handle this properly when menu mode is a thing
+    if len(app.map_references) > 0 do return app.map_references[0]
+    return { folder_path = "songs/test/" }
+    //--
 }
 
 osu_on_update :: proc(dt: f64, frame_tsc: i64) {

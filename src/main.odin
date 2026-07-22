@@ -121,7 +121,7 @@ main :: proc() {
         if arg == "--tournament" {
             game.tournament_client = true
             if i + 1 < len(os.args) && !strings.has_prefix(os.args[i + 1], "--") {
-                game.tournament_initial_map_path = os.args[i + 1]
+                game.startup_map_path = os.args[i + 1]
                 i += 1
             }
         }

@@ -51,7 +51,7 @@ ui_component_visible :: proc(c: UI_Component) -> bool {
         return game.input.rebinding_key != .NONE ||
             app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY ||
             app.mouse_input_mode == .REBINDING_MOUSE_SECONDARY
-    case .TOURNAMENT_WAITING_SCREEN: return game.mode == .TOURNAMENT_WAIT_SCREEN
+    case .TOURNAMENT_WAITING_SCREEN: return game.tournament_waiting_to_start
     }
     return false
 }
@@ -256,24 +256,32 @@ ui_update_timeline :: proc(ui: ^UI_Timeline, time_value: ^f64) -> (result: bool)
 timeline_update :: proc(ui: ^UI_Timeline) {
     seek_to_fract: f64
     if ui_update_timeline(&game.ui_timeline, &seek_to_fract) {
-        map_len_with_preempt := game.beatmap.length_ms + (-game.beatmap.start_time_ms)
+        map_len_with_preempt := game.beatmap.length_ms - game.beatmap.start_time_ms
         leadin_fract := -game.beatmap.start_time_ms / map_len_with_preempt
-        
+
+        seeking_backward: bool
         if seek_to_fract < leadin_fract {
             seek_to_ms := game.beatmap.start_time_ms + seek_to_fract * map_len_with_preempt
-            seeking_backward := seek_to_ms < game.beatmap.music_time_ms
+            seeking_backward = seek_to_ms < game.beatmap.music_time_ms
             game.beatmap.music_time_ms = seek_to_ms
-            if seeking_backward do beatmap_rewind_timeline(&game.beatmap)
         } else {
-            seek_to_music_fract := (seek_to_fract - leadin_fract) * (1 / (1.0 - leadin_fract))
+            seek_to_music_fract := (seek_to_fract - leadin_fract) / (1 - leadin_fract)
 
             seek_to_ms := seek_to_music_fract * sound_get_length_ms(&game.beatmap.music)
-            seeking_backward := seek_to_ms < game.beatmap.music_time_ms
-            beatmap_seek(&game.beatmap, seek_to_ms)
-            beatmap_reset_object_state(&game.beatmap)
-            if seeking_backward do beatmap_rewind_timeline(&game.beatmap)
+            seeking_backward = seek_to_ms < game.beatmap.music_time_ms
+            // note(isak): the timeline lives in raw playhead space (see render_timeline_clipspace),
+            // so seek the audio directly rather than through the master-time beatmap_seek
+            sound_set_position_ms(&game.beatmap.music, seek_to_ms)
+            game.beatmap.music_time_ms = beatmap_music_position_interpolated_ms(&game.beatmap)
         }
-        
+
+        // note(isak): same policy as editor_seek - backward seeks re-show expired objects
+        // and rewind the scheduled/fixed-update timeline
+        if seeking_backward {
+            beatmap_reset_object_state(&game.beatmap)
+            beatmap_rewind_timeline(&game.beatmap)
+        }
+
         if game.ui_timeline.clicked {
             sound_pause(&game.beatmap.music)
         }

@@ -83,6 +83,11 @@ game: struct {
 
     paused: bool,
     time_rate: f32,
+
+    // note(isak): tournament client arms the map paused at a lead-in and waits for a synchronized
+    // start. the start is a plain unpause once frame_clock passes the deadline (see tournament.odin)
+    tournament_waiting_to_start: bool,
+    tournament_start_deadline_s: f64,
     
     // note(isak): map game view fields
     
@@ -105,7 +110,6 @@ Game_Mode :: enum {
     MAIN_MENU,
     PLAY,
     EDITOR,
-    TOURNAMENT_WAIT_SCREEN,
 }
 
 @(rodata) null_mapset := Mapset{}
@@ -446,7 +450,7 @@ Osu_Map :: struct {
 
 
 osu_on_init :: proc() {
-    startup_mode: Game_Mode = .TOURNAMENT_WAIT_SCREEN if game.tournament_client else .EDITOR
+    startup_mode: Game_Mode = .PLAY if game.tournament_client else .EDITOR
 
     game.active_mapset = &null_mapset
     game.active_inso_map = &null_mapset.inso_map
@@ -465,13 +469,16 @@ osu_on_init :: proc() {
     game.beatmap.map_reference = startup_map_reference()
 
     if game.tournament_client {
+        tournament_sync_init()
         if game.user_config.osu_install_path != "" {
             config_import_from_osu(game.user_config.osu_install_path)
         }
     }
     
     beatmap_open(game.beatmap.map_reference)
-    beatmap_pause(&game.beatmap, game.tournament_client)
+    if game.tournament_client {
+        tournament_arm_beatmap(&game.beatmap)
+    }
 }
 
 startup_map_reference :: proc() -> Map_Reference {
@@ -508,22 +515,24 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
     // note(isak): game logic - map
     
     osu_handle_mode_switch()
-    
+
+    tournament_sync_poll()
+    tournament_update()
+
     #partial switch game.mode {
         case .PLAY:
-            handle_play_input_events()
+            if game.tournament_waiting_to_start {
+                if key_is_pressed(.RETURN) do tournament_request_start()
+            } else {
+                handle_play_input_events()
+            }
 
         case .EDITOR:
             handle_menu_input_events()
             handle_editor_input_events()
 
-        case .MAIN_MENU: 
+        case .MAIN_MENU:
             handle_menu_input_events()
-            
-        case .TOURNAMENT_WAIT_SCREEN: 
-            if key_is_pressed(.RETURN) {
-                game_switch_mode(.PLAY, 0)
-            }
     }
     handle_universal_input_events()
 
@@ -613,14 +622,11 @@ osu_handle_mode_switch :: proc() {
 
         beatmap_open(game.beatmap.map_reference)
 
-        seek_time := game.mode_seek_time_on_switch
-        if seek_time >= 0 {
+        seek_time := game.mode_seek_time_on_switch // master-clock time
+        if beatmap_game_time_to_music_time(&game.beatmap, seek_time) >= 0 {
             beatmap_seek(&game.beatmap, seek_time)
         } else {
-            // note(isak): negative time is the empty lead-in; beatmap_on_update counts it up and
-            // resumes the audio once it reaches zero, so we leave the freshly opened stream paused
-            game.beatmap.music_time_ms = seek_time
-            game.beatmap.auto_last_hit_time_ms = beatmap_music_time_ms(&game.beatmap)
+            beatmap_set_time(&game.beatmap, seek_time)
         }
 
         game.paused = target == .EDITOR

@@ -204,7 +204,7 @@ config_save :: proc(path: string) {
 
 config_supply_default :: proc() -> (result: User_Configuration) {
     result = {
-        universal_offset_ms      = -28,
+        universal_offset_ms      = 0,
         vsync_enabled            = false,
         gpu_profiler_enabled     = true,
         master_volume            = 0.5,

@@ -15,7 +15,7 @@ Beatmap :: struct {
     map_reference: Map_Reference,
     
     music: Sound,
-    music_time_ms: f64, // note(isak): for game logic, don't refer to this directly, use beatmap_time_ms() instead
+    music_time_ms: f64, // note(isak): for game logic, don't refer to this directly, use beatmap_music_time_ms() instead
     music_time_uninterpolated_ms: f64,
     length_ms: f64,
     start_time_ms: f64,
@@ -352,8 +352,11 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
         time_s_since_beginning_of_program() - load_start)
 
     if keep_position {
+        // note(isak): music_time_before_load is the raw playhead, so restore the audio position
+        // directly rather than through the master-time beatmap_seek - this is an exact round-trip
         if music_time_before_load >= 0 {
-            beatmap_seek(&game.beatmap, music_time_before_load)
+            sound_set_position_ms(&game.beatmap.music, music_time_before_load)
+            game.beatmap.music_time_ms = beatmap_music_position_interpolated_ms(&game.beatmap)
         } else {
             game.beatmap.music_time_ms = music_time_before_load
         }
@@ -413,14 +416,17 @@ _beatmap_allocate_internals :: proc(beatmap: ^Beatmap, kept_music: Sound = nil) 
 }
 
 beatmap_seek :: proc(beatmap: ^Beatmap, pos: f64) {
-    sound_set_position_ms(&game.beatmap.music, pos)
+    sound_set_position_ms(&game.beatmap.music, pos - f64(game.user_config.universal_offset_ms))
     beatmap.music_time_ms = beatmap_music_position_interpolated_ms(beatmap)
     beatmap.auto_last_hit_time_ms = beatmap_music_time_ms(beatmap)
 }
 
-// note(isak): rewinds the time-based visibility/expiry state. useful for seeking.
-// the visible-set window, the expiring lists and pending phase transitions are dropped, gameplay effect gfx
-// are freed, and every touched object has its transient state reset.
+beatmap_set_time :: proc(beatmap: ^Beatmap, master_time: f64) {
+    beatmap.music_time_ms = beatmap_game_time_to_music_time(beatmap, master_time)
+    beatmap.auto_last_hit_time_ms = beatmap_music_time_ms(beatmap)
+}
+
+// note(isak): rewinds visibility/expiry state. useful for seeking.
 beatmap_reset_object_state :: proc(beatmap: ^Beatmap) {
     beatmap.visible_hitobject_state = {}
     sb.reset(&beatmap.expiring_hitobjects)
@@ -580,7 +586,7 @@ beatmap_visible_incl_followpoints_bounds :: proc(beatmap: ^Beatmap, map_time: f6
 }
 
 beatmap_play :: proc(beatmap: ^Beatmap, keep_position: bool) {
-    seek_time := beatmap.music_time_ms if keep_position else beatmap.start_time_ms
+    seek_time := beatmap_music_time_ms(beatmap) if keep_position else beatmap.start_time_ms
     game_switch_mode(.PLAY, seek_time)
 }
 

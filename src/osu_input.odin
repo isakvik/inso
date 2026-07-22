@@ -166,7 +166,7 @@ rebindable_input_key_code :: proc(key: Rebindable_Input_Key) -> cstring {
 
 handle_play_input_events :: proc() {
     if key_is_pressed(.ESCAPE) && !game.tournament_client {
-        game_switch_mode(.EDITOR, game.beatmap.music_time_ms)
+        game_switch_mode(.EDITOR, beatmap_music_time_ms(&game.beatmap))
     }
     
     if key_is_pressed(.KP_PLUS) {
@@ -270,12 +270,12 @@ handle_editor_input_events :: proc() {
     }
     
     if key_is_pressed(.Z) {
-        if len(game.beatmap.hitobjects) > 0 && 
-           !f64_within(game.beatmap.music_time_ms, game.beatmap.hitobjects[0].start_time_ms, 3) {
-            editor_seek(&game.beatmap, game.beatmap.hitobjects[0].start_time_ms - f64(game.user_config.universal_offset_ms))
+        if len(game.beatmap.hitobjects) > 0 &&
+           !f64_within(beatmap_music_time_ms(&game.beatmap), game.beatmap.hitobjects[0].start_time_ms, 3) {
+            editor_seek(&game.beatmap, game.beatmap.hitobjects[0].start_time_ms)
         }
         else {
-            editor_seek(&game.beatmap, game.beatmap.start_time_ms - f64(game.user_config.universal_offset_ms))
+            editor_seek(&game.beatmap, game.beatmap.start_time_ms)
         }
     }
 

@@ -16,6 +16,9 @@ audio: struct {
     output_mixer:   bass.HSTREAM,
     music_mixer:    bass.HSTREAM,
     hitsound_mixer: bass.HSTREAM,
+    // note: wasapi device buffer in ms; decode positions lead the speakers by this much.
+    // 0 on the linux dev path (BASS's own output buffering, uncompensated)
+    output_latency_ms: f64,
 }
 
 Device :: i32
@@ -125,9 +128,10 @@ when ODIN_OS == .Windows {
         bass.WASAPI_GetDeviceInfo(bass.WASAPI_GetDevice(), &device_info)
 
         buffer_samples := info.buflen / (info.chans * _wasapi_format_bytes(info.format))
+        audio.output_latency_ms = f64(buffer_samples) * 1000 / f64(info.freq)
         log.infof("WASAPI output: %s :: %vhz %vch, buffer %v samples (%.1fms), device period min %.1fms / default %.1fms",
             device_info.name, info.freq, info.chans, buffer_samples,
-            f64(buffer_samples) * 1000 / f64(info.freq),
+            audio.output_latency_ms,
             f64(device_info.minperiod) * 1000, f64(device_info.defperiod) * 1000)
 
         return info, true
@@ -378,11 +382,13 @@ sound_get_length_ms :: proc(sound: ^Sound) -> (result: f64) {
     return result
 }
 
+// note: reports the audible position, not the decode position - the raw read leads the speakers
+// by the output buffer. clamped so a fresh start reads 0 while the buffer first fills
 sound_get_position_ms :: proc(sound: ^Sound) -> (result: f64) {
-    if audio.ready { 
+    if audio.ready {
         handle := _sound_get_channel_handle(sound)
         pos := bass.ChannelGetPosition(handle, bass.POS_BYTE)
-        result = bass.ChannelBytes2Seconds(handle, pos) * 1000
+        result = max(0, bass.ChannelBytes2Seconds(handle, pos) * 1000 - audio.output_latency_ms)
     }
     return result
 }

@@ -614,7 +614,7 @@ imgui_update :: proc() {
     imgui.Separator()
 
     if imgui.SmallButton("play") {
-        game_switch_mode(.PLAY, game.beatmap.music_time_ms)
+        game_switch_mode(.PLAY, beatmap_music_time_ms(&game.beatmap))
     }
     if imgui.SmallButton("play from beginning") {
         game_switch_mode(.PLAY, game.beatmap.start_time_ms)

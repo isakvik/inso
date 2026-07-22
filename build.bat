@@ -23,4 +23,8 @@ if %ERRORLEVEL% equ 0 (
 odin build ./src -linker:radlink -debug -out:build/%exec_name% -define:SOKOL_USE_GL=true -define:VERSION=%VERSION%
 set BUILD_ERR=%ERRORLEVEL%
 if %BUILD_ERR% neq 0 exit /b %BUILD_ERR%
+
+odin build ./tools/inso_start -debug -out:build/inso_start.exe
+set BUILD_ERR=%ERRORLEVEL%
+if %BUILD_ERR% neq 0 exit /b %BUILD_ERR%
 echo [build] build OK

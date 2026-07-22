@@ -1,12 +1,10 @@
 package inso
 
-import "core:time"
 import sb "swap_buffer"
 import "slotmap"
 
 import "core:math"
 import "core:math/linalg"
-import "core:strings"
 
 import sdl "vendor:sdl3"
 
@@ -456,7 +454,7 @@ osu_on_init :: proc() {
     game.active_inso_map = &null_mapset.inso_map
     game.active_map = &null_mapset.osu_map
     game.active_skin = skin_load(game.user_config.skin_path)
-    
+
     game.time_rate = 1.0
     game.mode = startup_mode
 
@@ -469,7 +467,7 @@ osu_on_init :: proc() {
     game.beatmap.map_reference = startup_map_reference()
 
     if game.tournament_client {
-        tournament_sync_init()
+        tournament_socket_init()
         if game.user_config.osu_install_path != "" {
             config_import_from_osu(game.user_config.osu_install_path)
         }
@@ -516,7 +514,7 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
     
     osu_handle_mode_switch()
 
-    tournament_sync_poll()
+    tournament_socket_poll()
     tournament_update()
 
     #partial switch game.mode {

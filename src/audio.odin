@@ -39,6 +39,8 @@ Base_Sound :: struct {
     pan: f32, // note(isak): -1.0 - 1.0 range
     time_at: f64,
     expires_at_ms: f64, // note(isak): 0 = no expiry
+    rate_trim: f64,
+    rate_trim_base_freq: f32, // note: captured on first trim; 0 = not yet read
 }
 
 Sound :: union {
@@ -455,6 +457,21 @@ sound_set_speed :: proc(sound: ^Sound, rate: f32) {
             log.error("BASS channel set tempo error:", bass.ErrorGetCode(), compensate_pitch)
         }
     }
+}
+
+// note: nudges playback rate by a fraction (0.0002 = 0.02%, ~a third of a cent). a continuous
+// resample-ratio change - no waveform discontinuity, so no clicks. the tournament servo's actuator
+sound_set_rate_trim :: proc(sound: ^Sound, trim: f64) {
+    if !audio.ready do return
+    base := cast(^Base_Sound)sound
+    if base.rate_trim == trim do return
+
+    handle := _sound_get_channel_handle(sound)
+    if base.rate_trim_base_freq == 0 {
+        if !bass.ChannelGetAttribute(handle, bass.ATTRIB_FREQ, &base.rate_trim_base_freq) do return
+    }
+    bass.ChannelSetAttribute(handle, bass.ATTRIB_FREQ, base.rate_trim_base_freq * f32(1 + trim))
+    base.rate_trim = trim
 }
 
 sound_play :: proc(sound: ^Sound, start_paused: bool = false, loop: bool = false, volume: f32 = 1.0, category: Sound_Category = .MUSIC) {

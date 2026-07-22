@@ -7,6 +7,9 @@ import "core:strconv"
 import "core:strings"
 import sdl "vendor:sdl3"
 
+// note(isak): difference between lazer and stable offset, as noted by lazer's FramedBeatmapClock
+STABLE_FEEL_OFFSET_MS :: 15
+
 // note(isak): maps relevant settings from the newest osu!.*.cfg into inso's config keys. this
 // is implemented mostly for the surprise factor, but is useful for letting our tournament players
 // set up/warm up on stable, and load their configs without having them get used to a new UI
@@ -49,7 +52,15 @@ config_import_from_osu :: proc(osu_install_path: string) {
     if v, ok := get_percent(pairs, "VolumeEffect");    ok do cfg.hitsound_volume = v
 
     if v, ok := get(pairs, "Offset"); ok {
-        if n, ok2 := strconv.parse_int(v); ok2 do cfg.universal_offset_ms = n
+        if n, ok2 := strconv.parse_int(v); ok2 {
+            // note(isak): in addition to the perceived lazer/stable difference constant, we also add
+            // the device buffer size difference because we subtract output latency from the music 
+            // clock in inso
+            feel_correction := STABLE_FEEL_OFFSET_MS + int(audio.output_latency_ms + 0.5)
+            cfg.universal_offset_ms = n + feel_correction
+            log.infof("osu import: offset %v -> %v (stable feel +%v, device buffer +%.1fms)",
+                n, cfg.universal_offset_ms, STABLE_FEEL_OFFSET_MS, audio.output_latency_ms)
+        }
     }
     if v, ok := get_percent(pairs, "DimLevel"); ok do cfg.bg_dim = v
     if v, ok := get(pairs, "CursorSize"); ok {

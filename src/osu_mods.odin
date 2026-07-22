@@ -2,6 +2,7 @@ package inso
 
 Osu_Mod :: enum {
     EASY,
+    HALF_TIME,
     HIDDEN,
     HARD_ROCK,
     DOUBLE_TIME,
@@ -19,6 +20,7 @@ Osu_Mod_Info :: struct {
 
 osu_mod_table := [Osu_Mod]Osu_Mod_Info {
     .EASY        = { name = "Easy",        apply_to_map = easy_apply_to_map },
+    .HALF_TIME   = { name = "Half time",   apply_to_map = half_time_apply_to_map },
     .HIDDEN      = { name = "Hidden",      apply_to_graphics = hidden_apply_to_graphics },
     .HARD_ROCK   = { name = "Hard rock",   apply_to_map = hard_rock_apply_to_map },
     .DOUBLE_TIME = { name = "Double time", apply_to_map = double_time_apply_to_map },
@@ -99,6 +101,10 @@ hard_rock_apply_to_map :: proc() {
             node.y = 384 - node.y
         }
     }
+}
+
+half_time_apply_to_map :: proc() {
+    game.time_rate = 0.75
 }
 
 double_time_apply_to_map :: proc() {

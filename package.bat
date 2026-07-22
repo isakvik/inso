@@ -13,6 +13,9 @@ echo [package] building %VERSION%...
 odin build ./src -out:%release_dir%\%exec_name% -define:SOKOL_USE_GL=true -define:VERSION=%VERSION% -define:WITH_CRASH_HANDLER=true -subsystem:windows -o:speed
 if %ERRORLEVEL% neq 0 goto stop
 
+odin build ./tools/inso_start -out:%release_dir%\inso_start.exe -o:speed
+if %ERRORLEVEL% neq 0 goto stop
+
 echo [package] copying runtime files...
 
 xcopy ".\lib\windows\*.dll" ".\%release_dir%" /Y /I /Q

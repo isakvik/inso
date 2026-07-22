@@ -1,16 +1,18 @@
 package inso
 
 import "core:log"
-import "core:mem"
 import "core:net"
-import "core:math/rand"
+
+// note(isak): receive side only - the go signal comes from the conductor tool in tools/inso_start,
+// which mirrors this wire format. the version field guards against drift between the two.
 
 TOURNAMENT_SYNC_PORT    :: 8727
 TOURNAMENT_SYNC_MAGIC   :: u32(0x4F534E49) // "INSO" little-endian
 TOURNAMENT_SYNC_VERSION :: u16(1)
 
 // note(isak): fixed-width, #packed so the byte layout is identical regardless of how the
-// compiler would otherwise pad it. every box runs the same x86 binary so endianness is moot.
+// compiler would otherwise pad it. every box runs x86 binaries from the same compiler so
+// endianness is moot.
 Sync_Packet :: struct #packed {
     magic:       u32,
     version:     u16,
@@ -25,9 +27,9 @@ Sync_Message_Kind :: enum u8 {
 
 tournament_socket:        net.UDP_Socket
 tournament_socket_active: bool
-tournament_last_match_id: u32 // dedup repeated broadcasts + our own echo
+tournament_last_match_id: u32 // dedup the conductor's spaced resends
 
-tournament_sync_init :: proc() {
+tournament_socket_init :: proc() {
     socket, bind_err := net.make_bound_udp_socket(net.IP4_Any, TOURNAMENT_SYNC_PORT)
     if bind_err != nil {
         log.error("tournament sync: bind failed:", bind_err)
@@ -47,7 +49,7 @@ tournament_sync_init :: proc() {
 }
 
 // note(isak): non-blocking recv errors with .Would_Block once the socket is empty, ending the drain.
-tournament_sync_poll :: proc() {
+tournament_socket_poll :: proc() {
     if !tournament_socket_active do return
 
     buf: [size_of(Sync_Packet)]byte
@@ -66,24 +68,5 @@ tournament_sync_poll :: proc() {
         case .START:
             tournament_request_start(f64(packet.start_in_ms))
         }
-    }
-}
-
-// conductor side (production PC): fire the go signal to the whole subnet. start_in_ms is slack so
-// the packet lands on every stage box before it acts. resent a handful of times; idempotent via match_id.
-tournament_sync_send_start :: proc(start_in_ms: u32 = 250) {
-    if !tournament_socket_active do return
-
-    packet := Sync_Packet{
-        magic       = TOURNAMENT_SYNC_MAGIC,
-        version     = TOURNAMENT_SYNC_VERSION,
-        kind        = .START,
-        match_id    = rand.uint32(),
-        start_in_ms = start_in_ms,
-    }
-
-    broadcast := net.Endpoint{ address = net.IP4_Address{255, 255, 255, 255}, port = TOURNAMENT_SYNC_PORT }
-    for _ in 0..<4 {
-        net.send_udp(tournament_socket, mem.ptr_to_bytes(&packet), broadcast)
     }
 }

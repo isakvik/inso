@@ -9,16 +9,28 @@ import sb "swap_buffer"
 import "slotmap"
 
 
+// note(isak): which system owns music_time_ms. useful for synchronization across devices (LAN play)
+Music_Clock_Source :: enum {
+    AUDIO, // derived from audio player source
+    WALL, // derived from real time; wall_anchor_tsc. keeps the music in line through 
+}
+
 Beatmap :: struct {
     // -- game data fields
-    
+
     map_reference: Map_Reference,
-    
+
     music: Sound,
     music_time_ms: f64, // note(isak): for game logic, don't refer to this directly, use beatmap_music_time_ms() instead
     music_time_uninterpolated_ms: f64,
     length_ms: f64,
     start_time_ms: f64,
+
+    music_clock_source: Music_Clock_Source,
+    wall_anchor_tsc: i64,
+    wall_anchor_music_time_ms: f64,
+    wall_servo_error_ms: f64,
+    wall_snap_cooldown_until_ms: f64, // a still-stalled device re-snaps at intervals, not every frame
     
     current_timing_point_index_uninherited: int,
     current_timing_point_index_inherited: int,
@@ -82,7 +94,7 @@ Beatmap :: struct {
 BEATMAP_LEAD_IN_MIN_MS :: 1000.0
 BEATMAP_LEAD_IN_MAX_MS :: 1800.0
 
-// note(isak): empty run-up before the first object. one second minimum, stretching toward 1.8s
+// note(isak): lead-in time before the first object. one second minimum, stretching toward 1.8s
 // when the approach circle needs longer to arrive than that
 beatmap_lead_in_ms :: proc(beatmap: ^Beatmap) -> f64 {
     first_preempt := beatmap.preempt_ms
@@ -167,23 +179,38 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap, kept_mu
 }
 
 beatmap_on_update :: proc(beatmap: ^Beatmap) {
-    if beatmap.music_time_ms < 0 {
-        beatmap.music_time_ms += game.dt * f64(game.paused ? 0 : game.time_rate)
-        
-        if beatmap.music_time_ms >= 0 {
-            sound_resume(&beatmap.music)
-            sound_set_position_ms(&beatmap.music, 0)
-            
-            beatmap.music_time_ms = beatmap_music_position_interpolated_ms(beatmap)
+    switch beatmap.music_clock_source {
+    case .AUDIO:
+        if beatmap.music_time_ms < 0 {
+            beatmap.music_time_ms += game.dt * f64(game.paused ? 0 : game.time_rate)
+
+            if beatmap.music_time_ms >= 0 {
+                sound_resume(&beatmap.music)
+                sound_set_position_ms(&beatmap.music, 0)
+
+                beatmap.music_time_ms = beatmap_music_position_interpolated_ms(beatmap)
+            } else {
+                sound_pause(&beatmap.music)
+            }
+        } else if game.mode == .PLAY && sound_is_finished(&beatmap.music) && !beatmap.score.completed {
+            beatmap.music_time_ms += game.dt * f64(game.paused ? 0 : game.time_rate)
         } else {
-            sound_pause(&beatmap.music)
+            // note(isak): audio clock time is determined by the sound library (and whether we were able to play music),
+            // but song time interpolation is required because BASS reports play position in buffer size granularity
+            beatmap.music_time_ms = beatmap_music_position_interpolated_ms(&game.beatmap)
         }
-    } else if game.mode == .PLAY && sound_is_finished(&beatmap.music) && !beatmap.score.completed {
-        beatmap.music_time_ms += game.dt * f64(game.paused ? 0 : game.time_rate)
-    } else {
-        // note(isak): map play time is determined by the sound library (and whether we were able to play music or not),
-        // but song time interpolation is required because BASS reports play position in buffer size granularity
-        beatmap.music_time_ms = beatmap_music_position_interpolated_ms(&game.beatmap)
+
+    case .WALL:
+        // note(isak): incompatible with pausing and time rate handling (good enough for YEAST)
+        was_lead_in := beatmap.music_time_ms < 0
+        beatmap.music_time_ms = beatmap.wall_anchor_music_time_ms +
+            tsc_to_ms(u64(game.frame_clock_tsc - beatmap.wall_anchor_tsc))
+
+        if was_lead_in && beatmap.music_time_ms >= 0 {
+            sound_resume(&beatmap.music)
+            sound_set_position_ms(&beatmap.music, beatmap.music_time_ms)
+        }
+        tournament_audio_servo(beatmap)
     }
     
     has_new_timing_point := beatmap_update_current_timing_section(beatmap)
@@ -210,7 +237,9 @@ beatmap_on_update :: proc(beatmap: ^Beatmap) {
     }
 }
 
-// note(isak): steps the fixed-rate simulation clock up to the current playhead, dispatching on_fixed_update and
+import fmt "core:fmt"
+
+// note(isak): steps the fixed-rate simulation clock up to the current music time, dispatching on_fixed_update and
 // draining scheduled events on each whole tick rather than once per render frame
 beatmap_advance_fixed_clock :: proc(beatmap: ^Beatmap) {
     dt := beatmap.fixed_update_dt_ms
@@ -229,7 +258,7 @@ beatmap_advance_fixed_clock :: proc(beatmap: ^Beatmap) {
 
     offset_ms := f64(game.user_config.universal_offset_ms)
     // note(isak): guard against freezing
-    remaining_ticks := 1 << 20
+    remaining_ticks := 1 << 16
     for beatmap.last_fixed_tick_ms + dt <= target_ms {
         beatmap.last_fixed_tick_ms += dt
 
@@ -416,6 +445,8 @@ _beatmap_allocate_internals :: proc(beatmap: ^Beatmap, kept_music: Sound = nil) 
 }
 
 beatmap_seek :: proc(beatmap: ^Beatmap, pos: f64) {
+    // an explicit seek is manual control; clock authority returns to the audio
+    beatmap.music_clock_source = .AUDIO
     sound_set_position_ms(&game.beatmap.music, pos - f64(game.user_config.universal_offset_ms))
     beatmap.music_time_ms = beatmap_music_position_interpolated_ms(beatmap)
     beatmap.auto_last_hit_time_ms = beatmap_music_time_ms(beatmap)

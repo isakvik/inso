@@ -25,11 +25,6 @@ to_ui_scale :: proc(v: f32) -> f32 {
 
 //////////////////////////////////////////////////////
 // note(isak): ui component relevance
-//
-// the interesting part of any hud element is *when* it belongs on screen, not how it draws. that
-// relevance lives here as a single predicate over current game state; each draw proc opens with its
-// own ui_component_visible guard so the call site is pure layering. hitobjects aren't listed - the
-// playfield core is unconditional and doesn't get a vote.
 
 UI_Component :: enum {
     PLAYFIELD_BORDER,
@@ -40,6 +35,7 @@ UI_Component :: enum {
     ACCURACY_COUNTER,
     RESULTS_SCREEN,
     REBIND_PROMPT,
+    TOURNAMENT_WAITING_SCREEN,
 }
 
 ui_component_visible :: proc(c: UI_Component) -> bool {
@@ -55,6 +51,7 @@ ui_component_visible :: proc(c: UI_Component) -> bool {
         return game.input.rebinding_key != .NONE ||
             app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY ||
             app.mouse_input_mode == .REBINDING_MOUSE_SECONDARY
+    case .TOURNAMENT_WAITING_SCREEN: return game.mode == .TOURNAMENT_WAIT_SCREEN
     }
     return false
 }
@@ -83,11 +80,11 @@ Hit_Error_Bar :: struct {
     count:   int,
 }
 
-hit_error_bar_reset :: proc(hit_error_bar: ^Hit_Error_Bar) {
+hit_error_bar_clear :: proc(hit_error_bar: ^Hit_Error_Bar) {
     hit_error_bar^ = {}
 }
 
-hit_error_bar_record :: proc(hit_error_bar: ^Hit_Error_Bar, error_ms: f64, judgement: Judgement_Type) {
+hit_error_bar_add :: proc(hit_error_bar: ^Hit_Error_Bar, error_ms: f64, judgement: Judgement_Type) {
     hit_error_bar.entries[hit_error_bar.next] = {
         error_ms    = error_ms,
         time_at = game.beatmap.music_time_ms,
@@ -450,7 +447,9 @@ results_screen_update :: proc() {
 results_screen_draw :: proc() {
     if !ui_component_visible(.RESULTS_SCREEN) do return
 
-    r_check_and_bind_layer(.PLATFORM)
+    s :: 1.5
+
+    r_check_and_bind_layer(.TOP)
     r_push_transform(fullscreen_transform)
     r_draw_quad(&window.renderer.quad_geometry,
         vec2{0,0}, vec2{1,1},
@@ -459,44 +458,41 @@ results_screen_draw :: proc() {
 
     score := &game.beatmap.score
     center_x := window.rect.w / 2
-    y := window.rect.h / 2 - to_ui_scale(130)
+    y := window.rect.h / 2 - to_ui_scale(130 * s)
 
     map_name := fmt.tprintf("%s - %s [%s]",
         game.active_map.artist, game.active_map.title, game.active_map.difficulty_name)
     push_text(&window.renderer, map_name,
-        pos = {center_x, y}, size = to_ui_scale(20),
+        pos = {center_x, y}, size = to_ui_scale(20 * s),
         color = {255, 255, 255, 180}, align_h = .Center, align_v = .Middle)
-    y += to_ui_scale(60)
+    y += to_ui_scale(60 * s)
 
     push_text(&window.renderer, fmt.tprintf("%.2f%%", score_accuracy(score) * 100),
-        pos = {center_x, y}, size = to_ui_scale(56),
+        pos = {center_x, y}, size = to_ui_scale(56 * s),
         color = color_white, align_h = .Center, align_v = .Middle)
-    y += to_ui_scale(52)
+    y += to_ui_scale(52 * s)
 
     push_text(&window.renderer, fmt.tprintf("%dx max combo", score.max_combo),
-        pos = {center_x, y}, size = to_ui_scale(24),
+        pos = {center_x, y}, size = to_ui_scale(24 * s),
         color = {255, 255, 255, 220}, align_h = .Center, align_v = .Middle)
-    y += to_ui_scale(44)
+    y += to_ui_scale(44 * s)
 
     counts := fmt.tprintf("marvelous %d   good %d   ok %d   miss %d",
         score.hit_counts[.MARVELOUS], score.hit_counts[.GOOD],
         score.hit_counts[.OK], score.hit_counts[.MISS])
     push_text(&window.renderer, counts,
-        pos = {center_x, y}, size = to_ui_scale(18),
+        pos = {center_x, y}, size = to_ui_scale(18 * s),
         color = {255, 255, 255, 180}, align_h = .Center, align_v = .Middle)
-    y += to_ui_scale(30)
+    y += to_ui_scale(30 * s)
 
     hit_errors := score_hit_error_stats()
     push_text(&window.renderer,
         fmt.tprintf("unstable rate %.1f   %.2f ms / +%.2f ms", hit_errors.unstable_rate, hit_errors.early_mean, hit_errors.late_mean),
-        pos = {center_x, y}, size = to_ui_scale(18),
+        pos = {center_x, y}, size = to_ui_scale(18 * s),
         color = {255, 255, 255, 180}, align_h = .Center, align_v = .Middle)
 
     push_text(&window.renderer, "score saved to scores/",
-        pos = {center_x, window.rect.h - to_ui_scale(64)}, size = to_ui_scale(14),
-        color = {255, 255, 255, 120}, align_h = .Center, align_v = .Middle)
-    push_text(&window.renderer, "esc to exit",
-        pos = {center_x, window.rect.h - to_ui_scale(40)}, size = to_ui_scale(14),
+        pos = {center_x, window.rect.h - to_ui_scale(64 * s)}, size = to_ui_scale(14 * s),
         color = {255, 255, 255, 120}, align_h = .Center, align_v = .Middle)
 }
 
@@ -577,6 +573,8 @@ score_write_results_file :: proc() {
 }
 
 rebind_screen_draw :: proc() {
+    if !ui_component_visible(.REBIND_PROMPT) do return
+
     if game.input.rebinding_key != .NONE {
         r_check_and_bind_layer(.PLATFORM)
         r_push_transform(fullscreen_transform)
@@ -611,7 +609,7 @@ rebind_screen_draw :: proc() {
             
         push_text(&window.renderer, "Waiting for primary mouse input...",
             pos = {window.rect.w / 2, window.rect.h / 2},
-            size = 16,
+            size = to_ui_scale(16),
             color = {255, 255, 255, 150},
             align_h = .Center,
             align_v = .Middle)
@@ -626,28 +624,55 @@ rebind_screen_draw :: proc() {
 
         push_text(&window.renderer, "Waiting for secondary mouse input...",
             pos = {window.rect.w / 2, window.rect.h / 2},
-            size = 16,
+            size = to_ui_scale(16),
             color = {255, 255, 255, 150},
             align_h = .Center,
             align_v = .Middle)
     }
 }
 
+tournament_waiting_screen_draw :: proc() {
+    if !ui_component_visible(.TOURNAMENT_WAITING_SCREEN) do return
+    
+    r_check_and_bind_layer(.UI)
+    r_push_transform(fullscreen_transform)
+    r_draw_quad(&window.renderer.quad_geometry,
+        vec2{0,0}, vec2{1,1},
+        vec2{0,0}, vec2{1,1},
+        color_black)
 
-GAME_MODE_SWITCH_PRE_FADE_TIMER :: 0.1
-GAME_MODE_SWITCH_POST_FADE_TIMER :: 0.3
+    push_text(&window.renderer, "Waiting for map start...",
+        pos = {window.rect.w / 2, window.rect.h / 2},
+        size = to_ui_scale(32),
+        color = {255, 255, 255, 255},
+        align_h = .Center,
+        align_v = .Middle)
+
+    if game.user_config.osu_install_path == {} {
+        push_text(&window.renderer, "user config is missing osu_install_path",
+            pos = {window.rect.w / 2, window.rect.h / 2 + to_ui_scale(48)},
+            size = to_ui_scale(24),
+            color = {255, 32, 32, 255},
+            align_h = .Center,
+            align_v = .Middle)
+    }
+}
+
+GAME_MODE_SWITCH_PRE_FADE_S :: 0.1
+GAME_MODE_SWITCH_POST_FADE_S :: 0.2
 
 fade_transition_draw :: proc() {
     switch_elapsed := game.frame_clock_s - game.last_mode_switch_time
     if game.last_mode_switch_time > 0 &&
-            switch_elapsed <= GAME_MODE_SWITCH_PRE_FADE_TIMER + GAME_MODE_SWITCH_POST_FADE_TIMER {
-        fade_in := f32(switch_elapsed / GAME_MODE_SWITCH_PRE_FADE_TIMER)
-        fade_out := f32((GAME_MODE_SWITCH_PRE_FADE_TIMER + GAME_MODE_SWITCH_POST_FADE_TIMER -
-            switch_elapsed) / GAME_MODE_SWITCH_POST_FADE_TIMER)
+            switch_elapsed <= GAME_MODE_SWITCH_PRE_FADE_S + GAME_MODE_SWITCH_POST_FADE_S {
+        fade_in := f32(switch_elapsed / GAME_MODE_SWITCH_PRE_FADE_S)
+        fade_out := f32((GAME_MODE_SWITCH_PRE_FADE_S + GAME_MODE_SWITCH_POST_FADE_S -
+            switch_elapsed) / GAME_MODE_SWITCH_POST_FADE_S)
         fade_alpha := clamp(min(fade_in, fade_out), 0, 1)
 
-        r_bind_layer_and_push_current_state(.PLATFORM, transform = clipspace_transform)
-        r_draw_quad(&window.renderer.quad_geometry, {0, 0}, {1, 1}, {0, 0}, {1, 1},
+        r_bind_layer_and_push_current_state(.BLANK, transform = clipspace_transform)
+        r_draw_quad(&window.renderer.quad_geometry, 
+            {0, 0}, {1, 1}, {0, 0}, {1, 1},
             with_alpha(color_black, fade_alpha))
     }
 }

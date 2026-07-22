@@ -167,10 +167,6 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap, kept_mu
 }
 
 beatmap_on_update :: proc(beatmap: ^Beatmap) {
-    if sound_is_finished(&beatmap.music) && game.mode != .PLAY {
-        beatmap_open(beatmap.map_reference)
-    }
-    
     if beatmap.music_time_ms < 0 {
         beatmap.music_time_ms += game.dt * f64(game.paused ? 0 : game.time_rate)
         
@@ -298,8 +294,8 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
         fast_reload_path = mapset_reload_map_data(game.active_mapset)
     }
     if !fast_reload_path {
+        cleanup_textures_for_rendering()
         if game.beatmap_active {
-            cleanup_textures_for_rendering()
             mapset_free(game.active_mapset)
             game.beatmap_active = false
         }
@@ -326,7 +322,7 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
             mapset_free(game.active_mapset)
         }
         if !opened {
-            log.panic("beatmap_open :: no loadable beatmap found")
+            log.panic("no loadable beatmap found")
         }
         game.active_map = &game.active_mapset.osu_map
         game.active_inso_map = &game.active_mapset.inso_map
@@ -412,7 +408,7 @@ _beatmap_allocate_internals :: proc(beatmap: ^Beatmap, kept_music: Sound = nil) 
     
     queue.init(&beatmap.judgements, 8192, memory.allocators[.JUDGEMENTS])
     queue.append(&beatmap.judgements, null_judgement)
-    hit_error_bar_reset(&game.hit_error_bar)
+    hit_error_bar_clear(&game.hit_error_bar)
     sb.init(&beatmap.expiring_hitobjects, 256, memory.allocators[.MAP_DATA])
 }
 

@@ -8,6 +8,117 @@ import sb "swap_buffer"
 //////////////////////////////////////////////////////
 // note(isak): hitobject logic core
 
+hitobject_pos :: proc(hobj: ^Hitobject) -> vec2 {
+    return hobj.pos + hobj.script_pos_translation
+}
+
+hitobject_tail_pos :: proc(hobj: ^Hitobject) -> vec2 {
+    path := &game.beatmap.slider_paths[hobj.slider_path_index]
+    tail_pos := (path.pos if hobj.slider_state.path_travel_count % 2 == 0 else path.end_pos) + hobj.script_pos_translation
+    return tail_pos
+}
+
+hitobject_duration :: proc(hobj: ^Hitobject) -> (result: f64) {
+    return hobj.end_time_ms - hobj.start_time_ms
+}
+
+hitobject_head_hittable :: proc(hobj: ^Hitobject, map_time: f64) -> bool {
+    if hobj.phase != .PREEMPT && hobj.phase != .POSTEMPT do return false
+    if hobj.type != .CIRCLE && hobj.type != .SLIDER do return false
+    return map_time <= hobj.start_time_ms + game.beatmap.timing_windows.ok
+}
+
+// note(isak): horizontal offset for the notelock shake. visual only
+hitobject_notelock_shake_offset :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
+    if hobj.notelock_shake_at_ms == 0 do return {}
+    t := map_time - hobj.notelock_shake_at_ms
+    if t < 0 || t >= NOTELOCK_SHAKE_DURATION_MS do return {}
+
+    progress := t / NOTELOCK_SHAKE_DURATION_MS
+    envelope := f32(1 - progress)
+    phase := f32(2 * math.PI * NOTELOCK_SHAKE_OSCILLATIONS * progress)
+    return {NOTELOCK_SHAKE_AMPLITUDE_OSUPX * envelope * math.sin(phase), 0}
+}
+
+hitobject_preempt_ms :: proc(hobj: ^Hitobject) -> f64 {
+    return hobj.custom_preempt_ms if hobj.custom_preempt_ms != 0 else game.beatmap.preempt_ms
+}
+
+hitobject_radius_osupx :: proc(hobj: ^Hitobject) -> f32 {
+    return hobj.custom_radius_osupx if hobj.custom_radius_osupx != 0 else game.beatmap.circle_radius_osupx
+}
+
+// note(isak): uses max_preempt_ms (max of global and all per-object preempts) to keep visible
+// start times sorted for the iterator while still including custom AR objects on time.
+hitobject_visible_start_time :: proc(hobj: ^Hitobject) -> (result: f64) {
+    start_time := hobj.start_time_ms
+    #partial switch hobj.type {
+    case .CIRCLE, .SLIDER, .SPINNER: start_time -= max(game.beatmap.max_preempt_ms, game.beatmap.timing_windows.miss)
+    }
+    return start_time
+}
+
+// note(isak): exact time an object enters PREEMPT and becomes hittable. gates on the object's own
+// preempt, unlike the visible-window scan above which must widen by max_preempt_ms to stay sorted.
+// the miss window floors it so low-preempt objects are still hittable through their full miss window.
+hitobject_activation_time :: proc(hobj: ^Hitobject) -> (result: f64) {
+    result = hobj.start_time_ms
+    #partial switch hobj.type {
+    case .CIRCLE, .SLIDER, .SPINNER: result -= max(hitobject_preempt_ms(hobj), game.beatmap.timing_windows.miss)
+    }
+    return result
+}
+
+hitobject_visible_end_time :: proc(hobj: ^Hitobject) -> (result: f64) {
+    end_time := hobj.end_time_ms + game.beatmap.timing_windows.ok
+    hit_anim_len := hobj.custom_hit_animation_len_ms != 0 ? hobj.custom_hit_animation_len_ms : OSU_HIT_ANIMATION_LENGTH
+    #partial switch hobj.type {
+    case .CIRCLE, .SLIDER: end_time += hit_anim_len
+    }
+    return end_time
+}
+
+DEFAULT_COMBO_COLORS := [4]Color {
+    {240, 150, 0, 0xFF},
+    {5, 240, 5, 0xFF},
+    {5, 5, 240, 0xFF},
+    {240, 5, 5, 0xFF},
+}
+
+hitobject_combo_color :: proc(hobj: ^Hitobject) -> (result: Color) {
+    combo := hobj.combo_color_index if game.user_config.use_beatmap_combo_color_skips else hobj.combo_index
+
+    if game.user_config.use_beatmap_skin {
+        if game.active_map.num_combo_colors > 0 {
+            result = game.active_map.combo_colors[combo % game.active_map.num_combo_colors]
+        } else {
+            result = DEFAULT_COMBO_COLORS[combo % len(DEFAULT_COMBO_COLORS)]
+        }
+        return result
+    }
+    else {
+        if game.active_skin.num_combo_colors > 0 {
+            result = game.active_skin.combo_colors[combo % game.active_skin.num_combo_colors]
+        } else {
+            result = DEFAULT_COMBO_COLORS[combo % len(DEFAULT_COMBO_COLORS)]
+        }
+        return result
+    }
+}
+
+hitobject_set_preempt :: proc(hobj: ^Hitobject, preempt: f64) {
+    hobj.custom_preempt_ms = preempt
+    if preempt > game.beatmap.max_preempt_ms {
+        game.beatmap.max_preempt_ms = preempt
+    }
+}
+
+hitobject_emit_phase_transition :: proc(hobj: ^Hitobject, to: Hitobject_Phase) {
+    sb.append(&game.beatmap.phase_transitions, Phase_Transition{hobj.index, hobj.phase, to})
+    hobj.phase = to
+}
+
+
 // note(isak): osu stores timing point hitsound volume as a 0-100 percentage
 timing_point_volume :: proc(timing_point: ^Timing_Point) -> f32 {
     return f32(timing_point.volume) / 100
@@ -73,7 +184,7 @@ hitobject_on_click :: proc(hobj: ^Hitobject, click_time: f64) -> (result: Judgem
         // note(isak): the error bar reads the committed judgement back so a filter-replaced
         // timing error shows what was actually scored
         committed := queue.get(&game.beatmap.judgements, hobj.judgement_index)
-        hit_error_bar_record(&game.hit_error_bar, committed.time_error_ms, result)
+        hit_error_bar_add(&game.hit_error_bar, committed.time_error_ms, result)
 
         if result != .MISS {
             if hobj.type == .SLIDER {

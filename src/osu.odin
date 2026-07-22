@@ -43,13 +43,15 @@ game: struct {
     mode_seek_time_on_switch: f64,
     
     user_config: User_Configuration,
+    tournament_client: bool,
+    tournament_initial_map_path: string,
     
     input: struct {
         k1, k2, m1, m2: Button_State,
         keys: [Rebindable_Input_Key]sdl.Scancode,
 
         rebinding_key: Rebindable_Input_Key,
-        rebind_captured_code: sdl.Scancode,
+        captured_scancode: sdl.Scancode,
 
         mouse_keys_enabled: bool,
         mouse_pos: vec2,
@@ -106,11 +108,8 @@ Game_Mode :: enum {
     TOURNAMENT_WAIT_SCREEN,
 }
 
-game_switch_mode :: proc(mode: Game_Mode, seek_time: f64) {
-    game.mode_switching_to = mode
-    game.mode_seek_time_on_switch = seek_time
-    game.last_mode_switch_time = game.frame_clock_s
-}
+@(rodata) null_mapset := Mapset{}
+@(rodata) null_skin := Skin{}
 
 // note(isak): we reserve the first slot for safety reasons, and we crash on modification for debug reasons
 @(rodata) null_drawable := Drawable{}
@@ -281,118 +280,6 @@ Slider_State :: struct {
     body_cache: Slider_Body_Cache,
 }
 
-hitobject_pos :: proc(hobj: ^Hitobject) -> vec2 {
-    return hobj.pos + hobj.script_pos_translation
-}
-
-hitobject_tail_pos :: proc(hobj: ^Hitobject) -> vec2 {
-    path := &game.beatmap.slider_paths[hobj.slider_path_index]
-    tail_pos := (path.pos if hobj.slider_state.path_travel_count % 2 == 0 else path.end_pos) + hobj.script_pos_translation
-    return tail_pos
-}
-
-hitobject_duration :: proc(hobj: ^Hitobject) -> (result: f64) {
-    return hobj.end_time_ms - hobj.start_time_ms
-}
-
-// note(isak): whether the object's head can still receive a press, used in notelock calcs
-hitobject_head_hittable :: proc(hobj: ^Hitobject, map_time: f64) -> bool {
-    if hobj.phase != .PREEMPT && hobj.phase != .POSTEMPT do return false
-    if hobj.type != .CIRCLE && hobj.type != .SLIDER do return false
-    return map_time <= hobj.start_time_ms + game.beatmap.timing_windows.ok
-}
-
-// note(isak): render-only horizontal offset for the notelock shake. does not affect hit detection
-hitobject_notelock_shake_offset :: proc(hobj: ^Hitobject, map_time: f64) -> vec2 {
-    if hobj.notelock_shake_at_ms == 0 do return {}
-    t := map_time - hobj.notelock_shake_at_ms
-    if t < 0 || t >= NOTELOCK_SHAKE_DURATION_MS do return {}
-
-    progress := t / NOTELOCK_SHAKE_DURATION_MS
-    envelope := f32(1 - progress)
-    phase := f32(2 * math.PI * NOTELOCK_SHAKE_OSCILLATIONS * progress)
-    return {NOTELOCK_SHAKE_AMPLITUDE_OSUPX * envelope * math.sin(phase), 0}
-}
-
-hitobject_preempt_ms :: proc(hobj: ^Hitobject) -> f64 {
-    return hobj.custom_preempt_ms if hobj.custom_preempt_ms != 0 else game.beatmap.preempt_ms
-}
-
-hitobject_radius_osupx :: proc(hobj: ^Hitobject) -> f32 {
-    return hobj.custom_radius_osupx if hobj.custom_radius_osupx != 0 else game.beatmap.circle_radius_osupx
-}
-
-// note(isak): uses max_preempt_ms (max of global and all per-object preempts) to keep visible
-// start times monotonic for the iterator while still including custom-preempt objects on time.
-hitobject_visible_start_time :: proc(hobj: ^Hitobject) -> (result: f64) {
-    start_time := hobj.start_time_ms
-    #partial switch hobj.type {
-    case .CIRCLE, .SLIDER, .SPINNER: start_time -= max(game.beatmap.max_preempt_ms, game.beatmap.timing_windows.miss)
-    }
-    return start_time
-}
-
-// note(isak): exact time an object enters PREEMPT and becomes hittable. gates on the object's own
-// preempt, unlike the visible-window scan above which must widen by max_preempt_ms to stay monotonic.
-// the miss window floors it so low-preempt objects are still hittable through their full miss window.
-hitobject_activation_time :: proc(hobj: ^Hitobject) -> (result: f64) {
-    result = hobj.start_time_ms
-    #partial switch hobj.type {
-    case .CIRCLE, .SLIDER, .SPINNER: result -= max(hitobject_preempt_ms(hobj), game.beatmap.timing_windows.miss)
-    }
-    return result
-}
-
-hitobject_visible_end_time :: proc(hobj: ^Hitobject) -> (result: f64) {
-    end_time := hobj.end_time_ms + game.beatmap.timing_windows.ok
-    hit_anim_len := hobj.custom_hit_animation_len_ms != 0 ? hobj.custom_hit_animation_len_ms : OSU_HIT_ANIMATION_LENGTH
-    #partial switch hobj.type {
-    case .CIRCLE, .SLIDER: end_time += hit_anim_len
-    }
-    return end_time
-}
-
-DEFAULT_COMBO_COLORS := [4]Color {
-    {240, 150, 0, 0xFF},
-    {5, 240, 5, 0xFF},
-    {5, 5, 240, 0xFF},
-    {240, 5, 5, 0xFF},
-}
-
-hitobject_combo_color :: proc(hobj: ^Hitobject) -> (result: Color) {
-    combo := hobj.combo_color_index if game.user_config.use_beatmap_combo_color_skips else hobj.combo_index
-
-    if game.user_config.use_beatmap_skin {
-        if game.active_map.num_combo_colors > 0 {
-            result = game.active_map.combo_colors[combo % game.active_map.num_combo_colors]
-        } else {
-            result = DEFAULT_COMBO_COLORS[combo % len(DEFAULT_COMBO_COLORS)]
-        }
-        return result
-    }
-    else {
-        if game.active_skin.num_combo_colors > 0 {
-            result = game.active_skin.combo_colors[combo % game.active_skin.num_combo_colors]
-        } else {
-            result = DEFAULT_COMBO_COLORS[combo % len(DEFAULT_COMBO_COLORS)]
-        }
-        return result
-    }
-}
-
-hitobject_set_preempt :: proc(hobj: ^Hitobject, preempt: f64) {
-    hobj.custom_preempt_ms = preempt
-    if preempt > game.beatmap.max_preempt_ms {
-        game.beatmap.max_preempt_ms = preempt
-    }
-}
-
-hitobject_emit_phase_transition :: proc(hobj: ^Hitobject, to: Hitobject_Phase) {
-    sb.append(&game.beatmap.phase_transitions, Phase_Transition{hobj.index, hobj.phase, to})
-    hobj.phase = to
-}
-
-
 Timing_Point_Type :: enum {
     UNINHERITED, // red lines
     INHERITED,   // green lines
@@ -450,6 +337,7 @@ Layer :: enum {
     CURSOR,
     TOP,
     PLATFORM, // note(isak): engine/debug overlays; always composited onto the real screen, on top of any post-processing
+    BLANK,
 }
 
 
@@ -557,7 +445,14 @@ Osu_Map :: struct {
 }
 
 
-osu_on_init :: proc(startup_mode: Game_Mode) {
+osu_on_init :: proc() {
+    startup_mode: Game_Mode = .TOURNAMENT_WAIT_SCREEN if game.tournament_client else .EDITOR
+
+    game.active_mapset = &null_mapset
+    game.active_inso_map = &null_mapset.inso_map
+    game.active_map = &null_mapset.osu_map
+    game.active_skin = skin_load(game.user_config.skin_path)
+    
     game.time_rate = 1.0
     game.mode = startup_mode
 
@@ -566,6 +461,22 @@ osu_on_init :: proc(startup_mode: Game_Mode) {
 
     game.input.keys = game.user_config.keys
     game.input.mouse_keys_enabled = game.user_config.mouse_keys_enabled
+    
+    if game.tournament_client {
+        if game.user_config.osu_install_path != "" {
+            config_import_from_osu(game.user_config.osu_install_path)
+        }
+        
+        if game.tournament_initial_map_path != "" {
+            game.beatmap.map_reference = map_reference_from_path(game.tournament_initial_map_path)
+        }
+    } else {
+        //-- @temp todo(isak): handle this properly when menu mode is a thing
+        initial_map_ref :=
+            len(app.map_references) > 0 ? app.map_references[0] : Map_Reference{ folder_path = "songs/test/" }
+        //--
+        beatmap_open(initial_map_ref)
+    }
 }
 
 osu_on_update :: proc(dt: f64, frame_tsc: i64) {
@@ -605,46 +516,121 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
             handle_menu_input_events()
             
         case .TOURNAMENT_WAIT_SCREEN: 
-            if key_is_pressed(.KP_ENTER) {
+            if key_is_pressed(.RETURN) {
                 game_switch_mode(.PLAY, 0)
             }
     }
     handle_universal_input_events()
-    
-    beatmap_on_update(&game.beatmap)
-    
-    map_time := beatmap_music_time_ms(&game.beatmap)
-    visible_hobjs := beatmap_get_visible_hitobjects(&game.beatmap, map_time)
-    
-    // note(isak): handle hitobject phase changes
-    for &hobj in visible_hobjs {
-        if hobj.phase == .NONE {
-            if hitobject_activation_time(&hobj) < map_time && map_time < hitobject_visible_end_time(&hobj) {
-                hitobject_emit_phase_transition(&hobj, .PREEMPT)
-                hobj.flags |= {.VISIBLE}
-                sb.append(&game.beatmap.expiring_hitobjects, hobj.index)
+
+    if game.beatmap_active {
+        beatmap_on_update(&game.beatmap)
+        
+        map_time := beatmap_music_time_ms(&game.beatmap)
+        visible_hobjs := beatmap_get_visible_hitobjects(&game.beatmap, map_time)
+        
+        // note(isak): handle hitobject phase changes
+        for &hobj in visible_hobjs {
+            if hobj.phase == .NONE {
+                if hitobject_activation_time(&hobj) < map_time && map_time < hitobject_visible_end_time(&hobj) {
+                    hitobject_emit_phase_transition(&hobj, .PREEMPT)
+                    hobj.flags |= {.VISIBLE}
+                    sb.append(&game.beatmap.expiring_hitobjects, hobj.index)
+                }
+            } else if hobj.phase == .PREEMPT && hobj.start_time_ms < map_time {
+                hitobject_emit_phase_transition(&hobj, .POSTEMPT)
             }
-        } else if hobj.phase == .PREEMPT && hobj.start_time_ms < map_time {
-            hitobject_emit_phase_transition(&hobj, .POSTEMPT)
+        }
+    
+        if game.playfield_dirty_transform {
+            game.playfield_transform = playfield_build_transform()
+            game.playfield_dirty_transform = false
+        }
+    
+        process_expiring_hitobjects(&game.beatmap.expiring_hitobjects)
+        process_hitobject_hittesting(visible_hobjs, map_time)
+        process_hitobject_phase_transitions()
+        game_sounds_process_expiry()
+        
+        results_screen_update()
+    
+        // game render
+        
+        r_bind_layer_and_push_current_state(.HITOBJECTS, transform = game.playfield_transform)
+        
+        playfield_draw(visible_hobjs, map_time)
+        
+        r_bind_layer_and_push_current_state(.UI,
+            transform = game.playfield_transform,
+            pipeline = { pipeline = builtin_pipeline_slot(.QUAD) })
+    
+        playfield_border_draw()
+        timeline_draw()
+        edit_mode_label_draw()
+    
+        hit_error_bar_draw_screenspace(&game.hit_error_bar)
+        input_display_draw_screenspace()
+        //accuracy_display_draw_screenspace()
+        results_screen_draw()
+    }
+    
+    if !lua_beatmap.hide_skin_cursor {
+        cursor_layer := lua_beatmap.cursor_layer
+        if cursor_layer == .BACKGROUND do cursor_layer = .CURSOR
+        r_bind_layer_and_push_current_state(cursor_layer, transform = window.screenspace_transform)
+    
+        cursor_expand_update()
+        cursor_trail_draw(&cursor_trails[0], mouse.pos)
+        cursor_draw(mouse.pos, skin_texture(.CURSOR))
+        if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {
+            cursor_trail_draw(&cursor_trails[1], mouse_secondary.pos)
+            cursor_draw(mouse_secondary.pos, skin_texture(.CURSOR))
         }
     }
+    
+    tournament_waiting_screen_draw()
+    
+    rebind_screen_draw()
+    fade_transition_draw()
+}
 
-    if game.playfield_dirty_transform {
-        game.playfield_transform = playfield_build_transform()
-        game.playfield_dirty_transform = false
+game_switch_mode :: proc(mode: Game_Mode, seek_time: f64) {
+    game.mode_switching_to = mode
+    game.mode_seek_time_on_switch = seek_time
+    game.last_mode_switch_time = game.frame_clock_s
+}
+
+osu_handle_mode_switch :: proc() {
+    if game.mode_switching_to != .NONE &&
+            game.frame_clock_s >= game.last_mode_switch_time + GAME_MODE_SWITCH_PRE_FADE_S {
+        target := game.mode_switching_to
+        game.mode = target
+        game.mode_switching_to = .NONE
+
+        beatmap_open(game.beatmap.map_reference)
+
+        seek_time := game.mode_seek_time_on_switch
+        if seek_time >= 0 {
+            beatmap_seek(&game.beatmap, seek_time)
+        } else {
+            // note(isak): negative time is the empty lead-in; beatmap_on_update counts it up and
+            // resumes the audio once it reaches zero, so we leave the freshly opened stream paused
+            game.beatmap.music_time_ms = seek_time
+            game.beatmap.auto_last_hit_time_ms = beatmap_music_time_ms(&game.beatmap)
+        }
+
+        game.paused = target == .EDITOR
+        if game.paused {
+            sound_pause(&game.beatmap.music)
+        } else if game.beatmap.music_time_ms >= 0 {
+            sound_resume(&game.beatmap.music)
+        }
+        if lua_cares_about_event(.ON_PAUSE_CHANGE) {
+            lua_beatmap_on_pause_change(game.paused)
+        }
     }
+}
 
-    process_expiring_hitobjects(&game.beatmap.expiring_hitobjects)
-    process_hitobject_hittesting(visible_hobjs, map_time)
-    process_hitobject_phase_transitions()
-    game_sounds_process_expiry()
-    
-    results_screen_update()
-
-    // game render
-    
-    r_bind_layer_and_push_current_state(.HITOBJECTS, transform = game.playfield_transform)
-
+playfield_draw :: proc(visible_hobjs: []Hitobject, map_time: f64) {
     for i in followpoint_first_active(&game.beatmap, map_time)..<len(game.beatmap.followpoint_connections) {
         conn := &game.beatmap.followpoint_connections[i]
         if conn.visible_start_time_ms > map_time do break
@@ -660,94 +646,6 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
     
     r_bind_layer_and_push_current_state(.BACKGROUND, transform = game.playfield_transform)
     process_and_draw_expiring_gfx_refs(&game.beatmap.map_expiring_gfx)
-
-    // note(isak): ui render
-    // todo(isak): "screens" implementation for determining relevant UI components?
-    
-    r_bind_layer_and_push_current_state(.UI, 
-        transform = game.playfield_transform,
-        pipeline = { pipeline = builtin_pipeline_slot(.QUAD) })
-    
-    if game.mode == .EDITOR {
-        playfield_border_draw :: proc(opacity: f32) {
-            cs := game.beatmap.circle_radius_osupx
-            pf_outline := Rect{
-                -cs, -cs, PLAYFIELD_SIZE_OSUPX+2*cs, (PLAYFIELD_SIZE_OSUPX*3/4)+2*cs
-            }
-            r_draw_rect_outline(&window.renderer.quad_geometry, pf_outline, with_alpha(color_white, opacity), 2)
-        }
-        if game.user_config.playfield_border_opacity > 0 {
-            playfield_border_draw(game.user_config.playfield_border_opacity)
-        }
-        
-        timeline_update(&game.ui_timeline)
-        render_timeline_clipspace(&game.ui_timeline)
-
-        push_text(&window.renderer, "Edit mode",
-            pos     = {window.rect.w / 2, to_ui_scale(30)},
-            size    = to_ui_scale(24),
-            color   = {255, 255, 255, 150},
-            align_h = .Center,
-            align_v = .Bottom)
-    }
-    if game.mode == .PLAY {
-        hit_error_bar_draw_screenspace(&game.hit_error_bar)
-        input_display_draw_screenspace()
-        //accuracy_display_draw_screenspace()
-    }
-
-    if !lua_beatmap.hide_skin_cursor {
-        cursor_layer := lua_beatmap.cursor_layer
-        if cursor_layer == .BACKGROUND do cursor_layer = .CURSOR
-        r_bind_layer_and_push_current_state(cursor_layer, transform = window.screenspace_transform)
-
-        cursor_expand_update()
-        cursor_trail_draw(&cursor_trails[0], mouse.pos)
-        cursor_draw(mouse.pos, skin_texture(.CURSOR))
-        if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {
-            cursor_trail_draw(&cursor_trails[1], mouse_secondary.pos)
-            cursor_draw(mouse_secondary.pos, skin_texture(.CURSOR))
-        }
-    }
-
-    results_screen_draw()
-    rebind_screen_draw()
-    
-    fade_transition_draw()
-}
-
-osu_handle_mode_switch :: proc() {
-    if game.mode_switching_to != .NONE &&
-            game.frame_clock_s >= game.last_mode_switch_time + GAME_MODE_SWITCH_PRE_FADE_TIMER {
-        target := game.mode_switching_to
-        game.mode = target
-        game.mode_switching_to = .NONE
-
-        #partial switch target {
-        case .PLAY, .EDITOR:
-            beatmap_open(game.beatmap.map_reference)
-
-            seek_time := game.mode_seek_time_on_switch
-            if seek_time >= 0 {
-                beatmap_seek(&game.beatmap, seek_time)
-            } else {
-                // note(isak): negative time is the empty lead-in; beatmap_on_update counts it up and
-                // resumes the audio once it reaches zero, so we leave the freshly opened stream paused
-                game.beatmap.music_time_ms = seek_time
-                game.beatmap.auto_last_hit_time_ms = beatmap_music_time_ms(&game.beatmap)
-            }
-
-            game.paused = target == .EDITOR
-            if game.paused {
-                sound_pause(&game.beatmap.music)
-            } else if game.beatmap.music_time_ms >= 0 {
-                sound_resume(&game.beatmap.music)
-            }
-            if lua_cares_about_event(.ON_PAUSE_CHANGE) {
-                lua_beatmap_on_pause_change(game.paused)
-            }
-        }
-    }
 }
 
 hitobjects_draw :: proc(visible_hobjs: []Hitobject, map_time: f64) {

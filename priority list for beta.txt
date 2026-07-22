@@ -14,16 +14,24 @@ old features
 
 YEAST mode
     screen capture must work
+    
     parse and apply settings from osu install (specify with path loaded from config), to allow warmup
         the osu config just takes straight precedence over the inso config, and is not saved to file
-    thepoon request:
-        open map across all clients with keyboard input (enter, anything that works with stable)
     opening map into tournament mode from starting inso
         cmd line argument
-        needs to find and apply config
-        intro screen ("Waiting for map start...")
-    score posting
-        asynchronously posting to score server via curl library
+
+        TESTING 
+            we need sensible defaults here (stables)
+            
+        
+    thepoon request:
+        open map across all clients with keyboard input (enter, anything that works with stable)
+        broadcast client
+
+
+
+jacky map:
+    force people into windowed borderless
 
 skinning
     we can test players' submitted skins for unhandled functionality

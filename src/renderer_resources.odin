@@ -423,6 +423,7 @@ prepare_textures_for_rendering :: proc() {
 
 cleanup_textures_for_rendering :: proc() {
     if !window.bindless_supported do return
+    if !window.textures_resident do return
 
     textures := &window.texture_buffer.data
     num_elements := min(int(skin_frame_block_base()) + len(window.skin_frame_textures), MAX_TEXTURE_HANDLES)

@@ -210,7 +210,7 @@ config_supply_default :: proc() -> (result: User_Configuration) {
         master_volume            = 0.5,
         music_volume             = 0.5,
         hitsound_volume          = 0.8,
-        skin_path                = "skins/gn/",
+        skin_path                = DEFAULT_SKIN_PATH,
         use_beatmap_skin         = true,
         use_beatmap_hitsounds    = true,
         use_beatmap_combo_color_skips = true,

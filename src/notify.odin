@@ -42,7 +42,7 @@ _notify_level_rgb := [Notify_Level][3]u8 {
 }
 
 _notify_is_hidden :: proc() -> bool {
-    return game.mode == .PLAY
+    return game.mode == .PLAY || game.mode == .TOURNAMENT_WAIT_SCREEN
 }
 
 // note(isak): i counts back from the newest entry

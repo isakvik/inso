@@ -247,6 +247,30 @@ osu_section_headers := []string{
     "[HitObjects]",
 }
 
+map_reference_from_path :: proc(path: string) -> Map_Reference {
+    is_osu_file := strings.has_suffix(path, ".osu")
+
+    folder_path := path
+    osu_filename: string
+    if is_osu_file {
+        idx := strings.last_index_any(path, "/\\")
+        folder_path = path[:idx + 1]
+        osu_filename = path[idx + 1:]
+    } else if !strings.has_suffix(folder_path, "/") && !strings.has_suffix(folder_path, "\\") {
+        folder_path = strings.concatenate({folder_path, "/"}, memory.allocators[.GLOBAL])
+    }
+
+    for ref in app.map_references {
+        folder_matches := ref.folder_path == folder_path
+        file_matches := !is_osu_file || ref.osu_filename == osu_filename
+        if folder_matches && file_matches {
+            return ref
+        }
+    }
+
+    return { folder_path = folder_path, osu_filename = osu_filename }
+}
+
 mapset_free :: proc(mapset: ^Mapset) {
     directory_watch_close(&mapset.watch)
 

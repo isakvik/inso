@@ -7,7 +7,7 @@ import gl "vendor:OpenGL"
 
 CRASH_STATS_ARENAS :: 9
 #assert(CRASH_STATS_ARENAS == len(Memory_Arena_Type))
-CRASH_STATS_LAYERS :: 8
+CRASH_STATS_LAYERS :: 9
 #assert(CRASH_STATS_LAYERS == len(Layer))
 
 // vendor-specific GL enums for VRAM queries. not in the standard gl package

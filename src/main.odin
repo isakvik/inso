@@ -71,10 +71,13 @@ memory_arena_names := [?]string {
     "Frame",
     "Command buffer[BACKGROUND]",
     "Command buffer[FOREGROUND]",
-    "Command buffer[HITOBJECT]",
+    "Command buffer[HITOBJECTS]",
     "Command buffer[OVERLAY]",
     "Command buffer[UI]",
+    "Command buffer[CURSOR]",
+    "Command buffer[TOP]",
     "Command buffer[PLATFORM]",
+    "Command buffer[BLANK]",
 }
 
 memory: struct {
@@ -106,8 +109,8 @@ memory_init :: proc() -> runtime.Allocator_Error {
 main :: proc() {
     _program_start_tsc = sdl.GetPerformanceCounter()
 
-    tournament_mode: bool
-    for arg in os.args {
+    for i := 0; i < len(os.args); i += 1 {
+        arg := os.args[i]
         if arg == "--disable-raw-input" {
             app.disable_raw_input = true
         }
@@ -116,13 +119,17 @@ main :: proc() {
             return
         }
         if arg == "--tournament" {
-            tournament_mode = true
+            game.tournament_client = true
+            if i + 1 < len(os.args) && !strings.has_prefix(os.args[i + 1], "--") {
+                game.tournament_initial_map_path = os.args[i + 1]
+                i += 1
+            }
         }
     }
 
     // note(isak): crash handler reruns the process, but doesn't forward the arguments we first launched with
     when #config(WITH_CRASH_HANDLER, false) {
-        if !crash_handler_is_game_process() && !tournament_mode {
+        if !crash_handler_is_game_process() && !game.tournament_client {
             crash_handler_run()
             return
         }
@@ -146,10 +153,6 @@ main :: proc() {
 
     game.user_config = config_load("user.ini")
     defer config_save("user.ini")
-
-    if game.user_config.osu_install_path != "" {
-        config_import_from_osu(game.user_config.osu_install_path)
-    }
 
     window_init({w = game.user_config.window_width, h = game.user_config.window_height}, mode = game.user_config.window_mode)
     app.ui_enabled = true
@@ -199,21 +202,11 @@ main :: proc() {
     if _, found := skin_reference_find(game.user_config.skin_path); !found && os.exists(game.user_config.skin_path) {
         skin_reference_add_external(game.user_config.skin_path)
     }
-
-    game.active_skin = skin_load(game.user_config.skin_path)
     
     inso_load_time := time_s_since_beginning_of_program()
-
-    //-- @temp todo(isak): handle this properly when menu mode is a thing
-    initial_map_ref :=
-        len(app.map_references) > 0 ? app.map_references[0] : Map_Reference{ folder_path = "songs/test/" }
-    //--
-
-    startup_mode: Game_Mode = .TOURNAMENT_WAIT_SCREEN if tournament_mode else .EDITOR
-    osu_on_init(startup_mode)
     notify_info("inso loaded in %.3vs", inso_load_time)
     
-    beatmap_open(initial_map_ref)
+    osu_on_init()
     
     notify_info("Press F8 to view previous notifications")
 
@@ -299,6 +292,7 @@ main :: proc() {
                     imgui.IO_AddKeyEvent(imgui.GetIO(), sdl_scancode_to_imgui(event.key.scancode), true)
                     if event.key.scancode == .RETURN && (event.key.mod & sdl.KMOD_ALT) != {} {
                         window_cycle_mode(window.mode)
+                        game.input.captured_scancode = .RETURN
                     }
                     
                     if game.input.rebinding_key != .NONE {
@@ -306,7 +300,7 @@ main :: proc() {
 
                         game.input.keys[game.input.rebinding_key] = event.key.scancode
                         game.user_config.keys[game.input.rebinding_key] = event.key.scancode
-                        game.input.rebind_captured_code = event.key.scancode
+                        game.input.captured_scancode = event.key.scancode
                     }
                     
                 case sdl.EventType.KEY_UP:
@@ -354,9 +348,9 @@ main :: proc() {
             keyboard_next_frame()
 
             // note(isak): disable keybind from rebind
-            if game.input.rebind_captured_code != .UNKNOWN {
-                keyboard.buttons_prev_frame[game.input.rebind_captured_code] = true
-                game.input.rebind_captured_code = .UNKNOWN
+            if game.input.captured_scancode != .UNKNOWN {
+                keyboard.buttons_prev_frame[game.input.captured_scancode] = true
+                game.input.captured_scancode = .UNKNOWN
             }
 
             if app.mouse_input_mode == .SDL_INPUT || !window.mouse_inside || !window.focused {
@@ -439,6 +433,8 @@ main :: proc() {
         {
             profiler_block_begin(.SWAP_FRAME); defer profiler_block_end()
             sdl.GL_SwapWindow(window.handle)
+
+            if frame_count == 0 do window_refresh_transparency_composition()
         }
         
         {
@@ -537,7 +533,7 @@ end_frame :: proc(renderer: ^Renderer) {
     if !window.transparent && !window_is_exclusive_fullscreen() {
         // note(isak): windows window with transparency captures the alpha of the last drawn pixels and uses that for
         // the window's opacity value. when we don't want transparency, clear alpha of every pixel to 1.0.
-        r_check_and_bind_layer(.PLATFORM)
+        r_check_and_bind_layer(max(Layer))
         r_bind_pipeline({ pipeline = builtin_pipeline_slot(.QUAD) })
         r_push_transform(window.screenspace_transform)
         r_bind_ssbo(&window.quad_store, .VERTEX_BUFFER)
@@ -681,18 +677,6 @@ imgui_update :: proc() {
 
         imgui.Checkbox("Snaking in sliders", &game.user_config.snaking_in_sliders_enabled)
         imgui.Checkbox("Snaking out sliders", &game.user_config.snaking_out_sliders_enabled)
-
-        /*if game.active_map != nil {
-            ar_override := f32(game.active_map.diff_approach_rate)
-            if imgui.SliderFloat("Approach rate##ar", &ar_override, 0, 10) {
-                game.active_map.diff_approach_rate = f64(ar_override)
-                preempt := convert_approach_rate_to_preempt_ms(game.active_map.diff_approach_rate)
-                for &hobj in game.beatmap.hitobjects {
-                    hobj.custom_preempt_ms = preempt
-                }
-                game.beatmap.max_preempt_ms = preempt
-            }
-        }*/
         
         if imgui.BeginTable("mods", 2, imgui.TableFlags_RowBg | imgui.TableFlags_SizingFixedFit) {
             for mod in Osu_Mod {

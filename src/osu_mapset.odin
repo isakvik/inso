@@ -209,6 +209,7 @@ Inso_Map_System :: enum {
 Inso_Section_Header_Types :: enum {
     HEADER,
     GENERAL,
+    FORCE_SETTINGS,
     SHADERS,
     BUFFERS,
     RENDER_TARGETS,
@@ -218,6 +219,7 @@ Inso_Section_Header_Types :: enum {
 inso_section_headers := []string{
     "",
     "[General]",
+    "[ForceSettings]",
     "[Shaders]",
     "[Buffers]",
     "[RenderTargets]",
@@ -554,7 +556,13 @@ mapset_parse_inso :: proc(mapset: ^Mapset, inso_file: string) -> Inso_Map {
         
         lines := consume_section(&c)
         defer section_index += 1
-        
+
+        // note(isak): sections can appear in any order, so the happy-path guess may walk past
+        // the last header slot; resume the search from the first real section
+        if section_index >= len(inso_section_headers) {
+            section_index = 1
+        }
+
         if len(lines) == 0 {
             fmt.println(inso_section_headers[section_index], ":: map section was blank")
             continue
@@ -566,7 +574,7 @@ mapset_parse_inso :: proc(mapset: ^Mapset, inso_file: string) -> Inso_Map {
         
         expected_happy_case := section_index
         for lines[0] != inso_section_headers[section_index] {
-            section_index = (section_index + 1) % int(max(Inso_Section_Header_Types))
+            section_index = (section_index + 1) % len(Inso_Section_Header_Types)
             if section_index == expected_happy_case {
                 fmt.println(inso_section_headers[expected_happy_case], ":: unhandled section")
                 continue section_loop
@@ -593,6 +601,30 @@ mapset_parse_inso :: proc(mapset: ^Mapset, inso_file: string) -> Inso_Map {
                         else do notify_warn("inso [General]: invalid FixedUpdateRate '%s'", value)
                 }
             }
+        case .FORCE_SETTINGS:
+            for i in 1..<len(lines) {
+                key, value := get_key_value(lines[i])
+                setting, forceable := forceable_setting_from_ini_key(key)
+                if !forceable {
+                    notify_warn("inso [ForceSettings]: '%s' is not a forceable setting", key)
+                    continue
+                }
+
+                if setting == .SKIN_PATH {
+                    mapset_relative := strings.concatenate({mapset.folder_path, value})
+                    if os.is_dir(mapset_relative) do value = mapset_relative
+                }
+
+                validation := game.user_config
+                if !forceable_setting_descs[setting].parse(&validation, value) {
+                    notify_warn("inso [ForceSettings]: invalid value '%s' for '%s'", value, key)
+                    continue
+                }
+
+                result.force_settings.present += {setting}
+                result.force_settings.values[setting] = strings.clone(value)
+            }
+
         case .SHADERS:
             resolve_vs :: proc(value: string) -> string {
                 switch value {

@@ -424,6 +424,8 @@ Inso_Map :: struct {
     use_backbuffer: bool,
     fixed_update_rate_hz: f64, // note(isak): on_fixed_update / scheduled-event tick rate
 
+    force_settings: Forced_Settings,
+
     shaders: []Shader,
 
     // note(isak): parsed [HitObjectExtraBits] rows from the .inso

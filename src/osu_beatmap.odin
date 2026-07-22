@@ -311,6 +311,10 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
         ref.folder_path == game.beatmap.map_reference.folder_path &&
         ref.osu_filename == game.beatmap.map_reference.osu_filename
 
+    // note(isak): forced strings live in the MAPSET arena, so get them out of user_config
+    // before any teardown can reset it
+    config_force_revert()
+
     music := game.beatmap.music
     old_audio_filepath: string
     if game.beatmap_active {
@@ -367,6 +371,8 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
         sound_destroy(&music)
         music = nil
     }
+
+    config_force_apply(game.active_inso_map.force_settings)
 
     if game.active_skin.path != game.user_config.skin_path {
         skin_set_active(game.user_config.skin_path)

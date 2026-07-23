@@ -378,10 +378,10 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
         skin_set_active(game.user_config.skin_path)
     }
 
+    window.transparent = false
     beatmap_on_init(ref, &game.beatmap, music)
     sound_set_speed(&game.beatmap.music, game.time_rate)
     game.beatmap_active = true
-    window.transparent = false
 
     notify_info("%sloaded beatmap in %.3vs", "re" if fast_reload_path else "", 
         time_s_since_beginning_of_program() - load_start)
@@ -451,10 +451,16 @@ _beatmap_allocate_internals :: proc(beatmap: ^Beatmap, kept_music: Sound = nil) 
 }
 
 beatmap_seek :: proc(beatmap: ^Beatmap, pos: f64) {
-    // an explicit seek is manual control; clock authority returns to the audio
-    beatmap.music_clock_source = .AUDIO
-    sound_set_position_ms(&game.beatmap.music, pos - f64(game.user_config.universal_offset_ms))
+    if beatmap.music_clock_source == .WALL {
+        beatmap.music_clock_source = .AUDIO
+        notify_warn("reset beatmap music clock source to audio")
+    }
+    
+    music_pos := pos - f64(game.user_config.universal_offset_ms)
+    sound_set_position_ms(&game.beatmap.music, music_pos)
     beatmap.music_time_ms = beatmap_music_position_interpolated_ms(beatmap)
+    
+    if !sound_is_playing(&game.beatmap.music) do beatmap.music_time_ms = music_pos
     beatmap.auto_last_hit_time_ms = beatmap_music_time_ms(beatmap)
 }
 

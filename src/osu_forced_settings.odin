@@ -47,7 +47,7 @@ forceable_setting_descs := [Forceable_Setting]Forceable_Setting_Desc {
             }
             return false
         },
-        apply = proc() { window_set_mode(game.user_config.window_mode) },
+        apply = proc() { window_set_mode_forced(game.user_config.window_mode) },
     },
     .BG_DIM = {
         ini_key = "bg_dim",

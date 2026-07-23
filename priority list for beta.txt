@@ -12,36 +12,19 @@ old features
     sliderfollowcircle animation (fade/scale)
     repeat arrow fadein/out animation
 
-YEAST mode
-    screen capture must work
-    
-    parse and apply settings from osu install (specify with path loaded from config), to allow warmup
-        the osu config just takes straight precedence over the inso config, and is not saved to file
-    opening map into tournament mode from starting inso
-        cmd line argument
-
-        TESTING 
-            we need sensible defaults here (stables)
-            
-        
-    thepoon request:
-        open map across all clients with keyboard input (enter, anything that works with stable)
-        broadcast client
-
-
-
-jacky map:
-    force people into windowed borderless
+aery final map:
+    turn mods on (PS dt/ht dont work in tournament mode?)
 
 skinning
     we can test players' submitted skins for unhandled functionality
     remaining ini keys: SliderBallFlip, HitCircleOverlayAboveNumber, LayeredHitSounds
 
+
 --
 
 extra features
     rotate slider from head
-    mine elements
+    mine elements (hide sliderpath?)
 
 scripting
     animated drawable - pass a spritesheet

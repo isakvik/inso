@@ -1187,6 +1187,9 @@ luaapi_drawable_instance_funcs := []Lua_Function {
   { "set_animation_rate", luaapi_drawable_set_animation_rate,
     "self drawable:set_animation_rate( float rate )",
     "sets the drawable's animation playback rate multiplier (1 = normal)." },
+  { "set_loop_animation", luaapi_drawable_set_loop_animation,
+    "self drawable:set_loop_animation( bool enabled )",
+    "loops the drawable's animation list instead of playing it once; the period comes from animation:set_loop_period (defaulting to the list's own extent)." },
   { "get_start_time", luaapi_drawable_get_start_time,
     "float drawable:get_start_time( void )",
     "the drawable's start time in ms." },
@@ -1332,6 +1335,16 @@ luaapi_drawable_set_beat_pulse :: proc "c" (L: ^lua.State) -> (result: i32) {
             d.flags += {.BEAT_PULSE}
         } else {
             d.flags -= {.BEAT_PULSE}
+        }
+        return 0
+    })
+}
+luaapi_drawable_set_loop_animation :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_drawable_op(L, proc "c" (L: ^lua.State, d: ^Drawable) -> i32 {
+        if lua_boolean(2) {
+            d.flags += {.LOOP_ANIMATION}
+        } else {
+            d.flags -= {.LOOP_ANIMATION}
         }
         return 0
     })

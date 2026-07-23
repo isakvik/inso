@@ -210,7 +210,12 @@ window_handle_mouse_restore_from_os :: proc() {
 
 window_set_mode :: proc(mode: Window_Mode) {
     if game.mode == .PLAY do return
+    window_set_mode_forced(mode)
+}
 
+// note(isak): applies even in PLAY. the tournament client lives there, and a map forcing
+// borderless for window transparency (.inso [ForceSettings]) outranks the instance's mode
+window_set_mode_forced :: proc(mode: Window_Mode) {
     window.mode = mode
     game.user_config.window_mode = mode
 

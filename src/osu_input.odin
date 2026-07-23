@@ -283,6 +283,14 @@ handle_editor_input_events :: proc() {
         if key_is_pressed(.LEFT)  do editor_seek_bookmark(&game.beatmap, -1)
         if key_is_pressed(.RIGHT) do editor_seek_bookmark(&game.beatmap, +1)
         if key_is_pressed(.O)     do file_dialog_open_osu()
+        if key_is_pressed(.V)     do editor_seek_to_clipboard_timestamp(&game.beatmap)
+        if key_is_pressed(.C) {
+            if key_is_down(.LSHIFT) {
+                editor_copy_playhead_timestamp(&game.beatmap)
+            } else {
+                editor_copy_playhead_ms(&game.beatmap)
+            }
+        }
     }
 
     if !app.ui_wants_mouse {

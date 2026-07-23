@@ -529,7 +529,8 @@ begin_frame :: proc(renderer: ^Renderer) {
 end_frame :: proc(renderer: ^Renderer) {
     text_submit_geometry(renderer)
 
-    if !window.transparent && !window_is_exclusive_fullscreen() {
+    window_wants_opaque := !window.transparent || game.tournament_waiting_to_start
+    if window_wants_opaque && !window_is_exclusive_fullscreen() {
         // note(isak): windows window with transparency captures the alpha of the last drawn pixels and uses that for
         // the window's opacity value. when we don't want transparency, clear alpha of every pixel to 1.0.
         r_check_and_bind_layer(max(Layer))
@@ -643,8 +644,7 @@ imgui_update :: proc() {
     
     imgui.Text("FPS: %f", imgui.GetIO().Framerate)
     imgui.Text("Time: %s", timer_str)
-    imgui.Text("Time rate: %.3f%s",
-        game.time_rate * (game.paused ? f32(0) : f32(1)),
+    imgui.Text("Time rate: %.3f%s", game.time_rate,
         game.paused ? cstring(" (paused)") : cstring(""))
 
     hobj_visibility := game.beatmap.visible_hitobject_state
@@ -654,8 +654,8 @@ imgui_update :: proc() {
     imgui.SameLine()
     imgui.Text("%d ms", i32(game.user_config.universal_offset_ms))
 
-    imgui.Text("Music pos: %f ms", f32(game.beatmap.music_time_ms))
-    imgui.Text("Sound pos: %f ms", f32(sound_get_position_ms(&game.beatmap.music)))
+    //imgui.Text("Music pos: %f ms", f32(game.beatmap.music_time_ms))
+    //imgui.Text("Sound pos: %f ms", f32(sound_get_position_ms(&game.beatmap.music)))
     
     imgui.Separator()
     if imgui.CollapsingHeader("Game") {

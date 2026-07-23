@@ -40,7 +40,7 @@
 </head>
 <body>
 
-<h1>Lua API for inso v0.2.7</h1>
+<h1>Lua API for inso v0.2.8</h1>
 <p class="note">documentation automatically generated from the engine's API registration tables</p>
 <p class="note">a method with return type <span class="sig s">self</span> returns its own object, so calls can be chained.</p>
 <nav class="toc">
@@ -206,6 +206,7 @@
 <tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">set_angle_vel</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">angle_vel</span> <span class="punctuation">)</span></code><div class="desc">sets the drawable's angular velocity.</div></td></tr>
 <tr><td><code class="sig"><span class="type">float</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">get_animation_rate</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the drawable's animation playback rate multiplier (1 = normal).</div></td></tr>
 <tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">set_animation_rate</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">rate</span> <span class="punctuation">)</span></code><div class="desc">sets the drawable's animation playback rate multiplier (1 = normal).</div></td></tr>
+<tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">set_loop_animation</span><span class="punctuation">(</span> <span class="type">bool</span> <span class="argument">enabled</span> <span class="punctuation">)</span></code><div class="desc">loops the drawable's animation list instead of playing it once; the period comes from animation:set_loop_period (defaulting to the list's own extent).</div></td></tr>
 <tr><td><code class="sig"><span class="type">float</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">get_start_time</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the drawable's start time in ms.</div></td></tr>
 <tr><td><code class="sig"><span class="self">self</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">set_start_time</span><span class="punctuation">(</span> <span class="type">float</span> <span class="argument">ms</span> <span class="punctuation">)</span></code><div class="desc">sets the drawable's start time in ms.</div></td></tr>
 <tr><td><code class="sig"><span class="type">float</span> <span class="receiver">drawable</span><span class="punctuation">:</span><span class="function">get_end_time</span><span class="punctuation">(</span> <span class="type">void</span> <span class="punctuation">)</span></code><div class="desc">the drawable's end time in ms.</div></td></tr>

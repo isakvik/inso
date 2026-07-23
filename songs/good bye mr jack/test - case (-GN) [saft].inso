@@ -5,6 +5,8 @@ LuaEntryPoint: test.lua
 DoubleMouse: 0
 Backbuffer: 1
 
+[ForceSettings]
+
 [Shaders]
 [[wave]]
 VertexShader: builtin.quad

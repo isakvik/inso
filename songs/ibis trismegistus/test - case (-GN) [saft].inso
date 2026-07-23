@@ -4,6 +4,9 @@ inso file format v1
 LuaEntryPoint: test.lua
 DoubleMouse: 0
 
+[ForceSettings]
+bg_dim: 0.8
+
 [Shaders]
 [[wave]]
 VertexShader: builtin.quad

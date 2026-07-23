@@ -18,6 +18,16 @@ Forceable_Setting :: enum {
     SNAKING_OUT_SLIDERS_ENABLED,
 }
 
+forceable_setting_keys := [Forceable_Setting]string {
+    .WINDOW_MODE                 = "window_mode",
+    .BG_DIM                      = "bg_dim",
+    .SKIN_PATH                   = "skin_path",
+    .PLAYFIELD_BORDER_OPACITY    = "playfield_border_opacity",
+    .CURSOR_SIZE_MULTIPLIER      = "cursor_size_multiplier",
+    .SNAKING_IN_SLIDERS_ENABLED  = "snaking_in_sliders_enabled",
+    .SNAKING_OUT_SLIDERS_ENABLED = "snaking_out_sliders_enabled",
+}
+
 Forced_Settings :: struct {
     present: bit_set[Forceable_Setting],
     values:  [Forceable_Setting]string, // note(isak): raw .inso values, MAPSET arena
@@ -35,7 +45,7 @@ Forceable_Setting_Desc :: struct {
 
 forceable_setting_descs := [Forceable_Setting]Forceable_Setting_Desc {
     .WINDOW_MODE = {
-        ini_key = "window_mode",
+        ini_key = forceable_setting_keys[.WINDOW_MODE],
         offset  = offset_of(User_Configuration, window_mode),
         size    = size_of(Window_Mode),
         parse   = proc(cfg: ^User_Configuration, value: string) -> bool {
@@ -50,7 +60,7 @@ forceable_setting_descs := [Forceable_Setting]Forceable_Setting_Desc {
         apply = proc() { window_set_mode_forced(game.user_config.window_mode) },
     },
     .BG_DIM = {
-        ini_key = "bg_dim",
+        ini_key = forceable_setting_keys[.BG_DIM],
         offset  = offset_of(User_Configuration, bg_dim),
         size    = size_of(f32),
         parse   = proc(cfg: ^User_Configuration, value: string) -> bool {
@@ -60,7 +70,7 @@ forceable_setting_descs := [Forceable_Setting]Forceable_Setting_Desc {
         },
     },
     .SKIN_PATH = {
-        ini_key = "skin_path",
+        ini_key = forceable_setting_keys[.SKIN_PATH],
         offset  = offset_of(User_Configuration, skin_path),
         size    = size_of(string),
         parse   = proc(cfg: ^User_Configuration, value: string) -> bool {
@@ -69,7 +79,7 @@ forceable_setting_descs := [Forceable_Setting]Forceable_Setting_Desc {
         },
     },
     .PLAYFIELD_BORDER_OPACITY = {
-        ini_key = "playfield_border_opacity",
+        ini_key = forceable_setting_keys[.PLAYFIELD_BORDER_OPACITY],
         offset  = offset_of(User_Configuration, playfield_border_opacity),
         size    = size_of(f32),
         parse   = proc(cfg: ^User_Configuration, value: string) -> bool {
@@ -79,7 +89,7 @@ forceable_setting_descs := [Forceable_Setting]Forceable_Setting_Desc {
         },
     },
     .CURSOR_SIZE_MULTIPLIER = {
-        ini_key = "cursor_size_multiplier",
+        ini_key = forceable_setting_keys[.CURSOR_SIZE_MULTIPLIER],
         offset  = offset_of(User_Configuration, cursor_size_multiplier),
         size    = size_of(f32),
         parse   = proc(cfg: ^User_Configuration, value: string) -> bool {
@@ -90,7 +100,7 @@ forceable_setting_descs := [Forceable_Setting]Forceable_Setting_Desc {
         },
     },
     .SNAKING_IN_SLIDERS_ENABLED = {
-        ini_key = "snaking_in_sliders_enabled",
+        ini_key = forceable_setting_keys[.SNAKING_IN_SLIDERS_ENABLED],
         offset  = offset_of(User_Configuration, snaking_in_sliders_enabled),
         size    = size_of(bool),
         parse   = proc(cfg: ^User_Configuration, value: string) -> bool {
@@ -98,7 +108,7 @@ forceable_setting_descs := [Forceable_Setting]Forceable_Setting_Desc {
         },
     },
     .SNAKING_OUT_SLIDERS_ENABLED = {
-        ini_key = "snaking_out_sliders_enabled",
+        ini_key = forceable_setting_keys[.SNAKING_OUT_SLIDERS_ENABLED],
         offset  = offset_of(User_Configuration, snaking_out_sliders_enabled),
         size    = size_of(bool),
         parse   = proc(cfg: ^User_Configuration, value: string) -> bool {

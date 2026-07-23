@@ -5,6 +5,10 @@ LuaEntryPoint: test.lua
 BackgroundPipeline: wave
 DoubleMouse: 0
 
+[ForceSettings]
+window_mode: borderless_fullscreen
+bg_dim: 0.8
+
 [Shaders]
 
 [Buffers]

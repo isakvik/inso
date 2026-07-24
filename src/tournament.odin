@@ -7,16 +7,16 @@ import "core:log"
 // start is the cheapest operation available (a plain unpause), so every lan client agrees on the
 // moment within receipt jitter. all the variable-cost work already happened at arm time.
 
-TOURNAMENT_LEAD_IN_MS :: f64(1500)
+TOURNAMENT_LEAD_IN_MS :: f64(3000) // span of the countdown
 
 tournament_arm_beatmap :: proc(beatmap: ^Beatmap) {
     beatmap_reset_object_state(beatmap)
     beatmap_pause(beatmap, true)
 
     sound_set_position_ms(&beatmap.music, 0)
-    // seeded offset-behind so the master clock reads -lead_in on every box at the deadline;
-    // each box's audio then starts its own universal_offset later.
     beatmap_set_time(beatmap, -TOURNAMENT_LEAD_IN_MS)
+
+    beatmap.music_clock_source = .AUDIO
 
     beatmap.wall_servo_error_ms = 0
     beatmap.wall_snap_cooldown_until_ms = 0
@@ -26,11 +26,25 @@ tournament_arm_beatmap :: proc(beatmap: ^Beatmap) {
     game.tournament_start_deadline_s = 0
 }
 
-// note(isak): delay_ms is slack for the network path so the packet lands on every box
+// note(isak): delay_ms is wait time for the network path so the packet lands on every box
 // before it fires; the local RETURN fallback passes 0.
 tournament_request_start :: proc(delay_ms: f64 = 0) {
     if !game.tournament_waiting_to_start do return
     game.tournament_start_deadline_s = game.frame_clock_s + delay_ms / 1000
+}
+
+// note(isak): fired mid-frame from tournament_socket_poll, which runs before tournament_update and
+// beatmap_on_update. same safe point the file-watcher reload uses
+tournament_abort :: proc() {
+    if game.tournament_waiting_to_start {
+        game.tournament_start_deadline_s = 0
+        notify_warn("tournament: scheduled start canceled by production")
+        return
+    }
+
+    beatmap_open(game.beatmap.map_reference)
+    tournament_arm_beatmap(&game.beatmap)
+    notify_warn("tournament: map aborted by production")
 }
 
 tournament_update :: proc() {

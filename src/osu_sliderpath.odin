@@ -26,6 +26,13 @@ write_instances_from_path :: proc(instance_buf: ^Buffer(vec2), path: ^Slider_Pat
 
     raw := make([dynamic]vec2, context.temp_allocator)
     flatten_path_into(&raw, path)
+
+    // degenerate paths (single-node "invisible" sliders, unsupported curve types) flatten to
+    // nothing; anchor them at the head so pos/end_pos and the gfx reading them don't sit at (0,0)
+    if len(raw) == 0 && len(path.nodes) > 0 {
+        append(&raw, path.nodes[0])
+    }
+
     write_equidistant_resampling(instance_buf, raw[:], path.distance_osupx)
 
     instance_count = instance_buf.count - instance_offset

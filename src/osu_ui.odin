@@ -36,6 +36,7 @@ UI_Component :: enum {
     RESULTS_SCREEN,
     REBIND_PROMPT,
     TOURNAMENT_WAITING_SCREEN,
+    TOURNAMENT_COUNTDOWN,
 }
 
 ui_component_visible :: proc(c: UI_Component) -> bool {
@@ -52,6 +53,9 @@ ui_component_visible :: proc(c: UI_Component) -> bool {
             app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY ||
             app.mouse_input_mode == .REBINDING_MOUSE_SECONDARY
     case .TOURNAMENT_WAITING_SCREEN: return game.tournament_waiting_to_start
+    case .TOURNAMENT_COUNTDOWN:
+        return game.tournament_client && !game.tournament_waiting_to_start &&
+            game.beatmap_active && game.beatmap.music_time_ms < 0
     }
     return false
 }
@@ -664,6 +668,29 @@ tournament_waiting_screen_draw :: proc() {
             align_h = .Center,
             align_v = .Middle)
     }
+}
+
+TOURNAMENT_COUNTDOWN_REVEAL_FADE_MS :: f64(500)
+
+tournament_countdown_draw :: proc() {
+    if !ui_component_visible(.TOURNAMENT_COUNTDOWN) do return
+
+    seconds_left := max(1, int(math.ceil(-game.beatmap.music_time_ms / 1000)))
+    backdrop_alpha := f32(clamp(-game.beatmap.music_time_ms / TOURNAMENT_COUNTDOWN_REVEAL_FADE_MS, 0, 1))
+
+    r_check_and_bind_layer(.UI)
+    r_push_transform(fullscreen_transform)
+    r_draw_quad(&window.renderer.quad_geometry,
+        vec2{0,0}, vec2{1,1},
+        vec2{0,0}, vec2{1,1},
+        with_alpha(color_black, backdrop_alpha))
+
+    push_text(&window.renderer, fmt.tprintf("starting in %d...", seconds_left),
+        pos = {window.rect.w / 2, window.rect.h / 2},
+        size = to_ui_scale(32),
+        color = {255, 255, 255, 255},
+        align_h = .Center,
+        align_v = .Middle)
 }
 
 GAME_MODE_SWITCH_PRE_FADE_S :: 0.1

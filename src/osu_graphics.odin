@@ -264,6 +264,11 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
         }
     }
 
+    hidden := .HIDDEN_FADES in hobj.flags
+    if hidden {
+        base = base[:len(base)-1] // the approach circle is always last
+    }
+
     num_base := num_custom if num_custom > 0 else (len(base) if in_visible_phase else 0)
     total_handles := num_digits + num_base
 
@@ -280,7 +285,7 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
         rel_pos: vec2
         switch phase {
             case .PREEMPT:  phase_end_time = phase_start_time + preempt
-            case .POSTEMPT: phase_end_time = phase_start_time + game.beatmap.timing_windows.ok
+            case .POSTEMPT: phase_end_time = phase_start_time + hitobject_timing_windows(hobj).ok
             case .HOLD:     phase_end_time = phase_start_time + hobj.end_time_ms - hobj.start_time_ms
             case .NONE:     phase_end_time = phase_start_time + f64(0)
             case .HIT, .MISS: 
@@ -327,18 +332,19 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
             if el_type != .APPROACH_CIRCLE do drawable_flags |= {.HITOBJECT_DIM}
             else do drawable_color = with_alpha(drawable_color, 0.9) // note(isak): osu's approach circle alpha multiplier
 
-            end_ms := hobj.start_time_ms + (game.beatmap.timing_windows.ok if el_type != .APPROACH_CIRCLE else 0)
+            end_ms := hobj.start_time_ms + (hitobject_timing_windows(hobj).ok if el_type != .APPROACH_CIRCLE else 0)
             hobj.gfx_handles[num_digits + i] = drawable_new(Drawable{
-                flags         = drawable_flags,
-                element       = el_id,
-                layer         = layer_id(.HITOBJECTS),
-                pos           = vec2{0, 0},
-                size          = skin_element_size_radius_units(el_type),
-                anchor        = .CENTER,
-                color         = drawable_color,
-                start_time_ms = hobj.start_time_ms - preempt,
-                end_time_ms   = end_ms,
-                hobj_index    = hobj.index + 1,
+                flags          = drawable_flags,
+                element        = el_id,
+                layer          = layer_id(.HITOBJECTS),
+                pos            = vec2{0, 0},
+                size           = skin_element_size_radius_units(el_type),
+                anchor         = .CENTER,
+                color          = drawable_color,
+                start_time_ms  = hobj.start_time_ms - preempt,
+                end_time_ms    = end_ms,
+                hobj_index     = hobj.index + 1,
+                animation_list = game.beatmap.hidden_fade_list if hidden else 0,
             })
         }
     }
@@ -365,16 +371,17 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
             digit_metrics := game.active_skin.elements[digit_el].metrics
             digit_size_norm := digit_metrics * number_scale_norm
             hobj.gfx_handles[di] = drawable_new(Drawable{
-                flags         = {.ACTIVE, .FADE_IN, .SCALE_POS_BY_RADIUS, .HITOBJECT_DIM},
-                element       = builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + digits[di])),
-                layer         = layer_id(.HITOBJECTS),
-                pos           = {x_norm + digit_size_norm.x / 2, 0},
-                size          = digit_size_norm,
-                anchor        = .CENTER,
-                color         = with_alpha(color_white, 1),
-                start_time_ms = hobj.start_time_ms - preempt,
-                end_time_ms   = hobj.start_time_ms + game.beatmap.timing_windows.ok,
-                hobj_index    = hobj.index + 1,
+                flags          = {.ACTIVE, .FADE_IN, .SCALE_POS_BY_RADIUS, .HITOBJECT_DIM},
+                element        = builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + digits[di])),
+                layer          = layer_id(.HITOBJECTS),
+                pos            = {x_norm + digit_size_norm.x / 2, 0},
+                size           = digit_size_norm,
+                anchor         = .CENTER,
+                color          = with_alpha(color_white, 1),
+                start_time_ms  = hobj.start_time_ms - preempt,
+                end_time_ms    = hobj.start_time_ms + hitobject_timing_windows(hobj).ok,
+                hobj_index     = hobj.index + 1,
+                animation_list = game.beatmap.hidden_fade_list if hidden else 0,
             })
             x_norm += digit_size_norm.x - overlap_norm
         }
@@ -382,7 +389,7 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
 }
 
 hitcircle_create_default_hit_drawables :: proc(hobj: ^Hitobject, pos: vec2, map_time: f64, sliderend: bool) {
-    if .HIDDEN_BY_SCRIPT in hobj.flags {
+    if hobj.flags & {.HIDDEN_BY_SCRIPT, .HIDDEN_FADES} != {} {
         return
     }
 
@@ -504,10 +511,21 @@ slider_body_alpha :: proc(hobj: ^Hitobject, map_time: f64) -> f32 {
     fade_in_ms := min(preempt * 0.4, 400.0)
     fade_in := clamp((map_time - (hobj.start_time_ms - preempt)) / fade_in_ms, 0, 1)
 
+    if .HIDDEN_FADES in hobj.flags {
+        return f32(min(fade_in, slider_hidden_fadeout_factor(hobj, map_time)))
+    }
+
     fade_out_ms := f64(OSU_HIT_ANIMATION_LENGTH)
     fade_out := clamp((hobj.end_time_ms + fade_out_ms - map_time) / fade_out_ms, 0, 1)
 
     return f32(min(fade_in, fade_out))
+}
+
+// note(isak): stable hidden slider fade - starts the moment the 40%-of-preempt fade-in completes
+// and reaches zero exactly at the slider's end time
+slider_hidden_fadeout_factor :: proc(hobj: ^Hitobject, map_time: f64) -> f64 {
+    fade_out_start := hobj.start_time_ms - hitobject_preempt_ms(hobj) * 0.6
+    return clamp((hobj.end_time_ms - map_time) / (hobj.end_time_ms - fade_out_start), 0, 1)
 }
 
 SLIDER_ATLAS_PAD :: 2
@@ -935,7 +953,22 @@ slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
             d_follow.start_time_ms = slider.tracked_timestamp_at
         }
     }
-    
+
+    // note(isak): everything riding the body fades with it under hidden; the ball and follow
+    // circle stay visible so the slide remains trackable, like stable
+    if .HIDDEN_FADES in hobj.flags {
+        fade := u8(f32(0xFF) * f32(slider_hidden_fadeout_factor(hobj, map_time)))
+        fading := [?]Drawable_Handle{
+            gfx.end_circle, gfx.end_overlay, gfx.head_circle, gfx.head_overlay,
+            gfx.end_repeat, gfx.head_repeat,
+        }
+        for h in fading {
+            if d, ok := slotmap.get(&game.beatmap.drawables, h); ok do d.color.a = fade
+        }
+        for h in gfx.ticks {
+            if d, ok := slotmap.get(&game.beatmap.drawables, h); ok do d.color.a = fade
+        }
+    }
 }
 
 slider_render_gfx :: proc(hobj: ^Hitobject, map_time: f64) {

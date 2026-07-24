@@ -16,6 +16,7 @@ Forceable_Setting :: enum {
     CURSOR_SIZE_MULTIPLIER,
     SNAKING_IN_SLIDERS_ENABLED,
     SNAKING_OUT_SLIDERS_ENABLED,
+    HITSOUND_VOLUME_FOLLOWS_MUSIC,
 }
 
 forceable_setting_keys := [Forceable_Setting]string {
@@ -26,6 +27,7 @@ forceable_setting_keys := [Forceable_Setting]string {
     .CURSOR_SIZE_MULTIPLIER      = "cursor_size_multiplier",
     .SNAKING_IN_SLIDERS_ENABLED  = "snaking_in_sliders_enabled",
     .SNAKING_OUT_SLIDERS_ENABLED = "snaking_out_sliders_enabled",
+    .HITSOUND_VOLUME_FOLLOWS_MUSIC = "hitsound_volume_follows_music",
 }
 
 Forced_Settings :: struct {
@@ -114,6 +116,15 @@ forceable_setting_descs := [Forceable_Setting]Forceable_Setting_Desc {
         parse   = proc(cfg: ^User_Configuration, value: string) -> bool {
             return _parse_force_bool(value, &cfg.snaking_out_sliders_enabled)
         },
+    },
+    .HITSOUND_VOLUME_FOLLOWS_MUSIC = {
+        ini_key = forceable_setting_keys[.HITSOUND_VOLUME_FOLLOWS_MUSIC],
+        offset  = offset_of(User_Configuration, hitsound_volume_follows_music),
+        size    = size_of(bool),
+        parse   = proc(cfg: ^User_Configuration, value: string) -> bool {
+            return _parse_force_bool(value, &cfg.hitsound_volume_follows_music)
+        },
+        apply   = audio_apply_config_volumes,
     },
 }
 

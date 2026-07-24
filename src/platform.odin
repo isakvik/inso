@@ -239,8 +239,9 @@ mouse_rebind :: proc(id: Mouse_ID, handle: Mouse_Handle) {
 mouse_enable_double_mouse_mode :: proc() -> bool {
     if app.disable_raw_input {
         notify_error("raw input disabled for this program run - cannot enable special mouse mode!")
+        return false
     }
-    
+
     mouse_enable_raw_input_mode()
     
     if mice[.PRIMARY].device_handle == {} {
@@ -350,9 +351,12 @@ read_entire_file_to_string :: proc(path: string, allocator := context.allocator)
 
 read_entire_file_to_cstring :: proc(path: string, allocator := context.allocator) -> (cstring, int, os.Error) {
     data, err := read_entire_file(path, allocator)
-    _ = new(byte, allocator)
-    len := len(data)
-    return cstring(raw_data(data)), len, err
+    if err != os.General_Error.None {
+        return nil, 0, err
+    }
+    terminated := make([]u8, len(data) + 1, allocator)
+    copy(terminated, data)
+    return cstring(raw_data(terminated)), len(data), err
 }
 
 

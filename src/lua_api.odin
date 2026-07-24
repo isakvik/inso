@@ -378,6 +378,9 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
   { "unhide", luaapi_hitobject_unhide,
     "self hitobject:unhide( void )",
     "undoes hide()." },
+  { "set_hidden_fades", luaapi_hitobject_set_hidden_fades,
+    "self hitobject:set_hidden_fades( bool enabled )",
+    "renders this object like the hidden mod: no approach circle, the circle fades out before its hit time, slider bodies fade out over the slide. takes effect when the object's graphics spawn, so set it from on_init." },
   { "hide_combo_numbers", luaapi_hitobject_hide_combo_numbers,
     "self hitobject:hide_combo_numbers( void )",
     "stops drawing the combo number on this object's circle." },
@@ -474,6 +477,18 @@ luaapi_hitobject_instance_funcs := []Lua_Function {
   { "set_ar", luaapi_hitobject_set_ar,
     "self hitobject:set_ar( float ar )",
     "overrides the object's approach rate (converted to a preempt time)." },
+  { "get_od", luaapi_hitobject_get_od,
+    "float hitobject:get_od( void )",
+    "the object's overall difficulty, derived from its ok hit window." },
+  { "set_od", luaapi_hitobject_set_od,
+    "self hitobject:set_od( float od )",
+    "overrides the object's hit windows (converted from an overall difficulty)." },
+  { "get_timing_windows", luaapi_hitobject_get_timing_windows,
+    "(float marvelous, float good, float ok, float miss) hitobject:get_timing_windows( void )",
+    "the object's hit window half-widths in ms." },
+  { "set_timing_windows", luaapi_hitobject_set_timing_windows,
+    "self hitobject:set_timing_windows( float marvelous, float good, float ok, float miss )",
+    "overrides the object's hit window half-widths in ms; expects marvelous <= good <= ok <= miss." },
   { "get_cs", luaapi_hitobject_get_cs,
     "float hitobject:get_cs( void )",
     "the object's circle size, derived from its radius." },
@@ -664,6 +679,17 @@ luaapi_hitobject_hide :: proc "c" (L: ^lua.State) -> (result: i32) {
 luaapi_hitobject_unhide :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         hobj.flags &~= {.HIDDEN_BY_SCRIPT}
+        return 0
+    })
+}
+
+luaapi_hitobject_set_hidden_fades :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        if lua_boolean(2) {
+            hobj.flags |= {.HIDDEN_FADES}
+        } else {
+            hobj.flags &~= {.HIDDEN_FADES}
+        }
         return 0
     })
 }
@@ -942,6 +968,52 @@ luaapi_hitobject_set_ar :: proc "c" (L: ^lua.State) -> (result: i32) {
     return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
         context = lua_beatmap.odin_context
         hitobject_set_preempt(hobj, convert_approach_rate_to_preempt_ms(f64(lua_number(2))))
+        return 0
+    })
+}
+
+luaapi_hitobject_get_od :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        context = lua_beatmap.odin_context
+        lua.pushnumber(L, lua.Number(convert_timing_window_to_overall_difficulty(hitobject_timing_windows(hobj))))
+        return 1
+    })
+}
+
+luaapi_hitobject_set_od :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        context = lua_beatmap.odin_context
+        hitobject_set_timing_windows(hobj, convert_overall_difficulty_to_timing_window(f64(lua_number(2))))
+        return 0
+    })
+}
+
+luaapi_hitobject_get_timing_windows :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_get(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        context = lua_beatmap.odin_context
+        windows := hitobject_timing_windows(hobj)
+        lua.pushnumber(L, lua.Number(windows.marvelous))
+        lua.pushnumber(L, lua.Number(windows.good))
+        lua.pushnumber(L, lua.Number(windows.ok))
+        lua.pushnumber(L, lua.Number(windows.miss))
+        return 4
+    })
+}
+
+luaapi_hitobject_set_timing_windows :: proc "c" (L: ^lua.State) -> (result: i32) {
+    return _luaapi_hitobject_op(L, proc "c" (L: ^lua.State, hobj: ^Hitobject) -> i32 {
+        context = lua_beatmap.odin_context
+        windows := Timing_Window{
+            marvelous = f64(lua_number(2)),
+            good      = f64(lua_number(3)),
+            ok        = f64(lua_number(4)),
+            miss      = f64(lua_number(5)),
+        }
+        if !(windows.marvelous <= windows.good && windows.good <= windows.ok && windows.ok <= windows.miss) {
+            notify_warn("set_timing_windows: expected marvelous <= good <= ok <= miss, got %v, %v, %v, %v",
+                windows.marvelous, windows.good, windows.ok, windows.miss)
+        }
+        hitobject_set_timing_windows(hobj, windows)
         return 0
     })
 }
@@ -2767,6 +2839,9 @@ luaapi_beatmap_set_timing_windows :: proc "c" (L: ^lua.State) -> i32 {
     }
 
     game.beatmap.timing_windows = windows
+    if windows.miss > game.beatmap.max_miss_ms {
+        game.beatmap.max_miss_ms = windows.miss
+    }
     return 0
 }
 

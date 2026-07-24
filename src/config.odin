@@ -15,6 +15,7 @@ User_Configuration :: struct {
     master_volume: f32,
     music_volume: f32,
     hitsound_volume: f32,
+    hitsound_volume_follows_music: bool,
     
     vsync_enabled: bool,
     fps_limiter: i32, // 0 = uncapped
@@ -75,6 +76,9 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         }
         if v, ok := get(gen, "hitsound_volume"); ok {
             if f, ok2 := strconv.parse_f32(v); ok2 do result.hitsound_volume = f
+        }
+        if v, ok := get(gen, "hitsound_volume_follows_music"); ok {
+            result.hitsound_volume_follows_music = v == "true"
         }
         if v, ok := get(gen, "vsync_enabled"); ok {
             result.vsync_enabled = v == "true"
@@ -155,6 +159,15 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
     return
 }
 
+config_apply :: proc() {
+    window_apply_vsync(game.user_config.vsync_enabled)
+    window_set_mode_forced(game.user_config.window_mode)
+    audio_apply_config_volumes()
+
+    game.input.keys = game.user_config.keys
+    game.input.mouse_keys_enabled = game.user_config.mouse_keys_enabled
+}
+
 config_save :: proc(path: string) {
     sb := strings.builder_make(context.temp_allocator)
     w  := strings.to_writer(&sb)
@@ -168,6 +181,7 @@ config_save :: proc(path: string) {
     ini.write_pair(w, "master_volume",                 cfg.master_volume)
     ini.write_pair(w, "music_volume",                  cfg.music_volume)
     ini.write_pair(w, "hitsound_volume",               cfg.hitsound_volume)
+    ini.write_pair(w, "hitsound_volume_follows_music", cfg.hitsound_volume_follows_music)
     ini.write_pair(w, "osu_install_path",              cfg.osu_install_path)
     ini.write_pair(w, "skin_path",                     cfg.skin_path)
     ini.write_pair(w, "use_beatmap_skin",              cfg.use_beatmap_skin)
@@ -215,18 +229,20 @@ config_supply_default :: proc() -> (result: User_Configuration) {
         skin_path                = DEFAULT_SKIN_PATH,
         use_beatmap_skin         = true,
         use_beatmap_hitsounds    = true,
-        use_beatmap_combo_color_skips = true,
         window_width             = 1280,
         window_height            = 720,
         window_mode              = .WINDOWED,
         cursor_size_multiplier   = 1.0,
         cursor_sensitivity       = 1.0,
         playfield_border_opacity = 0.0,
-        ui_scale                 = 1.0,
         accuracy_display_size    = 48,
-        bg_dim                   = 0.5,
-        snaking_in_sliders_enabled  = true,
-        snaking_out_sliders_enabled = true,
+        bg_dim                   = 0.3,
+        snaking_in_sliders_enabled = true,
+        
+        // note(isak): play mode settings unsupported by stable should have defaults that match its behavior
+        ui_scale                 = 1.0,
+        snaking_out_sliders_enabled = false,
+        use_beatmap_combo_color_skips = true,
     }
     result.keys[.K1] = .Z
     result.keys[.K2] = .X

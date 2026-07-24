@@ -111,39 +111,24 @@ double_time_apply_to_map :: proc() {
     game.time_rate = 1.5
 }
 
-// note(isak): osu stable hidden - no approach circle, circles fade in over the first 40% of the
-// preempt and back out over the next 30%, gone before hit time. the hit expand animation is
-// disabled too.
+// note(isak): osu stable hidden - see Hitobject_Flag.HIDDEN_FADES for the per-object machinery
 hidden_apply_to_graphics :: proc() {
-    elements := &game.beatmap.elements
-    anims    := &game.beatmap.animations
-    lists    := &game.beatmap.animation_lists
-
-    invisible := animation_new(anims, lists, Animation_Alpha{
-        start_time = 0, end_time = 1,
-        start_alpha = 0, end_alpha = 0,
-    })
-
-    elements.data[builtin_element_slot(.APPROACH_CIRCLE)].animation_list = invisible
-
-    hit_pop_elements := [?]Element_Type{
-        .CLICKED_HIT_CIRCLE, .CLICKED_HIT_CIRCLE_OVERLAY,
-        .CLICKED_SLIDER_START_CIRCLE, .CLICKED_SLIDER_START_CIRCLE_OVERLAY,
-        .FINISHED_SLIDER_END_CIRCLE, .FINISHED_SLIDER_END_CIRCLE_OVERLAY,
+    for &hobj in game.beatmap.hitobjects {
+        hobj.flags |= {.HIDDEN_FADES}
     }
-    for el in hit_pop_elements {
-        elements.data[builtin_element_slot(el)].animation_list = invisible
-    }
+}
 
-    // note(isak): animation times are normalized against the circle drawable lifetime
-    // (preempt + ok window), so per-object custom preempts from scripts get proportionally
-    // scaled fades rather than the same timing
-    preempt  := game.beatmap.preempt_ms
-    lifetime := preempt + game.beatmap.timing_windows.ok
+// note(isak): circles fade in over the first 40% of the preempt and back out over the next 30%,
+// gone before hit time. times are normalized against the circle drawable lifetime (preempt + ok
+// window), so per-object custom preempts from scripts get proportionally scaled fades rather
+// than the same timing
+hidden_fade_animation_new :: proc(beatmap: ^Beatmap) -> Animation_List_ID {
+    preempt  := beatmap.preempt_ms
+    lifetime := preempt + beatmap.timing_windows.ok
     fade_in_end  := preempt * 0.4 / lifetime
     fade_out_end := preempt * 0.7 / lifetime
 
-    fade := animation_new(anims, lists,
+    return animation_new(&beatmap.animations, &beatmap.animation_lists,
         Animation_Alpha{
             start_time = 0, end_time = fade_in_end,
             start_alpha = 0, end_alpha = 1,
@@ -153,16 +138,4 @@ hidden_apply_to_graphics :: proc() {
             start_alpha = 1, end_alpha = 0,
         },
     )
-
-    fading_elements := [?]Element_Type{
-        .HIT_CIRCLE, .HIT_CIRCLE_OVERLAY,
-        .SLIDER_START_CIRCLE, .SLIDER_START_CIRCLE_OVERLAY,
-    }
-    for el in fading_elements {
-        elements.data[builtin_element_slot(el)].animation_list = fade
-    }
-    for digit in 0..<10 {
-        digit_el := Element_Type(int(Element_Type.COMBO_DIGIT_0) + digit)
-        elements.data[builtin_element_slot(digit_el)].animation_list = fade
-    }
 }

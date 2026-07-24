@@ -51,6 +51,12 @@ config_import_from_osu :: proc(osu_install_path: string) {
     if v, ok := get_percent(pairs, "VolumeMusic");     ok do cfg.music_volume = v
     if v, ok := get_percent(pairs, "VolumeEffect");    ok do cfg.hitsound_volume = v
 
+    if fullscreen, ok := get_bool(pairs, "Fullscreen"); ok {
+        cfg.window_mode = .EXCLUSIVE_FULLSCREEN if fullscreen else .WINDOWED
+        if v, ok := get(pairs, "Width");  ok do if n, ok2 := strconv.parse_f32(v); ok2 do cfg.window_width = n
+        if v, ok := get(pairs, "Height"); ok do if n, ok2 := strconv.parse_f32(v); ok2 do cfg.window_height = n
+    }
+
     if v, ok := get(pairs, "Offset"); ok {
         if n, ok2 := strconv.parse_int(v); ok2 {
             // note(isak): in addition to the perceived lazer/stable difference constant, we also add
@@ -66,7 +72,6 @@ config_import_from_osu :: proc(osu_install_path: string) {
     if v, ok := get(pairs, "CursorSize"); ok {
         if n, ok2 := strconv.parse_f32(v); ok2 do cfg.cursor_size_multiplier = n
     }
-    // note(isak): osu's MouseSpeed is raw-input sensitivity; only takes effect in raw mode over there
     if v, ok := get(pairs, "MouseSpeed"); ok {
         if n, ok2 := strconv.parse_f32(v); ok2 do cfg.cursor_sensitivity = n
     }

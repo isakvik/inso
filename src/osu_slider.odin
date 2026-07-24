@@ -92,9 +92,9 @@ slider_process :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
     if .HEAD_HIT in slider.flags {
         slider.flags |= {.HEAD_CHECKED}
     }
-    else if .HEAD_CHECKED not_in slider.flags && map_time > hobj.start_time_ms + game.beatmap.timing_windows.ok {
+    else if .HEAD_CHECKED not_in slider.flags && map_time > hobj.start_time_ms + hitobject_timing_windows(hobj).ok {
         slider.flags |= {.HEAD_CHECKED}
-        final_head := judgement_new(hobj, .SLIDER_HEAD_MISS, game.beatmap.timing_windows.ok)
+        final_head := judgement_new(hobj, .SLIDER_HEAD_MISS, hitobject_timing_windows(hobj).ok)
         if final_head != .SLIDER_HEAD_MISS && final_head != .MISS {
             slider.flags |= {.HEAD_HIT}
         }
@@ -205,7 +205,7 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
         follow_radius_travel_time := f64(follow_radius) / osupx_per_ms
         
         if .HEAD_HIT in slider.flags || 
-            slider_time_at >= min(game.beatmap.timing_windows.ok, follow_radius_travel_time) {
+            slider_time_at >= min(hitobject_timing_windows(hobj).ok, follow_radius_travel_time) {
             slider.flags |= {.HEAD_CONTINGENCY_WINDOW_PASSED}
         }
     }

@@ -3,6 +3,7 @@ package inso
 import sb "swap_buffer"
 import "slotmap"
 
+import "core:log"
 import "core:math"
 import "core:math/linalg"
 
@@ -145,6 +146,10 @@ Hitobject_Flag :: enum {
     HIDE_COMBO_NUMBERS,
     HIDDEN_BY_SCRIPT,
 
+    // note(isak): renders the object with hidden-mod fades: no approach circle, circles fade out
+    // before hit time, slider bodies fade out over the slide. the hidden mod sets this on every object
+    HIDDEN_FADES,
+
     NO_FOLLOWPOINT_IN,
     NO_FOLLOWPOINT_OUT,
 
@@ -206,6 +211,7 @@ Hitobject :: struct {
     notelock_shake_at_ms: f64,
     custom_preempt_ms: f64, // note(isak): per-object approach time override. 0 = use global
     custom_radius_osupx: f32, // note(isak): per-object circle size override. 0 = use global
+    custom_timing_windows: Timing_Window, // per-object hit window override. miss == 0 = use global
     custom_elements: [Hitobject_Phase][]Element_ID,
     custom_element_nums: [Hitobject_Phase]int,
     custom_hit_animation_len_ms: f64,
@@ -488,15 +494,13 @@ osu_on_init :: proc() {
     game_sounds_clear()
     ui_init_timeline(&game.ui_timeline)
 
-    game.input.keys = game.user_config.keys
-    game.input.mouse_keys_enabled = game.user_config.mouse_keys_enabled
-    
     game.beatmap.map_reference = startup_map_reference()
 
     if game.tournament_client {
         tournament_socket_init()
         if game.user_config.osu_install_path != "" {
             config_import_from_osu(game.user_config.osu_install_path)
+            config_apply()
         }
     }
     
@@ -509,6 +513,9 @@ osu_on_init :: proc() {
 startup_map_reference :: proc() -> Map_Reference {
     if game.startup_map_path != "" {
         return map_reference_from_path(game.startup_map_path)
+    }
+    if game.tournament_client {
+        log.panic("tournament: no map path given - launch as 'inso --tournament <map path>'")
     }
     //-- @temp todo(isak): handle this properly when menu mode is a thing
     if len(app.map_references) > 0 do return app.map_references[0]
@@ -627,7 +634,8 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
     }
     
     tournament_waiting_screen_draw()
-    
+    tournament_countdown_draw()
+
     rebind_screen_draw()
     fade_transition_draw()
 }

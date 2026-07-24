@@ -59,6 +59,7 @@ Beatmap :: struct {
     visible_hitobject_state: Visibility_State,
     preempt_ms: f64,
     max_preempt_ms: f64, // note(isak): max of preempt_ms and all custom per-object preempts; used as iterator lookahead
+    max_miss_ms: f64, // max of the global and all per-object miss windows; same iterator lookahead role
     circle_radius_osupx: f32,
     
     playfield_translation_osupx: vec2,
@@ -89,6 +90,8 @@ Beatmap :: struct {
     elements: queue.Queue(Element),
     animations: queue.Queue(Animation),
     animation_lists: queue.Queue(Animation_List),
+
+    hidden_fade_list: Animation_List_ID,
 }
 
 BEATMAP_LEAD_IN_MIN_MS :: 1000.0
@@ -129,6 +132,7 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap, kept_mu
     beatmap.timing_windows = convert_overall_difficulty_to_timing_window(game.active_map.diff_overall_difficulty)
     beatmap.preempt_ms = convert_approach_rate_to_preempt_ms(game.active_map.diff_approach_rate)
     beatmap.max_preempt_ms = beatmap.preempt_ms
+    beatmap.max_miss_ms = beatmap.timing_windows.miss
 
     beatmap_write_slider_instances(game.active_map)
     beatmap_apply_note_stacking(game.active_map, beatmap.preempt_ms, beatmap.circle_radius_osupx)
@@ -163,6 +167,7 @@ beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap, kept_mu
     // map graphics init
     
     create_default_elements(&beatmap.elements, &beatmap.animations, &beatmap.animation_lists)
+    beatmap.hidden_fade_list = hidden_fade_animation_new(beatmap)
     mods_apply_to_graphics()
 
     beatmap.bg_handle = create_bg_drawable(game.active_map.bg_filename, game.active_inso_map.bg_pipeline_name)
@@ -338,10 +343,13 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
             game.beatmap.map_reference,
             len(app.map_references) > 0 ? app.map_references[0] : Map_Reference{},
         }
+        // note: substituting a different map is a dev convenience only - a tournament client
+        // must play exactly the requested map, or die where production can see it during setup
+        try_refs := fallback_refs[:1] if game.tournament_client else fallback_refs[:]
         opened: bool
-        try_loop: for try_ref, i in fallback_refs {
+        try_loop: for try_ref, i in try_refs {
             if try_ref.folder_path == "" do continue
-            for earlier_ref in fallback_refs[:i] {
+            for earlier_ref in try_refs[:i] {
                 if try_ref == earlier_ref do continue try_loop
             }
 
@@ -355,6 +363,9 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
             mapset_free(game.active_mapset)
         }
         if !opened {
+            if game.tournament_client {
+                log.panicf("tournament: configured map '%s%s' failed to load", ref.folder_path, ref.osu_filename)
+            }
             log.panic("no loadable beatmap found")
         }
         game.active_map = &game.active_mapset.osu_map

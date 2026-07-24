@@ -25,7 +25,7 @@ hitobject_duration :: proc(hobj: ^Hitobject) -> (result: f64) {
 hitobject_head_hittable :: proc(hobj: ^Hitobject, map_time: f64) -> bool {
     if hobj.phase != .PREEMPT && hobj.phase != .POSTEMPT do return false
     if hobj.type != .CIRCLE && hobj.type != .SLIDER do return false
-    return map_time <= hobj.start_time_ms + game.beatmap.timing_windows.ok
+    return map_time <= hobj.start_time_ms + hitobject_timing_windows(hobj).ok
 }
 
 // note(isak): horizontal offset for the notelock shake. visual only
@@ -48,12 +48,16 @@ hitobject_radius_osupx :: proc(hobj: ^Hitobject) -> f32 {
     return hobj.custom_radius_osupx if hobj.custom_radius_osupx != 0 else game.beatmap.circle_radius_osupx
 }
 
+hitobject_timing_windows :: proc(hobj: ^Hitobject) -> Timing_Window {
+    return hobj.custom_timing_windows if hobj.custom_timing_windows.miss != 0 else game.beatmap.timing_windows
+}
+
 // note(isak): uses max_preempt_ms (max of global and all per-object preempts) to keep visible
 // start times sorted for the iterator while still including custom AR objects on time.
 hitobject_visible_start_time :: proc(hobj: ^Hitobject) -> (result: f64) {
     start_time := hobj.start_time_ms
     #partial switch hobj.type {
-    case .CIRCLE, .SLIDER, .SPINNER: start_time -= max(game.beatmap.max_preempt_ms, game.beatmap.timing_windows.miss)
+    case .CIRCLE, .SLIDER, .SPINNER: start_time -= max(game.beatmap.max_preempt_ms, game.beatmap.max_miss_ms)
     }
     return start_time
 }
@@ -64,13 +68,13 @@ hitobject_visible_start_time :: proc(hobj: ^Hitobject) -> (result: f64) {
 hitobject_activation_time :: proc(hobj: ^Hitobject) -> (result: f64) {
     result = hobj.start_time_ms
     #partial switch hobj.type {
-    case .CIRCLE, .SLIDER, .SPINNER: result -= max(hitobject_preempt_ms(hobj), game.beatmap.timing_windows.miss)
+    case .CIRCLE, .SLIDER, .SPINNER: result -= max(hitobject_preempt_ms(hobj), hitobject_timing_windows(hobj).miss)
     }
     return result
 }
 
 hitobject_visible_end_time :: proc(hobj: ^Hitobject) -> (result: f64) {
-    end_time := hobj.end_time_ms + game.beatmap.timing_windows.ok
+    end_time := hobj.end_time_ms + hitobject_timing_windows(hobj).ok
     hit_anim_len := hobj.custom_hit_animation_len_ms != 0 ? hobj.custom_hit_animation_len_ms : OSU_HIT_ANIMATION_LENGTH
     #partial switch hobj.type {
     case .CIRCLE, .SLIDER: end_time += hit_anim_len
@@ -110,6 +114,13 @@ hitobject_set_preempt :: proc(hobj: ^Hitobject, preempt: f64) {
     hobj.custom_preempt_ms = preempt
     if preempt > game.beatmap.max_preempt_ms {
         game.beatmap.max_preempt_ms = preempt
+    }
+}
+
+hitobject_set_timing_windows :: proc(hobj: ^Hitobject, windows: Timing_Window) {
+    hobj.custom_timing_windows = windows
+    if windows.miss > game.beatmap.max_miss_ms {
+        game.beatmap.max_miss_ms = windows.miss
     }
 }
 
@@ -159,14 +170,15 @@ hitobject_on_click :: proc(hobj: ^Hitobject, click_time: f64) -> (result: Judgem
     
     #partial switch hobj.type {
     case .CIRCLE, .SLIDER:
+        tw := hitobject_timing_windows(hobj)
         time_error_ms = click_time - hobj.start_time_ms
-        if abs(time_error_ms) < game.beatmap.timing_windows.marvelous {
+        if abs(time_error_ms) < tw.marvelous {
             result = .MARVELOUS
-        } else if abs(time_error_ms) < game.beatmap.timing_windows.good {
+        } else if abs(time_error_ms) < tw.good {
             result = .GOOD
-        } else if abs(time_error_ms) < game.beatmap.timing_windows.ok {
+        } else if abs(time_error_ms) < tw.ok {
             result = .OK
-        } else if -game.beatmap.timing_windows.miss < time_error_ms && time_error_ms < 0 {
+        } else if -tw.miss < time_error_ms && time_error_ms < 0 {
             // note(isak): if we're outside the timing window on the late side, the hitobject's timing window 
             // has already expired, even if the on_click goes through (because of a potentially long postempt)
             result = .MISS
@@ -310,7 +322,7 @@ spinner_process_expiry :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: boo
 }
 
 hitcircle_process_expiry :: proc(hobj: ^Hitobject, map_time: f64) -> (expired: bool) {
-    end_time := hobj.end_time_ms + game.beatmap.timing_windows.ok
+    end_time := hobj.end_time_ms + hitobject_timing_windows(hobj).ok
     if end_time < map_time {
         final := judgement_new(hobj, .MISS, end_time - hobj.end_time_ms)
         judgement_new_drawable(hobj)

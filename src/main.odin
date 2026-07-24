@@ -176,11 +176,8 @@ main :: proc() {
     keyboard_init()
     mouse_init()
     
-    window_apply_vsync(game.user_config.vsync_enabled)
-    audio_set_volume(game.user_config.master_volume)
-    audio_set_category_volume(.MUSIC, game.user_config.music_volume)
-    audio_set_category_volume(.HITSOUND, game.user_config.hitsound_volume)
-    
+    config_apply()
+
     if !input_validate_mouse_hwid(.PRIMARY, game.user_config.primary_mouse_hwid) {
         game.user_config.primary_mouse_hwid = {}
     }
@@ -188,8 +185,9 @@ main :: proc() {
         game.user_config.secondary_mouse_hwid = {}
     }
 
-    shaders_watch := directory_watch_init("shaders/")
-    skins_watch := directory_watch_init("skins/")
+    shaders_watch, skins_watch: Directory_Watch
+    directory_watch_init(&shaders_watch, "shaders/")
+    directory_watch_init(&skins_watch, "skins/")
     defer directory_watch_close(&skins_watch)
 
     // todo(isak): consider creating a song index (with allocator)
@@ -686,7 +684,7 @@ imgui_update :: proc() {
                 if imgui.Selectable(osu_mod_table[mod].name, enabled, {.SpanAllColumns}) {
                     game.mods ~= {mod}
 
-                    if mod == .DOUBLE_TIME && enabled {
+                    if (mod == .DOUBLE_TIME || mod == .HALF_TIME) && enabled {
                         game.time_rate = 1.0
                     }
                     beatmap_open(game.beatmap.map_reference, true)
@@ -772,9 +770,14 @@ imgui_update :: proc() {
             audio_set_volume(game.user_config.master_volume)
         }
         if imgui.SliderFloat("Music##vol", &game.user_config.music_volume, 0, 1) {
-            audio_set_category_volume(.MUSIC, game.user_config.music_volume)
+            audio_apply_config_volumes()
         }
-        if imgui.SliderFloat("Hitsounds##vol", &game.user_config.hitsound_volume, 0, 1) {
+        if game.user_config.hitsound_volume_follows_music {
+            imgui.BeginDisabled()
+            shown := game.user_config.music_volume
+            imgui.SliderFloat("Hitsounds##vol", &shown, 0, 1)
+            imgui.EndDisabled()
+        } else if imgui.SliderFloat("Hitsounds##vol", &game.user_config.hitsound_volume, 0, 1) {
             audio_set_category_volume(.HITSOUND, game.user_config.hitsound_volume)
         }
     }

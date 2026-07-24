@@ -18,10 +18,12 @@ Directory_Watch :: struct {
     path: string,
 }
 
-directory_watch_init :: proc(path: string) -> Directory_Watch {
-    result := Directory_Watch{ path = path }
+// note(isak): the kernel holds pointers to overlapped/notify_buf while a read is pending,
+// never construct one in a local and copy it
+directory_watch_init :: proc(watch: ^Directory_Watch, path: string) {
+    watch^ = Directory_Watch{ path = path }
 
-    result.dir_handle = windows.CreateFileW(
+    watch.dir_handle = windows.CreateFileW(
         windows.utf8_to_wstring(path),
         windows.FILE_LIST_DIRECTORY,
         windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE,
@@ -30,20 +32,27 @@ directory_watch_init :: proc(path: string) -> Directory_Watch {
         windows.FILE_FLAG_BACKUP_SEMANTICS | windows.FILE_FLAG_OVERLAPPED,
         nil,
     )
-    if result.dir_handle == windows.INVALID_HANDLE_VALUE {
+    if watch.dir_handle == windows.INVALID_HANDLE_VALUE {
         log.error("directory_watch_init: invalid path:", path)
-        return result
+        return
     }
 
-    result.iocp_handle = windows.CreateIoCompletionPort(windows.INVALID_HANDLE_VALUE, nil, 0, 1)
-    windows.CreateIoCompletionPort(result.dir_handle, result.iocp_handle, 0, 1)
-    result.initialized = true
-    _directory_watch_start_io(&result)
-    return result
+    watch.iocp_handle = windows.CreateIoCompletionPort(windows.INVALID_HANDLE_VALUE, nil, 0, 1)
+    windows.CreateIoCompletionPort(watch.dir_handle, watch.iocp_handle, 0, 1)
+    watch.initialized = true
+    _directory_watch_start_io(watch)
 }
 
 directory_watch_close :: proc(watch: ^Directory_Watch) {
     if !watch.initialized do return
+
+    // note(isak): we must cancel the pending operation so that watch.notify_buf can be freed safely
+    if windows.CancelIoEx(watch.dir_handle, &watch.overlapped) != windows.FALSE {
+        bytes: windows.DWORD
+        completion_key: windows.ULONG_PTR
+        overlapped: windows.LPOVERLAPPED
+        windows.GetQueuedCompletionStatus(watch.iocp_handle, &bytes, &completion_key, &overlapped, 1000)
+    }
     windows.CloseHandle(watch.dir_handle)
     windows.CloseHandle(watch.iocp_handle)
     watch.initialized = false

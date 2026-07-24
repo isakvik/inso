@@ -12,15 +12,11 @@ old features
     sliderfollowcircle animation (fade/scale)
     repeat arrow fadein/out animation
 
-aery final map:
-    turn mods on (PS dt/ht dont work in tournament mode?)
-
 skinning
     we can test players' submitted skins for unhandled functionality
     remaining ini keys: SliderBallFlip, HitCircleOverlayAboveNumber, LayeredHitSounds
 
-
---
+-- out of scope --
 
 extra features
     rotate slider from head

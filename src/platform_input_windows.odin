@@ -135,8 +135,9 @@ get_hwid_for_mouse_handle :: proc(handle: windows.HANDLE, alloc: runtime.Allocat
         return {}
     }
     
-    // note(isak): buffers must be aligned to windows.UINT boundaries, so we call make() with those
-    buf_size_in_uints := (buf_size * size_of(windows.WCHAR)) / size_of(windows.UINT)
+    // note(isak): buffers must be aligned to windows.UINT boundaries, so we call make() with those.
+    // buf_size is in WCHARs - round the division up or odd name lengths overflow by two bytes
+    buf_size_in_uints := (buf_size * size_of(windows.WCHAR) + size_of(windows.UINT) - 1) / size_of(windows.UINT)
     buf_internal := make([]windows.UINT, buf_size_in_uints, alloc)
     buf := slice.from_ptr(raw_data(transmute([]windows.WCHAR)buf_internal), int(buf_size))
     

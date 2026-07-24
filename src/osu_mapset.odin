@@ -381,7 +381,7 @@ mapset_open_for_editing :: proc(path: string, osu_filename: string = "") -> (^Ma
     }
     mapset_apply_hitobject_extra_bits(mapset)
 
-    mapset.watch = directory_watch_init(path)
+    directory_watch_init(&mapset.watch, path)
     
     log.info("opened mapset with directory watch:", path)
     return mapset, true
@@ -414,6 +414,7 @@ discover_maps :: proc(
     clear(&app.map_reference_names)
 
     dirs, _ := os.read_dir(dir_handle, 1024, temp_alloc)
+    os.close(dir_handle)
 
     count := 0
     for dir in dirs {
@@ -424,6 +425,7 @@ discover_maps :: proc(
         sub_handle, sub_err := os.open(folder_path)
         if sub_err != nil do continue
         sub_files, _ := os.read_dir(sub_handle, 256, temp_alloc)
+        os.close(sub_handle)
 
         for sub_file in sub_files {
             if filepath.ext(sub_file.name) != ".osu" do continue
@@ -464,9 +466,13 @@ mapset_walk_directory :: proc(mapset: ^Mapset, path: string) -> (ok: bool) {
     cwd, _ := os.get_working_directory(context.temp_allocator)
     defer os.change_directory(cwd)
 
-    files: []os.File_Info
-    dir_handle, io_err := os.open(path)
-    files, io_err = os.read_dir(dir_handle, 1024, context.temp_allocator)
+    dir_handle, open_err := os.open(path)
+    if open_err != nil {
+        log.errorf("mapset: couldn't open directory '{}': {}", path, open_err)
+        return false
+    }
+    files, _ := os.read_dir(dir_handle, 1024, context.temp_allocator)
+    os.close(dir_handle)
 
     os.change_directory(path)
 
@@ -1043,6 +1049,7 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> (result: Osu_Map,
             case .EVENTS:
                 for i in 1..<len(lines) {
                     if lines[i] == "//Background and Video events" {
+                        if i + 1 >= len(lines) do continue
                         path_from := strings.index_byte(lines[i+1], '"')
                         path_to := strings.last_index_byte(lines[i+1], '"')
 
@@ -1154,7 +1161,13 @@ mapset_parse_osu :: proc(mapset: ^Mapset, osu_file: string) -> (result: Osu_Map,
                 result.slider_paths = slice.from_ptr(cast(^Slider_Path)slider_array_ptr, int(slider_temp_queue.len))
         }
     }
-    
+
+    if len(result.timing_points) == 0 || len(result.hitobjects) == 0 {
+        log.errorf("map parse :: '{}' has no timing points or hitobjects", mapset.osu_filename)
+        notify_error("map parse: '%s' has no timing points or hitobjects", mapset.osu_filename)
+        return result, false
+    }
+
     map_postprocess(mapset, &result)
 
     return result, true
@@ -1343,8 +1356,15 @@ map_postprocess :: proc(mapset: ^Mapset, osu_map: ^Osu_Map) {
             
             slider.tick_interval_ms = 0 if disable_ticks else
                 uninherited_tp.beat_length / osu_map.diff_slider_tickrate
-            slider.tick_count = 0 if disable_ticks else
-                int((slider.duration_ms - SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS) / slider.tick_interval_ms)
+
+            // note(isak): degenerate timing (zero tickrate, negative or NaN durations) must not
+            // reach the tick allocations below as a negative or absurd count
+            if slider.tick_interval_ms > 0 {
+                tick_count := (slider.duration_ms - SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS) / slider.tick_interval_ms
+                if tick_count > 0 && tick_count < 1 << 20 {
+                    slider.tick_count = int(tick_count)
+                }
+            }
             slider.tick_hits = make([]bool, slider.tick_count, context.allocator)
 
             // note(isak): bake the lenient hitsound timing point for every edge and tick now that the
@@ -1418,6 +1438,11 @@ mapset_parse_osu_slider_params :: proc(hobj: ^Hitobject, slider: ^Slider_Path, p
                 }
             case 1:
                 hobj.slider_state.path_travel_count = parse_int_strict(value, "slider repeat count") or_return
+                if hobj.slider_state.path_travel_count < 1 {
+                    log.errorf("map parse :: bad slider repeat count '{}'", value)
+                    notify_error("map parse: bad slider repeat count '%s'", value)
+                    return false
+                }
 
                 // note(isak): edges = path_travel_count + 1 (head, repeats, tail). default every edge to the
                 // object-level hitsound and auto sample sets; edgeSounds/edgeSets below override when present
@@ -1591,6 +1616,10 @@ convert_overall_difficulty_to_timing_window :: proc(od: f64) -> Timing_Window {
         ok        = max(200 - 10 * od, 0),
         miss      = 400,
     }
+}
+
+convert_timing_window_to_overall_difficulty :: proc(windows: Timing_Window) -> f64 {
+    return (200 - windows.ok) / 10
 }
 
 

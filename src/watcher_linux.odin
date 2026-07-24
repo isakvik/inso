@@ -17,13 +17,13 @@ Directory_Watch :: struct {
     path: string,
 }
 
-directory_watch_init :: proc(path: string) -> Directory_Watch {
-    result := Directory_Watch{ path = path }
+directory_watch_init :: proc(watch: ^Directory_Watch, path: string) {
+    watch^ = Directory_Watch{ path = path }
 
     fd, err := linux.inotify_init1({ .NONBLOCK })
     if err != .NONE {
         log.error("inotify_init1 failed:", err)
-        return result
+        return
     }
 
     path_cstr := strings.clone_to_cstring(path, context.temp_allocator)
@@ -31,13 +31,12 @@ directory_watch_init :: proc(path: string) -> Directory_Watch {
     if err2 != .NONE {
         log.error("inotify_add_watch failed:", path, err2)
         linux.close(fd)
-        return result
+        return
     }
 
-    result.inotify_fd  = fd
-    result.wd          = wd
-    result.initialized = true
-    return result
+    watch.inotify_fd  = fd
+    watch.wd          = wd
+    watch.initialized = true
 }
 
 directory_watch_close :: proc(watch: ^Directory_Watch) {

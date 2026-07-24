@@ -268,6 +268,17 @@ audio_set_category_volume :: proc(category: Sound_Category, volume: f32) {
     }
 }
 
+effective_hitsound_volume :: proc() -> f32 {
+    cfg := &game.user_config
+    return cfg.music_volume if cfg.hitsound_volume_follows_music else cfg.hitsound_volume
+}
+
+audio_apply_config_volumes :: proc() {
+    audio_set_volume(game.user_config.master_volume)
+    audio_set_category_volume(.MUSIC, game.user_config.music_volume)
+    audio_set_category_volume(.HITSOUND, effective_hitsound_volume())
+}
+
 //////////////////////////////////////////////////////
 // note(isak): sound api
 
@@ -284,8 +295,15 @@ sound_stream_init :: proc(path: string, prescan: bool = false, loop: bool = fals
         return result, false
     }
     
-    result.handle = bass.FX_TempoCreate(result.handle, bass.FX_FREESOURCE | bass.STREAM_DECODE)
-    
+    tempo_handle := bass.FX_TempoCreate(result.handle, bass.FX_FREESOURCE | bass.STREAM_DECODE)
+    if tempo_handle == 0 {
+        log.error("BASS tempo stream create error:", bass.ErrorGetCode(), "::", path)
+        bass.StreamFree(result.handle)
+        result.handle = 0
+        return result, false
+    }
+    result.handle = tempo_handle
+
     bass.ChannelSetAttribute(result.handle, bass.ATTRIB_TEMPO_OPTION_USE_QUICKALGO, 1)
     bass.ChannelSetAttribute(result.handle, bass.ATTRIB_TEMPO_OPTION_OVERLAP_MS, 4.0)
     bass.ChannelSetAttribute(result.handle, bass.ATTRIB_TEMPO_OPTION_SEQUENCE_MS, 30.0)
@@ -546,15 +564,20 @@ sample_load_file :: proc(path: string, max_simultaneous: int = 8) -> (result: Sa
     }
     result.file_data = file_data
 
+    // note(isak): 0kb / silent files are how skins and maps mute a sound; treat them as a valid
+    // silent sample (zero handle). every play path already no-ops on handle 0. a 0-byte file
+    // never reaches BASS - it would fail format detection (FILEFORM) instead of ERROR_EMPTY
+    if len(file_data) == 0 {
+        return result, true
+    }
+
     path_cstr := strings.clone_to_cstring(path, context.temp_allocator)
-    
+
     // note(isak): SAMPLE_OVER_POS drops the oldest instance when the pool is exhausted
     result.handle = bass.SampleLoad(0, rawptr(path_cstr), 0, 0, u32(max_simultaneous),
         bass.SAMPLE_FLOAT | bass.SAMPLE_OVER_POS)
     if result.handle == 0 {
         err := bass.ErrorGetCode()
-        // note(isak): 0kb / silent files are how osu maps mute a sound; treat them as a valid
-        // silent sample (zero handle). every play path already no-ops on handle 0.
         if err == bass.ERROR_EMPTY {
             return result, true
         }

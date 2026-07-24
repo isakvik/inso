@@ -200,7 +200,8 @@ texture_array_from_files :: proc(paths: []string, wrap: Texture_Wrap = .CLAMP) -
 
 
 texture_write_ptr_to :: proc(texture: Texture, rect: Rect, pixels: rawptr, pixel_count: int) {
-    assert(int(rect.w * rect.h) <= pixel_count)
+    // note(isak): floating point accuracy bit me in the ass here on 24.07.2026
+    assert(int(rect.w) * int(rect.h) <= pixel_count)
     gl.TextureSubImage3D(texture.tex_id, 0, i32(rect.x), i32(rect.y), 0, i32(rect.w), i32(rect.h), 1,
         texture.format, gl.UNSIGNED_BYTE, pixels)
 }

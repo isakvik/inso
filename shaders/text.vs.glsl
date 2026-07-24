@@ -18,7 +18,7 @@ struct Vertex {
     vec2 uv;
 };
 
-layout(binding = 1, std140) readonly buffer vertexData {
+layout(binding = 1, std430) readonly buffer vertexData {
     GlyphQuad vertices[];
 };
 

@@ -44,7 +44,6 @@ Glyph_Quad :: struct {
     uv_max:  [2]f32,
     color:   [4]u8,
     transform_index: u32, // always TRANSFORM_SLOT_SCREENSPACE: push_text takes screen pixels
-    __padding: [2]u32
 }
 
 // note(isak) @release: arial unicode ships with some microsoft products and contains pretty much everything, but
@@ -99,23 +98,27 @@ text_init :: proc() {
 
 text_resize_callback :: proc(ctx: rawptr, w, h: int) {
     _texture_reinit(&window.font_atlas_texture, i32(w), i32(h), ctx)
+
+    // note(isak): reinit swaps in a fresh handle
+    if window.bindless_supported {
+        window.texture_buffer.data[Builtin_Texture_Slot.FONT_ATLAS] = window.font_atlas_texture.tex_handle
+    }
+
     fs.__dirtyRectReset(cast(^fs.FontContext)ctx)
 }
 
 text_update_callback :: proc(ctx: rawptr, dirty_rect: [4]f32, texture_data: rawptr) {
-    dirty_rect := [4]i32{
-        i32(dirty_rect[0]),
-        i32(dirty_rect[1]),
-        i32(dirty_rect[2]) - i32(dirty_rect[0]),
-        i32(dirty_rect[3]) - i32(dirty_rect[1]),
-    }
+    x := i32(dirty_rect[0])
+    y := i32(dirty_rect[1])
+    w := i32(dirty_rect[2]) - x
+    h := i32(dirty_rect[3]) - y
 
-    for i in 0..<dirty_rect[3] {
-        texture_write_to(window.font_atlas_texture,
-                         {f32(dirty_rect[0]), f32(dirty_rect[1] + i), f32(dirty_rect[2]), 1},
-                         rawptr(uintptr(texture_data) + uintptr(dirty_rect[0] + window.font_atlas_texture.w * (dirty_rect[1] + i))),
-                         int(dirty_rect[2]))
-    }
+    atlas_width := window.font_atlas_texture.w
+    row_start := rawptr(uintptr(texture_data) + uintptr(x + atlas_width * y))
+
+    gl.PixelStorei(gl.UNPACK_ROW_LENGTH, atlas_width)
+    texture_write_to(window.font_atlas_texture, {f32(x), f32(y), f32(w), f32(h)}, row_start, int(w) * int(h))
+    gl.PixelStorei(gl.UNPACK_ROW_LENGTH, 0)
 }
 
 // todo(isak): this is actually pretty slow since it has to generate a bunch of stuff for every call.

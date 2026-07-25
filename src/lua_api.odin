@@ -2240,7 +2240,7 @@ luaapi_animation_frames :: proc "c" (L: ^lua.State) -> i32 {
     end      := f64(lua_number(3))
     tex_name := lua_string(4)
 
-    tex_slot, found := game.active_mapset.texture_slot_by_name[tex_name]
+    tex_slot, found := game.active_mapset.texture_slot_by_name[to_forward_slash(tex_name)]
     if !found {
         log.warn("User error - texture not found:", tex_name)
         notify_warn("lua: Animation:frames texture not found '%s'", tex_name)

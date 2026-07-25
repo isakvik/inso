@@ -109,10 +109,15 @@ Mapset :: struct {
 }
 
 
+to_forward_slash :: proc(name: string, alloc := context.temp_allocator) -> string {
+    key, _ := strings.replace_all(name, "\\", "/", alloc)
+    return key
+}
+
 mapset_sample :: proc(name: string) -> (result: ^Sample, found: bool) {
     assert(game.active_mapset != nil)
     index: u32
-    index, found = game.active_mapset.sample_slot_by_name[name]
+    index, found = game.active_mapset.sample_slot_by_name[to_forward_slash(name)]
     if found do result = queue.get_ptr(&game.active_mapset.samples, index)
     return result, found
 }
@@ -120,7 +125,7 @@ mapset_sample :: proc(name: string) -> (result: ^Sample, found: bool) {
 mapset_texture :: proc(name: string) -> (result: ^Texture, found: bool) {
     assert(game.active_mapset != nil)
     index: u32
-    index, found = game.active_mapset.texture_slot_by_name[name]
+    index, found = game.active_mapset.texture_slot_by_name[to_forward_slash(name)]
     if found do result = queue.get_ptr(&game.active_mapset.textures, index)
     else do result = &game.active_mapset.textures.data[0]
     return result, found
@@ -150,15 +155,16 @@ mapset_texture_slot :: proc(name: string) -> (result: u32, found: bool) {
         return skin_texture(skin_el), true
     }
 
+    key := to_forward_slash(name)
     index: u32
-    index, found = game.active_mapset.texture_slot_by_name[name]
+    index, found = game.active_mapset.texture_slot_by_name[key]
     if found {
         result = user_texture(index)
         return result, found
     }
     // note(isak): render targets sit in the global texture slot space right after map textures,
     // so they sample by name through the same path as any other texture.
-    index, found = game.active_mapset.render_target_by_name[name]
+    index, found = game.active_mapset.render_target_by_name[key]
     if found do result = mapset_render_target_texture_slot(index)
     return result, found
 }
@@ -462,7 +468,7 @@ discover_maps :: proc(
     notify_info("discover_maps: found %v maps in '%s'", count, songs_dir)
 }
 
-mapset_walk_directory :: proc(mapset: ^Mapset, path: string) -> (ok: bool) {
+mapset_walk_directory :: proc(mapset: ^Mapset, path: string, rel_prefix := "") -> (ok: bool) {
     cwd, _ := os.get_working_directory(context.temp_allocator)
     defer os.change_directory(cwd)
 
@@ -478,16 +484,26 @@ mapset_walk_directory :: proc(mapset: ^Mapset, path: string) -> (ok: bool) {
 
     for file in files {
         if file.type == .Directory {
-            mapset_walk_directory(mapset, file.name) or_return
+            child_prefix := file.name
+            if rel_prefix != "" {
+                child_prefix = strings.concatenate({rel_prefix, "/", file.name}, context.temp_allocator)
+            }
+            mapset_walk_directory(mapset, file.name, child_prefix) or_return
         } else {
-            mapset_handle_file(mapset, file) or_return
+            mapset_handle_file(mapset, file, rel_prefix) or_return
         }
     }
     return true
 }
 
-mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) -> (ok: bool) {
+mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info, rel_prefix := "") -> (ok: bool) {
     extension := filepath.ext(file.name)
+
+    rel_name := file.name
+    if rel_prefix != "" {
+        rel_name = strings.concatenate({rel_prefix, "/", file.name}, context.temp_allocator)
+    }
+
     switch {
         case extension == ".inso": {
             filedata, file_err := read_entire_file_to_string(file.name, context.temp_allocator)
@@ -514,7 +530,7 @@ mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) -> (ok: bool) {
                 notify_error("mapset: texture limit (%d) reached, skipping '%s'", max_user_textures(), file.name)
                 break
             }
-            tex_key := strings.clone(file.name, memory.allocators[.MAPSET])
+            tex_key := strings.clone(rel_name, memory.allocators[.MAPSET])
             tex, file_err := texture_from_file(file.name)
             if file_err != nil {
                 log.errorf("mapset: failed to load texture '{}': {}", file.name, file_err)
@@ -526,7 +542,7 @@ mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info) -> (ok: bool) {
         case slice.contains(supported_audio_extensions, extension): {
             sample, ok := sample_load_file(file.name)
             if ok {
-                sample_key := strings.clone(file.name, memory.allocators[.MAPSET])
+                sample_key := strings.clone(rel_name, memory.allocators[.MAPSET])
                 slot := u32(mapset.samples.len)
                 mapset.sample_slot_by_name[sample_key] = slot
                 sample.filepath = sample_key

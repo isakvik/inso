@@ -111,8 +111,17 @@ input_thread_apply_events :: proc(events: []Input_Event) {
     for &event in events {
         if event.kind != .MOUSE do continue
 
-        switch app.mouse_input_mode {
-        case .RAW_DOUBLE_MOUSE_INPUT:
+        // note(isak): a pending rebind claims the next click whole, and the os keeps the cursor
+        // meanwhile (see mouse_sync_cursor_with_os), so the input source is left untouched by it
+        if rebind_target, rebinding := app.mouse_rebind_target.?; rebinding {
+            if event.button_flags & INPUT_M1_DOWN != 0 {
+                mouse_rebind(rebind_target, event.device)
+            }
+            continue
+        }
+
+        switch app.mouse_input_source {
+        case .RAW_DOUBLE:
             target: ^Mouse
             if event.device == mouse.device_handle {
                 target = &mouse
@@ -123,23 +132,17 @@ input_thread_apply_events :: proc(events: []Input_Event) {
             }
             apply_raw_mouse_event(target, &event)
 
-        case .RAW_SINGLE_MOUSE_INPUT:
+        case .RAW:
             // note(isak): any physical mouse will move the primary cursor, so no handle filtering here
             apply_raw_mouse_event(&mouse, &event)
 
-        case .REBINDING_MOUSE_PRIMARY, .REBINDING_MOUSE_SECONDARY:
-            if event.button_flags & INPUT_M1_DOWN != 0 {
-                id: Mouse_ID = app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY ? .PRIMARY : .SECONDARY
-                mouse_rebind(id, event.device)
-                app.mouse_input_mode = .SDL_INPUT
-            }
-
-        case .SDL_INPUT: // note(isak): leave to main game loop
+        case .OS: // note(isak): leave to main game loop
         }
     }
 }
 
 apply_raw_mouse_event :: proc(target: ^Mouse, event: ^Input_Event) {
+    target.absolute_positioning = event.absolute_input
     target.pos = raw_cursor_integrate(target.pos, event)
 
     flags := event.button_flags
@@ -285,7 +288,7 @@ _input_thread_queue_raw_event :: proc "system" (raw: ^windows.RAWINPUT, tsc: i64
         event.motion_x = i32(m.lLastX)
         event.motion_y = i32(m.lLastY)
         event.button_flags = u16(m.usButtonFlags)
-        event.absolute_motion = m.usFlags & windows.MOUSE_MOVE_ABSOLUTE != 0
+        event.absolute_input = m.usFlags & windows.MOUSE_MOVE_ABSOLUTE != 0
 
     case windows.RIM_TYPEKEYBOARD:
         k := &raw.data.keyboard
@@ -313,8 +316,8 @@ _input_thread_queue_raw_event :: proc "system" (raw: ^windows.RAWINPUT, tsc: i64
     if event.kind == .MOUSE && event.button_flags == 0 && input_thread.write_count > 0 {
         last := &write[input_thread.write_count - 1]
         if last.kind == .MOUSE && last.button_flags == 0 &&
-           last.device == event.device && last.absolute_motion == event.absolute_motion {
-            if event.absolute_motion {
+           last.device == event.device && last.absolute_input == event.absolute_input {
+            if event.absolute_input {
                 last^ = event
             } else {
                 last.motion_x += event.motion_x

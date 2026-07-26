@@ -74,6 +74,10 @@ config_import_from_osu :: proc(osu_install_path: string) {
     }
     if v, ok := get(pairs, "MouseSpeed"); ok {
         if n, ok2 := strconv.parse_f32(v); ok2 do cfg.cursor_sensitivity = n
+        // note(isak): raw input is the only path that owns cursor position
+        if cfg.cursor_sensitivity != 1.0 {
+            cfg.raw_input_enabled = true
+        }
     }
 
     if v, ok := get_bool(pairs, "SnakingSliders");    ok do cfg.snaking_in_sliders_enabled = v

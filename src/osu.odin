@@ -627,7 +627,7 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
         cursor_expand_update()
         cursor_trail_draw(&cursor_trails[0], mouse.pos)
         cursor_draw(mouse.pos, skin_texture(.CURSOR))
-        if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {
+        if app.mouse_input_source == .RAW_DOUBLE {
             cursor_trail_draw(&cursor_trails[1], mouse_secondary.pos)
             cursor_draw(mouse_secondary.pos, skin_texture(.CURSOR))
         }

@@ -63,7 +63,8 @@ app: struct {
     skin_dropdown: Imgui_Dropdown,
     offset_window_open: bool,
 
-    mouse_input_mode: Mouse_Input_Mode,
+    mouse_input_source: Mouse_Input_Source,
+    mouse_rebind_target: Maybe(Mouse_ID), // note(isak): set while waiting for a click to bind a device
     input_thread_active: bool, // note(isak): per-event judgement runs only when this is up
     input_device_hwids: []string,
     input_device_handles: []Mouse_Handle,
@@ -93,18 +94,23 @@ app_cleanup :: proc() {
 //////////////////////////////////////////////////////
 // note(isak): input api
 
-Mouse_Input_Mode :: enum {
-    SDL_INPUT,
-    RAW_SINGLE_MOUSE_INPUT,
-    RAW_DOUBLE_MOUSE_INPUT,
-    REBINDING_MOUSE_PRIMARY,
-    REBINDING_MOUSE_SECONDARY,
+// note(isak): where the cursor position comes from, and nothing else. rebinding is a modal capture
+// that composes with any of these - see app.mouse_rebind_target
+Mouse_Input_Source :: enum {
+    OS,         // the os owns the cursor, we read it back every frame
+    RAW,        // we integrate raw deltas and warp the os cursor onto our position
+    RAW_DOUBLE, // as RAW, plus a second cursor bound to its own device
 }
 
 is_raw_input_enabled :: proc() -> bool {
-    return !app.disable_raw_input && 
-        (app.mouse_input_mode == .RAW_SINGLE_MOUSE_INPUT ||
-        app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT)
+    return !app.disable_raw_input &&
+        (app.mouse_input_source == .RAW || app.mouse_input_source == .RAW_DOUBLE)
+}
+
+// note(isak): sdl button events are the fallback for when raw input isn't driving mouse.buttons.
+// a pending rebind swallows clicks whole, since the click that binds a device isn't a game click
+mouse_accepts_sdl_buttons :: proc() -> bool {
+    return !is_raw_input_enabled() && app.mouse_rebind_target == nil
 }
 
 Mouse_Button :: enum {
@@ -132,7 +138,7 @@ Input_Event :: struct {
     // .MOUSE
     motion_x, motion_y: i32,
     button_flags: u16, // win32 RI_MOUSE_* transition flags
-    absolute_motion: bool,
+    absolute_input: bool,
 
     // .KEY
     scancode: sdl.Scancode,
@@ -147,16 +153,13 @@ INPUT_M2_UP:   u16 : 0x0008
 INPUT_M3_DOWN: u16 : 0x0010
 INPUT_M3_UP:   u16 : 0x0020
 
-// note(isak): advances an integrated raw cursor, confined to the window like osu does. the
-// confinement is load-bearing: the os cursor is warped to follow this every frame and SetCursorPos
-// clamps to the desktop, so a position allowed past the edge desyncs from the real cursor and every
-// later warp pins the real one against that edge until the overshoot is walked back by hand. a
-// fullscreen window never gets the mouse-leave that would resync it, so the pin is permanent there.
-// ignores motion while the cursor is outside the window and for absolute motion (tablets)
+// note(isak): cursor movement calculation
 raw_cursor_integrate :: proc(pos: vec2, event: ^Input_Event) -> vec2 {
-    if !window.mouse_inside || event.absolute_motion do return pos
+    if !window.mouse_inside || event.absolute_input do return pos
 
     moved := pos + {f32(event.motion_x), f32(event.motion_y)} * game.user_config.cursor_sensitivity
+
+    // note(isak): we need the clamp to prevent a desync between the os cursor and game cursor
     return {
         clamp(moved.x, 0, window.rect.w - 1),
         clamp(moved.y, 0, window.rect.h - 1),
@@ -175,7 +178,10 @@ Mouse :: struct {
     buttons: [Mouse_Button]Button_State,
     last_click_position: [Mouse_Button]vec2,
 
-    is_rebinding: bool,
+    // note(isak): a tablet reports absolute positions and its driver already maps the tablet area
+    // onto the desktop, so the os cursor leads and we follow it instead of integrating and warping.
+    // cleared by the next relative report, so switching back to a mouse mid-session just works
+    absolute_positioning: bool,
 }
 
 mouse: Mouse
@@ -209,7 +215,7 @@ mouse_get_position_relative_to_window :: proc() -> (result: vec2) {
 
 mouse_rebind :: proc(id: Mouse_ID, handle: Mouse_Handle) {
     mice[id].device_handle = handle
-    mice[id].is_rebinding = false
+    app.mouse_rebind_target = nil
 
     handle_hwid: string
     for device_handle, i in app.input_device_handles {
@@ -249,9 +255,10 @@ mouse_enable_double_mouse_mode :: proc() -> bool {
         return false
     }
     
-    app.mouse_input_mode = .RAW_DOUBLE_MOUSE_INPUT
+    app.mouse_input_source = .RAW_DOUBLE
     for &mouse in mice {
         mouse.pos = mouse_get_position_relative_to_window()
+        mouse.absolute_positioning = false
     }
     return true
 }
@@ -259,12 +266,30 @@ mouse_enable_double_mouse_mode :: proc() -> bool {
 // note(isak): single mouse mode drives the primary cursor from raw input regardless of which physical
 // mouse sends it, so no device handle needs to be bound
 mouse_enable_raw_input_mode :: proc() {
-    app.mouse_input_mode = .RAW_SINGLE_MOUSE_INPUT
+    app.mouse_input_source = .RAW
     mouse.pos = mouse_get_position_relative_to_window()
+    mouse.absolute_positioning = false
 }
 
 mouse_disable_raw_input_mode :: proc() {
-    app.mouse_input_mode = .SDL_INPUT
+    app.mouse_input_source = .OS
+}
+
+// note(isak): settles who owns the cursor for this frame and syncs the other one to it. the os
+// leads whenever we aren't integrating raw deltas ourselves - raw input off, a pen, or the window
+// not holding the cursor - and we lead otherwise, warping the real cursor onto our position.
+// a resize moves the window origin out from under an integrated position, so it re-seeds once
+mouse_sync_cursor_with_os :: proc() {
+    os_leads := !is_raw_input_enabled() || mouse.absolute_positioning ||
+                !window.focused || !window.mouse_inside ||
+                app.mouse_rebind_target != nil
+
+    if os_leads || window.mouse_needs_restore {
+        mouse.pos = mouse_get_position_relative_to_window()
+    } else {
+        sdl.WarpMouseInWindow(window.handle, mouse.pos.x, mouse.pos.y)
+    }
+    window.mouse_needs_restore = false
 }
 
 

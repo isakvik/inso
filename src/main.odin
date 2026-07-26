@@ -242,19 +242,19 @@ main :: proc() {
                     io := imgui.GetIO()
                     switch event.button.button {
                         case sdl.BUTTON_LEFT:
-                            if app.mouse_input_mode == .SDL_INPUT {
+                            if mouse_accepts_sdl_buttons() {
                                 mouse.buttons[.LEFT].is_down = true
                             }
                             mouse.last_click_position[.LEFT] = {event.button.x, event.button.y}
                             imgui.IO_AddMouseButtonEvent(io, 0, true)
                         case sdl.BUTTON_MIDDLE:
-                            if app.mouse_input_mode == .SDL_INPUT {
+                            if mouse_accepts_sdl_buttons() {
                                 mouse.buttons[.MIDDLE].is_down = true
                             }
                             mouse.last_click_position[.MIDDLE] = {event.button.x, event.button.y}
                             imgui.IO_AddMouseButtonEvent(io, 2, true)
                         case sdl.BUTTON_RIGHT:
-                            if app.mouse_input_mode == .SDL_INPUT {
+                            if mouse_accepts_sdl_buttons() {
                                 mouse.buttons[.RIGHT].is_down = true
                             }
                             mouse.last_click_position[.RIGHT] = {event.button.x, event.button.y}
@@ -265,17 +265,17 @@ main :: proc() {
                     io := imgui.GetIO()
                     switch event.button.button {
                         case sdl.BUTTON_LEFT:
-                            if app.mouse_input_mode == .SDL_INPUT {
+                            if mouse_accepts_sdl_buttons() {
                                 mouse.buttons[.LEFT].is_down = false
                             }
                             imgui.IO_AddMouseButtonEvent(io, 0, false)
                         case sdl.BUTTON_MIDDLE:
-                            if app.mouse_input_mode == .SDL_INPUT { 
-                                mouse.buttons[.MIDDLE].is_down = false 
+                            if mouse_accepts_sdl_buttons() {
+                                mouse.buttons[.MIDDLE].is_down = false
                             }
                             imgui.IO_AddMouseButtonEvent(io, 2, false)
                         case sdl.BUTTON_RIGHT:
-                            if app.mouse_input_mode == .SDL_INPUT {
+                            if mouse_accepts_sdl_buttons() {
                                 mouse.buttons[.RIGHT].is_down = false
                             }
                             imgui.IO_AddMouseButtonEvent(io, 1, false)
@@ -340,7 +340,6 @@ main :: proc() {
             game.input.frame_start_mouse_screen = mouse.pos
             game.input.frame_events = input_thread_drain()
             input_thread_apply_events(game.input.frame_events)
-            window_handle_mouse_restore_from_os()
 
             keyboard_next_frame()
 
@@ -350,13 +349,7 @@ main :: proc() {
                 game.input.captured_scancode = .UNKNOWN
             }
 
-            if app.mouse_input_mode == .SDL_INPUT || !window.mouse_inside || !window.focused {
-                // note(isak): this ensures cursor movement updates despite not receiving raw input messages 
-                mouse.pos = mouse_get_position_relative_to_window()
-            }
-            if window.focused && window.mouse_inside && is_raw_input_enabled() {
-                sdl.WarpMouseInWindow(window.handle, mouse.pos.x, mouse.pos.y)
-            }
+            mouse_sync_cursor_with_os()
 
             imgui.IO_AddMousePosEvent(imgui.GetIO(), mouse.pos.x, mouse.pos.y)
             app.ui_wants_mouse = imgui.GetIO().WantCaptureMouse
@@ -783,7 +776,7 @@ imgui_update :: proc() {
     }
     if imgui.CollapsingHeader("Input") {
         if !app.disable_raw_input {
-            raw_input := app.mouse_input_mode == .RAW_SINGLE_MOUSE_INPUT
+            raw_input := app.mouse_input_source == .RAW
             if imgui.Checkbox("Raw input", &raw_input) {
                 if raw_input {
                     mouse_enable_raw_input_mode()
@@ -796,7 +789,7 @@ imgui_update :: proc() {
             imgui.Text("Raw input disabled")
         }
                 
-        raw_active := app.mouse_input_mode != .SDL_INPUT
+        raw_active := is_raw_input_enabled()
         imgui.BeginDisabled(!raw_active)
         if imgui.Button("x##sensitivity_reset") do game.user_config.cursor_sensitivity = 1.0
         imgui.SameLine()
@@ -827,13 +820,11 @@ imgui_update :: proc() {
         /*
         imgui.Text("Rebind mice")
         if imgui.Button("primary") {
-            app.mouse_input_mode = .REBINDING_MOUSE_PRIMARY
-            mice[.PRIMARY].is_rebinding = true
+            app.mouse_rebind_target = .PRIMARY
         }
         imgui.SameLine()
-        if imgui.Button("secondary") { 
-            app.mouse_input_mode = .REBINDING_MOUSE_SECONDARY
-            mice[.SECONDARY].is_rebinding = true
+        if imgui.Button("secondary") {
+            app.mouse_rebind_target = .SECONDARY
         }
         */
     }

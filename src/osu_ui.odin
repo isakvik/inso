@@ -49,9 +49,7 @@ ui_component_visible :: proc(c: UI_Component) -> bool {
     case .ACCURACY_COUNTER: return game.mode == .PLAY && game.user_config.accuracy_display_size > 0
     case .RESULTS_SCREEN:   return game.beatmap.score.completed
     case .REBIND_PROMPT:
-        return game.input.rebinding_key != .NONE ||
-            app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY ||
-            app.mouse_input_mode == .REBINDING_MOUSE_SECONDARY
+        return game.input.rebinding_key != .NONE || app.mouse_rebind_target != nil
     case .TOURNAMENT_WAITING_SCREEN: return game.tournament_waiting_to_start
     case .TOURNAMENT_COUNTDOWN:
         return game.tournament_client && !game.tournament_waiting_to_start &&
@@ -389,11 +387,11 @@ input_display_draw_screenspace :: proc() {
     render_input_key(game.input.k1, &tr[0], { window.rect.w, cy - y_step,   key, key }, color_dim_yellow)
     render_input_key(game.input.k2, &tr[1], { window.rect.w, cy,          key, key }, color_dim_yellow)
 
-    lit_color := app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT ? color_sky_blue :  color_magenta
+    lit_color := app.mouse_input_source == .RAW_DOUBLE ? color_sky_blue :  color_magenta
     render_input_key(game.input.m1, &tr[2], { window.rect.w, cy + y_step,   key, key }, lit_color)
     render_input_key(game.input.m2, &tr[3], { window.rect.w, cy + 2*y_step, key, key }, lit_color)
 
-    if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {
+    if app.mouse_input_source == .RAW_DOUBLE {
         render_input_key(game.input.ms1, &tr[4], { window.rect.w, cy + y_step,   key, half }, color_dim_orange)
         render_input_key(game.input.ms2, &tr[5], { window.rect.w, cy + 2*y_step, key, half }, color_dim_orange)
     }
@@ -611,22 +609,7 @@ rebind_screen_draw :: proc() {
         
     }
     
-    if app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY {
-        r_check_and_bind_layer(.PLATFORM)        
-        r_push_transform(fullscreen_transform)
-        r_draw_quad(&window.renderer.quad_geometry,
-            vec2{0,0}, vec2{1,1},
-            vec2{0,0}, vec2{1,1},
-            with_alpha(color_black, 0.5))
-            
-        push_text(&window.renderer, "Waiting for primary mouse input...",
-            pos = {window.rect.w / 2, window.rect.h / 2},
-            size = to_ui_scale(16),
-            color = {255, 255, 255, 150},
-            align_h = .Center,
-            align_v = .Middle)
-        
-    } else if app.mouse_input_mode == .REBINDING_MOUSE_SECONDARY {
+    if rebind_target, rebinding := app.mouse_rebind_target.?; rebinding {
         r_check_and_bind_layer(.PLATFORM)
         r_push_transform(fullscreen_transform)
         r_draw_quad(&window.renderer.quad_geometry,
@@ -634,7 +617,8 @@ rebind_screen_draw :: proc() {
             vec2{0,0}, vec2{1,1},
             with_alpha(color_black, 0.5))
 
-        push_text(&window.renderer, "Waiting for secondary mouse input...",
+        prompt := rebind_target == .PRIMARY ? "Waiting for primary mouse input..." : "Waiting for secondary mouse input..."
+        push_text(&window.renderer, prompt,
             pos = {window.rect.w / 2, window.rect.h / 2},
             size = to_ui_scale(16),
             color = {255, 255, 255, 150},

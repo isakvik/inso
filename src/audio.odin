@@ -16,6 +16,11 @@ audio: struct {
     output_mixer:   bass.HSTREAM,
     music_mixer:    bass.HSTREAM,
     hitsound_mixer: bass.HSTREAM,
+    // note(isak): device mix format observed at last (re)init; the format-change poll compares against
+    // this, NOT against the mixer rate. WASAPI_GetInfo (negotiated stream) and WASAPI_GetDeviceInfo
+    // (device mix format) can differ on devices advertising many rates, so mixer-vs-device thrashes reinit
+    output_device_mixfreq:  bass.DWORD,
+    output_device_mixchans: bass.DWORD,
     // note: wasapi device buffer in ms; decode positions lead the speakers by this much.
     // 0 on the linux dev path (BASS's own output buffering, uncompensated)
     output_latency_ms: f64,
@@ -128,6 +133,8 @@ when ODIN_OS == .Windows {
 
         device_info: bass.WASAPI_DEVICEINFO
         bass.WASAPI_GetDeviceInfo(bass.WASAPI_GetDevice(), &device_info)
+        audio.output_device_mixfreq  = device_info.mixfreq
+        audio.output_device_mixchans = device_info.mixchans
 
         buffer_samples := info.buflen / (info.chans * _wasapi_format_bytes(info.format))
         audio.output_latency_ms = f64(buffer_samples) * 1000 / f64(info.freq)
@@ -146,6 +153,20 @@ when ODIN_OS == .Windows {
         case bass.WASAPI_FORMAT_24BIT: return 3
         }
         return 4 // FLOAT / 32BIT
+    }
+
+    // note(isak): windows can change a device's shared-mode mix format without firing a WASAPI notify
+    // (e.g. 96khz -> 48khz on the same default device). detect it by watching the device's own mix format
+    // drift from what we last (re)initialized against, and request a reinit to rebuild the output at the new rate
+    _detect_output_format_change :: proc() {
+        if !audio.ready do return
+
+        device_info: bass.WASAPI_DEVICEINFO
+        if !bass.WASAPI_GetDeviceInfo(bass.WASAPI_GetDevice(), &device_info) do return
+
+        if device_info.mixfreq != audio.output_device_mixfreq || device_info.mixchans != audio.output_device_mixchans {
+            intrinsics.atomic_store(&audio.device_reinit_requested, true)
+        }
     }
 }
 
@@ -214,11 +235,10 @@ audio_cleanup :: proc() {
 }
 
 // note(isak): moves the WASAPI output onto the new default device when windows reports a change
-// (or the current device dies). the mixer chain survives untouched unless the new device runs
-// a different format, in which case only the output mixer is rebuilt.
-// bassmix resamples the music/hitsound mixers into it, so playback position is preserved
 audio_handle_device_change :: proc() -> (reinitialized: bool) {
     when ODIN_OS == .Windows {
+        _detect_output_format_change()
+
         if !intrinsics.atomic_exchange(&audio.device_reinit_requested, false) {
             return false
         }

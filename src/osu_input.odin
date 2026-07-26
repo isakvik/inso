@@ -14,8 +14,9 @@ import sdl "vendor:sdl3"
 process_hittesting_event_walk :: proc(visible_hobjs: []Hitobject, map_time_now: f64) {
     tsc_to_ms := 1000.0 / f64(input_tsc_frequency())
 
-    raw_cursor := app.mouse_input_mode == .RAW_SINGLE_MOUSE_INPUT ||
-                  app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT
+    // note(isak): an absolute device carries no deltas to re-integrate, so its presses judge against
+    // the frame's cursor position like the fallback path does
+    raw_cursor := is_raw_input_enabled() && !mouse.absolute_positioning
     cursor_screen := game.input.frame_start_mouse_screen
 
     held := &game.input.raw_held
@@ -31,11 +32,10 @@ process_hittesting_event_walk :: proc(visible_hobjs: []Hitobject, map_time_now: 
 
         switch event.kind {
         case .MOUSE:
-            if app.mouse_input_mode == .REBINDING_MOUSE_PRIMARY ||
-               app.mouse_input_mode == .REBINDING_MOUSE_SECONDARY {
+            if app.mouse_rebind_target != nil {
                 continue // the click belongs to the rebind, not gameplay
             }
-            if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT && event.device != mouse.device_handle {
+            if app.mouse_input_source == .RAW_DOUBLE && event.device != mouse.device_handle {
                 continue // only the primary mouse aims and presses
             }
 
@@ -201,7 +201,7 @@ handle_play_input_events :: proc() {
         lua_beatmap_on_cursor_moved(game.input.mouse_pos)
     }
 
-    if app.mouse_input_mode == .RAW_DOUBLE_MOUSE_INPUT {
+    if app.mouse_input_source == .RAW_DOUBLE {
         game.input.mouse_secondary_pos = screenspace_to_playfield_osupx(vec2{mouse_secondary.pos.x, mouse_secondary.pos.y})
         game.input.ms1 = mouse_secondary.buttons[.LEFT]
         game.input.ms2 = mouse_secondary.buttons[.RIGHT]

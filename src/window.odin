@@ -201,13 +201,6 @@ window_on_resize :: proc(new_w, new_h: i32) {
     window.mouse_needs_restore = true
 }
 
-window_handle_mouse_restore_from_os :: proc() {
-    if !window.mouse_needs_restore do return
-    if is_raw_input_enabled() {
-        mouse.pos = mouse_get_position_relative_to_window()
-    }
-}
-
 window_set_mode :: proc(mode: Window_Mode) {
     if game.mode == .PLAY do return
     window_set_mode_forced(mode)

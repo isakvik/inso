@@ -203,6 +203,30 @@ mapset_buffer :: proc(name: string) -> (result: ^Mapset_Buffer, found: bool) {
     return result, found
 }
 
+mapset_claim_post_pass_slot :: proc(mapset: ^Mapset) -> (slot: u32, ok: bool) {
+    for candidate in u32(0)..<u32(MAX_POST_PASSES) {
+        taken := false
+        for pass in mapset.post_passes {
+            if pass.quad_index == candidate {
+                taken = true
+                break
+            }
+        }
+        if !taken do return candidate, true
+    }
+    return 0, false
+}
+
+mapset_remove_post_pass :: proc(mapset: ^Mapset, slot: u32) -> (removed: bool) {
+    for pass, i in mapset.post_passes {
+        if pass.quad_index == slot {
+            ordered_remove(&mapset.post_passes, i)
+            return true
+        }
+    }
+    return false
+}
+
 
 Inso_Map_System :: enum {
     OSU_FILE,
@@ -313,8 +337,6 @@ mapset_free :: proc(mapset: ^Mapset) {
     free_all(memory.allocators[.MAPSET])
 }
 
-// note(isak): post passes and layer captures are registered by the script's on_init, so they
-// reset whenever the script context does - otherwise regens stack duplicate passes
 mapset_reset_script_render_state :: proc(mapset: ^Mapset) {
     mapset.post_passes = make([dynamic]Post_Pass, 0, 8, memory.allocators[.MAP_DATA])
     mapset.custom_layers = make([dynamic]Custom_Layer, 0, MAX_CUSTOM_LAYERS, memory.allocators[.MAP_DATA])
@@ -324,7 +346,7 @@ mapset_reset_script_render_state :: proc(mapset: ^Mapset) {
 
 // note(isak): mod toggles and retries only invalidate .osu-derived data (mods + stacking mutate
 // positions and slider paths in place), so regen re-parses just the .osu into a fresh MAP_DATA
-// arena. every asset in the MAPSET arena - textures, samples, shaders, the .inso - stays resident.
+// arena
 mapset_reload_map_data :: proc(mapset: ^Mapset) -> (ok: bool) {
     if mapset.osu_filename == "" do return false
 

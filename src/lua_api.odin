@@ -2505,8 +2505,11 @@ luaapi_beatmap_static_funcs := []Lua_Function {
     "void Beatmap.clear_skin_override( void )",
     "restores the configured skin, dropping a set_skin_override. a no-op if nothing was overridden. opening a map does this on its own." },
   { "add_post_pass", luaapi_beatmap_add_post_pass,
-    "void Beatmap.add_post_pass{ shader=, src=, dst=, Layer after }",
-    "queues a fullscreen shader pass sampling src (string or table) into dst, running after the 'after' layer (default HITOBJECTS). src/dst names may be a render target, 'screen' (the window), or 'backbuffer' (the whole-frame capture; requires [General] Backbuffer: 1)." },
+    "int Beatmap.add_post_pass{ shader=, src=, dst=, Layer after }",
+    "queues a fullscreen shader pass sampling src (string or table) into dst, running after the 'after' layer (default HITOBJECTS), and returns its id for remove_post_pass. src/dst names may be a render target, 'screen' (the window), or 'backbuffer' (the whole-frame capture; requires [General] Backbuffer: 1)." },
+  { "remove_post_pass", luaapi_beatmap_remove_post_pass,
+    "void Beatmap.remove_post_pass( int pass_id )",
+    "drops a pass added by add_post_pass, using the id it returned. passes keep their id when others are removed. note that freeing the layers a pass samples does not stop the pass: it keeps sampling whatever the render target last held." },
   { "get_accuracy", luaapi_beatmap_get_accuracy,
     "float Beatmap.get_accuracy( void )",
     "the running accuracy from 0 to 1 over objects judged so far. 1 before anything is judged." },
@@ -2689,7 +2692,8 @@ luaapi_beatmap_add_post_pass :: proc "c" (L: ^lua.State) -> i32 {
     lua.L_checktype(L, 1, lua.TTABLE)
     mapset := game.active_mapset
 
-    if len(mapset.post_passes) >= MAX_POST_PASSES {
+    quad_index, slot_free := mapset_claim_post_pass_slot(mapset)
+    if !slot_free {
         notify_warn("lua: Beatmap.add_post_pass exceeded MAX_POST_PASSES (%d)", MAX_POST_PASSES)
         return 0
     }
@@ -2730,7 +2734,7 @@ luaapi_beatmap_add_post_pass :: proc "c" (L: ^lua.State) -> i32 {
         pipeline   = pipeline,
         dst        = dst,
         after      = after,
-        quad_index = u32(len(mapset.post_passes)),
+        quad_index = quad_index,
     }
 
     add_src :: proc(pass: ^Post_Pass, name: string) {
@@ -2771,6 +2775,16 @@ luaapi_beatmap_add_post_pass :: proc "c" (L: ^lua.State) -> i32 {
     }
 
     append(&mapset.post_passes, pass)
+    lua.pushinteger(L, lua.Integer(pass.quad_index))
+    return 1
+}
+
+luaapi_beatmap_remove_post_pass :: proc "c" (L: ^lua.State) -> i32 {
+    context = lua_beatmap.odin_context
+    slot := u32(lua_int(1))
+    if !mapset_remove_post_pass(game.active_mapset, slot) {
+        notify_warn("lua: Beatmap.remove_post_pass no pass with id %d", slot)
+    }
     return 0
 }
 

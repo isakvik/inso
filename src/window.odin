@@ -1,5 +1,6 @@
 package inso
 
+import "core:c"
 import q "core:container/queue"
 import "core:fmt"
 import "core:log"
@@ -10,6 +11,11 @@ import sdl "vendor:sdl3"
 import sg "vendor:sokol/gfx"
 import stbi "vendor:stb/image"
 
+@(export)
+NvOptimusEnablement: c.ulong = 1
+
+@(export)
+AmdPowerXpressRequestHighPerformance: c.int = 1
 
 window: struct {
     rect: Rect,

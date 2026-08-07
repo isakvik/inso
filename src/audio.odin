@@ -37,9 +37,9 @@ DEVICE_DEFAULT :: Audio_Device(-1)
 Sound_Handle :: bass.DWORD
 
 Sound :: struct {
-    handle:   Sound_Handle,
-    paused:   bool, // note(isak): mirrors the mixer channel pause flag
-    volume:   f32, // note(isak): 0.0 - 1.0 range
+    handle: Sound_Handle,
+    paused: bool, // note(isak): mirrors the mixer channel pause flag
+    volume: f32, // note(isak): 0.0 - 1.0 range
     expires_at_ms: f64, // note(isak): 0 = no expiry
     rate_trim: f64,
     rate_trim_base_freq: f32, // note(isak): captured on first trim; 0 = not yet read

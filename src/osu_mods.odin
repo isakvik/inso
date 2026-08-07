@@ -20,26 +20,42 @@ Osu_Mod_Info :: struct {
 
 osu_mod_table := [Osu_Mod]Osu_Mod_Info {
     .EASY        = { name = "Easy",        apply_to_map = easy_apply_to_map },
-    .HALF_TIME   = { name = "Half time",   apply_to_map = half_time_apply_to_map },
+    .HALF_TIME   = { name = "Half time" },
     .HIDDEN      = { name = "Hidden",      apply_to_graphics = hidden_apply_to_graphics },
     .HARD_ROCK   = { name = "Hard rock",   apply_to_map = hard_rock_apply_to_map },
-    .DOUBLE_TIME = { name = "Double time", apply_to_map = double_time_apply_to_map },
+    .DOUBLE_TIME = { name = "Double time" },
     
     .DIFFICULTY_ADJUST = { name = "Difficulty adjust", apply_to_map = difficulty_adjust_apply_to_map },
 }
 
-// note(isak): runs before the diff_* -> radius/preempt/window conversions and slider instance baking
+
+// note(isak): runs before the diff_* -> radius/preempt/window conversions and slider instance writes
 mods_apply_to_map :: proc() {
+    game.time_rate = mod_time_rate()
     for mod in game.mods {
         if apply := osu_mod_table[mod].apply_to_map; apply != nil do apply()
     }
 }
-
 // note(isak): runs after create_default_elements
 mods_apply_to_graphics :: proc() {
     for mod in game.mods {
         if apply := osu_mod_table[mod].apply_to_graphics; apply != nil do apply()
     }
+}
+
+half_time_rate:   f32 = 0.75
+double_time_rate: f32 = 1.5
+
+mod_time_rate :: proc() -> f32 {
+    rate := f32(1)
+    if .HALF_TIME in game.mods do rate *= half_time_rate
+    if .DOUBLE_TIME in game.mods do rate *= double_time_rate
+    return rate
+}
+
+time_rate_recompute :: proc() {
+    game.time_rate = mod_time_rate()
+    sound_set_speed(&game.beatmap.music, game.time_rate)
 }
 
 Difficulty_Setting :: enum {
@@ -103,15 +119,6 @@ hard_rock_apply_to_map :: proc() {
     }
 }
 
-half_time_apply_to_map :: proc() {
-    game.time_rate = 0.75
-}
-
-double_time_apply_to_map :: proc() {
-    game.time_rate = 1.5
-}
-
-// note(isak): osu stable hidden - see Hitobject_Flag.HIDDEN_FADES for the per-object machinery
 hidden_apply_to_graphics :: proc() {
     for &hobj in game.beatmap.hitobjects {
         hobj.flags |= {.HIDDEN_FADES}

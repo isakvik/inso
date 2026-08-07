@@ -337,7 +337,7 @@ main :: proc() {
                 }
             }
 
-            // the frame-start snapshot lets the hittesting event walk re-integrate cursor motion
+            // note(isak): the frame-start snapshot lets the hittesting event walk re-integrate cursor
             // to the position each press actually happened at
             game.input.frame_start_mouse_screen = mouse.pos
             game.input.frame_events = input_thread_drain()
@@ -687,10 +687,6 @@ imgui_update :: proc() {
                 imgui.TableSetColumnIndex(0)
                 if imgui.Selectable(osu_mod_table[mod].name, enabled, {.SpanAllColumns}) {
                     game.mods ~= {mod}
-
-                    if (mod == .DOUBLE_TIME || mod == .HALF_TIME) && enabled {
-                        game.time_rate = 1.0
-                    }
                     beatmap_open(game.beatmap.map_reference, true)
                 }
                 imgui.TableSetColumnIndex(1)
@@ -701,6 +697,17 @@ imgui_update :: proc() {
                 }
             }
             imgui.EndTable()
+        }
+
+        if .HALF_TIME in game.mods {
+            if imgui.SliderFloat("Half time rate", &half_time_rate, 0.1, 1.0) {
+                time_rate_recompute()
+            }
+        }
+        if .DOUBLE_TIME in game.mods {
+            if imgui.SliderFloat("Double time rate", &double_time_rate, 1.0, 4.0) {
+                time_rate_recompute()
+            }
         }
         
         if .DIFFICULTY_ADJUST in game.mods {
@@ -730,7 +737,7 @@ imgui_update :: proc() {
                     setting = f64(setting_slider)
                     difficulty_adjust_touch()
                 }
-                // a held slider postpones a pending reload even while the value sits still
+                // note(isak): IsItemActive means holding it
                 if reload_deadline_s != 0 && imgui.IsItemActive() {
                     difficulty_adjust_touch()
                 }

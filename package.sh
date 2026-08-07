@@ -12,6 +12,7 @@ echo "[package] building ${VERSION}..."
 
 # note: WITH_CRASH_HANDLER is windows-only (crash_handler_windows.odin), so it's omitted here just like build.sh
 odin build ./src \
+    -collection:dep=vendor \
     -out:"$release_dir/$exec_name" \
     -define:SOKOL_USE_GL=true \
     -define:VERSION=${VERSION} \

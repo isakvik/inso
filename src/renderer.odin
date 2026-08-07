@@ -12,8 +12,8 @@ import "core:strings"
 import "core:container/queue"
 
 import gl "vendor:OpenGL"
-import sg "vendor:sokol/gfx"
-import slog "vendor:sokol/log"
+import sg "dep:sokol/gfx"
+import slog "dep:sokol/log"
 
 
 MAX_BATCH_VERTICES :: 64*1024

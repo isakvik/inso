@@ -8,6 +8,10 @@ import "core:strings"
 import sdl "vendor:sdl3"
 
 
+// note(isak): linux device output buffer range; dev period is derived at half of it
+AUDIO_BUFFER_MS_MIN :: 1
+AUDIO_BUFFER_MS_MAX :: 50
+
 // note(isak): user config is saved to a .ini file, just like osu
 User_Configuration :: struct {
     universal_offset_ms: int,
@@ -16,6 +20,8 @@ User_Configuration :: struct {
     music_volume: f32,
     hitsound_volume: f32,
     hitsound_volume_follows_music: bool,
+    audio_device: i32, // note(isak): bass device index on linux; -1 = default
+    linux_audio_buffer_ms: f32, // note(isak): bass device output buffer (linux); 1-50ms
     
     vsync_enabled: bool,
     fps_limiter: i32, // 0 = uncapped
@@ -79,6 +85,12 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         }
         if v, ok := get(gen, "hitsound_volume_follows_music"); ok {
             result.hitsound_volume_follows_music = v == "true"
+        }
+        if v, ok := get(gen, "audio_device"); ok {
+            if n, ok2 := strconv.parse_int(v); ok2 do result.audio_device = i32(n)
+        }
+        if v, ok := get(gen, "linux_audio_buffer_ms"); ok {
+            if f, ok2 := strconv.parse_f32(v); ok2 do result.linux_audio_buffer_ms = clamp(f, AUDIO_BUFFER_MS_MIN, AUDIO_BUFFER_MS_MAX)
         }
         if v, ok := get(gen, "vsync_enabled"); ok {
             result.vsync_enabled = v == "true"
@@ -182,6 +194,8 @@ config_save :: proc(path: string) {
     ini.write_pair(w, "music_volume",                  cfg.music_volume)
     ini.write_pair(w, "hitsound_volume",               cfg.hitsound_volume)
     ini.write_pair(w, "hitsound_volume_follows_music", cfg.hitsound_volume_follows_music)
+    ini.write_pair(w, "audio_device",                  cfg.audio_device)
+    ini.write_pair(w, "linux_audio_buffer_ms",         cfg.linux_audio_buffer_ms)
     ini.write_pair(w, "osu_install_path",              cfg.osu_install_path)
     ini.write_pair(w, "skin_path",                     cfg.skin_path)
     ini.write_pair(w, "use_beatmap_skin",              cfg.use_beatmap_skin)
@@ -226,6 +240,8 @@ config_supply_default :: proc() -> (result: User_Configuration) {
         master_volume            = 0.5,
         music_volume             = 0.5,
         hitsound_volume          = 0.8,
+        audio_device             = -1,
+        linux_audio_buffer_ms    = 20,
         skin_path                = DEFAULT_SKIN_PATH,
         use_beatmap_skin         = true,
         use_beatmap_hitsounds    = true,

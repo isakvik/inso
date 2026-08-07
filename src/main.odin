@@ -18,11 +18,11 @@ import "core:path/filepath"
 import "core:strings"
 import "core:time"
 
-import "bass"
-import imgui "imgui"
-import imgui_gl3 "imgui/imgui_impl_opengl3"
+import "dep:bass"
+import imgui "dep:imgui"
+import imgui_gl3 "dep:imgui/imgui_impl_opengl3"
 import sdl "vendor:sdl3"
-import sg "vendor:sokol/gfx"
+import sg "dep:sokol/gfx"
 
 
 Memory_Arena_Type :: enum {
@@ -159,8 +159,10 @@ main :: proc() {
     
     audio_init()
     if !audio.ready {
-        log.panic("BASS audio init error:", bass.ErrorGetCode())
+        log.error("BASS audio engine init error:", bass.ErrorGetCode())
+        notify_error("no audio device available! check your audio settings")
     }
+    audio_device_dropdown_rebuild()
     defer audio_cleanup()
 
     renderer_init()
@@ -759,6 +761,15 @@ imgui_update :: proc() {
         }
     }
     if imgui.CollapsingHeader("Audio") {
+        if len(audio.devices) > 0 {
+            app.audio_device_dropdown.selected = app.audio_device_row[audio.device_index]
+            imgui_dropdown_draw(&app.audio_device_dropdown)
+            audio_device_dropdown_apply()
+        }
+        if !audio.ready {
+            imgui.TextColored({1.0, 0.35, 0.35, 1.0}, "audio initialization error")
+        }
+        imgui.Separator()
         if imgui.SliderFloat("Master##vol", &game.user_config.master_volume, 0, 1) {
             audio_set_volume(game.user_config.master_volume)
         }
@@ -772,6 +783,13 @@ imgui_update :: proc() {
             imgui.EndDisabled()
         } else if imgui.SliderFloat("Hitsounds##vol", &game.user_config.hitsound_volume, 0, 1) {
             audio_set_category_volume(.HITSOUND, game.user_config.hitsound_volume)
+        }
+        when ODIN_OS == .Linux {
+            if imgui.SliderFloat("Output buffer (ms)", &game.user_config.linux_audio_buffer_ms, AUDIO_BUFFER_MS_MIN, AUDIO_BUFFER_MS_MAX) {
+                if !imgui.IsItemActive() {
+                    audio_reopen()
+                }
+            }
         }
     }
     if imgui.CollapsingHeader("Input") {

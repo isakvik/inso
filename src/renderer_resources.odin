@@ -4,7 +4,7 @@ import "core:math"
 import "core:container/queue"
 
 import gl "vendor:OpenGL"
-import sg "vendor:sokol/gfx"
+import sg "dep:sokol/gfx"
 
 
 quad_vs_path :: "shaders/quad.vs.glsl"

@@ -1,7 +1,8 @@
 package inso
 
-import imgui "imgui"
-import imgui_gl3 "imgui/imgui_impl_opengl3"
+import imgui "dep:imgui"
+import imgui_gl3 "dep:imgui/imgui_impl_opengl3"
+import "core:fmt"
 import sdl "vendor:sdl3"
 
 
@@ -25,6 +26,11 @@ imgui_init :: proc() {
     app.skin_dropdown = Imgui_Dropdown{
         label    = "Skin",
         items    = &app.skin_reference_names,
+        selected = 0,
+    }
+    app.audio_device_dropdown = Imgui_Dropdown{
+        label    = "Audio output",
+        items    = &app.audio_device_names,
         selected = 0,
     }
 }
@@ -57,6 +63,51 @@ imgui_dropdown_draw :: proc(dropdown: ^Imgui_Dropdown) {
             dropdown.changed  = true
         }
         if is_selected do imgui.SetItemDefaultFocus()
+    }
+}
+
+
+audio_device_dropdown_rebuild :: proc() {
+    clear(&app.audio_device_names)
+    clear(&app.audio_device_row)
+
+    default_label := cstring("Default")
+    if len(audio.default_device_name) > 0 {
+        default_label = fmt.caprintf("Default (%s)", audio.default_device_name)
+    }
+    append(&app.audio_device_names, default_label)
+
+    seen: map[string]int
+    defer delete(seen)
+
+    for dev, i in audio.devices {
+        app.audio_device_row[dev.index] = i + 1
+
+        count := seen[dev.name] + 1
+        seen[dev.name] = count
+        label := fmt.caprintf("%s##%d", dev.name, i)
+        if count > 1 {
+            label = fmt.caprintf("%s (%d)##%d", dev.name, count, i)
+        }
+        append(&app.audio_device_names, label)
+    }
+}
+
+audio_device_dropdown_apply :: proc() {
+    if !app.audio_device_dropdown.changed do return
+
+    target := DEVICE_DEFAULT
+    name := "default"
+    if app.audio_device_dropdown.selected > 0 {
+        if len(audio.devices) == 0 do return
+        row := app.audio_device_dropdown.selected - 1
+        target = audio.devices[row].index
+        name  = audio.devices[row].name
+    }
+
+    if audio_set_device(target) {
+        game.user_config.audio_device = target
+        audio_apply_config_volumes()
     }
 }
 

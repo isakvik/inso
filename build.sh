@@ -14,6 +14,7 @@ if [ -f data/Roboto-Regular.ttf ] && [ ! -f build/Roboto-Regular.ttf ]; then
 fi
 
 odin build src \
+    -collection:dep=vendor \
     -out:build/inso \
     -define:SOKOL_USE_GL=true \
     -define:VERSION=${VERSION} \

@@ -10,6 +10,7 @@ if [ -f data/Roboto-Regular.ttf ] && [ ! -f build/Roboto-Regular.ttf ]; then
 fi
 
 odin run src \
+    -collection:dep=vendor \
     -out:build/inso_temp \
     -define:SOKOL_USE_GL=true \
     -o:minimal \

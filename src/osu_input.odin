@@ -246,7 +246,11 @@ EDITOR_BEAT_DIVISOR :: 4
 
 handle_editor_input_events :: proc() {
     if key_is_pressed(.ESCAPE) || key_is_pressed(.SPACE) {
-        beatmap_pause(&game.beatmap, !game.paused)
+        if !audio.ready {
+            notify_warn("no audio device - playback is locked")
+        } else {
+            beatmap_pause(&game.beatmap, !game.paused)
+        }
     }
     if key_is_pressed(.F5) && !key_is_down(.LCTRL) {
         seek_time := 0 if key_is_down(.LSHIFT) else beatmap_music_time_ms(&game.beatmap)

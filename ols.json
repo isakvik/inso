@@ -1,7 +1,8 @@
 {
   "collections": [
     { "name": "core",   "path": "F:/Program Files/odin/core" },
-    { "name": "vendor", "path": "F:/Program Files/odin/vendor" }
+    { "name": "vendor", "path": "F:/Program Files/odin/vendor" },
+    { "name": "dep",    "path": "vendor" }
   ],
   "enable_document_symbols": true,
   "enable_hover": true,

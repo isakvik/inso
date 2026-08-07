@@ -19,7 +19,7 @@ import "core:strconv"
 
 import "vendor:cgltf"
 import gl "vendor:OpenGL"
-import sg "vendor:sokol/gfx"
+import sg "dep:sokol/gfx"
 
 /*
 mapset definition:

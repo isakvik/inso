@@ -8,7 +8,7 @@ import "core:math"
 
 import gl "vendor:OpenGL"
 import sdl "vendor:sdl3"
-import sg "vendor:sokol/gfx"
+import sg "dep:sokol/gfx"
 import stbi "vendor:stb/image"
 
 @(export)

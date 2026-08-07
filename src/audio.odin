@@ -5,23 +5,39 @@ import "core:strings"
 import "core:log"
 import os "core:os"
 
-import "bass"
+import "dep:bass"
 
 
 Sound_Category :: enum { MUSIC, HITSOUND }
 
+Audio_Device_Info :: struct {
+    index:  Audio_Device, // note(isak): bass device index; -1 = the default device
+    name:   string,
+    driver: string,
+    flags:  bass.DWORD,
+    // note(isak): index into the wasapi endpoint list, precomputed at enumeration time so a
+    // switch never has to walk WASAPI_GetDeviceInfo. -1 = unresolved (use the OS default)
+    wasapi_index: i32,
+}
+
 audio: struct {
     ready: bool,
     device_reinit_requested: bool,
-    output_mixer:   bass.HSTREAM,
-    music_mixer:    bass.HSTREAM,
-    hitsound_mixer: bass.HSTREAM,
-    // note: wasapi device buffer in ms; decode positions lead the speakers by this much.
+    device_list_rebuild_requested: bool,
+    device_index: Audio_Device,
+    devices: [dynamic]Audio_Device_Info,
+    default_device_name: string,
+    // note(isak): linux only. bass is initialized only once, so a reinit to another device is deferred
+    bass_init_done: bool,
+    output_mixer, music_mixer, hitsound_mixer: bass.HSTREAM,
+    // note(isak): wasapi device buffer in ms; decode positions lead the speakers by this much.
     // 0 on the linux dev path (BASS's own output buffering, uncompensated)
     output_latency_ms: f64,
 }
 
-Device :: i32
+Audio_Device :: i32
+DEVICE_DEFAULT :: Audio_Device(-1)
+
 Sound_Handle :: bass.DWORD
 
 Sound_Flags :: distinct bit_set[Sound_Flag; u32]
@@ -36,8 +52,6 @@ Sound_Flag :: enum u32 {
 Base_Sound :: struct {
     flags: Sound_Flags,
     volume: f32, // note(isak): 0.0 - 1.0 range
-    pan: f32, // note(isak): -1.0 - 1.0 range
-    time_at: f64,
     expires_at_ms: f64, // note(isak): 0 = no expiry
     rate_trim: f64,
     rate_trim_base_freq: f32, // note: captured on first trim; 0 = not yet read
@@ -63,190 +77,232 @@ Sound_Channel :: struct {
 // note(isak): sample held in memory with a fixed channel pool. use for short sounds that may overlap
 Sample :: struct {
     handle:    bass.HSAMPLE,
-    filepath:  string, // note(isak): filename only (no dir); join with mapset.folder_path for full path
+    filepath:  string, // note(isak): filename only; join with mapset.folder_path for full path
     file_data: []byte, // note(isak): raw file bytes kept alive for in-memory stream creation
+}
+
+// note(isak): how the master output mixer is driven
+Mixer_Chain_Kind :: enum {
+    DECODE, // decode source for WASAPI audioclient
+    LIVE,   // stream playing directly to device
 }
 
 //////////////////////////////////////////////////////
 // note(isak): audio engine api
 
-when ODIN_OS == .Windows {
-    // note(isak): bass runs as a decode source, wasapi reads from it
-    _bass_wasapi_output_proc :: proc "c" (buffer: rawptr, len: u32, user_data: rawptr) -> u32 {
-        if audio.output_mixer != 0 {
-            c := bass.ChannelGetData(audio.output_mixer, buffer, len)
-            return max(c, 0)
-        }
-        return 0
-    }
+audio_init :: proc() -> bool {
+    _audio_enumerate_devices()
 
-    // note(isak): basswasapi wraps the COM device event listener for us; this fires on its event thread,
-    // so we only set a flag here and let the main loop do the reinit
-    _bass_wasapi_notify_proc :: proc "c" (notify: bass.DWORD, device: bass.DWORD, user: rawptr) {
-        switch notify {
-        case bass.WASAPI_NOTIFY_DEFOUTPUT, bass.WASAPI_NOTIFY_FAIL:
-            intrinsics.atomic_store(&audio.device_reinit_requested, true)
-        case bass.WASAPI_NOTIFY_ENABLED:
-            // note(isak): a device (re)appeared; only interesting if we lost output earlier
-            if !audio.ready {
-                intrinsics.atomic_store(&audio.device_reinit_requested, true)
-            }
-        }
-    }
-
-    /*
-    note(isak): we're using some flags that make BASS run very smoothly with WASAPI in windows' shared audio mode
-    courtesy of LastExceed: https://github.com/ppy/osu-framework/pull/6651
-
-    the following is the old osu lazer init that makes BASS run like ass, which are useful for provoking large
-    interpolation deltas (for handling the music buffer granularity/play time discrepancy):
-
-        device = -1,
-        freq = 0,
-        chans = 0,
-        flags = 0,
-        buffer = 0.02,
-        period = 0,
-        _proc = _bass_wasapi_output_proc,
-        user = nil
-    */
-    _wasapi_output_init :: proc() -> (info: bass.WASAPI_INFO, ok: bool) {
-        if !bass.WASAPI_Init(
-            device = -1,
-            freq = 0,
-            chans = 0,
-            flags = bass.WASAPI_EVENT | bass.WASAPI_AUTOFORMAT,
-            buffer = 0,
-            period = 1.1920929e-07, // math.F32_EPSILON
-            _proc = _bass_wasapi_output_proc,
-            user = nil
-        ) {
-            log.error("BASS_WASAPI init error:", bass.ErrorGetCode())
-            return
-        }
-        bass.WASAPI_GetInfo(&info)
-
-        device_info: bass.WASAPI_DEVICEINFO
-        bass.WASAPI_GetDeviceInfo(bass.WASAPI_GetDevice(), &device_info)
-
-        buffer_samples := info.buflen / (info.chans * _wasapi_format_bytes(info.format))
-        audio.output_latency_ms = f64(buffer_samples) * 1000 / f64(info.freq)
-        log.infof("WASAPI output: %s :: %vhz %vch, buffer %v samples (%.1fms), device period min %.1fms / default %.1fms",
-            device_info.name, info.freq, info.chans, buffer_samples,
-            audio.output_latency_ms,
-            f64(device_info.minperiod) * 1000, f64(device_info.defperiod) * 1000)
-
-        return info, true
-    }
-
-    _wasapi_format_bytes :: proc(format: bass.DWORD) -> bass.DWORD {
-        switch format {
-        case bass.WASAPI_FORMAT_8BIT:  return 1
-        case bass.WASAPI_FORMAT_16BIT: return 2
-        case bass.WASAPI_FORMAT_24BIT: return 3
-        }
-        return 4 // FLOAT / 32BIT
-    }
-}
-
-// todo(isak): should probably call this device_init() or something
-// todo(isak): device selection
-audio_init :: proc(device: Device = -1) -> bool {
     when ODIN_OS == .Windows {
         // note(isak): device 0 is BASS's "no sound" device; it only hosts decode streams and
-        // samples here, all actual output goes through WASAPI. this keeps every sound on one
-        // output path and out of reach of device removal
+        // samples here, all actual output goes through WASAPI.
+        // freq 0 (device's own rate) fails on the no-sound device and leaves BASS
+        // in a half-initialized state where Mixer_StreamCreate then fails with
+        // BASS_ERROR_INIT, so we set a sane default
         if !bass.Init(0, 44100, 0, nil, nil) {
             log.error("BASS init error:", bass.ErrorGetCode())
             return false
         }
-
-        wasapi_info := _wasapi_output_init() or_return
-        audio.output_mixer = bass.Mixer_StreamCreate(wasapi_info.freq, wasapi_info.chans,
-            bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
-        audio.music_mixer = bass.Mixer_StreamCreate(wasapi_info.freq, wasapi_info.chans,
-            bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
-        audio.hitsound_mixer = bass.Mixer_StreamCreate(wasapi_info.freq, wasapi_info.chans,
-            bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
-        bass.Mixer_StreamAddChannel(audio.output_mixer, audio.music_mixer,    bass.MIXER_DOWNMIX)
-        bass.Mixer_StreamAddChannel(audio.output_mixer, audio.hitsound_mixer, bass.MIXER_DOWNMIX)
-
-        bass.WASAPI_Start()
-        bass.WASAPI_SetNotify(_bass_wasapi_notify_proc, nil)
-    } else {
-        // note(isak): on linux/mac, BASS handles output via ALSA/PulseAudio directly.
-        // these must be set before Init. CONFIG_BUFFER defaults to 500ms which causes huge delay on pause/seek
-        bass.SetConfig(bass.CONFIG_UPDATEPERIOD, 1)
-        bass.SetConfig(bass.CONFIG_DEV_PERIOD, 10)
-        bass.SetConfig(bass.CONFIG_BUFFER, 50)
-
-        if !bass.Init(device, 44100, 0, nil, nil) {
-            log.error("BASS init error:", bass.ErrorGetCode())
-            return false
-        }
-        audio.output_mixer = bass.Mixer_StreamCreate(44100, 2,
-            bass.SAMPLE_FLOAT | bass.MIXER_NONSTOP)
-        if audio.output_mixer != 0 {
-            bass.ChannelPlay(audio.output_mixer, false)
-        }
-        audio.music_mixer = bass.Mixer_StreamCreate(44100, 2,
-            bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
-        audio.hitsound_mixer = bass.Mixer_StreamCreate(44100, 2,
-            bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
-        bass.Mixer_StreamAddChannel(audio.output_mixer, audio.music_mixer,    bass.MIXER_DOWNMIX)
-        bass.Mixer_StreamAddChannel(audio.output_mixer, audio.hitsound_mixer, bass.MIXER_DOWNMIX)
+        // note(isak): the bass->wasapi index map is only trustworthy once BASS is up; the wasapi
+        // enumeration shares state with the initialized output. run it here, not in enumerate
+        _platform_audio_resolve_wasapi_indices()
     }
 
-    if audio.output_mixer == 0 {
-        log.error("BASS mixer init error:", bass.ErrorGetCode())
-        return false
-    }
+    audio.ready = _audio_init_on_valid_device()
 
-    audio.ready = true
-    return true
+    when ODIN_OS == .Windows {
+        if audio.ready {
+            bass.WASAPI_SetNotify(_bass_wasapi_notify_proc, nil)
+        }
+    }
+    return audio.ready
 }
 
 audio_cleanup :: proc() {
     when ODIN_OS == .Windows {
-        bass.WASAPI_Free()
+        _platform_audio_cleanup()
     }
     bass.Free()
+
+    _set_default_device_name("")
+    for i in 0..<len(audio.devices) {
+        delete(audio.devices[i].name)
+        delete(audio.devices[i].driver)
+    }
+    delete(audio.devices)
 }
 
-// note(isak): moves the WASAPI output onto the new default device when windows reports a change
+_set_default_device_name :: proc(name: string) {
+    if audio.default_device_name == name do return
+    delete(audio.default_device_name)
+    audio.default_device_name = strings.clone(name, context.allocator) if len(name) > 0 else ""
+}
+
+_audio_enumerate_devices :: proc() {
+    _set_default_device_name("")
+
+    for _, i in audio.devices {
+        delete(audio.devices[i].name)
+        delete(audio.devices[i].driver)
+    }
+    clear(&audio.devices)
+    
+    when ODIN_OS == .Windows {
+        bass.SetConfig(bass.CONFIG_UNICODE, 1) // device name strings in unicode instead of ansi
+        bass.SetConfig(bass.CONFIG_DEV_DEFAULT, 1) // inserts default into device list at index 1
+    }
+
+    for i in 0..<256 {
+        info: bass.DEVICEINFO
+        if !bass.GetDeviceInfo(device = bass.DWORD(i), info = &info) do break
+        if i <= 1 do continue
+        if info.flags & bass.DEVICE_ENABLED == 0 do continue
+
+        if len(audio.default_device_name) == 0 && info.flags & bass.DEVICE_DEFAULT != 0 &&
+                len(string(info.name)) > 0 && string(info.name) != "Default" {
+            _set_default_device_name(string(info.name))
+        }
+
+        append(&audio.devices, Audio_Device_Info{
+            index  = Audio_Device(i),
+            name   = strings.clone(string(info.name), context.allocator),
+            driver = strings.clone(string(info.driver), context.allocator),
+            flags  = info.flags,
+            wasapi_index = i32(DEVICE_DEFAULT),
+        })
+    }
+}
+
+_audio_init_mixers :: proc(freq: bass.DWORD, chans: bass.DWORD, kind: Mixer_Chain_Kind) -> bool {
+    // note(isak): a 0 channel or 0 freq from a backend means it didn't configure right, so
+    // set a sane default
+    freq, chans := freq, chans
+    if chans == 0 do chans = 2
+    if freq == 0 do freq = 44100
+
+    output_flags: u32 = bass.SAMPLE_FLOAT | bass.MIXER_NONSTOP
+    if kind == .DECODE {
+        output_flags |= bass.STREAM_DECODE
+    }
+
+    if audio.output_mixer != 0 {
+        mixer_info: bass.CHANNELINFO
+        if bass.ChannelGetInfo(audio.output_mixer, &mixer_info) &&
+                freq == mixer_info.freq && chans == mixer_info.chans {
+            return true
+        }
+
+        // note(isak): format changed; rebuild the chain
+        bass.Mixer_ChannelRemove(audio.music_mixer)
+        bass.Mixer_ChannelRemove(audio.hitsound_mixer)
+        bass.StreamFree(audio.output_mixer)
+        audio.output_mixer = 0
+    }
+
+    audio.output_mixer = bass.Mixer_StreamCreate(freq, chans, output_flags)
+    if audio.output_mixer == 0 {
+        log.error("BASS mixer init error:", bass.ErrorGetCode(), "(freq", freq, "chans", chans, ")")
+        return false
+    }
+    audio.music_mixer = bass.Mixer_StreamCreate(freq, chans,
+        bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
+    audio.hitsound_mixer = bass.Mixer_StreamCreate(freq, chans,
+        bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
+    bass.Mixer_StreamAddChannel(audio.output_mixer, audio.music_mixer,    bass.MIXER_DOWNMIX)
+    bass.Mixer_StreamAddChannel(audio.output_mixer, audio.hitsound_mixer, bass.MIXER_DOWNMIX)
+
+    if kind == .LIVE {
+        bass.ChannelPlay(audio.output_mixer, false)
+    }
+    return true
+}
+
+_audio_init_on_valid_device :: proc() -> bool {
+    configured := game.user_config.audio_device
+
+    if configured != DEVICE_DEFAULT && _platform_audio_init(configured) {
+        log.infof("audio: using configured device %v", configured)
+        return true
+    }
+
+    if _platform_audio_init(DEVICE_DEFAULT) {
+        if configured != DEVICE_DEFAULT {
+            log.warnf("audio: configured device %v failed, using default", configured)
+        }
+        return true
+    }
+
+    for dev in audio.devices {
+        if _platform_audio_init(dev.index) {
+            log.infof("audio: fell back to device %v (%s)", dev.index, dev.name)
+            return true
+        }
+    }
+    return false
+}
+
+// note(isak): moves the output when windows reports the default device or the device list changed
 audio_handle_device_change :: proc() -> (reinitialized: bool) {
     when ODIN_OS == .Windows {
-        if !intrinsics.atomic_exchange(&audio.device_reinit_requested, false) {
-            return false
+        rebuild_list := intrinsics.atomic_exchange(&audio.device_list_rebuild_requested, false)
+        reinit := intrinsics.atomic_exchange(&audio.device_reinit_requested, false)
+        if !rebuild_list && !reinit do return false
+
+        // note(isak): the bass list and the cached wasapi mapping are snapshots from the last
+        // enumeration, so a device appearing means the dropdown and the mapping are both stale
+        if rebuild_list {
+            _audio_enumerate_devices()
+            when ODIN_OS == .Windows {
+                _platform_audio_resolve_wasapi_indices()
+            }
+            audio_device_dropdown_rebuild()
         }
 
-        bass.WASAPI_Free()
-        wasapi_info, ok := _wasapi_output_init()
-        if !ok {
-            // note(isak): no usable output device right now
-            audio.ready = false
-            return false
+        if reinit || !audio.ready {
+            if _platform_audio_init(audio.device_index) {
+                audio.ready = true
+            } else {
+                // note(isak): the selected device is gone; fall back the way startup does
+                audio.ready = _audio_init_on_valid_device()
+            }
+            if audio.ready && audio.device_index == DEVICE_DEFAULT {
+                // note(isak): while following the OS default, its name can change out from under us
+                audio_device_dropdown_rebuild()
+            }
+            return audio.ready
         }
-
-        mixer_info: bass.CHANNELINFO
-        bass.ChannelGetInfo(audio.output_mixer, &mixer_info)
-        if wasapi_info.freq != mixer_info.freq || wasapi_info.chans != mixer_info.chans {
-            bass.Mixer_ChannelRemove(audio.music_mixer)
-            bass.Mixer_ChannelRemove(audio.hitsound_mixer)
-            bass.StreamFree(audio.output_mixer)
-            audio.output_mixer = bass.Mixer_StreamCreate(wasapi_info.freq, wasapi_info.chans,
-                bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
-            bass.Mixer_StreamAddChannel(audio.output_mixer, audio.music_mixer,    bass.MIXER_DOWNMIX)
-            bass.Mixer_StreamAddChannel(audio.output_mixer, audio.hitsound_mixer, bass.MIXER_DOWNMIX)
-        }
-
-        bass.WASAPI_Start()
-        audio.ready = true
-        log.info("audio output moved to new default device")
         return true
     } else {
         return false
     }
+}
+
+// note(isak): reinits audio and mixer chain on the new device
+audio_set_device :: proc(device: Audio_Device) -> bool {
+    if device == audio.device_index do return true
+    audio.device_index = device
+
+    if _platform_audio_init(device) {
+        audio.ready = true
+        return true
+    }
+
+    audio.ready = false
+    notify_error("audio device %v failed to initialize", device)
+    return false
+}
+
+// note(isak): reinits the audio chain on the current device, e.g. after a buffer-size
+// setting change. config like CONFIG_DEV_BUFFER only binds on the next Init
+audio_reopen :: proc() -> bool {
+    if !_platform_audio_init(audio.device_index) {
+        audio.ready = false
+        notify_error("audio re-init on device %v failed", audio.device_index)
+        return false
+    }
+    audio.ready = true
+    audio_apply_config_volumes()
+    return true
 }
 
 // note(isak): volume is a 0.0 - 1.0 range
@@ -456,11 +512,10 @@ sound_set_volume :: proc(sound: ^Sound, volume: f32) {
     }
 }
 
-sound_set_speed :: proc(sound: ^Sound, rate: f32) {
+sound_set_speed :: proc(sound: ^Sound, rate: f32, compensate_pitch: bool = true) {
     if audio.ready { 
         handle := _sound_get_channel_handle(sound)
         rate := clamp(rate, 1/50, 50)
-        compensate_pitch := true
         
         freq: f32
         if !bass.ChannelGetAttribute(handle, bass.ATTRIB_FREQ, &freq) {
@@ -561,9 +616,6 @@ sample_load_file :: proc(path: string, max_simultaneous: int = 8) -> (result: Sa
     }
     result.file_data = file_data
 
-    // note(isak): 0kb / silent files are how skins and maps mute a sound; treat them as a valid
-    // silent sample (zero handle). every play path already no-ops on handle 0. a 0-byte file
-    // never reaches BASS - it would fail format detection (FILEFORM) instead of ERROR_EMPTY
     if len(file_data) == 0 {
         return result, true
     }

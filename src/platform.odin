@@ -61,6 +61,9 @@ app: struct {
     ui_wants_mouse: bool,
     map_dropdown: Imgui_Dropdown,
     skin_dropdown: Imgui_Dropdown,
+    audio_device_dropdown: Imgui_Dropdown,
+    audio_device_names: [dynamic]cstring, // note(isak): parallel for imgui
+    audio_device_row: map[Audio_Device]int, // note(isak): enumerated device index -> dropdown row
     offset_window_open: bool,
 
     mouse_input_source: Mouse_Input_Source,

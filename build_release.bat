@@ -11,7 +11,7 @@ if %ERRORLEVEL% equ 0 (
     taskkill /IM %exec_name% /F /T > nul
 )
 
-odin build ./src -linker:radlink -out:build/%exec_name% -define:SOKOL_USE_GL=true -no-bounds-check -o:speed
+odin build ./src -collection:dep=vendor -linker:radlink -out:build/%exec_name% -define:SOKOL_USE_GL=true -no-bounds-check -o:speed
 if %ERRORLEVEL% equ 1 goto stop 
 python debug.py
 echo [build] build OK

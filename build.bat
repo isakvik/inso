@@ -20,7 +20,7 @@ if %ERRORLEVEL% equ 0 (
     taskkill /IM %exec_name% /F /T > nul
 )
 
-odin build ./src -linker:radlink -debug -out:build/%exec_name% -define:SOKOL_USE_GL=true -define:VERSION=%VERSION%
+odin build ./src -collection:dep=vendor -linker:radlink -debug -out:build/%exec_name% -define:SOKOL_USE_GL=true -define:VERSION=%VERSION%
 set BUILD_ERR=%ERRORLEVEL%
 if %BUILD_ERR% neq 0 exit /b %BUILD_ERR%
 

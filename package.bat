@@ -3,7 +3,7 @@
 set /p VERSION=<VERSION
 set release_dir=build-release
 set exec_name=inso.exe
-set zip_name=inso-%VERSION%.zip
+set zip_name=inso-%VERSION%-windows-x64.zip
 
 if exist %release_dir% rmdir /S /Q %release_dir%
 mkdir %release_dir%

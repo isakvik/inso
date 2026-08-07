@@ -4,7 +4,7 @@ set -e
 VERSION=$(tr -d '[:space:]' < VERSION)
 release_dir=build-release
 exec_name=inso
-zip_name=inso-${VERSION}-linux.zip
+zip_name=inso-${VERSION}-linux-x64.zip
 
 mkdir -p "$release_dir"
 

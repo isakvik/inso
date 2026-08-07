@@ -413,11 +413,11 @@ slider_start_slide_sounds :: proc(hobj: ^Hitobject, timing_point: ^Timing_Point)
 
     if slider.slide_sound == {} {
         slider.slide_sound = game_sound_play(resolve_hitsound(sample_set, .SLIDERSLIDE, timing_point.sample_index),
-            loop = true, volume = volume, expires_at_ms = hobj.end_time_ms)
+            volume = volume, expires_at_ms = hobj.end_time_ms)
     }
     if slider.whistle_sound == {} && .WHISTLE in hobj.hitsound_flags {
         slider.whistle_sound = game_sound_play(resolve_hitsound(sample_set, .SLIDERWHISTLE, timing_point.sample_index),
-            loop = true, volume = volume, expires_at_ms = hobj.end_time_ms)
+            volume = volume, expires_at_ms = hobj.end_time_ms)
     }
     slider_renew_slide_sounds(slider, beatmap_music_time_ms(&game.beatmap))
 }

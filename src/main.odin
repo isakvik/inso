@@ -49,7 +49,7 @@ Memory_Arena_Type :: enum {
     // note(isak): skin data (names, paths). cleared on skin unload
     SKIN,
 
-    // note(isak): active sound channels (Sound_Channel slotmap). freed and reinited on game_sounds_clear
+    // note(isak): active managed sounds (game.sounds slotmap). freed and reinited on game_sounds_clear
     SOUND,
 
     // note(isak): per-hitobject custom drawables assigned by lua scripts. cleared on mapset reload and lua hot-reload
@@ -355,6 +355,15 @@ main :: proc() {
 
             imgui.IO_AddMousePosEvent(imgui.GetIO(), mouse.pos.x, mouse.pos.y)
             app.ui_wants_mouse = imgui.GetIO().WantCaptureMouse
+            
+            if game.mode == .EDITOR {
+                _ = sdl.ShowCursor()
+                window.cursor_hidden = false
+            } else {
+                if !window.cursor_hidden {
+                    window.cursor_hidden = sdl.HideCursor()
+                }
+            }
         }
 
         {
@@ -762,7 +771,11 @@ imgui_update :: proc() {
     }
     if imgui.CollapsingHeader("Audio") {
         if len(audio.devices) > 0 {
-            app.audio_device_dropdown.selected = app.audio_device_row[audio.device_index]
+            // note(isak): only follow the live device while audio is actually up; on a failed
+            // switch the dropdown stays on the device the user picked so they can switch back
+            if audio.ready {
+                app.audio_device_dropdown.selected = app.audio_device_row[audio.device_index]
+            }
             imgui_dropdown_draw(&app.audio_device_dropdown)
             audio_device_dropdown_apply()
         }
@@ -782,7 +795,7 @@ imgui_update :: proc() {
             imgui.SliderFloat("Hitsounds##vol", &shown, 0, 1)
             imgui.EndDisabled()
         } else if imgui.SliderFloat("Hitsounds##vol", &game.user_config.hitsound_volume, 0, 1) {
-            audio_set_category_volume(.HITSOUND, game.user_config.hitsound_volume)
+            audio_group_set_volume(.HITSOUND, game.user_config.hitsound_volume)
         }
         when ODIN_OS == .Linux {
             imgui.SliderInt("Output buffer (ms)", &game.user_config.linux_audio_buffer_ms, AUDIO_BUFFER_MS_MIN, AUDIO_BUFFER_MS_MAX)
@@ -925,15 +938,6 @@ handle_debug_ui_events :: proc() {
     }
     if key_is_pressed(.F8) {
         notify.show_all = !notify.show_all
-    }
-
-    // note(isak): cursor visibility - always show the OS cursor in edit mode (the
-    // skin cursor draws over it in-game), hide it in every other mode
-    if app.ui_enabled {
-        _ = sdl.ShowCursor()
-        window.cursor_hidden = false
-    } else if !window.cursor_hidden {
-        window.cursor_hidden = sdl.HideCursor()
     }
 }
 

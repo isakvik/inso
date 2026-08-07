@@ -3,25 +3,32 @@ package inso
 
 import "base:intrinsics"
 import "core:log"
-import "core:strings"
 
 import "dep:bass"
 
 _platform_audio_init :: proc(device: Audio_Device) -> b32 {
     bass.WASAPI_Free()
-
-    // note(isak): the output is wasapi, not a BASS device, so the old decode chain on the host
-    // device is not freed by anything - orphan it no longer, release it explicitly before the
-    // rebuild (the wasapi output proc is stopped by WASAPI_Free above, so it can't read a freed
-    // mixer)
-    _audio_free_mixer_chain()
+    _platform_audio_free_mixer_chain()
 
     wasapi_info, ok := _wasapi_output_init(device)
     if !ok do return false
-    if !_audio_init_mixers(wasapi_info.freq, wasapi_info.chans, .DECODE) do return false
+    if !_audio_init_mixers(wasapi_info.freq, wasapi_info.chans) do return false
     return bass.WASAPI_Start()
 }
 
+// note(isak): frees the current mixer chain. the linux backend doesn't need this, it just frees the device
+_platform_audio_free_mixer_chain :: proc() {
+    for group in Sound_Group {
+        if audio.group_mixers[group] != 0 {
+            bass.StreamFree(audio.group_mixers[group])
+            audio.group_mixers[group] = 0
+        }
+    }
+    if audio.output_mixer != 0 {
+        bass.StreamFree(audio.output_mixer)
+        audio.output_mixer = 0
+    }
+}
 
 // note(isak): bass runs as a decode source, wasapi reads from it
 _bass_wasapi_output_proc :: proc "c" (buffer: rawptr, len: u32, user_data: rawptr) -> u32 {
@@ -82,8 +89,6 @@ _wasapi_output_init :: proc(device: Audio_Device = DEVICE_DEFAULT) -> (info: bas
     device_info: bass.WASAPI_DEVICEINFO
     bass.WASAPI_GetDeviceInfo(bass.WASAPI_GetDevice(), &device_info)
     if device == DEVICE_DEFAULT {
-        // note(isak): we followed the OS default - the endpoint we actually started is the one
-        // the dropdown's row-0 label should name, refreshed on every default re-init
         _set_default_device_name(string(device_info.name))
     }
 
@@ -106,46 +111,19 @@ _wasapi_format_bytes :: proc(format: bass.DWORD) -> bass.DWORD {
     return 4 // FLOAT / 32BIT
 }
 
-// note(isak): wasapi and BASS don't share an index space, but each BASS (DirectSound) device's
-// "driver" string equals its wasapi endpoint "id". indices are cached at init time (we never
-// resolve during enumeration, the wasapi endpoint list isn't stable until BASS is up). the
-// walk here is a fallback for a device added after init, where the cache is momentarily stale
 _wasapi_device_from_bass :: proc(device: Audio_Device) -> i32 {
     if device == DEVICE_DEFAULT do return i32(DEVICE_DEFAULT)
     for dev in audio.devices {
-        if dev.index == device {
-            if dev.wasapi_index != i32(DEVICE_DEFAULT) do return dev.wasapi_index
-            // note(isak): cache miss - live walk, same as resolve once did
-            for d in 0..<256 {
-                info: bass.WASAPI_DEVICEINFO
-                if !bass.WASAPI_GetDeviceInfo(device = bass.DWORD(d), info = &info) do break
-                if info.flags & (bass.DEVICE_INPUT | bass.DEVICE_LOOPBACK) != 0 do continue
-                if string(info.id) == dev.driver do return i32(d)
-            }
-            return i32(DEVICE_DEFAULT)
+        if dev.index != device do continue
+        // note(isak): the bass "driver" strings are the wasapi endpoint ids; walk the wasapi
+        // list to find the matching endpoint. happens only on device switches, so no caching
+        for d in 0..<256 {
+            info: bass.WASAPI_DEVICEINFO
+            if !bass.WASAPI_GetDeviceInfo(device = bass.DWORD(d), info = &info) do break
+            if info.flags & (bass.DEVICE_INPUT | bass.DEVICE_LOOPBACK) != 0 do continue
+            if string(info.id) == dev.driver do return i32(d)
         }
+        return i32(DEVICE_DEFAULT)
     }
     return i32(DEVICE_DEFAULT)
-}
-
-// note(isak): build the bass->wasapi index map once per init. keys are the wasapi endpoint "id"
-// strings (bass's DirectSound "driver" equals its wasapi endpoint id). input/loopback endpoints
-// share the same enumerate index space but can't be initialized as outputs, so they are excluded
-// here - resolving to one of them is how a non-default device init would fail with NOTAVAIL
-_platform_audio_resolve_wasapi_indices :: proc() {
-    wasapi_index_of_id: map[string]u32
-    defer delete(wasapi_index_of_id)
-
-    for d in 0..<256 {
-        info: bass.WASAPI_DEVICEINFO
-        if !bass.WASAPI_GetDeviceInfo(device = bass.DWORD(d), info = &info) do break
-        if info.flags & (bass.DEVICE_INPUT | bass.DEVICE_LOOPBACK) != 0 do continue
-        wasapi_index_of_id[strings.clone(string(info.id), context.temp_allocator)] = u32(d)
-    }
-
-    for &dev in audio.devices {
-        if idx, ok := wasapi_index_of_id[dev.driver]; ok {
-            dev.wasapi_index = i32(idx)
-        }
-    }
 }

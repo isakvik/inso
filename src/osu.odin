@@ -996,28 +996,23 @@ rebindable_input_key_names := [Rebindable_Input_Key]string {
 //////////////////////////////////////////////////////
 // note(isak): managed game sound API
 
-// note(isak): expires_at_ms is absolute music time, 0 = no expiry
+// note(isak): managed looping sounds created from a sample's in-memory data. they're stopped
+// by game_sound_stop, the expiry loop, or teardown. expires_at_ms is absolute music time,
+// 0 = no expiry
 game_sound_play :: proc(
-    s: ^Sample, loop: bool = false, volume: f32 = 1.0, category: Sound_Category = .HITSOUND, expires_at_ms: f64 = 0
+    s: ^Sample, volume: f32 = 1.0, category: Sound_Group = .HITSOUND, expires_at_ms: f64 = 0
 ) -> (result: slotmap.Handle) {
     if s.handle == 0 do return
 
-    sound: Sound
-    ok: bool
-    if loop {
-        sound, ok = sound_stream_init_from_memory(s.file_data, loop = true)
-    } else {
-        sound, ok = sound_channel_init(s)
-    }
+    sound, ok := sound_stream_init_from_memory(s.file_data, loop = true)
     if !ok do return
 
     handle := slotmap.insert(&game.sounds, sound)
     stored, _ := slotmap.get(&game.sounds, handle)
-    sound_play(stored, volume = volume, category = category)
+    sound_play(stored, volume = volume, group = category)
 
     if expires_at_ms != 0 {
-        base := cast(^Base_Sound)stored
-        base.expires_at_ms = expires_at_ms
+        stored.expires_at_ms = expires_at_ms
         sb.append(&game.expiring_sounds, handle)
     }
     return handle
@@ -1044,8 +1039,7 @@ game_sound_renew_expiry :: proc(handle: slotmap.Handle, expires_at_ms: f64) {
     if handle == {} do return
     sound, ok := slotmap.get(&game.sounds, handle)
     if ok {
-        base := cast(^Base_Sound)sound
-        base.expires_at_ms = expires_at_ms
+        sound.expires_at_ms = expires_at_ms
     }
 }
 
@@ -1055,8 +1049,7 @@ game_sounds_process_expiry :: proc() {
         sound, ok := slotmap.get(&game.sounds, handle)
         if !ok do continue
 
-        base := cast(^Base_Sound)sound
-        expired := base.expires_at_ms != 0 && music_time > base.expires_at_ms
+        expired := sound.expires_at_ms != 0 && music_time > sound.expires_at_ms
         if expired || sound_is_finished(sound) {
             game_sound_stop(handle)
             continue

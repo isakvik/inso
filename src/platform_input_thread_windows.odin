@@ -143,7 +143,7 @@ input_thread_apply_events :: proc(events: []Input_Event) {
 
 apply_raw_mouse_event :: proc(target: ^Mouse, event: ^Input_Event) {
     target.absolute_positioning = event.absolute_input
-    target.pos = raw_cursor_integrate(target.pos, event)
+    target.pos = raw_cursor_integrate_delta(target.pos, event)
 
     flags := event.button_flags
     if flags & INPUT_M1_DOWN != 0 do target.buttons[.LEFT].is_down   = true

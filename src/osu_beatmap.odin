@@ -107,7 +107,7 @@ beatmap_lead_in_ms :: proc(beatmap: ^Beatmap) -> f64 {
     return clamp(first_preempt, BEATMAP_LEAD_IN_MIN_MS, BEATMAP_LEAD_IN_MAX_MS)
 }
 
-beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap, kept_music: Sound = nil) {
+beatmap_on_init :: proc(map_reference: Map_Reference, beatmap: ^Beatmap, kept_music: Sound = {}) {
     beatmap^ = { map_reference = map_reference }
     _beatmap_allocate_internals(beatmap, kept_music)
 
@@ -343,8 +343,8 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
             game.beatmap.map_reference,
             len(app.map_references) > 0 ? app.map_references[0] : Map_Reference{},
         }
-        // note: substituting a different map is a dev convenience only - a tournament client
-        // must play exactly the requested map, or die where production can see it during setup
+        // note(isak): substituting a different map is a dev convenience only - a tournament client
+        // must play exactly the requested map, or abort where production can see it during setup
         try_refs := fallback_refs[:1] if game.tournament_client else fallback_refs[:]
         opened: bool
         try_loop: for try_ref, i in try_refs {
@@ -380,7 +380,7 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
 
     if old_audio_filepath != {} && game.active_map.audio_filepath != old_audio_filepath {
         sound_destroy(&music)
-        music = nil
+        music = {}
     }
 
     config_force_apply(game.active_inso_map.force_settings)
@@ -421,8 +421,8 @@ beatmap_open :: proc(ref: Map_Reference, keep_position: bool = false, reload_ass
     // --
 }
 
-_beatmap_allocate_internals :: proc(beatmap: ^Beatmap, kept_music: Sound = nil) {
-    if kept_music != nil {
+_beatmap_allocate_internals :: proc(beatmap: ^Beatmap, kept_music: Sound = {}) {
+    if kept_music.handle != 0 {
         beatmap.music = kept_music
         sound_pause(&beatmap.music)
         sound_set_position_ms(&beatmap.music, 0)
@@ -430,9 +430,9 @@ _beatmap_allocate_internals :: proc(beatmap: ^Beatmap, kept_music: Sound = nil) 
         ok: bool
         beatmap.music, ok = sound_stream_init(game.active_map.audio_filepath, prescan = true)
         if ok {
-            sound_play(&beatmap.music, start_paused = true, category = .MUSIC)
+            sound_play(&beatmap.music, start_paused = true, group = .MUSIC)
         } else {
-            log.error("tried to open map sound file, but failed:", game.active_map.audio_filepath)
+            notify_error("couldn't load music file '%s'", game.active_map.audio_filepath)
         }
     }
 
@@ -540,7 +540,7 @@ beatmap_music_position_interpolated_ms :: proc(beatmap: ^Beatmap) -> (result: f6
 
     last_time := beatmap.music_time_ms
     real_time := game.frame_clock_s
-    song_time := sound_get_position_ms(&beatmap.music)
+    song_time := sound_get_audible_position_ms(&beatmap.music)
 
     elapsed_ms := (real_time - beatmap.last_music_position_interpolation_check_time) * 1000
     song_elapsed_ms := song_time - beatmap.music_time_uninterpolated_ms

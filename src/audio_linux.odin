@@ -37,8 +37,9 @@ _platform_audio_init :: proc(device: Audio_Device) -> b32 {
             }
         }
         audio.output_mixer = 0
-        audio.music_mixer = 0
-        audio.hitsound_mixer = 0
+        for group in Sound_Group {
+            audio.group_mixers[group] = 0
+        }
     } else if bass.GetDevice() != 0 {
         // note(isak): a zombie device from a failed init attempt - the chain never came up, so
         // there is no mixer to read the device from; free whatever is current instead
@@ -75,7 +76,7 @@ _platform_audio_init :: proc(device: Audio_Device) -> b32 {
     log.infof("BASS output: device %v @ %vhz, device buffer %vms -> %.1fms effective",
         device, freq, buffer_ms, audio.output_latency_ms)
 
-    ok := _audio_init_mixers(freq, 2, .LIVE)
+    ok := _audio_init_mixers(freq, 2)
     if !ok do return false
 
     // note(isak): back to the host so everything created from here on (sounds, samples, sample

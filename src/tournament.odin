@@ -83,7 +83,7 @@ tournament_audio_servo :: proc(beatmap: ^Beatmap) {
         return
     }
 
-    audio_behind_ms := beatmap.music_time_ms - sound_get_position_ms(&beatmap.music)
+    audio_behind_ms := beatmap.music_time_ms - sound_get_audible_position_ms(&beatmap.music)
     beatmap.wall_servo_error_ms = damp_continuously(beatmap.wall_servo_error_ms, audio_behind_ms,
         TOURNAMENT_SERVO_SMOOTH_HALF_LIFE_MS, game.dt)
 

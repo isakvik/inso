@@ -40,7 +40,7 @@ process_hittesting_event_walk :: proc(visible_hobjs: []Hitobject, map_time_now: 
             }
 
             if raw_cursor {
-                cursor_screen = raw_cursor_integrate(cursor_screen, &event)
+                cursor_screen = raw_cursor_integrate_delta(cursor_screen, &event)
             }
 
             m1_press, m2_press: bool

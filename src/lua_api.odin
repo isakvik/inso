@@ -2436,7 +2436,7 @@ luaapi_sound_play_loop :: proc "c" (L: ^lua.State) -> i32 {
         notify_warn("lua: Sound.play_loop sound not found '%s'", name)
         return 0
     }
-    handle := game_sound_play(sample, loop = true, volume = volume)
+    handle := game_sound_play(sample, volume = volume)
     lua_create_userdata(L, handle, lua_classes[.SOUND].name)
     return 1
 }

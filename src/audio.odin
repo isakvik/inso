@@ -3,21 +3,19 @@ package inso
 import "base:intrinsics"
 import "core:strings"
 import "core:log"
+import "core:fmt"
 import os "core:os"
 
 import "dep:bass"
 
 
-Sound_Category :: enum { MUSIC, HITSOUND }
+Sound_Group :: enum { MUSIC, HITSOUND }
 
 Audio_Device_Info :: struct {
     index:  Audio_Device, // note(isak): bass device index; -1 = the default device
     name:   string,
     driver: string,
     flags:  bass.DWORD,
-    // note(isak): index into the wasapi endpoint list, precomputed at enumeration time so a
-    // switch never has to walk WASAPI_GetDeviceInfo. -1 = unresolved (use the OS default)
-    wasapi_index: i32,
 }
 
 audio: struct {
@@ -27,9 +25,9 @@ audio: struct {
     device_index: Audio_Device,
     devices: [dynamic]Audio_Device_Info,
     default_device_name: string,
-    output_mixer, music_mixer, hitsound_mixer: bass.HSTREAM,
-    // note(isak): wasapi device buffer in ms; decode positions lead the speakers by this much.
-    // 0 on the linux dev path (BASS's own output buffering, uncompensated)
+    output_mixer: bass.HSTREAM,
+    group_mixers: [Sound_Group]bass.HSTREAM,
+    // note(isak): wasapi device buffer in ms; decode positions lead the speakers by this much
     output_latency_ms: f64,
 }
 
@@ -38,39 +36,14 @@ DEVICE_DEFAULT :: Audio_Device(-1)
 
 Sound_Handle :: bass.DWORD
 
-Sound_Flags :: distinct bit_set[Sound_Flag; u32]
-Sound_Flag :: enum u32 {
-    PAUSED,
-    STREAM,
-    LOOP,
-    PRESCAN,
-    TEMPO,
-}
-
-Base_Sound :: struct {
-    flags: Sound_Flags,
-    volume: f32, // note(isak): 0.0 - 1.0 range
+Sound :: struct {
+    handle:   Sound_Handle,
+    paused:   bool, // note(isak): mirrors the mixer channel pause flag
+    volume:   f32, // note(isak): 0.0 - 1.0 range
     expires_at_ms: f64, // note(isak): 0 = no expiry
     rate_trim: f64,
-    rate_trim_base_freq: f32, // note: captured on first trim; 0 = not yet read
-    category: Sound_Category, // note(isak): which decode mixer the sound belongs to
-}
-
-Sound :: union {
-    Sound_Stream,
-    Sound_Channel,
-}
-
-// note(isak): BASS handled stream IO, suitable for large files
-Sound_Stream :: struct {
-    using base: Base_Sound,
-    handle: bass.HSTREAM,
-}
-
-// note(isak): files held in memory, suitable for short repeating sounds
-Sound_Channel :: struct {
-    using base: Base_Sound,
-    handle: bass.HCHANNEL,
+    rate_trim_base_freq: f32, // note(isak): captured on first trim; 0 = not yet read
+    group: Sound_Group, // note(isak): which decode mixer the sound belongs to
 }
 
 // note(isak): sample held in memory with a fixed channel pool. use for short sounds that may overlap
@@ -80,12 +53,6 @@ Sample :: struct {
     file_data: []byte, // note(isak): raw file bytes kept alive for in-memory stream creation
 }
 
-// note(isak): how the master output mixer is driven
-Mixer_Chain_Kind :: enum {
-    DECODE, // decode source for WASAPI audioclient
-    LIVE,   // stream playing directly to device
-}
-
 //////////////////////////////////////////////////////
 // note(isak): audio engine api
 
@@ -93,19 +60,15 @@ audio_init :: proc() -> bool {
     _audio_enumerate_devices()
 
     // note(isak): device 0 is BASS's "no sound" device; every sound source (music stream, loop
-    // streams, sample channels, samples) lives here and survives output device teardowns, since
-    // a reinit only ever frees the current output device (never the host). actual output goes
-    // through the device the platform backend inits below
+    // streams, sample channels, samples) refers to it and survives output device teardowns, since
+    // a reinit only ever frees the current output device. actual output goes through the device
+    // the platform backend inits
     // freq 0 (use device config) doesn't work with our mixers, so we have to set a default
     if !bass.Init(0, 44100, 0, nil, nil) {
         log.error("BASS init error:", bass.ErrorGetCode())
         return false
     }
     bass.SetDevice(0)
-
-    when ODIN_OS == .Windows {
-        _platform_audio_resolve_wasapi_indices()
-    }
 
     audio.ready = _audio_init_on_valid_device()
 
@@ -175,24 +138,24 @@ _audio_enumerate_devices :: proc() {
             name   = strings.clone(string(info.name), context.allocator),
             driver = strings.clone(string(info.driver), context.allocator),
             flags  = info.flags,
-            wasapi_index = i32(DEVICE_DEFAULT),
         })
     }
 }
 
-_audio_init_mixers :: proc(freq: bass.DWORD, chans: bass.DWORD, kind: Mixer_Chain_Kind) -> bool {
+_audio_init_mixers :: proc(freq: bass.DWORD, chans: bass.DWORD) -> bool {
     // note(isak): a 0 channel or 0 freq from a backend means it didn't configure right, so
     // set a sane default
     freq, chans := freq, chans
     if chans == 0 do chans = 2
     if freq == 0 do freq = 44100
 
-    // note(isak): every (re)init builds a fresh chain. the old one died with the previous output
-    // device (or is freed by _audio_free_mixer_chain on the wasapi path); the source channels
-    // survive on the host device and _audio_chain_revalidate reattaches them below, preserving
-    // their positions - so there's no need to keep a matching chain alive
+    // note(isak): mixers are attached to devices, so we have to rebuild the chain on reinit.
+    // the source channels are kept alive on device 0, so it's just a matter of redirecting the
+    // mixers to the platform output, and attaching the channels to the new chain here (keeping
+    // playback position and pause state)
     output_flags: u32 = bass.SAMPLE_FLOAT | bass.MIXER_NONSTOP
-    if kind == .DECODE {
+    when ODIN_OS == .Windows {
+        // note(isak): wasapi reads the output mixer to its own audio client
         output_flags |= bass.STREAM_DECODE
     }
 
@@ -201,39 +164,19 @@ _audio_init_mixers :: proc(freq: bass.DWORD, chans: bass.DWORD, kind: Mixer_Chai
         log.error("BASS mixer init error:", bass.ErrorGetCode(), "(freq", freq, "chans", chans, ")")
         return false
     }
-    audio.music_mixer = bass.Mixer_StreamCreate(freq, chans,
-        bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
-    audio.hitsound_mixer = bass.Mixer_StreamCreate(freq, chans,
-        bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
-    bass.Mixer_StreamAddChannel(audio.output_mixer, audio.music_mixer,    bass.MIXER_DOWNMIX)
-    bass.Mixer_StreamAddChannel(audio.output_mixer, audio.hitsound_mixer, bass.MIXER_DOWNMIX)
+    
+    for group in Sound_Group {
+        audio.group_mixers[group] = bass.Mixer_StreamCreate(freq, chans,
+            bass.SAMPLE_FLOAT | bass.STREAM_DECODE | bass.MIXER_NONSTOP)
+        bass.Mixer_StreamAddChannel(audio.output_mixer, audio.group_mixers[group], bass.MIXER_DOWNMIX)
+    }
 
-    if kind == .LIVE {
+    when ODIN_OS == .Linux {
         bass.ChannelPlay(audio.output_mixer, false)
     }
-    // note(isak): reattach every managed sound whose attachment was lost with the old chain
-    // (no-op on first init, when nothing is loaded yet)
-    _audio_chain_revalidate()
+    bass.ChannelSetAttribute(audio.output_mixer, bass.ATTRIB_VOL, game.user_config.master_volume)
+    _audio_chain_reintegrate_handles()
     return true
-}
-
-// note(isak): frees the current mixer chain. the managed sources attached to it live on the host
-// device and survive; _audio_chain_revalidate reattaches them to the fresh chain after the next
-// _audio_init_mixers. the linux backend doesn't call this - it frees the output device instead,
-// which kills the chain with it
-_audio_free_mixer_chain :: proc() {
-    if audio.hitsound_mixer != 0 {
-        bass.StreamFree(audio.hitsound_mixer)
-        audio.hitsound_mixer = 0
-    }
-    if audio.music_mixer != 0 {
-        bass.StreamFree(audio.music_mixer)
-        audio.music_mixer = 0
-    }
-    if audio.output_mixer != 0 {
-        bass.StreamFree(audio.output_mixer)
-        audio.output_mixer = 0
-    }
 }
 
 _audio_init_on_valid_device :: proc() -> bool {
@@ -267,13 +210,10 @@ audio_handle_device_change :: proc() -> (reinitialized: bool) {
         reinit := intrinsics.atomic_exchange(&audio.device_reinit_requested, false)
         if !rebuild_list && !reinit do return false
 
-        // note(isak): the bass list and the cached wasapi mapping are snapshots from the last
-        // enumeration, so a device appearing means the dropdown and the mapping are both stale
+        // note(isak): the bass list is a snapshot from the last enumeration, so a device
+        // appearing means the dropdown is stale
         if rebuild_list {
             _audio_enumerate_devices()
-            when ODIN_OS == .Windows {
-                _platform_audio_resolve_wasapi_indices()
-            }
             audio_device_dropdown_rebuild()
         }
 
@@ -304,8 +244,20 @@ audio_set_device :: proc(device: Audio_Device) -> bool {
     }
 
     audio.ready = false
-    notify_error("audio device %v failed to initialize", device)
+    notify_error("audio device '%s' failed to initialize", audio_device_name(device))
     return false
+}
+
+audio_device_name :: proc(device: Audio_Device) -> string {
+    if device == DEVICE_DEFAULT {
+        return "default"
+    }
+    for dev in audio.devices {
+        if dev.index == device {
+            return dev.name
+        }
+    }
+    return fmt.tprint(device)
 }
 
 // note(isak): reinits the output on the current device, e.g. after a buffer-size
@@ -319,34 +271,36 @@ audio_reopen :: proc() -> bool {
 // note(isak): volume is a 0.0 - 1.0 range
 audio_set_volume :: proc(volume: f32) {
     when ODIN_OS == .Windows {
+        // note(isak): session volume is the program entry in the windows volume mixer
         bass.WASAPI_SetVolume(bass.WASAPI_CURVE_WINDOWS | bass.WASAPI_VOL_SESSION, volume)
     } else {
-        bass.SetVolume(volume)
+        // note(isak): BASS_SetVolume moves the system mixer's PCM control on linux, which is
+        // visible to other apps; apply master volume inside our own chain instead
+        if audio.output_mixer != 0 {
+            bass.ChannelSetAttribute(audio.output_mixer, bass.ATTRIB_VOL, volume)
+        }
     }
 }
 
-audio_set_category_volume :: proc(category: Sound_Category, volume: f32) {
-    switch category {
-    case .MUSIC:    bass.ChannelSetAttribute(audio.music_mixer,    bass.ATTRIB_VOL, volume)
-    case .HITSOUND: bass.ChannelSetAttribute(audio.hitsound_mixer, bass.ATTRIB_VOL, volume)
-    }
-}
-
-effective_hitsound_volume :: proc() -> f32 {
-    cfg := &game.user_config
-    return cfg.music_volume if cfg.hitsound_volume_follows_music else cfg.hitsound_volume
+audio_group_set_volume :: proc(group: Sound_Group, volume: f32) {
+    bass.ChannelSetAttribute(audio.group_mixers[group], bass.ATTRIB_VOL, volume)
 }
 
 audio_apply_config_volumes :: proc() {
+    effective_hitsound_volume :: proc() -> f32 {
+        cfg := &game.user_config
+        return cfg.music_volume if cfg.hitsound_volume_follows_music else cfg.hitsound_volume
+    }
+    
     audio_set_volume(game.user_config.master_volume)
-    audio_set_category_volume(.MUSIC, game.user_config.music_volume)
-    audio_set_category_volume(.HITSOUND, effective_hitsound_volume())
+    audio_group_set_volume(.MUSIC, game.user_config.music_volume)
+    audio_group_set_volume(.HITSOUND, effective_hitsound_volume())
 }
 
 //////////////////////////////////////////////////////
 // note(isak): sound api
 
-sound_stream_init :: proc(path: string, prescan: bool = false, loop: bool = false) -> (result: Sound_Stream, ok: bool) {
+sound_stream_init :: proc(path: string, prescan: bool = false, loop: bool = false) -> (result: Sound, ok: bool) {
     // bass.UNICODE for wstring
     init_flags: u32 = bass.STREAM_DECODE | bass.SAMPLE_FLOAT
     init_flags |= prescan ? bass.STREAM_PRESCAN : 0
@@ -372,30 +326,13 @@ sound_stream_init :: proc(path: string, prescan: bool = false, loop: bool = fals
     bass.ChannelSetAttribute(result.handle, bass.ATTRIB_TEMPO_OPTION_OVERLAP_MS, 4.0)
     bass.ChannelSetAttribute(result.handle, bass.ATTRIB_TEMPO_OPTION_SEQUENCE_MS, 30.0)
     
-    result.flags = { .STREAM, .TEMPO }
-    result.flags |= prescan ? {.PRESCAN} : {}
-    result.flags |= loop ? {.LOOP} : {}
-    
-    return result, true
-}
-
-sound_channel_init :: proc(s: ^Sample, loop: bool = false) -> (result: Sound_Channel, ok: bool) {
-    if !audio.ready || s.handle == 0 do return
-    // note(isak): STREAM_DECODE is only valid on sample channels together with SAMCHAN_STREAM
-    channel := bass.SampleGetChannel(s.handle, (loop ? bass.SAMPLE_LOOP : 0) | bass.SAMCHAN_STREAM | bass.STREAM_DECODE)
-    if channel == 0 {
-        log.error("BASS sample get channel error:", bass.ErrorGetCode())
-        return result, false
-    }
-    result.handle = channel
-    if loop do result.flags |= {.LOOP}
     return result, true
 }
 
 // note(isak): creates a decode stream suitable for adding to the WASAPI mixer.
 // use for managed looping sounds where a sample channel (SampleGetChannel) can't be
 // used as a decode channel reliably.
-sound_loop_stream_init :: proc(path: string) -> (result: Sound_Stream, ok: bool) {
+sound_loop_stream_init :: proc(path: string) -> (result: Sound, ok: bool) {
     path_cstr := strings.clone_to_cstring(path, context.temp_allocator)
     result.handle = bass.StreamCreateFile(0, rawptr(path_cstr), 0, 0,
         bass.STREAM_DECODE | bass.SAMPLE_FLOAT | bass.SAMPLE_LOOP)
@@ -403,11 +340,10 @@ sound_loop_stream_init :: proc(path: string) -> (result: Sound_Stream, ok: bool)
         log.error("BASS loop stream create error:", bass.ErrorGetCode())
         return result, false
     }
-    result.flags = {.STREAM, .LOOP}
     return result, true
 }
 
-sound_stream_init_from_memory :: proc(data: []byte, loop: bool = false) -> (result: Sound_Stream, ok: bool) {
+sound_stream_init_from_memory :: proc(data: []byte, loop: bool = false) -> (result: Sound, ok: bool) {
     flags: u32 = bass.STREAM_DECODE | bass.SAMPLE_FLOAT
     flags |= loop ? bass.SAMPLE_LOOP : 0
     result.handle = bass.StreamCreateFile(bass.FILE_MEM, raw_data(data), 0, u64(len(data)), flags)
@@ -415,102 +351,74 @@ sound_stream_init_from_memory :: proc(data: []byte, loop: bool = false) -> (resu
         log.error("BASS stream from memory error:", bass.ErrorGetCode())
         return result, false
     }
-    result.flags = {.STREAM}
-    if loop do result.flags |= {.LOOP}
     return result, true
 }
 
 sound_destroy :: proc(sound: ^Sound) {
-    switch s in sound {
-    case Sound_Stream:  bass.StreamFree(s.handle)
-    case Sound_Channel: bass.ChannelFree(s.handle)
-    }
+    bass.StreamFree(sound.handle)
 }
 
 sound_is_playing :: proc(sound: ^Sound) -> (result: bool) {
-    if audio.ready { 
-        if sound_is_paused(sound) {
-            result = false
-        }
-        else {
-            switch s in sound {
-            // todo(isak): overlayable stream is a bit more complicated but not implemented yet
-            case Sound_Stream:  result = bass.ChannelIsActive(s.handle) == bass.ACTIVE_PLAYING
-            case Sound_Channel: result = bass.ChannelIsActive(s.handle) == bass.ACTIVE_PLAYING
-            }
-        }
+    if audio.ready && !sound.paused {
+        result = bass.ChannelIsActive(sound.handle) == bass.ACTIVE_PLAYING
     }
     return result
 }
 
 sound_is_paused :: proc(sound: ^Sound) -> bool {
-    base := cast(^Base_Sound)sound
-    return .PAUSED in base.flags
+    return sound.paused
 }
 
 sound_is_finished :: proc(sound: ^Sound) -> (result: bool) {
-    if audio.ready { 
-        handle := _sound_get_channel_handle(sound)
-        state := bass.ChannelIsActive(handle)
-        result = state == bass.ACTIVE_STOPPED
+    if audio.ready {
+        result = bass.ChannelIsActive(sound.handle) == bass.ACTIVE_STOPPED
     }
     return result
 }
 
 sound_get_length_ms :: proc(sound: ^Sound) -> (result: f64) {
-    if audio.ready { 
-        handle := _sound_get_channel_handle(sound)
-        length := bass.ChannelGetLength(handle, bass.POS_BYTE)
-        result = bass.ChannelBytes2Seconds(handle, length) * 1000
+    if audio.ready {
+        length := bass.ChannelGetLength(sound.handle, bass.POS_BYTE)
+        result = bass.ChannelBytes2Seconds(sound.handle, length) * 1000
     }
     return result
 }
 
-// note: reports the audible position, not the decode position - the raw read leads the speakers
-// by the output buffer. clamped so a fresh start reads 0 while the buffer first fills
-sound_get_position_ms :: proc(sound: ^Sound) -> (result: f64) {
+sound_get_audible_position_ms :: proc(sound: ^Sound) -> (result: f64) {
     if audio.ready {
-        handle := _sound_get_channel_handle(sound)
-        pos := bass.ChannelGetPosition(handle, bass.POS_BYTE)
-        result = max(0, bass.ChannelBytes2Seconds(handle, pos) * 1000 - audio.output_latency_ms)
+        pos := bass.ChannelGetPosition(sound.handle, bass.POS_BYTE)
+        result = max(0, bass.ChannelBytes2Seconds(sound.handle, pos) * 1000 - audio.output_latency_ms)
     }
     return result
 }
 
 sound_get_position_fract :: proc(sound: ^Sound) -> (result: f64) {
-    if audio.ready { 
-        handle := _sound_get_channel_handle(sound)
-        
-        pos := bass.ChannelGetPosition(handle, bass.POS_BYTE)
-        length := bass.ChannelGetLength(handle, bass.POS_BYTE)
-        
+    if audio.ready {
+        pos := bass.ChannelGetPosition(sound.handle, bass.POS_BYTE)
+        length := bass.ChannelGetLength(sound.handle, bass.POS_BYTE)
         result = f64(pos) / f64(length)
     }
     return result
 }
 
 sound_set_position_ms :: proc(sound: ^Sound, ms: f64) {
-    if audio.ready { 
-        handle := _sound_get_channel_handle(sound)
+    if audio.ready {
         // note(isak): small epsilon here; setting the position to somewhere after this fails
         ms := clamp(ms, 0, sound_get_length_ms(sound) - 0.01)
-        
-        pos_bytes := bass.ChannelSeconds2Bytes(handle, ms / 1000)
-        if !bass.Mixer_ChannelSetPosition(handle, pos_bytes, bass.POS_BYTE) {
+        pos_bytes := bass.ChannelSeconds2Bytes(sound.handle, ms / 1000)
+        if !bass.Mixer_ChannelSetPosition(sound.handle, pos_bytes, bass.POS_BYTE) {
             log.error("BASS channel set position error:", bass.ErrorGetCode())
         }
     }
 }
 
 sound_set_position_fract :: proc(sound: ^Sound, fract: f64) {
-    if audio.ready { 
-        handle := _sound_get_channel_handle(sound)
+    if audio.ready {
         sound_length := sound_get_length_ms(sound)
         // note(isak): small epsilon here; setting the position to somewhere after this fails 
         ms := clamp(fract * sound_length, 0, sound_length - 0.01)
-        
-        pos_bytes := bass.ChannelSeconds2Bytes(handle, ms / 1000)
-        if !bass.Mixer_ChannelSetPosition(handle, pos_bytes, bass.POS_BYTE) {
+        pos_bytes := bass.ChannelSeconds2Bytes(sound.handle, ms / 1000)
+        if !bass.Mixer_ChannelSetPosition(sound.handle, pos_bytes, bass.POS_BYTE) {
             log.error("BASS channel set position error:", bass.ErrorGetCode())
         }
     }
@@ -518,25 +426,22 @@ sound_set_position_fract :: proc(sound: ^Sound, fract: f64) {
 
 sound_set_volume :: proc(sound: ^Sound, volume: f32) {
     if audio.ready {
-        base := cast(^Base_Sound)sound
-        base.volume = volume
-        handle := _sound_get_channel_handle(sound)
-        bass.ChannelSetAttribute(handle, bass.ATTRIB_VOL, volume)
+        sound.volume = volume
+        bass.ChannelSetAttribute(sound.handle, bass.ATTRIB_VOL, volume)
     }
 }
 
 sound_set_speed :: proc(sound: ^Sound, rate: f32, compensate_pitch: bool = true) {
-    if audio.ready { 
-        handle := _sound_get_channel_handle(sound)
+    if audio.ready {
         rate := clamp(rate, 1/50, 50)
         
         freq: f32
-        if !bass.ChannelGetAttribute(handle, bass.ATTRIB_FREQ, &freq) {
+        if !bass.ChannelGetAttribute(sound.handle, bass.ATTRIB_FREQ, &freq) {
             log.error("BASS channel get freq error:", bass.ErrorGetCode())
         }
         
         freq_target := (compensate_pitch ? (rate-1.0) * 100.0 : rate * freq)
-       	if !bass.ChannelSetAttribute(handle, (compensate_pitch ? bass.ATTRIB_TEMPO : bass.ATTRIB_TEMPO_FREQ), freq_target) {
+        if !bass.ChannelSetAttribute(sound.handle, (compensate_pitch ? bass.ATTRIB_TEMPO : bass.ATTRIB_TEMPO_FREQ), freq_target) {
             log.error("BASS channel set tempo error:", bass.ErrorGetCode(), compensate_pitch)
         }
     }
@@ -544,129 +449,109 @@ sound_set_speed :: proc(sound: ^Sound, rate: f32, compensate_pitch: bool = true)
 
 // note(isak): nudges playback rate by a fraction. continuous resample-ratio change
 sound_set_rate_trim :: proc(sound: ^Sound, trim: f64) {
-    if !audio.ready do return
-    base := cast(^Base_Sound)sound
-    if base.rate_trim == trim do return
-
-    handle := _sound_get_channel_handle(sound)
-    if base.rate_trim_base_freq == 0 {
-        if !bass.ChannelGetAttribute(handle, bass.ATTRIB_FREQ, &base.rate_trim_base_freq) do return
+    if !audio.ready || sound.rate_trim == trim do return
+    if sound.rate_trim_base_freq == 0 {
+        if !bass.ChannelGetAttribute(sound.handle, bass.ATTRIB_FREQ, &sound.rate_trim_base_freq) do return
     }
-    bass.ChannelSetAttribute(handle, bass.ATTRIB_FREQ, base.rate_trim_base_freq * f32(1 + trim))
-    base.rate_trim = trim
+    bass.ChannelSetAttribute(sound.handle, bass.ATTRIB_FREQ, sound.rate_trim_base_freq * f32(1 + trim))
+    sound.rate_trim = trim
 }
 
-// note(isak): looping is decided at creation (SAMPLE_LOOP on the BASS handle + the .LOOP base
-// flag); this proc never autofrees the channel. managed sounds are destroyed by their owner
-// (expiry loop, game_sound_stop, teardown) - letting BASS autofree an ended stream first would
-// make our destroy path hit a dead handle that BASS may have recycled for a new channel
-sound_play :: proc(sound: ^Sound, start_paused: bool = false, volume: f32 = 1.0, category: Sound_Category = .MUSIC) {
-    if audio.ready {
-        base := cast(^Base_Sound)sound
-        handle := _sound_get_channel_handle(sound)
+// note(isak): looping is decided at creation (SAMPLE_LOOP on the BASS handle); this proc never
+// autofrees the channel. managed sounds are destroyed by their owner (expiry loop,
+// game_sound_stop, teardown) - letting BASS autofree an ended stream first would make our
+// destroy path hit a dead handle that BASS may have recycled for a new channel
+sound_play :: proc(sound: ^Sound, start_paused: bool = false, volume: f32 = 1.0, group: Sound_Group = .MUSIC) {
+    if !audio.ready do return
+    sound.paused = start_paused
+    sound.volume = volume
+    sound.group = group
 
-        bass.ChannelSetAttribute(handle, bass.ATTRIB_NORAMP, 1.0) // see https://github.com/ppy/osu-framework/pull/3146
-        bass.ChannelSetAttribute(handle, bass.ATTRIB_VOL, volume)
-        base.volume = volume
-        base.category = category
+    bass.ChannelSetAttribute(sound.handle, bass.ATTRIB_VOL, volume)
 
-        if bass.Mixer_ChannelGetMixer(handle) == 0 {
-            flags: u32 = bass.MIXER_DOWNMIX | bass.MIXER_NORAMPIN
-            flags |= start_paused ? bass.MIXER_CHAN_PAUSE : 0
-
-            mixer := audio.music_mixer if category == .MUSIC else audio.hitsound_mixer
-            if !bass.Mixer_StreamAddChannel(mixer, handle, flags) {
-                log.error("BASS mixer add channel error:", bass.ErrorGetCode())
-            }
-        }
-        
-        if !start_paused && !sound_is_playing(sound) {
-            if !bass.ChannelPlay(handle, true) {
-                log.error("BASS channel play error:", bass.ErrorGetCode())
-            }
-        }
-        
-        if start_paused {
-            base.flags |= {.PAUSED}
+    if bass.Mixer_ChannelGetMixer(sound.handle) == 0 {
+        mixer := audio.group_mixers[group]
+        _sound_add_to_mixer(sound.handle, mixer, start_paused)
+    }
+    
+    if !start_paused && !sound_is_playing(sound) {
+        if !bass.ChannelPlay(sound.handle, true) {
+            log.error("BASS channel play error:", bass.ErrorGetCode())
         }
     }
 }
 
 sound_resume :: proc(sound: ^Sound) {
-    if audio.ready { 
-        base := cast(^Base_Sound)sound
-        handle := _sound_get_channel_handle(sound)
-        bass.Mixer_ChannelFlags(handle, 0, bass.MIXER_CHAN_PAUSE)
-        base.flags &= ~{.PAUSED}
+    if audio.ready {
+        bass.Mixer_ChannelFlags(sound.handle, 0, bass.MIXER_CHAN_PAUSE)
+        sound.paused = false
     }
 }
 
 sound_pause :: proc(sound: ^Sound) {
-    if audio.ready { 
-        base := cast(^Base_Sound)sound
-        handle := _sound_get_channel_handle(sound)
-        bass.Mixer_ChannelFlags(handle, bass.MIXER_CHAN_PAUSE, bass.MIXER_CHAN_PAUSE)
-        base.flags |= {.PAUSED}
+    if audio.ready {
+        bass.Mixer_ChannelFlags(sound.handle, bass.MIXER_CHAN_PAUSE, bass.MIXER_CHAN_PAUSE)
+        sound.paused = true
     }
 }
 
-_sound_get_channel_handle :: proc(sound: ^Sound) -> (result: Sound_Handle) {
-    switch s in sound {
-    case Sound_Stream:  result = s.handle
-    case Sound_Channel: result = s.handle
+// note(isak): attaches a source to a group mixer with the standard flags
+_sound_add_to_mixer :: proc(handle: Sound_Handle, mixer: bass.HSTREAM, paused: bool) -> bool {
+    flags: u32 = bass.MIXER_DOWNMIX | bass.MIXER_NORAMPIN
+    flags |= paused ? bass.MIXER_CHAN_PAUSE : 0
+    if !bass.Mixer_StreamAddChannel(mixer, handle, flags) {
+        log.error("BASS mixer add channel error:", bass.ErrorGetCode())
+        return false
     }
-    return result
+    // see https://github.com/ppy/osu-framework/pull/3146
+    bass.ChannelSetAttribute(handle, bass.ATTRIB_NORAMP, 1.0)
+    return true
 }
 
-// note(isak): reattaches any managed sound whose decode mixer attachment was lost (e.g. after
-// a fallback chain rebuild). cheap no-op when everything is attached. run after every reinit
-// so a sound can never end up orphaned and silently inaudible
-_audio_chain_revalidate :: proc() {
-    if !audio.ready do return
-    if audio.music_mixer == 0 || audio.hitsound_mixer == 0 do return
-
+// note(isak): needs to run even if reinit failed (audio.ready is false) because the mixer chain is rebuild
+// regardless
+_audio_chain_reintegrate_handles :: proc() {
+    if audio.group_mixers[.MUSIC] == 0 || audio.group_mixers[.HITSOUND] == 0 do return
+    
+    // todo(isak): beatmap music is a special case all right, but relying on this being a complete list
+    // is stupid and brittle
     _audio_chain_reattach(&game.beatmap.music, .MUSIC)
     for &sound in game.sounds.values {
-        base := cast(^Base_Sound)&sound
-        _audio_chain_reattach(&sound, base.category)
+        _audio_chain_reattach(&sound, sound.group)
     }
 }
 
-_audio_chain_reattach :: proc(sound: ^Sound, category: Sound_Category) {
-    handle := _sound_get_channel_handle(sound)
-    if handle == 0 do return
+_audio_chain_reattach :: proc(sound: ^Sound, group: Sound_Group) {
+    if sound.handle == 0 do return
 
-    base := cast(^Base_Sound)sound
-    mixer := audio.music_mixer if category == .MUSIC else audio.hitsound_mixer
-    if bass.Mixer_ChannelGetMixer(handle) == mixer do return
+    mixer := audio.group_mixers[group]
+    if bass.Mixer_ChannelGetMixer(sound.handle) == mixer do return
 
-    if bass.Mixer_ChannelGetMixer(handle) != 0 {
-        if !bass.Mixer_ChannelRemove(handle) {
+    if bass.Mixer_ChannelGetMixer(sound.handle) != 0 {
+        if !bass.Mixer_ChannelRemove(sound.handle) {
             log.error("BASS mixer remove error:", bass.ErrorGetCode())
             return
         }
     }
-    flags: u32 = bass.MIXER_DOWNMIX | bass.MIXER_NORAMPIN
-    flags |= .PAUSED in base.flags ? bass.MIXER_CHAN_PAUSE : 0
-    if !bass.Mixer_StreamAddChannel(mixer, handle, flags) {
-        log.error("BASS mixer reattach error:", bass.ErrorGetCode())
-        return
-    }
-    bass.ChannelSetAttribute(handle, bass.ATTRIB_NORAMP, 1.0)
-    bass.ChannelSetAttribute(handle, bass.ATTRIB_VOL, base.volume)
-    // note(isak): continue from where the sound was, not from the start
-    if !(.PAUSED in base.flags) && bass.ChannelIsActive(handle) == bass.ACTIVE_STOPPED {
-        if !bass.ChannelPlay(handle, false) {
-            log.error("BASS channel play error:", bass.ErrorGetCode())
+    
+    if _sound_add_to_mixer(sound.handle, mixer, sound.paused) {
+        bass.ChannelSetAttribute(sound.handle, bass.ATTRIB_VOL, sound.volume)
+        
+        if !sound.paused && bass.ChannelIsActive(sound.handle) == bass.ACTIVE_STOPPED {
+            if !bass.ChannelPlay(sound.handle, false) {
+                log.error("BASS channel play error:", bass.ErrorGetCode())
+            }
         }
+        log.info("audio: reattached sound to", group, "mixer (handle", sound.handle, ")")
     }
-    log.info("audio: reattached sound to", category, "mixer (handle", handle, ")")
 }
 
 //////////////////////////////////////////////////////
 // note(isak): sample api
 
-sample_load_file :: proc(path: cstring, max_simultaneous: int = 8, alloc := context.allocator) -> (result: Sample, ok: bool) {
+sample_load_file :: proc(
+    path: cstring, max_simultaneous: int = 8, alloc := context.allocator
+) -> (result: Sample, ok: bool) {
     result.filepath = string(path)
 
     file_data, file_err := os.read_entire_file(string(path), alloc)
@@ -708,15 +593,18 @@ sample_load_memory :: proc(data: rawptr, max_simultaneous: int = 8) -> (result: 
 // frees itself when it ends, and the mixer applies the hitsound category volume
 sample_play :: proc(s: ^Sample, volume: f32 = 1.0, pan: f32 = 0.0) {
     if !audio.ready || s.handle == 0 do return
+    
     channel := bass.SampleGetChannel(s.handle, bass.SAMCHAN_STREAM | bass.STREAM_DECODE)
     if channel == 0 {
         log.error("BASS sample get channel error:", bass.ErrorGetCode())
         return
     }
+    mixer := audio.group_mixers[.HITSOUND]
     bass.ChannelSetAttribute(channel, bass.ATTRIB_NORAMP, 1.0)
     bass.ChannelSetAttribute(channel, bass.ATTRIB_VOL, volume)
     bass.ChannelSetAttribute(channel, bass.ATTRIB_PAN, pan)
-    if !bass.Mixer_StreamAddChannel(audio.hitsound_mixer, channel,
+    
+    if !bass.Mixer_StreamAddChannel(mixer, channel,
         bass.MIXER_DOWNMIX | bass.MIXER_NORAMPIN | bass.STREAM_AUTOFREE) {
         log.error("BASS mixer add channel error:", bass.ErrorGetCode())
     }

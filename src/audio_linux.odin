@@ -18,7 +18,7 @@ _platform_audio_init :: proc(device: Audio_Device) -> b32 {
     bass.SetConfig(bass.CONFIG_DEV_BUFFER,   u32(buffer_ms))
     bass.SetConfig(bass.CONFIG_BUFFER,       u32(max(period_ms + 1, buffer_ms)))
 
-    if !bass.Init(device, 0, 0, nil, nil) {
+    if !bass.Init(device, 44100, 0, nil, nil) {
         log.error("BASS init error (device", device, "):", bass.ErrorGetCode())
         return false
     }

@@ -8,17 +8,20 @@ import "core:strings"
 import "dep:bass"
 
 _platform_audio_init :: proc(device: Audio_Device) -> b32 {
-    _platform_audio_cleanup()
-    
+    bass.WASAPI_Free()
+
+    // note(isak): the output is wasapi, not a BASS device, so the old decode chain on the host
+    // device is not freed by anything - orphan it no longer, release it explicitly before the
+    // rebuild (the wasapi output proc is stopped by WASAPI_Free above, so it can't read a freed
+    // mixer)
+    _audio_free_mixer_chain()
+
     wasapi_info, ok := _wasapi_output_init(device)
     if !ok do return false
     if !_audio_init_mixers(wasapi_info.freq, wasapi_info.chans, .DECODE) do return false
     return bass.WASAPI_Start()
 }
 
-_platform_audio_cleanup :: proc() {
-    bass.WASAPI_Free()
-}
 
 // note(isak): bass runs as a decode source, wasapi reads from it
 _bass_wasapi_output_proc :: proc "c" (buffer: rawptr, len: u32, user_data: rawptr) -> u32 {

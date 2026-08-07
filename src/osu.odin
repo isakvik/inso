@@ -1013,7 +1013,7 @@ game_sound_play :: proc(
 
     handle := slotmap.insert(&game.sounds, sound)
     stored, _ := slotmap.get(&game.sounds, handle)
-    sound_play(stored, loop = loop, volume = volume, category = category)
+    sound_play(stored, volume = volume, category = category)
 
     if expires_at_ms != 0 {
         base := cast(^Base_Sound)stored

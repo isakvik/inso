@@ -27,8 +27,6 @@ audio: struct {
     device_index: Audio_Device,
     devices: [dynamic]Audio_Device_Info,
     default_device_name: string,
-    // note(isak): linux only. bass is initialized only once, so a reinit to another device is deferred
-    bass_init_done: bool,
     output_mixer, music_mixer, hitsound_mixer: bass.HSTREAM,
     // note(isak): wasapi device buffer in ms; decode positions lead the speakers by this much.
     // 0 on the linux dev path (BASS's own output buffering, uncompensated)
@@ -55,6 +53,7 @@ Base_Sound :: struct {
     expires_at_ms: f64, // note(isak): 0 = no expiry
     rate_trim: f64,
     rate_trim_base_freq: f32, // note: captured on first trim; 0 = not yet read
+    category: Sound_Category, // note(isak): which decode mixer the sound belongs to
 }
 
 Sound :: union {
@@ -93,18 +92,18 @@ Mixer_Chain_Kind :: enum {
 audio_init :: proc() -> bool {
     _audio_enumerate_devices()
 
+    // note(isak): device 0 is BASS's "no sound" device; every sound source (music stream, loop
+    // streams, sample channels, samples) lives here and survives output device teardowns, since
+    // a reinit only ever frees the current output device (never the host). actual output goes
+    // through the device the platform backend inits below
+    // freq 0 (use device config) doesn't work with our mixers, so we have to set a default
+    if !bass.Init(0, 44100, 0, nil, nil) {
+        log.error("BASS init error:", bass.ErrorGetCode())
+        return false
+    }
+    bass.SetDevice(0)
+
     when ODIN_OS == .Windows {
-        // note(isak): device 0 is BASS's "no sound" device; it only hosts decode streams and
-        // samples here, all actual output goes through WASAPI.
-        // freq 0 (device's own rate) fails on the no-sound device and leaves BASS
-        // in a half-initialized state where Mixer_StreamCreate then fails with
-        // BASS_ERROR_INIT, so we set a sane default
-        if !bass.Init(0, 44100, 0, nil, nil) {
-            log.error("BASS init error:", bass.ErrorGetCode())
-            return false
-        }
-        // note(isak): the bass->wasapi index map is only trustworthy once BASS is up; the wasapi
-        // enumeration shares state with the initialized output. run it here, not in enumerate
         _platform_audio_resolve_wasapi_indices()
     }
 
@@ -120,7 +119,15 @@ audio_init :: proc() -> bool {
 
 audio_cleanup :: proc() {
     when ODIN_OS == .Windows {
-        _platform_audio_cleanup()
+        bass.WASAPI_Free()
+    }
+    // note(isak): the current device is normally the host (device 0) these days - Free frees
+    // whatever is current, so point it at the output device first
+    if audio.output_mixer != 0 {
+        dev := bass.ChannelGetDevice(audio.output_mixer)
+        if dev != 0 && dev != 0xFFFFFFFF {
+            bass.SetDevice(dev)
+        }
     }
     bass.Free()
 
@@ -180,23 +187,13 @@ _audio_init_mixers :: proc(freq: bass.DWORD, chans: bass.DWORD, kind: Mixer_Chai
     if chans == 0 do chans = 2
     if freq == 0 do freq = 44100
 
+    // note(isak): every (re)init builds a fresh chain. the old one died with the previous output
+    // device (or is freed by _audio_free_mixer_chain on the wasapi path); the source channels
+    // survive on the host device and _audio_chain_revalidate reattaches them below, preserving
+    // their positions - so there's no need to keep a matching chain alive
     output_flags: u32 = bass.SAMPLE_FLOAT | bass.MIXER_NONSTOP
     if kind == .DECODE {
         output_flags |= bass.STREAM_DECODE
-    }
-
-    if audio.output_mixer != 0 {
-        mixer_info: bass.CHANNELINFO
-        if bass.ChannelGetInfo(audio.output_mixer, &mixer_info) &&
-                freq == mixer_info.freq && chans == mixer_info.chans {
-            return true
-        }
-
-        // note(isak): format changed; rebuild the chain
-        bass.Mixer_ChannelRemove(audio.music_mixer)
-        bass.Mixer_ChannelRemove(audio.hitsound_mixer)
-        bass.StreamFree(audio.output_mixer)
-        audio.output_mixer = 0
     }
 
     audio.output_mixer = bass.Mixer_StreamCreate(freq, chans, output_flags)
@@ -214,7 +211,29 @@ _audio_init_mixers :: proc(freq: bass.DWORD, chans: bass.DWORD, kind: Mixer_Chai
     if kind == .LIVE {
         bass.ChannelPlay(audio.output_mixer, false)
     }
+    // note(isak): reattach every managed sound whose attachment was lost with the old chain
+    // (no-op on first init, when nothing is loaded yet)
+    _audio_chain_revalidate()
     return true
+}
+
+// note(isak): frees the current mixer chain. the managed sources attached to it live on the host
+// device and survive; _audio_chain_revalidate reattaches them to the fresh chain after the next
+// _audio_init_mixers. the linux backend doesn't call this - it frees the output device instead,
+// which kills the chain with it
+_audio_free_mixer_chain :: proc() {
+    if audio.hitsound_mixer != 0 {
+        bass.StreamFree(audio.hitsound_mixer)
+        audio.hitsound_mixer = 0
+    }
+    if audio.music_mixer != 0 {
+        bass.StreamFree(audio.music_mixer)
+        audio.music_mixer = 0
+    }
+    if audio.output_mixer != 0 {
+        bass.StreamFree(audio.output_mixer)
+        audio.output_mixer = 0
+    }
 }
 
 _audio_init_on_valid_device :: proc() -> bool {
@@ -279,9 +298,6 @@ audio_handle_device_change :: proc() -> (reinitialized: bool) {
 
 // note(isak): reinits audio and mixer chain on the new device
 audio_set_device :: proc(device: Audio_Device) -> bool {
-    if device == audio.device_index do return true
-    audio.device_index = device
-
     if _platform_audio_init(device) {
         audio.ready = true
         return true
@@ -292,15 +308,10 @@ audio_set_device :: proc(device: Audio_Device) -> bool {
     return false
 }
 
-// note(isak): reinits the audio chain on the current device, e.g. after a buffer-size
-// setting change. config like CONFIG_DEV_BUFFER only binds on the next Init
+// note(isak): reinits the output on the current device, e.g. after a buffer-size
+// setting change. config like CONFIG_DEV_BUFFER only binds on the next Init/REINIT
 audio_reopen :: proc() -> bool {
-    if !_platform_audio_init(audio.device_index) {
-        audio.ready = false
-        notify_error("audio re-init on device %v failed", audio.device_index)
-        return false
-    }
-    audio.ready = true
+    if !audio_set_device(audio.device_index) do return false
     audio_apply_config_volumes()
     return true
 }
@@ -507,6 +518,8 @@ sound_set_position_fract :: proc(sound: ^Sound, fract: f64) {
 
 sound_set_volume :: proc(sound: ^Sound, volume: f32) {
     if audio.ready {
+        base := cast(^Base_Sound)sound
+        base.volume = volume
         handle := _sound_get_channel_handle(sound)
         bass.ChannelSetAttribute(handle, bass.ATTRIB_VOL, volume)
     }
@@ -543,17 +556,22 @@ sound_set_rate_trim :: proc(sound: ^Sound, trim: f64) {
     base.rate_trim = trim
 }
 
-sound_play :: proc(sound: ^Sound, start_paused: bool = false, loop: bool = false, volume: f32 = 1.0, category: Sound_Category = .MUSIC) {
+// note(isak): looping is decided at creation (SAMPLE_LOOP on the BASS handle + the .LOOP base
+// flag); this proc never autofrees the channel. managed sounds are destroyed by their owner
+// (expiry loop, game_sound_stop, teardown) - letting BASS autofree an ended stream first would
+// make our destroy path hit a dead handle that BASS may have recycled for a new channel
+sound_play :: proc(sound: ^Sound, start_paused: bool = false, volume: f32 = 1.0, category: Sound_Category = .MUSIC) {
     if audio.ready {
         base := cast(^Base_Sound)sound
         handle := _sound_get_channel_handle(sound)
 
         bass.ChannelSetAttribute(handle, bass.ATTRIB_NORAMP, 1.0) // see https://github.com/ppy/osu-framework/pull/3146
         bass.ChannelSetAttribute(handle, bass.ATTRIB_VOL, volume)
+        base.volume = volume
+        base.category = category
 
         if bass.Mixer_ChannelGetMixer(handle) == 0 {
             flags: u32 = bass.MIXER_DOWNMIX | bass.MIXER_NORAMPIN
-            flags |= (!loop && .STREAM in base.flags) ? bass.STREAM_AUTOFREE : 0
             flags |= start_paused ? bass.MIXER_CHAN_PAUSE : 0
 
             mixer := audio.music_mixer if category == .MUSIC else audio.hitsound_mixer
@@ -570,9 +588,6 @@ sound_play :: proc(sound: ^Sound, start_paused: bool = false, loop: bool = false
         
         if start_paused {
             base.flags |= {.PAUSED}
-        }
-        if loop {
-            base.flags |= {.LOOP}
         }
     }
 }
@@ -603,13 +618,58 @@ _sound_get_channel_handle :: proc(sound: ^Sound) -> (result: Sound_Handle) {
     return result
 }
 
+// note(isak): reattaches any managed sound whose decode mixer attachment was lost (e.g. after
+// a fallback chain rebuild). cheap no-op when everything is attached. run after every reinit
+// so a sound can never end up orphaned and silently inaudible
+_audio_chain_revalidate :: proc() {
+    if !audio.ready do return
+    if audio.music_mixer == 0 || audio.hitsound_mixer == 0 do return
+
+    _audio_chain_reattach(&game.beatmap.music, .MUSIC)
+    for &sound in game.sounds.values {
+        base := cast(^Base_Sound)&sound
+        _audio_chain_reattach(&sound, base.category)
+    }
+}
+
+_audio_chain_reattach :: proc(sound: ^Sound, category: Sound_Category) {
+    handle := _sound_get_channel_handle(sound)
+    if handle == 0 do return
+
+    base := cast(^Base_Sound)sound
+    mixer := audio.music_mixer if category == .MUSIC else audio.hitsound_mixer
+    if bass.Mixer_ChannelGetMixer(handle) == mixer do return
+
+    if bass.Mixer_ChannelGetMixer(handle) != 0 {
+        if !bass.Mixer_ChannelRemove(handle) {
+            log.error("BASS mixer remove error:", bass.ErrorGetCode())
+            return
+        }
+    }
+    flags: u32 = bass.MIXER_DOWNMIX | bass.MIXER_NORAMPIN
+    flags |= .PAUSED in base.flags ? bass.MIXER_CHAN_PAUSE : 0
+    if !bass.Mixer_StreamAddChannel(mixer, handle, flags) {
+        log.error("BASS mixer reattach error:", bass.ErrorGetCode())
+        return
+    }
+    bass.ChannelSetAttribute(handle, bass.ATTRIB_NORAMP, 1.0)
+    bass.ChannelSetAttribute(handle, bass.ATTRIB_VOL, base.volume)
+    // note(isak): continue from where the sound was, not from the start
+    if !(.PAUSED in base.flags) && bass.ChannelIsActive(handle) == bass.ACTIVE_STOPPED {
+        if !bass.ChannelPlay(handle, false) {
+            log.error("BASS channel play error:", bass.ErrorGetCode())
+        }
+    }
+    log.info("audio: reattached sound to", category, "mixer (handle", handle, ")")
+}
+
 //////////////////////////////////////////////////////
 // note(isak): sample api
 
-sample_load_file :: proc(path: string, max_simultaneous: int = 8) -> (result: Sample, ok: bool) {
-    result.filepath = path
+sample_load_file :: proc(path: cstring, max_simultaneous: int = 8, alloc := context.allocator) -> (result: Sample, ok: bool) {
+    result.filepath = string(path)
 
-    file_data, file_err := os.read_entire_file(path, context.allocator)
+    file_data, file_err := os.read_entire_file(string(path), alloc)
     if file_err != nil {
         log.error("sample_load_file: could not read file:", path, file_err)
         return result, false
@@ -620,10 +680,8 @@ sample_load_file :: proc(path: string, max_simultaneous: int = 8) -> (result: Sa
         return result, true
     }
 
-    path_cstr := strings.clone_to_cstring(path, context.temp_allocator)
-
     // note(isak): SAMPLE_OVER_POS drops the oldest instance when the pool is exhausted
-    result.handle = bass.SampleLoad(0, rawptr(path_cstr), 0, 0, u32(max_simultaneous),
+    result.handle = bass.SampleLoad(0, rawptr(path), 0, 0, u32(max_simultaneous),
         bass.SAMPLE_FLOAT | bass.SAMPLE_OVER_POS)
     if result.handle == 0 {
         err := bass.ErrorGetCode()

@@ -562,7 +562,8 @@ mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info, rel_prefix := ""
             queue.push_back(&mapset.textures, tex)
         }
         case slice.contains(supported_audio_extensions, extension): {
-            sample, ok := sample_load_file(file.name)
+            path_cstr := strings.clone_to_cstring(file.name, context.allocator)
+            sample, ok := sample_load_file(path_cstr, alloc = context.allocator)
             if ok {
                 sample_key := strings.clone(rel_name, memory.allocators[.MAPSET])
                 slot := u32(mapset.samples.len)

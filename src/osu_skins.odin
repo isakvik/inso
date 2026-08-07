@@ -529,8 +529,9 @@ skin_try_load_sample :: proc(stem: string, dest: ^Sample) -> bool {
         if !os.exists(path) {
             continue
         }
+        path_cstr := strings.clone_to_cstring(path, context.allocator)
 
-        sample, ok := sample_load_file(path)
+        sample, ok := sample_load_file(path_cstr, alloc = context.allocator)
         if ok {
             dest^ = sample
             return true

@@ -21,7 +21,7 @@ User_Configuration :: struct {
     hitsound_volume: f32,
     hitsound_volume_follows_music: bool,
     audio_device: i32, // note(isak): bass device index on linux; -1 = default
-    linux_audio_buffer_ms: f32, // note(isak): bass device output buffer (linux); 1-50ms
+    linux_audio_buffer_ms: i32, // note(isak): bass device output buffer (linux); 1-50ms
     
     vsync_enabled: bool,
     fps_limiter: i32, // 0 = uncapped
@@ -90,7 +90,7 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
             if n, ok2 := strconv.parse_int(v); ok2 do result.audio_device = i32(n)
         }
         if v, ok := get(gen, "linux_audio_buffer_ms"); ok {
-            if f, ok2 := strconv.parse_f32(v); ok2 do result.linux_audio_buffer_ms = clamp(f, AUDIO_BUFFER_MS_MIN, AUDIO_BUFFER_MS_MAX)
+            if n, ok2 := strconv.parse_int(v); ok2 do result.linux_audio_buffer_ms = i32(clamp(n, AUDIO_BUFFER_MS_MIN, AUDIO_BUFFER_MS_MAX))
         }
         if v, ok := get(gen, "vsync_enabled"); ok {
             result.vsync_enabled = v == "true"

@@ -430,7 +430,7 @@ _beatmap_allocate_internals :: proc(beatmap: ^Beatmap, kept_music: Sound = nil) 
         ok: bool
         beatmap.music, ok = sound_stream_init(game.active_map.audio_filepath, prescan = true)
         if ok {
-            sound_play(&beatmap.music, start_paused = true, loop = true, category = .MUSIC)
+            sound_play(&beatmap.music, start_paused = true, category = .MUSIC)
         } else {
             log.error("tried to open map sound file, but failed:", game.active_map.audio_filepath)
         }

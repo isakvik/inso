@@ -785,10 +785,9 @@ imgui_update :: proc() {
             audio_set_category_volume(.HITSOUND, game.user_config.hitsound_volume)
         }
         when ODIN_OS == .Linux {
-            if imgui.SliderFloat("Output buffer (ms)", &game.user_config.linux_audio_buffer_ms, AUDIO_BUFFER_MS_MIN, AUDIO_BUFFER_MS_MAX) {
-                if !imgui.IsItemActive() {
-                    audio_reopen()
-                }
+            imgui.SliderInt("Output buffer (ms)", &game.user_config.linux_audio_buffer_ms, AUDIO_BUFFER_MS_MIN, AUDIO_BUFFER_MS_MAX)
+            if imgui.IsItemDeactivatedAfterEdit() {
+                audio_reopen()
             }
         }
     }
@@ -928,11 +927,12 @@ handle_debug_ui_events :: proc() {
         notify.show_all = !notify.show_all
     }
 
-    // note(isak): cursor visibility - show OS cursor when imgui wants the mouse
-    want_mouse := imgui.GetIO().WantCaptureMouse
-    if window.cursor_hidden && want_mouse {
-        window.cursor_hidden = !sdl.ShowCursor()
-    } else if !window.cursor_hidden && !want_mouse {
+    // note(isak): cursor visibility - always show the OS cursor in edit mode (the
+    // skin cursor draws over it in-game), hide it in every other mode
+    if app.ui_enabled {
+        _ = sdl.ShowCursor()
+        window.cursor_hidden = false
+    } else if !window.cursor_hidden {
         window.cursor_hidden = sdl.HideCursor()
     }
 }

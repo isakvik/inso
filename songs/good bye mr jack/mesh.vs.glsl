@@ -1,7 +1,6 @@
 #version 460
 #ifdef BINDLESS
 #extension GL_ARB_bindless_texture : require
-#extension GL_NV_gpu_shader5 : enable
 #endif
 
 // note: matches the tightly-packed Odin Mesh_Vertex (pos/norm/uv, 32 bytes). declaring vec3

@@ -22,11 +22,24 @@ gl_has_extension :: proc(name: cstring) -> bool {
     return false
 }
 
-gl_vendor_is_intel :: proc() -> bool {
-    vendor := gl.GetString(gl.VENDOR)
-    renderer := gl.GetString(gl.RENDERER)
-    return strings.contains(string(vendor), "Intel") ||
-           strings.contains(string(renderer), "Intel")
+// note(isak): mesa reports amd apu codenames as the renderer (e.g. "AMD RENOIR (radeonsi, ...)")
+MESA_APU_CODENAMES := []string{"RENOIR", "CEZANNE", "REMBRANDT", "PHOENIX", "RAPHAEL", "STRIX", "GRAVITON"}
+
+gl_gpu_is_intel :: proc() -> bool {
+    vendor := string(gl.GetString(gl.VENDOR))
+    renderer := string(gl.GetString(gl.RENDERER))
+    return strings.contains(vendor, "Intel") || strings.contains(renderer, "Intel")
+}
+
+gl_gpu_is_integrated :: proc() -> bool {
+    if gl_gpu_is_intel() do return true
+    renderer := string(gl.GetString(gl.RENDERER))
+    // note(isak): windows amd apus report exactly "AMD Radeon(TM) Graphics"; dgpus have model names
+    if strings.contains(renderer, "Radeon(TM) Graphics") do return true
+    for codename in MESA_APU_CODENAMES {
+        if strings.contains(renderer, codename) do return true
+    }
+    return false
 }
 
 //////////////////////////////////////////////////////

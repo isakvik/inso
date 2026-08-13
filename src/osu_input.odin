@@ -7,10 +7,6 @@ import sdl "vendor:sdl3"
 
 // note(isak): walks this frame's raw input events in arrival order and judges every controller
 // press at its own timestamp.
-//
-// raw keyboard reports autorepeat makes and INPUTSINK delivers input while unfocused, so
-// game.input.raw_held tracks physical state through everything while presses only fire on real
-// down-edges in a focused window
 process_hittesting_event_walk :: proc(visible_hobjs: []Hitobject, map_time_now: f64) {
     tsc_to_ms := 1000.0 / f64(input_tsc_frequency())
 
@@ -18,7 +14,10 @@ process_hittesting_event_walk :: proc(visible_hobjs: []Hitobject, map_time_now: 
     // the frame's cursor position like the fallback path does
     raw_cursor := is_raw_input_enabled() && !mouse.absolute_positioning
     cursor_screen := game.input.frame_start_mouse_screen
-
+    
+    // note(isak): raw keyboard reports autorepeat makes and INPUTSINK delivers input while unfocused,
+    // so game.input.raw_held tracks physical state through everything while presses only fire on real
+    // down-edges in a focused window
     held := &game.input.raw_held
 
     for &event in game.input.frame_events {

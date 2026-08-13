@@ -55,6 +55,10 @@ function crt_init()
     -- bloom strength (composite reads slot 0); starts off, on_update ramps it after ~31s
     Shader.set_param(0, 0)
 
+    -- blur texel size
+    Shader.set_param(13, 1/1280)
+    Shader.set_param(14, 1/720)
+
     -- CRT tunables, slots 4..12 (see crt_lottes.fs.glsl)
     Shader.set_param(4,  1.0)  -- MASK: 1 = aperture grille
     Shader.set_param(5,  0.5)  -- MASK_INTENSITY

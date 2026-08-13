@@ -424,6 +424,8 @@ shader_init :: proc(vs_path, fs_path: string, alloc: runtime.Allocator = context
         return {}, .PATH_ERROR
     }
 
+    log.infof("compiling shader: '{}' / '{}'", vs_path, fs_path)
+    
     // note(isak): try bindless compilation first. if the driver reports the extension but
     // can't actually compile shaders with sampler arrays in buffer blocks (intel), fall back
     // to the non-bindless path and disable bindless globally for all subsequent shaders
@@ -442,6 +444,7 @@ shader_init :: proc(vs_path, fs_path: string, alloc: runtime.Allocator = context
         }
 
         log.warnf("bindless shader compile failed for '{}' / '{}', falling back to non-bindless", vs_path, fs_path)
+        shader_log_error(temp_shader)
         sg.destroy_shader(temp_shader)
         window.bindless_supported = false
         tried_bindless_path = true
@@ -460,9 +463,22 @@ shader_init :: proc(vs_path, fs_path: string, alloc: runtime.Allocator = context
 
     // note(isak): if the bindless backup still fails, we're failing for an unexpected reason. restore state
     window.bindless_supported = tried_bindless_path
-    
+
+    shader_log_error(temp_shader)
     sg.destroy_shader(temp_shader)
     return {}, .COMPILE_ERROR
+}
+
+shader_log_error :: proc(shader: sg.Shader) {
+    info := sg.gl_query_shader_info(shader)
+    if info.prog == 0 do return
+
+    buf := make([]u8, 8192, context.temp_allocator)
+    len_written: i32
+    gl.GetProgramInfoLog(info.prog, i32(len(buf)), &len_written, raw_data(buf))
+    if len_written > 0 {
+        log.errorf("shader driver log: {}", string(buf[:len_written]))
+    }
 }
 
 _shader_setup_sampler_uniforms :: proc(shader: sg.Shader) {

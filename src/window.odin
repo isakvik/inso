@@ -35,6 +35,7 @@ window: struct {
 
     bindless_supported: bool,
     intel_gpu: bool,
+    integrated_gpu: bool,
     transparent: bool,
 
     handle: ^sdl.Window,
@@ -142,15 +143,19 @@ window_init :: proc(rect: Rect, mode: Window_Mode) {
 
     window.bindless_supported = gl_has_extension("GL_ARB_bindless_texture")
     log.infof("GL_ARB_bindless_texture: {}", window.bindless_supported ? "supported" : "not supported")
+    log.infof("graphics driver: {} ({}) / {}",
+        gl.GetString(gl.VENDOR), gl.GetString(gl.RENDERER), gl.GetString(gl.VERSION))
 
-    // note(isak): intel igpus don't support bindless handles in arrays and CRASH on shader compile. 
-    // they also diverge from nvidia on a few other points (see slider_render_path)
-    window.intel_gpu = gl_vendor_is_intel()
-    if window.intel_gpu {
-        log.infof("intel gpu detected ({} / {}), forcing no-bindless fallback",
-            gl.GetString(gl.VENDOR), gl.GetString(gl.RENDERER))
+    // note(isak): we've had igpus crash on shader compiles as well as hang at runtime because of shaders
+    // calling certain texture functions on bindless handles, so we blanket disable the bindless path
+    window.integrated_gpu = gl_gpu_is_integrated()
+    if window.integrated_gpu {
+        log.infof("integrated gpu detected, forcing no-bindless fallback")
         window.bindless_supported = false
     }
+
+    // note(isak): intel igpus break scissored glClear vs ClipControl(UPPER_LEFT), see slider_render_path()
+    window.intel_gpu = gl_gpu_is_intel()
 
     win_x, win_y: i32
     sdl.GetWindowPosition(window.handle, &win_x, &win_y)

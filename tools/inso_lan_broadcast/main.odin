@@ -1,4 +1,4 @@
-package inso_start
+package inso_lan_broadcast
 
 import "core:fmt"
 import "core:mem"

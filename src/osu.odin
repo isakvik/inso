@@ -498,10 +498,6 @@ osu_on_init :: proc() {
 
     if game.tournament_client {
         tournament_socket_init()
-        if game.user_config.osu_install_path != "" {
-            config_import_from_osu(game.user_config.osu_install_path)
-            config_apply()
-        }
     }
     
     beatmap_open(game.beatmap.map_reference)

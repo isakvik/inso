@@ -34,7 +34,7 @@ config_import_from_osu :: proc(osu_install_path: string) {
     }
     get_percent :: proc(pairs: map[string]string, key: string) -> (f32, bool) {
         if v, ok := get(pairs, key); ok {
-            if n, ok2 := strconv.parse_f32(v); ok2 do return n / 100.0, true
+            if n, ok2 := strconv.parse_f32(v); ok2 do return clamp(n / 100.0, 0, 1), true
         }
         return 0, false
     }
@@ -53,8 +53,8 @@ config_import_from_osu :: proc(osu_install_path: string) {
 
     if fullscreen, ok := get_bool(pairs, "Fullscreen"); ok {
         cfg.window_mode = .EXCLUSIVE_FULLSCREEN if fullscreen else .WINDOWED
-        if v, ok := get(pairs, "Width");  ok do if n, ok2 := strconv.parse_f32(v); ok2 do cfg.window_width = n
-        if v, ok := get(pairs, "Height"); ok do if n, ok2 := strconv.parse_f32(v); ok2 do cfg.window_height = n
+        if v, ok := get(pairs, "Width");  ok do if n, ok2 := strconv.parse_f32(v); ok2 do cfg.window_width  = clamp(n, 320, 7680)
+        if v, ok := get(pairs, "Height"); ok do if n, ok2 := strconv.parse_f32(v); ok2 do cfg.window_height = clamp(n, 240, 4320)
     }
 
     if v, ok := get(pairs, "Offset"); ok {
@@ -70,10 +70,10 @@ config_import_from_osu :: proc(osu_install_path: string) {
     }
     if v, ok := get_percent(pairs, "DimLevel"); ok do cfg.bg_dim = v
     if v, ok := get(pairs, "CursorSize"); ok {
-        if n, ok2 := strconv.parse_f32(v); ok2 do cfg.cursor_size_multiplier = n
+        if n, ok2 := strconv.parse_f32(v); ok2 do cfg.cursor_size_multiplier = clamp(n, 0.1, 2.0)
     }
     if v, ok := get(pairs, "MouseSpeed"); ok {
-        if n, ok2 := strconv.parse_f32(v); ok2 do cfg.cursor_sensitivity = n
+        if n, ok2 := strconv.parse_f32(v); ok2 do cfg.cursor_sensitivity = clamp(n, 0.1, 5.0)
         // note(isak): raw input is the only path that owns cursor position
         if cfg.cursor_sensitivity != 1.0 {
             cfg.raw_input_enabled = true
@@ -87,8 +87,16 @@ config_import_from_osu :: proc(osu_install_path: string) {
     if v, ok := get_bool(pairs, "MouseDisableButtons"); ok do cfg.mouse_keys_enabled = !v
 
     if v, ok := get(pairs, "Skin"); ok && v != "default" && v != "-1" {
-        // note(isak): remap to osu folder
-        cfg.skin_path = strings.concatenate({osu_install_path, "/Skins/", v, "/"})
+        install := osu_install_path
+        for len(install) > 0 && (install[len(install) - 1] == '/' || install[len(install) - 1] == '\\') {
+            install = install[:len(install) - 1]
+        }
+        skin_dir := strings.concatenate({install, "/Skins/", v, "/"})
+        if os.exists(skin_dir) && os.is_dir(skin_dir) {
+            cfg.skin_path = skin_dir
+        } else {
+            log.warnf("osu import: skin '%s' has no folder, keeping current skin", v)
+        }
     }
 
     if v, ok := get(pairs, "keyOsuLeft"); ok {

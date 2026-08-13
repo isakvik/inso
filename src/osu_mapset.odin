@@ -562,25 +562,25 @@ mapset_handle_file :: proc(mapset: ^Mapset, file: os.File_Info, rel_prefix := ""
             queue.push_back(&mapset.textures, tex)
         }
         case slice.contains(supported_audio_extensions, extension): {
-            path_cstr := strings.clone_to_cstring(file.name, context.allocator)
-            sample, ok := sample_load_file(path_cstr, alloc = context.allocator)
-            if ok {
-                sample_key := strings.clone(rel_name, memory.allocators[.MAPSET])
-                slot := u32(mapset.samples.len)
-                mapset.sample_slot_by_name[sample_key] = slot
-                sample.filepath = sample_key
-                queue.push_back(&mapset.samples, sample)
-
-                if key, is_hitsound := hitsound_key_from_filename(sample_key); is_hitsound {
+            if key, is_hitsound := hitsound_key_from_filename(rel_name); is_hitsound {
+                path_cstr := strings.clone_to_cstring(file.name, context.allocator)
+                sample, ok := sample_load_file(path_cstr, alloc = context.allocator)
+                if ok {
+                    sample_path := strings.clone(rel_name, memory.allocators[.MAPSET])
+                    slot := u32(mapset.samples.len)
+                    mapset.sample_slot_by_name[sample_path] = slot
+                    sample.filepath = sample_path
+                    queue.push_back(&mapset.samples, sample)
+    
                     existing_slot, taken := mapset.hitsound_slot_by_key[key]
-                    if !taken || audio_extension_rank(sample_key) <
+                    if !taken || audio_extension_rank(sample_path) <
                         audio_extension_rank(queue.get_ptr(&mapset.samples, existing_slot).filepath) {
                         mapset.hitsound_slot_by_key[key] = slot
                     }
+                } else {
+                    log.errorf("mapset: failed to load sample '{}'", file.name)
+                    notify_error("mapset: failed to load sample '%s'", file.name)
                 }
-            } else {
-                log.errorf("mapset: failed to load sample '{}'", file.name)
-                notify_error("mapset: failed to load sample '%s'", file.name)
             }
         }
     }

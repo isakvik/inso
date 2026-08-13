@@ -296,10 +296,12 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
                     rel_pos = hitobject_tail_pos(hobj) - hitobject_pos(hobj)
                 }
         }
-        
+
         // note(isak): size is stored in radius units (1 = 1 radius). render_drawable multiplies by 
         // hitobject_radius_osupx at draw time
         
+        is_final_phase := phase == .HIT || phase == .MISS
+
         for i in 0..<hobj.custom_element_nums[phase] {
             el_id := hobj.custom_elements[phase][i]
             el := q.get(&game.beatmap.elements, el_id)
@@ -307,8 +309,9 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
             drawable_color := hitobject_combo_color(hobj) if .USE_COMBO_COLOR in el.flags else color_white
             drawable_flags := Drawable_Flags{.ACTIVE}
             if in_visible_phase do drawable_flags |= {.FADE_IN, .HITOBJECT_DIM}
-            
-            hobj.gfx_handles[num_digits + i] = drawable_new(Drawable{
+            if is_final_phase do drawable_flags |= {.OWNER_DRAWN}
+
+            handle := drawable_new(Drawable{
                 flags         = drawable_flags,
                 element       = el_id,
                 layer         = layer_id(.HITOBJECTS),
@@ -320,6 +323,10 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
                 end_time_ms   = phase_end_time,
                 hobj_index    = hobj.index + 1,
             })
+            hobj.gfx_handles[num_digits + i] = handle
+            if is_final_phase {
+                sb.append(&game.beatmap.gameplay_expiring_gfx, handle)
+            }
         }
     } else {
         for el_type, i in base {
@@ -456,6 +463,7 @@ process_hitobject_phase_transitions :: proc() {
             if hobj.type == .SLIDER do slider_create_gfx(hobj)
 
         case .POSTEMPT:
+            hitobject_clear_drawables(hobj)
             hitobject_create_phase_drawables(hobj, .POSTEMPT, hobj.start_time_ms)
         
         case .HOLD:

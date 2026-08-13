@@ -253,7 +253,17 @@ handle_editor_input_events :: proc() {
         }
     }
     if key_is_pressed(.F5) && !key_is_down(.LCTRL) {
-        seek_time := 0 if key_is_down(.LSHIFT) else beatmap_music_time_ms(&game.beatmap)
+        seek_time: f64
+        if key_is_down(.LSHIFT) && len(game.beatmap.hitobjects) > 0 {
+            preempt_ms := game.beatmap.hitobjects[0].custom_preempt_ms
+            if preempt_ms == 0 {
+                preempt_ms = game.beatmap.preempt_ms
+            }
+            preempt_ms = clamp(preempt_ms, 600, 1800)
+            seek_time = game.beatmap.hitobjects[0].start_time_ms - preempt_ms
+        } else {
+            seek_time = beatmap_music_time_ms(&game.beatmap)
+        }
         game_switch_mode(.PLAY, seek_time)
     }
     if key_is_pressed(.R) {

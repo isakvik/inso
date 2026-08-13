@@ -3,7 +3,7 @@ package inso
 import "core:log"
 import "core:net"
 
-// note(isak): receive side only, send side lies in tools/inso_start
+// note(isak): receive side only, send side lies in tools/inso_lan_broadcast
 
 TOURNAMENT_SYNC_VERSION :: u16(2) // increment this when changing packet format
 

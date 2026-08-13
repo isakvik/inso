@@ -153,10 +153,6 @@ main :: proc() {
     game.user_config = config_load("user.ini")
     defer config_save("user.ini")
 
-    window_init({w = game.user_config.window_width, h = game.user_config.window_height}, mode = game.user_config.window_mode)
-    app.ui_enabled = true
-    defer window_cleanup()
-    
     audio_init()
     if !audio.ready {
         log.error("BASS audio engine init error:", bass.ErrorGetCode())
@@ -165,6 +161,16 @@ main :: proc() {
     audio_device_dropdown_rebuild()
     defer audio_cleanup()
 
+    // note(isak): import after audio_init so the device buffer feeds the offset conversion,
+    // and before window_init so the imported resolution/fullscreen mode applies this session
+    if game.tournament_client && game.user_config.osu_install_path != "" {
+        config_import_from_osu(game.user_config.osu_install_path)
+    }
+
+    window_init({w = game.user_config.window_width, h = game.user_config.window_height}, mode = game.user_config.window_mode)
+    app.ui_enabled = true
+    defer window_cleanup()
+    
     renderer_init()
     renderer := &window.renderer
     defer renderer_cleanup()

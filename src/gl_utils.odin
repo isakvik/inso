@@ -1,12 +1,19 @@
 package inso
 
 import "core:slice"
+import "core:strconv"
 import "core:strings"
-import "core:fmt"
 import "core:time"
 
 import gl "vendor:OpenGL"
 
+
+Graphics_Vendor :: enum {
+    UNKNOWN,
+    DEDICATED_GPU,
+    INTEL_INTEGRATED,
+    AMD_INTEGRATED,
+}
 
 //////////////////////////////////////////////////////
 // note(isak): gl capability queries
@@ -22,24 +29,38 @@ gl_has_extension :: proc(name: cstring) -> bool {
     return false
 }
 
-// note(isak): mesa reports amd apu codenames as the renderer (e.g. "AMD RENOIR (radeonsi, ...)")
-MESA_APU_CODENAMES := []string{"RENOIR", "CEZANNE", "REMBRANDT", "PHOENIX", "RAPHAEL", "STRIX", "GRAVITON"}
-
-gl_gpu_is_intel :: proc() -> bool {
+gl_gpu_detect_vendor :: proc() -> Graphics_Vendor {
     vendor := string(gl.GetString(gl.VENDOR))
     renderer := string(gl.GetString(gl.RENDERER))
-    return strings.contains(vendor, "Intel") || strings.contains(renderer, "Intel")
-}
-
-gl_gpu_is_integrated :: proc() -> bool {
-    if gl_gpu_is_intel() do return true
-    renderer := string(gl.GetString(gl.RENDERER))
-    // note(isak): windows amd apus report exactly "AMD Radeon(TM) Graphics"; dgpus have model names
-    if strings.contains(renderer, "Radeon(TM) Graphics") do return true
-    for codename in MESA_APU_CODENAMES {
-        if strings.contains(renderer, codename) do return true
-    }
-    return false
+    
+	if vendor == {} || renderer == {} {
+		return .UNKNOWN
+	}
+    
+	is_intel := strings.contains(vendor, "Intel")
+	is_amd   := strings.contains(vendor, "AMD") || strings.contains(vendor, "ATI")
+    
+	if is_intel {
+		if !strings.contains(renderer, "Arc") {
+			return .INTEL_INTEGRATED
+		}
+	}
+    
+	// AMD iGPUs: "Radeon Graphics" (bare), "Radeon Vega", "Radeon(TM) R"
+	if is_amd {
+		contains_vega     := strings.contains(renderer, "Vega")
+		contains_bare     := strings.contains(renderer, "Radeon Graphics")
+		contains_r_series := strings.contains(renderer, "R5") || strings.contains(renderer, "R7")
+		
+		// RX series (e.g., RX 6700XT, RX 7900) are dGPUs
+		is_discrete_rx    := strings.contains(renderer, "RX ") || strings.contains(renderer, "Radeon HD")
+    
+		if (contains_vega || contains_bare || contains_r_series) && !is_discrete_rx {
+			return .AMD_INTEGRATED
+		}
+	}
+    
+	return .DEDICATED_GPU
 }
 
 //////////////////////////////////////////////////////

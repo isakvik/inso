@@ -686,9 +686,9 @@ slider_render_path :: proc(renderer: ^Renderer, hobj: ^Hitobject, slider: ^Slide
         r_bind_framebuffer({ write = builtin_framebuffer(.SLIDERS) })
         r_bind_ssbo(&window.circle_geo_buffer, .VERTEX_BUFFER)
 
-        if window.intel_gpu {
-            // note(isak): on intel opengl drivers, a scissored glClear ignores ClipControl(UPPER_LEFT).
-            // pre-flip against the atlas height so the command's own y-flip cancels back to top-left
+        if window.graphics_vendor == .INTEL_INTEGRATED {
+            // note(isak): on intel opengl drivers, a scissored glClear ignores ClipControl(UPPER_LEFT),
+            // so we flip the y coordinate basis to upper left ourselves
             r_set_scissor_mode(
                 i32(slot_rect.x),
                 atlas.h - i32(slot_rect.y) - i32(slot_rect.h),

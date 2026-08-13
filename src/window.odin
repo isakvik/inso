@@ -33,9 +33,8 @@ window: struct {
     resized: bool,
     mouse_needs_restore: bool,
 
+    graphics_vendor: Graphics_Vendor,
     bindless_supported: bool,
-    intel_gpu: bool,
-    integrated_gpu: bool,
     transparent: bool,
 
     handle: ^sdl.Window,
@@ -146,16 +145,15 @@ window_init :: proc(rect: Rect, mode: Window_Mode) {
     log.infof("graphics driver: {} ({}) / {}",
         gl.GetString(gl.VENDOR), gl.GetString(gl.RENDERER), gl.GetString(gl.VERSION))
 
+    window.graphics_vendor = gl_gpu_detect_vendor()
+    
     // note(isak): we've had igpus crash on shader compiles as well as hang at runtime because of shaders
     // calling certain texture functions on bindless handles, so we blanket disable the bindless path
-    window.integrated_gpu = gl_gpu_is_integrated()
-    if window.integrated_gpu {
+    // note(isak): intel igpus break scissored glClear vs ClipControl(UPPER_LEFT), see slider_render_path()
+    if window.graphics_vendor == .INTEL_INTEGRATED || window.graphics_vendor == .AMD_INTEGRATED {
         log.infof("integrated gpu detected, forcing no-bindless fallback")
         window.bindless_supported = false
     }
-
-    // note(isak): intel igpus break scissored glClear vs ClipControl(UPPER_LEFT), see slider_render_path()
-    window.intel_gpu = gl_gpu_is_intel()
 
     win_x, win_y: i32
     sdl.GetWindowPosition(window.handle, &win_x, &win_y)

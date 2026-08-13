@@ -87,9 +87,18 @@ flatten_segment_into :: proc(out: ^[dynamic]vec2, seg: []vec2, type: Slider_Path
         return
     }
     #partial switch type {
-    case .ARC:             flatten_arc_into(out, seg)
-    case .LINEAR, .BEZIER: flatten_bezier_into(out, seg)
+    case .ARC:    flatten_arc_into(out, seg)
+    case .LINEAR: flatten_linear_into(out, seg)
+    case .BEZIER: flatten_bezier_into(out, seg)
     // CATMULL / NONE: unsupported, emit nothing
+    }
+}
+
+// multi-point linear sliders are polylines: straight segments between consecutive control points.
+// (matches osu!framework's PathApproximator.ApproximateLinear)
+flatten_linear_into :: proc(out: ^[dynamic]vec2, control: []vec2) {
+    for point in control {
+        append(out, point)
     }
 }
 
@@ -328,13 +337,9 @@ path_calculate_position_at :: proc(hobj: ^Hitobject, time_at: f64, path: ^Slider
         return hobj.pos
     }
 
-    if path.type == .BEZIER {
-        pos_at = curve_calculate_position_at(hobj, time_at, path)
-    } else if path.type == .ARC {
-        pos_at = curve_calculate_position_at(hobj, time_at, path)
-    } else if path.type == .LINEAR {
-        pos_at = straight_calculate_position_at(hobj, time_at, path)
-    }
+    // note(isak): the baked instances are equidistant, so this lookup gives the ball constant
+    // velocity on every path type, including multi-point linear polylines
+    pos_at = curve_calculate_position_at(hobj, time_at, path)
     return pos_at
 }
 
@@ -373,19 +378,4 @@ curve_calculate_position_at :: proc(hobj: ^Hitobject, time_at: f64, path: ^Slide
         return vec2({linalg.lerp(pos_i.x, pos_i2.x, f32(t2)), linalg.lerp(pos_i.y, pos_i2.y, f32(t2))})
     }
     return vec2({0, 0})
-}
-
-straight_calculate_position_at :: proc(hobj: ^Hitobject, time_at: f64, path: ^Slider_Path) -> (point: vec2) {
-    duration := hobj.end_time_ms - hobj.start_time_ms
-    elapsed  := clamp(time_at - hobj.start_time_ms, 0, duration)
-
-    repeat_count := hobj.slider_state.path_travel_count
-    t_passes  := (elapsed / duration) * f64(repeat_count)
-    pass_idx  := min(int(t_passes), repeat_count - 1)
-    pass_frac := t_passes - f64(pass_idx)
-
-    // even passes go forward (0->1), odd passes go backward (1->0)
-    t_on_path := pass_frac if pass_idx % 2 == 0 else 1.0 - pass_frac
-
-    return linalg.lerp(path.pos, path.end_pos, vec2{f32(t_on_path), f32(t_on_path)})
 }

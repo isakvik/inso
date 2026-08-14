@@ -13,8 +13,6 @@ Get the latest release [here](https://github.com/isakvik/inso/releases/latest). 
 
 Unzip, add songs to your inso folder's songs/ and run inso.exe.
 
-PS: AMD laptops using integrated graphics might have issues in the latest build. Use a dedicated GPU if available.
-
 ### Linux
 
 BASS has a dependency on `libasound2`.

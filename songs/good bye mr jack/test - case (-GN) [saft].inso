@@ -8,11 +8,6 @@ Backbuffer: 1
 [ForceSettings]
 
 [Shaders]
-[[wave]]
-VertexShader: builtin.quad
-FragmentShader: quad_wave.fs.glsl
-BlendMode: Alpha
-
 [[blur_h]]
 VertexShader: builtin.quad
 FragmentShader: blur_h.fs.glsl
@@ -42,9 +37,6 @@ DepthWrite: 1
 [Buffers]
 [[my_model]]
 Source: Crate1.gltf
-
-[[wave_data]]
-Size: 4096
 
 [RenderTargets]
 [[scene]]

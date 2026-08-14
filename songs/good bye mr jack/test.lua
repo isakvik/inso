@@ -22,7 +22,7 @@ function on_init()
     crt_init()
 
     schedule_at(5000, function() 
-        Beatmap.set_skin_override("osu! default")
+        Beatmap.set_skin_override("gn")
     end)
     schedule_at(8000, function() 
         Beatmap.clear_skin_override()

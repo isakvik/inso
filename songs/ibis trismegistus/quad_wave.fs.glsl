@@ -40,7 +40,7 @@ vec2 rotateZAxis(vec2 uv, float th) {
 }
 
 void main() {
-    float s = time * 0.001;
+    float s = time * 0.0001;
     vec2 delta = (gl_FragCoord.xy - vec2(1280, 720) * 0.5) / 720;
     float c = length(delta);
 

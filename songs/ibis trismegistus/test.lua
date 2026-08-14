@@ -106,19 +106,17 @@ function on_init()
         --hobj:hide()
         t = hobj:get_start_time()
     
-        hobj:set_ar(9-i/2)
+        hobj:set_ar(9-i*0.01)
 
         hobj:set_slider_element(SliderPart.BALL, ball)
-
-        hobj:set_slider_follow_circle_radius(2.4)
         --hobj:set_slider_element(SliderPart.FOLLOW_CIRCLE, blank)
     end
     
-    register_global_event("hehe", function()
-        -- note that this drifts over time, it's not a clean repeat every 250ms
-        schedule_event("hehe", 250)
-        print("hehe loop " .. Beatmap.get_music_time_ms())
-    end)
+    --register_global_event("hehe", function()
+    --    -- note that this drifts over time, it's not a clean repeat every 250ms
+    --    schedule_event("hehe", 250)
+    --    print("hehe loop " .. Beatmap.get_music_time_ms())
+    --end)
 
     -- render target bloom demo:
     -- capture the hitobjects into "scene", prefilter+blur it through two half-res targets,

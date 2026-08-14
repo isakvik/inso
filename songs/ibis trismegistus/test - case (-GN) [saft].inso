@@ -3,6 +3,7 @@ inso file format v1
 [General]
 LuaEntryPoint: test.lua
 DoubleMouse: 0
+BackgroundPipeline: wave
 
 [ForceSettings]
 bg_dim: 0.8
@@ -13,46 +14,8 @@ VertexShader: builtin.quad
 FragmentShader: quad_wave.fs.glsl
 BlendMode: Alpha
 
-[[blur_h]]
-VertexShader: builtin.quad
-FragmentShader: blur_h.fs.glsl
-BlendMode: None
-
-[[blur_v]]
-VertexShader: builtin.quad
-FragmentShader: blur_v.fs.glsl
-BlendMode: None
-
-[[composite]]
-VertexShader: builtin.quad
-FragmentShader: composite.fs.glsl
-BlendMode: Additive
-
-[[mesh]]
-VertexShader: mesh.vs.glsl
-FragmentShader: mesh.fs.glsl
-BlendMode: Alpha
-DepthWrite: 1
-
 [Buffers]
-[[my_model]]
-Source: Crate1.gltf
-
-[[wave_data]]
-Size: 4096
 
 [RenderTargets]
-[[scene]]
-Format: rgba16f
-Depth: 1
-
-[[mesh_scene]]
-Depth: 1
-
-[[bloom_a]]
-Size: 50%
-
-[[bloom_b]]
-Size: 50%
 
 [HitObjectExtraBits]

@@ -71,6 +71,10 @@ Scheduled_Event :: struct {
 
 LUA_WATCHDOG_INSTRUCTION_COUNT :: 1_000_000
 
+// note(isak): luajit's dofile/load accept precompiled bytecode (leading signature byte). we error on these
+// so mappers can't hide code
+LUA_BYTECODE_SIGNATURE :: '\x1b'
+
 lua_create_beatmap_script_context :: proc(script_path: string) {
     script_file_len, err := file_size(script_path)
     if err != os.General_Error.None {
@@ -81,6 +85,11 @@ lua_create_beatmap_script_context :: proc(script_path: string) {
     if script_file_len == 0 {
         log.errorf("loading lua script '{}' failed, empty file", script_path)
         notify_error("loading lua script '%s' failed, empty file", script_path)
+        return
+    }
+    if lua_script_is_bytecode(script_path) {
+        log.errorf("loading lua script '{}' failed, precompiled bytecode scripts are not allowed", script_path)
+        notify_error("loading lua script '%s' failed, precompiled bytecode scripts are not allowed", script_path)
         return
     }
     
@@ -128,6 +137,16 @@ lua_cleanup :: proc() {
 lua_reload :: proc(script_path: string) {
     lua_cleanup()
     lua_create_beatmap_script_context(script_path)
+}
+
+lua_script_is_bytecode :: proc(script_path: string) -> bool {
+    f, open_err := os.open(script_path)
+    if open_err != nil do return false
+    defer os.close(f)
+
+    header: [1]u8
+    n, read_err := os.read(f, header[:])
+    return read_err == nil && n == 1 && header[0] == LUA_BYTECODE_SIGNATURE
 }
 
 

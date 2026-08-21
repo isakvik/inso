@@ -245,6 +245,18 @@ rect_intersect :: proc "contextless" (a, b: Rect) -> (Rect, bool) {
 }
 
 //////////////////////////////////////////////////////
+// note(isak): path utils
+
+filename_is_path :: proc(name: string) -> bool {
+    if len(name) == 0 do return false
+
+    for c in name {
+        if c == '/' || c == '\\' || c == ':' do return false
+    }
+    return true
+}
+
+//////////////////////////////////////////////////////
 // note(isak): math utils
 
 vec2 :: linalg.Vector2f32

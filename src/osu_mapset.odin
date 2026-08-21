@@ -632,7 +632,11 @@ mapset_parse_inso :: proc(mapset: ^Mapset, inso_file: string) -> Inso_Map {
                 key, value := get_key_value(lines[i])
                 switch key {
                     case "LuaEntryPoint":
-                        result.lua_entry_point = strings.concatenate({mapset.folder_path, value}, context.allocator)
+                        if filename_is_path(value) {
+                            result.lua_entry_point = strings.concatenate({mapset.folder_path, value}, context.allocator)
+                        } else {
+                            notify_warn("inso [General]: invalid LuaEntryPoint '%s' (relative paths are not supported)", value)
+                        }
                     case "BackgroundPipeline":
                         result.bg_pipeline_name = strings.clone(value, context.allocator)
                     case "DoubleMouse":

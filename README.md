@@ -34,10 +34,6 @@ inso command line flags:
 | `--gen-lua-docs` | regenerates the lua docs and exits |
 | `--disable-raw-input` | disables raw input (NVIDIA Nsight may crash with it enabled) |
 
-inso_lan_broadcast sends a number of packets to an IP, meant for broadcasting start packets to clients waiting in tournament mode. 
-
-Usage: `inso_lan_broadcast [start|abort] [broadcast ip] [wait ms]`
-
 Edit mode keybinds:
 
 | key | action |
@@ -57,3 +53,11 @@ Edit mode keybinds:
 | `home` | reset playback rate to 1x |
 | `pageup` / `pagedown` | speed up / slow down playback (x1.5 steps) |
 | mouse scroll | scrub along the beat grid (up = backward) |
+
+## inso LAN tournament mode
+
+inso has a tournament mode where the client will load up a map and wait. It opens a listener on port 8727, waiting for a start packet to arrive (or ctrl+enter to be pressed).
+
+The bundled executable inso_lan_broadcast sends a number of inso command packets to an IP, meant for broadcasting start packets to waiting clients. The clients will handle real time synchronization based on the arriving packet payload, and should all start playing at the same time, so you can simply display capture each setup and run a synchronized stream that way. This is how YEAST3 was streamed.
+
+Usage: `inso_lan_broadcast [start|abort] [broadcast ip] [wait ms]`

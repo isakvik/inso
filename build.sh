@@ -20,3 +20,5 @@ odin build src \
     -define:VERSION=${VERSION} \
     -o:minimal \
     -extra-linker-flags:"-Llib/linux/ -Wl,-rpath,\$ORIGIN -ldl -lm"
+
+odin build tools/validate_shaders -out:build/validate_shaders

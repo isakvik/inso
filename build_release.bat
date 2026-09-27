@@ -6,12 +6,15 @@ if not exist "build\Roboto-Regular.ttf" copy ".\data\Roboto-Regular.ttf" ".\buil
 
 set exec_name=inso.exe
 
+call icons\compile_icon.bat
+if errorlevel 1 goto stop
+
 tasklist /FI "IMAGENAME eq %exec_name%" | find /I "%exec_name%" >nul
 if %ERRORLEVEL% equ 0 (
     taskkill /IM %exec_name% /F /T > nul
 )
 
-odin build ./src -collection:dep=vendor -linker:radlink -out:build/%exec_name% -define:SOKOL_USE_GL=true -no-bounds-check -o:speed
+odin build ./src -collection:dep=vendor -linker:radlink -out:build/%exec_name% -define:SOKOL_USE_GL=true -no-bounds-check -o:speed -extra-linker-flags:"icons\inso.res"
 if %ERRORLEVEL% equ 1 goto stop 
 python debug.py
 echo [build] build OK

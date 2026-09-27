@@ -1,5 +1,12 @@
 priority list for beta
 
+extra features
+    shader validation
+    shader compiling sandboxing
+
+    lua: on_timing_point(time_ms, red/green) since we don't handle greenlines any way now
+    custom mods (load inso/lua into any map)
+
 known discrepancies
     slider mechanics leniency from lazer
     no hidden sliderticks

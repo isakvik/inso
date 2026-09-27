@@ -406,8 +406,8 @@ main :: proc() {
             
             handle_debug_ui_events()
             file_dialog_poll()
-            if audio_handle_device_change() {
-                // note(isak): session volume is remembered per-device by windows, so re-apply ours
+            if game.user_config.audio_device == -1 && audio_handle_device_change() {
+                // note(isak): session volume may reset; 
                 audio_set_volume(game.user_config.master_volume)
             }
             if key_is_down(.LCTRL) && key_is_pressed(.F5) {
@@ -431,10 +431,8 @@ main :: proc() {
 
             end_frame(renderer)
 
-            if app.ui_enabled {
-                imgui.Render()
-                imgui_gl3.RenderDrawData(imgui.GetDrawData())
-            }
+            imgui.Render()
+            imgui_gl3.RenderDrawData(imgui.GetDrawData())
         }
 
         {
@@ -527,9 +525,9 @@ begin_frame :: proc(renderer: ^Renderer) {
         layer_state.scissor = Command_Scissor_Mode{0, 0, i32(window.rect.w), i32(window.rect.h)}
     }
 
+    imgui_gl3.NewFrame()
+    imgui.NewFrame()
     if app.ui_enabled {
-        imgui_gl3.NewFrame()
-        imgui.NewFrame()
         imgui_update()
     }
 }
@@ -784,8 +782,8 @@ imgui_update :: proc() {
     }
     if imgui.CollapsingHeader("Audio") {
         if len(audio.devices) > 0 {
-            // note(isak): only follow the live device while audio is actually up; on a failed
-            // switch the dropdown stays on the device the user picked so they can switch back
+            // note(isak): only follow the used device while audio is actually up; on a failed
+            // switch the dropdown stays on the device the user picked for better UX
             if audio.ready {
                 app.audio_device_dropdown.selected = app.audio_device_row[audio.device_index]
             }
@@ -793,7 +791,31 @@ imgui_update :: proc() {
             audio_device_dropdown_apply()
         }
         if !audio.ready {
-            imgui.TextColored({1.0, 0.35, 0.35, 1.0}, "audio initialization error")
+            imgui.TextColored({1.0, 0.35, 0.35, 1.0}, "could not initialize audio device!")
+        }
+        when ODIN_OS == .Windows {
+            backend := &game.user_config.audio_backend
+            if imgui.BeginCombo("Output mode", audio_backend_display_names[backend^]) {
+                for mode in Audio_Backend {
+                    is_selected := mode == backend^
+                    if imgui.Selectable(audio_backend_display_names[mode], is_selected) && !is_selected {
+                        backend^ = mode
+                        audio_reopen()
+                    }
+                    if is_selected do imgui.SetItemDefaultFocus()
+                }
+                imgui.EndCombo()
+            }
+
+            if audio.ready && backend^ != audio.wasapi_status.backend {
+                if audio.exclusive_retry_next_s != 0 {
+                    imgui.TextDisabled("(waiting for the exclusive device...)")
+                } else {
+                    imgui.TextColored({1.0, 0.75, 0.35, 1.0}, "exclusive unavailable right now, running shared")
+                }
+            } else if backend^ == .EXCLUSIVE_MODE {
+                imgui.TextDisabled("(bypasses the windows mixer; blocks other apps' audio)")
+            }
         }
         imgui.Separator()
         if imgui.SliderFloat("Master##vol", &game.user_config.master_volume, 0, 1) {
@@ -814,6 +836,19 @@ imgui_update :: proc() {
             imgui.SliderInt("Output buffer (ms)", &game.user_config.linux_audio_buffer_ms, AUDIO_BUFFER_MS_MIN, AUDIO_BUFFER_MS_MAX)
             if imgui.IsItemDeactivatedAfterEdit() {
                 audio_reopen()
+            }
+        }
+        when ODIN_OS == .Windows {
+            audio_service_exclusive_retry(game.frame_clock_s)
+            
+            if audio.ready {
+                d := &audio.wasapi_status
+                imgui.TextDisabled(fmt.ctprintf("%s: %vhz %vch %s",
+                    audio_backend_keys[audio.wasapi_status.backend], d.freq, d.chans,
+                    _wasapi_format_name(d.wire_format)))
+                imgui.TextDisabled(fmt.ctprintf("buffer %v samples (%.2fms)", d.buffer_samples, audio.output_latency_ms))
+                imgui.TextDisabled(fmt.ctprintf("device period min %.2fms / default %.2fms",
+                    d.device_minperiod_ms, d.device_defperiod_ms))
             }
         }
     }
@@ -967,6 +1002,9 @@ debug_visuals_draw :: proc(renderer: ^Renderer, frame_count: u64) {
         profiler_push_gpu_blocks_as_text(renderer)
     }
     if app.debug_display_frame_graph || app.debug_display_frame_profiler {
+        if game.mode == .PLAY {
+            push_text(renderer, fmt.tprintf("%.2f", profiler_get_fps()), {window.rect.w-110, window.rect.h-210}, 20)
+        }
         profiler_push_quad(&renderer.quad_geometry, frame_count)
     }
     if app.debug_display_memory_profiler {

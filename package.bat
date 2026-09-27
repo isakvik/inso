@@ -10,10 +10,13 @@ mkdir %release_dir%
 
 echo [package] building %VERSION%...
 
-odin build ./src -collection:dep=vendor -out:%release_dir%\%exec_name% -define:SOKOL_USE_GL=true -define:VERSION=%VERSION% -define:WITH_CRASH_HANDLER=true -subsystem:windows -o:speed
+call icons\compile_icon.bat
+if errorlevel 1 goto stop
+
+odin build ./src -collection:dep=vendor -out:%release_dir%\%exec_name% -define:SOKOL_USE_GL=true -define:VERSION=%VERSION% -define:WITH_CRASH_HANDLER=true -subsystem:windows -o:speed -extra-linker-flags:"icons\inso.res"
 if %ERRORLEVEL% neq 0 goto stop
 
-odin build ./tools/inso_start -out:%release_dir%\inso_start.exe -o:speed
+odin build ./tools/inso_lan_broadcast -out:%release_dir%\inso_lan_broadcast.exe -o:speed :: -extra-linker-flags:"icons\inso.res"
 if %ERRORLEVEL% neq 0 goto stop
 
 echo [package] copying runtime files...
@@ -24,8 +27,6 @@ for %%d in (data shaders skins songs) do (
 )
 
 echo [package] generating lua docs...
-rem regenerate from the freshly built binary (needs its DLLs, hence after the copy above). it's a
-rem -subsystem:windows app so it detaches from the console - start /wait blocks until docs are written
 start /wait "" ".\%release_dir%\%exec_name%" --gen-lua-docs
 if exist ".\docs\lua_api.html" xcopy /E /I /Y /Q ".\docs" ".\%release_dir%\docs"
 

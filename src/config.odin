@@ -22,6 +22,7 @@ User_Configuration :: struct {
     hitsound_volume_follows_music: bool,
     audio_device: i32, // note(isak): bass device index on linux; -1 = default
     linux_audio_buffer_ms: i32, // note(isak): bass device output buffer (linux); 1-50ms
+    audio_backend: Audio_Backend,
     
     vsync_enabled: bool,
     fps_limiter: i32, // 0 = uncapped
@@ -91,6 +92,9 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         }
         if v, ok := get(gen, "linux_audio_buffer_ms"); ok {
             if n, ok2 := strconv.parse_int(v); ok2 do result.linux_audio_buffer_ms = i32(clamp(n, AUDIO_BUFFER_MS_MIN, AUDIO_BUFFER_MS_MAX))
+        }
+        if v, ok := get(gen, "audio_backend"); ok {
+            result.audio_backend = audio_backend_from_string(v)
         }
         if v, ok := get(gen, "vsync_enabled"); ok {
             result.vsync_enabled = v == "true"
@@ -196,6 +200,7 @@ config_save :: proc(path: string) {
     ini.write_pair(w, "hitsound_volume_follows_music", cfg.hitsound_volume_follows_music)
     ini.write_pair(w, "audio_device",                  cfg.audio_device)
     ini.write_pair(w, "linux_audio_buffer_ms",         cfg.linux_audio_buffer_ms)
+    ini.write_pair(w, "audio_backend",                 cfg.audio_backend)
     ini.write_pair(w, "osu_install_path",              cfg.osu_install_path)
     ini.write_pair(w, "skin_path",                     cfg.skin_path)
     ini.write_pair(w, "use_beatmap_skin",              cfg.use_beatmap_skin)
@@ -242,6 +247,7 @@ config_supply_default :: proc() -> (result: User_Configuration) {
         hitsound_volume          = 0.8,
         audio_device             = -1,
         linux_audio_buffer_ms    = 20,
+        audio_backend            = .SHARED_MODE,
         skin_path                = DEFAULT_SKIN_PATH,
         use_beatmap_skin         = true,
         use_beatmap_hitsounds    = true,

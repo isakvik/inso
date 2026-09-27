@@ -18,6 +18,37 @@ Audio_Device_Info :: struct {
     flags:  bass.DWORD,
 }
 
+Audio_Backend :: enum { 
+    SHARED_MODE, 
+    EXCLUSIVE_MODE,
+}
+audio_backend_keys := [Audio_Backend]string {
+    .SHARED_MODE = "shared",
+    .EXCLUSIVE_MODE = "exclusive",
+}
+audio_backend_display_names := [Audio_Backend]cstring {
+    .SHARED_MODE = "Default (shared)",
+    .EXCLUSIVE_MODE = "WASAPI exclusive",
+}
+
+audio_backend_from_string :: proc(value: string) -> Audio_Backend {
+    for key, i in audio_backend_keys {
+        if key == value do return Audio_Backend(i)
+    }
+    return .SHARED_MODE
+}
+
+// note(isak): filled by the windows backend on every init for the settings ui
+Wasapi_Output_Status :: struct {
+    backend: Audio_Backend,
+    freq:           i32,
+    chans:          i32,
+    wire_format:    i32, // note(isak): bass.WASAPI_FORMAT_*
+    buffer_samples: i32,
+    device_minperiod_ms: f64,
+    device_defperiod_ms: f64,
+}
+
 audio: struct {
     ready: bool,
     device_reinit_requested: bool,
@@ -27,8 +58,11 @@ audio: struct {
     default_device_name: string,
     output_mixer: bass.HSTREAM,
     group_mixers: [Sound_Group]bass.HSTREAM,
-    // note(isak): wasapi device buffer in ms; decode positions lead the speakers by this much
     output_latency_ms: f64,
+    wasapi_status: Wasapi_Output_Status,
+    
+    exclusive_retry_next_s: f64,
+    exclusive_retry_give_up_s: f64,
 }
 
 Audio_Device :: i32
@@ -174,7 +208,7 @@ _audio_init_mixers :: proc(freq: bass.DWORD, chans: bass.DWORD) -> bool {
     when ODIN_OS == .Linux {
         bass.ChannelPlay(audio.output_mixer, false)
     }
-    bass.ChannelSetAttribute(audio.output_mixer, bass.ATTRIB_VOL, game.user_config.master_volume)
+    bass.ChannelSetAttribute(audio.output_mixer, bass.ATTRIB_VOLDSP, game.user_config.master_volume)
     _audio_chain_reintegrate_handles()
     return true
 }
@@ -236,6 +270,43 @@ audio_handle_device_change :: proc() -> (reinitialized: bool) {
     }
 }
 
+EXCLUSIVE_RETRY_INTERVAL_S :: 1.0
+EXCLUSIVE_RETRY_WINDOW_S   :: 3.0
+
+// note(isak): when exclusive is wanted but the endpoint is still held elsewhere (previous app,
+// browser tab), poll for release once a second for a short window before settling into shared.
+// runs on the main loop like audio_handle_device_change; reinits must never overlap
+audio_service_exclusive_retry :: proc(frame_clock_s: f64) {
+    when ODIN_OS == .Windows {
+        if game.user_config.audio_backend != .EXCLUSIVE_MODE ||
+                audio.wasapi_status.backend == .EXCLUSIVE_MODE {
+            audio.exclusive_retry_next_s = 0
+            return
+        }
+
+        // note(isak): first observation of the mismatch arms the polling window
+        if audio.exclusive_retry_next_s == 0 {
+            log.info("audio: exclusive endpoint busy; polling for release")
+            audio.exclusive_retry_next_s = frame_clock_s + EXCLUSIVE_RETRY_INTERVAL_S
+            audio.exclusive_retry_give_up_s = frame_clock_s + EXCLUSIVE_RETRY_WINDOW_S
+            return
+        }
+
+        if frame_clock_s >= audio.exclusive_retry_next_s {
+            audio.exclusive_retry_next_s = frame_clock_s + EXCLUSIVE_RETRY_INTERVAL_S
+            _ = audio_reopen()
+        }
+
+        // note(isak): window elapsed without grabbing the endpoint; settle into shared
+        if frame_clock_s >= audio.exclusive_retry_give_up_s {
+            audio.exclusive_retry_next_s = 0
+            if audio.wasapi_status.backend != .EXCLUSIVE_MODE {
+                log.info("audio: exclusive retry window elapsed; staying shared")
+            }
+        }
+    }
+}
+
 // note(isak): reinits audio and mixer chain on the new device
 audio_set_device :: proc(device: Audio_Device) -> bool {
     if _platform_audio_init(device) {
@@ -270,15 +341,10 @@ audio_reopen :: proc() -> bool {
 
 // note(isak): volume is a 0.0 - 1.0 range
 audio_set_volume :: proc(volume: f32) {
-    when ODIN_OS == .Windows {
-        // note(isak): session volume is the program entry in the windows volume mixer
-        bass.WASAPI_SetVolume(bass.WASAPI_CURVE_WINDOWS | bass.WASAPI_VOL_SESSION, volume)
-    } else {
-        // note(isak): BASS_SetVolume moves the system mixer's PCM control on linux, which is
-        // visible to other apps; apply master volume inside our own chain instead
-        if audio.output_mixer != 0 {
-            bass.ChannelSetAttribute(audio.output_mixer, bass.ATTRIB_VOL, volume)
-        }
+    // note(isak): bass.ATTRIB_VOLDSP applies its volume to the data so that volume takes effect on
+    // both standard and decode-only (WASAPI) mixers
+    if audio.output_mixer != 0 {
+        bass.ChannelSetAttribute(audio.output_mixer, bass.ATTRIB_VOLDSP, volume)
     }
 }
 

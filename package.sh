@@ -26,8 +26,6 @@ for d in data shaders skins songs; do
     cp -rf "$d" "$release_dir/"
 done
 
-# regenerate the lua api reference from the freshly built binary (needs its libs, hence after the copy above).
-# non-fatal: never block packaging on a doc hiccup
 echo "[package] generating lua docs..."
 "$release_dir/$exec_name" --gen-lua-docs || echo "[package] warning: lua doc generation failed"
 if [ -f docs/lua_api.html ]; then

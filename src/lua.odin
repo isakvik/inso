@@ -99,15 +99,13 @@ lua_create_beatmap_script_context :: proc(script_path: string) {
     lua.open_table(state)
     lua.open_string(state)
     lua.open_math(state)
-    if ODIN_DEBUG {
-        lua.open_debug(state)
-    }
-    //lua.open_package(state) // don't need it
     
     // note(isak): unsafe libraries. you want a map where every note you hit deletes a random file from your PC?
     // this is how you get that
-    //lua.open_io(lua_ctx.state) 
-    //lua.open_os(lua_ctx.state) 
+    //lua.open_debug(state)
+    //lua.open_package(state)
+    //lua.open_io(state) 
+    //lua.open_os(state) 
         
     lua_beatmap.odin_context = context
     L:= lua_beatmap.state

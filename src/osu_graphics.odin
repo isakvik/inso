@@ -211,14 +211,6 @@ build_default_elements :: proc(elements: ^q.Queue(Element), anims: ^q.Queue(Anim
             start_scale = {1.1, 1.1}, end_scale = {1, 1},
         },
     )
-
-    elements.data[builtin_element_slot(.SLIDER_FOLLOW_CIRCLE)].animation_list = animation_new_in_domain(anims, lists, .MILLISECONDS,
-        Animation_Scale{
-            tween = .QUAD_OUT,
-            start_time = 0, end_time = SLIDER_FOLLOW_CIRCLE_POP_MS,
-            start_scale = {1/2.4, 1/2.4}, end_scale = {1, 1},
-        },
-    )
 }
 
 
@@ -271,6 +263,12 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
 
     num_base := num_custom if num_custom > 0 else (len(base) if in_visible_phase else 0)
     total_handles := num_digits + num_base
+
+    // note(isak): handles draw last-to-first, so the digits normally land above the whole circle.
+    // HitCircleOverlayAboveNumber moves the overlay to the front instead, in front of the digits
+    has_overlay := base[0] == .HIT_CIRCLE_OVERLAY || base[0] == .SLIDER_START_CIRCLE_OVERLAY
+    overlay_above_digits := num_custom == 0 && has_overlay && game.active_skin.hit_circle_overlay_above_number
+    digit_handle_offset := 1 if overlay_above_digits else 0
 
     if total_handles == 0 do return
 
@@ -340,7 +338,8 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
             else do drawable_color = with_alpha(drawable_color, 0.9) // note(isak): osu's approach circle alpha multiplier
 
             end_ms := hobj.start_time_ms + (hitobject_timing_windows(hobj).ok if el_type != .APPROACH_CIRCLE else 0)
-            hobj.gfx_handles[num_digits + i] = drawable_new(Drawable{
+            handle_index := 0 if overlay_above_digits && i == 0 else num_digits + i
+            hobj.gfx_handles[handle_index] = drawable_new(Drawable{
                 flags          = drawable_flags,
                 element        = el_id,
                 layer          = layer_id(.HITOBJECTS),
@@ -377,7 +376,7 @@ hitobject_create_phase_drawables :: proc(hobj: ^Hitobject, phase: Hitobject_Phas
             digit_el      := Skin_Element_Type(int(Skin_Element_Type.COMBO_0) + digits[di])
             digit_metrics := game.active_skin.elements[digit_el].metrics
             digit_size_norm := digit_metrics * number_scale_norm
-            hobj.gfx_handles[di] = drawable_new(Drawable{
+            hobj.gfx_handles[di + digit_handle_offset] = drawable_new(Drawable{
                 flags          = {.ACTIVE, .FADE_IN, .SCALE_POS_BY_RADIUS, .HITOBJECT_DIM},
                 element        = builtin_element_slot(Element_Type(int(Element_Type.COMBO_DIGIT_0) + digits[di])),
                 layer          = layer_id(.HITOBJECTS),
@@ -778,7 +777,7 @@ slider_part_element :: proc(hobj: ^Hitobject, part: Slider_Part) -> Element_ID {
 }
 
 // note(isak): size is in radius units (multiplied by the CS radius at render time via hobj_index)
-slider_drawable_new :: proc(hobj: ^Hitobject, part: Slider_Part, size_radius_units: vec2, color: Color, flags: Drawable_Flags = {}) -> Drawable_Handle {
+slider_drawable_new :: proc(hobj: ^Hitobject, part: Slider_Part, size_radius_units: vec2, color: Color, flags: Drawable_Flags = {}, linger_ms: f64 = 0) -> Drawable_Handle {
     return drawable_new(Drawable{
         flags         = flags,
         element       = slider_part_element(hobj, part),
@@ -787,7 +786,7 @@ slider_drawable_new :: proc(hobj: ^Hitobject, part: Slider_Part, size_radius_uni
         anchor        = .CENTER,
         color         = color,
         start_time_ms = hobj.start_time_ms - hitobject_preempt_ms(hobj),
-        end_time_ms   = hobj.end_time_ms,
+        end_time_ms   = hobj.end_time_ms + linger_ms,
         hobj_index    = hobj.index + 1,
     })
 }
@@ -803,16 +802,17 @@ slider_create_gfx :: proc(hobj: ^Hitobject) {
     ball_size    := skin_element_size_radius_units(.SLIDER_BALL)
     end_size     := skin_element_size_radius_units(.SLIDER_END)
     overlay_size := skin_element_size_radius_units(.SLIDER_END_OVERLAY)
-    follow_size  := vec2{2, 2} * f32(slider.follow_circle_radius_mult)
 
     gfx := &slider.gfx
     gfx.end_circle   = slider_drawable_new(hobj, .END,           end_size,     combo,       {.FADE_IN, .HITOBJECT_DIM})
     gfx.end_overlay  = slider_drawable_new(hobj, .END_OVERLAY,   overlay_size, color_white, {.FADE_IN, .HITOBJECT_DIM})
     gfx.head_circle  = slider_drawable_new(hobj, .END,           end_size,     combo,       {.FADE_IN, .HITOBJECT_DIM})
     gfx.head_overlay = slider_drawable_new(hobj, .END_OVERLAY,   overlay_size, color_white, {.FADE_IN, .HITOBJECT_DIM})
-    gfx.end_repeat   = slider_drawable_new(hobj, .REPEAT,        repeat_size, color_white, {.BEAT_PULSE})
-    gfx.head_repeat  = slider_drawable_new(hobj, .REPEAT,        repeat_size, color_white, {.BEAT_PULSE})
-    gfx.follow       = slider_drawable_new(hobj, .FOLLOW_CIRCLE, follow_size, color_white)
+    gfx.follow       = slider_drawable_new(hobj, .FOLLOW_CIRCLE, slider_follow_circle_size(slider), color_white,
+                                           linger_ms = FOLLOW_CIRCLE_END_MS)
+    for &arrow in gfx.repeat_arrows {
+        arrow = slider_drawable_new(hobj, .REPEAT, repeat_size, color_white)
+    }
 
     ball_color := game.active_skin.slider_ball
     if game.active_skin.allow_slider_ball_tint do ball_color = combo
@@ -843,7 +843,7 @@ slider_set_part_element :: proc(hobj: ^Hitobject, part: Slider_Part, element: El
     switch part {
     case .BALL:          update(gfx.ball, element)
     case .FOLLOW_CIRCLE: update(gfx.follow, element)
-    case .REPEAT:        update(gfx.end_repeat, element);  update(gfx.head_repeat, element)
+    case .REPEAT:        for h in gfx.repeat_arrows do update(h, element)
     case .END:           update(gfx.end_circle, element);  update(gfx.head_circle, element)
     case .END_OVERLAY:   update(gfx.end_overlay, element); update(gfx.head_overlay, element)
     case .TICK:          for h in gfx.ticks do update(h, element)
@@ -853,10 +853,13 @@ slider_set_part_element :: proc(hobj: ^Hitobject, part: Slider_Part, element: El
 slider_clear_handles :: proc(hobj: ^Hitobject) {
     gfx := &hobj.slider_state.gfx
     handles := [?]Drawable_Handle{
-        gfx.ball, gfx.follow, gfx.end_circle, gfx.end_overlay, gfx.end_repeat,
-        gfx.head_circle, gfx.head_overlay, gfx.head_repeat,
+        gfx.ball, gfx.follow, gfx.end_circle, gfx.end_overlay,
+        gfx.head_circle, gfx.head_overlay,
     }
-    for h in handles   {
+    for h in handles {
+        if h != {} do slotmap.remove(&game.beatmap.drawables, h)
+    }
+    for h in gfx.repeat_arrows {
         if h != {} do slotmap.remove(&game.beatmap.drawables, h)
     }
     for &h in gfx.ticks {
@@ -883,6 +886,114 @@ slider_handle_update :: proc(h: Drawable_Handle, active: bool, pos: vec2, angle:
     if active && fade_start_ms >= 0 do d.start_time_ms = fade_start_ms
 }
 
+progress_over :: proc(elapsed_ms, duration_ms: f64) -> f32 {
+    if duration_ms <= 0 do return 1
+    return f32(clamp(elapsed_ms / duration_ms, 0, 1))
+}
+
+// note(isak): stable's follow circle, via lazer's LegacyFollowCircle. scales relative to the full sprite
+FOLLOW_CIRCLE_PRESS_SCALE_MS    :: 180
+FOLLOW_CIRCLE_PRESS_FADE_MS     :: 60
+FOLLOW_CIRCLE_PRESS_START_SCALE :: 0.5
+FOLLOW_CIRCLE_BREAK_MS          :: 100
+FOLLOW_CIRCLE_BREAK_SCALE       :: 2
+FOLLOW_CIRCLE_END_MS            :: 200
+FOLLOW_CIRCLE_END_SCALE         :: 0.8
+
+// note(isak): handles custom scripts scaling the radius multiplier
+slider_follow_circle_size :: proc(slider: ^Slider_State) -> vec2 {
+    return skin_element_size_radius_units(.SLIDER_FOLLOW_CIRCLE) *
+        (slider.follow_circle_radius_mult / SLIDER_FOLLOW_CIRCLE_DEFAULT_RADIUS_MULT)
+}
+
+slider_follow_circle_press_look :: proc(hobj: ^Hitobject, since_press_ms: f64) -> (scale, alpha: f32) {
+    remaining_ms := max(hobj.end_time_ms - hobj.slider_state.tracked_timestamp_at, 0)
+    grown := tween_apply(.QUAD_OUT, progress_over(since_press_ms, min(FOLLOW_CIRCLE_PRESS_SCALE_MS, remaining_ms)))
+    
+    scale = math.lerp(f32(FOLLOW_CIRCLE_PRESS_START_SCALE), 1, grown)
+    alpha = progress_over(since_press_ms, min(FOLLOW_CIRCLE_PRESS_FADE_MS, remaining_ms))
+    return scale, alpha
+}
+
+slider_follow_circle_look :: proc(hobj: ^Hitobject, map_time: f64) -> (scale, alpha: f32) {
+    slider := &hobj.slider_state
+    if .EVER_TRACKED not_in slider.flags do return 0, 0
+
+    pressed_at := slider.tracked_timestamp_at
+    if slider.scorepoint_missed_at > pressed_at {
+        scale, alpha = slider_follow_circle_press_look(hobj, slider.scorepoint_missed_at - pressed_at)
+        t := progress_over(map_time - slider.scorepoint_missed_at, FOLLOW_CIRCLE_BREAK_MS)
+        scale = math.lerp(scale, FOLLOW_CIRCLE_BREAK_SCALE, t)
+        alpha = math.lerp(alpha, 0, t)
+        return scale, alpha
+    }
+    if .FINALIZED in slider.flags {
+        scale, alpha = slider_follow_circle_press_look(hobj, hobj.end_time_ms - pressed_at)
+        t := progress_over(map_time - hobj.end_time_ms, FOLLOW_CIRCLE_END_MS)
+        scale = math.lerp(scale, FOLLOW_CIRCLE_END_SCALE, tween_apply(.QUAD_OUT, t))
+        alpha *= (1 - tween_apply(.QUAD_IN, t))
+        return scale, alpha
+    }
+
+    return slider_follow_circle_press_look(hobj, map_time - pressed_at)
+}
+
+// note(isak): stable's reverse arrow, via lazer's LegacyReverseArrow and DrawableSliderRepeat
+REPEAT_ARROW_FADE_IN_MS  :: 150
+REPEAT_ARROW_PULSE_MS    :: 300
+REPEAT_ARROW_PULSE_SCALE :: 1.3
+REPEAT_ARROW_HIT_MS      :: 300
+REPEAT_ARROW_HIT_SCALE   :: 1.4
+
+// note(isak): every repeat gets its own arrow, but at most two per end are ever alive (the one just
+// hit, still fading, and the next one appearing behind it), so they cycle through four slots
+slider_repeat_arrow_slot :: proc(repeat_index: int) -> int {
+    return (repeat_index % 2) * 2 + (repeat_index / 2) % 2
+}
+
+// note(isak): end 0 is the tail, where even repeats turn around; end 1 is the head
+slider_upcoming_repeat_on_end :: proc(slider: ^Slider_State, end: int) -> int {
+    return slider.checked_repeats_count + (end - slider.checked_repeats_count) %% 2
+}
+
+slider_repeat_arrow_look :: proc(hobj: ^Hitobject, repeat_index: int, map_time: f64) -> (scale, alpha: f32) {
+    slider := &hobj.slider_state
+    span_ms := slider.duration_ms
+    hit_time_ms := hobj.start_time_ms + f64(repeat_index + 1) * span_ms
+
+    // note(isak): the first arrow arrives with the slider, held back until snaking finishes; each
+    // later one spawns the moment the previous arrow on its end is hit
+    appear_ms, fade_in_start_ms, fade_in_ms: f64
+    if repeat_index == 0 {
+        preempt_ms := hitobject_preempt_ms(hobj)
+        appear_ms = hobj.start_time_ms - preempt_ms
+        fade_in_start_ms = appear_ms + (preempt_ms / 3 if slider_snakes_in(hobj) else 0)
+        fade_in_ms = REPEAT_ARROW_FADE_IN_MS
+    } else {
+        appear_ms = hit_time_ms - 2 * span_ms
+        fade_in_start_ms = appear_ms
+        fade_in_ms = min(REPEAT_ARROW_FADE_IN_MS, span_ms)
+    }
+    if map_time < fade_in_start_ms do return 0, 0
+
+    pulse_t := progress_over(math.mod(map_time - appear_ms, REPEAT_ARROW_PULSE_MS), REPEAT_ARROW_PULSE_MS)
+
+    scale = math.lerp(f32(REPEAT_ARROW_PULSE_SCALE), 1, tween_apply(.QUAD_OUT, pulse_t))
+    alpha = progress_over(map_time - fade_in_start_ms, fade_in_ms)
+
+    if repeat_index < slider.checked_repeats_count {
+        t := progress_over(map_time - hit_time_ms, min(REPEAT_ARROW_HIT_MS, span_ms))
+        if slider.last_repeat_hit_per_end[repeat_index % 2] {
+            eased := tween_apply(.QUAD_OUT, t)
+            scale = math.lerp(f32(1), REPEAT_ARROW_HIT_SCALE, eased)
+            alpha *= 1 - eased
+        } else {
+            alpha *= 1 - t
+        }
+    }
+    return scale, alpha
+}
+
 slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
     slider := &hobj.slider_state
     gfx := &slider.gfx
@@ -892,6 +1003,7 @@ slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
     end_pos  := path.end_pos + hobj.script_pos_translation
     snake_full := slider_snake_in_factor(hobj) >= 1
 
+    // note(isak): sliderticks
     current_span := slider.checked_repeats_count
     last_span := slider.path_travel_count - 1
     snake_out := slider_snake_out_factor(hobj)
@@ -902,8 +1014,8 @@ slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
             span := current_span + (1 if slider.tick_hits[tick_i] else 0)
             active := span <= last_span
 
-            // note(isak): the body retracts behind the ball on the final span, so passed ticks must
-            // vanish with it whether or not they were tracked - a missed tick shouldn't hang in open space
+            // note(isak): when snaking out, passed ticks must
+            // vanish with it regardless of if they were hit so they don't render off the track
             if snake_out > 0 {
                 tick_fraction := f64(tick_i + 1) * slider.tick_interval_ms / slider.duration_ms
                 retracted := final_span_heads_back ? tick_fraction > 1 - snake_out : tick_fraction < snake_out
@@ -920,6 +1032,7 @@ slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
         }
     }
 
+    // note(isak): sliderend
     overlay_drawn := slider.custom_elements[.END_OVERLAY] != 0 || skin_draws_sliderend_overlay(game.active_skin)
 
     has_sliderend_at_end := slider.path_travel_count % 2 == 1 || current_span < last_span
@@ -934,17 +1047,53 @@ slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
     slider_handle_update(gfx.head_circle,  head_on, hobj_pos)
     slider_handle_update(gfx.head_overlay, head_on && overlay_drawn, hobj_pos)
 
-    has_repeat_at_end := slider.path_travel_count > 1 && current_span < last_span &&
-        (slider.path_travel_count % 2 == 0 || current_span < slider.path_travel_count - 2)
-    slider_handle_update(gfx.end_repeat, has_repeat_at_end && snake_full, end_pos, path.end_angle_rad)
+    hidden_fade := f32(1)
+    if .HIDDEN_FADES in hobj.flags {
+        hidden_fade = f32(slider_hidden_fadeout_factor(hobj, map_time))
+    }
 
-    has_repeat_at_head := slider.path_travel_count > 2 && current_span < last_span &&
-        (slider.path_travel_count % 2 == 1 || current_span < slider.path_travel_count - 2)
-    slider_handle_update(gfx.head_repeat, has_repeat_at_head && hobj.start_time_ms <= map_time, hobj_pos, path.head_angle_rad)
+    // note(isak): slider repeats
+    for h in gfx.repeat_arrows {
+        if d, ok := slotmap.get(&game.beatmap.drawables, h); ok do d.flags &~= {.ACTIVE}
+    }
+    repeat_size := skin_element_size_radius_units(.SLIDER_REPEAT)
+    repeat_count := slider.path_travel_count - 1
+    for end in 0..<2 {
+        upcoming := slider_upcoming_repeat_on_end(slider, end)
+        for repeat_index in ([?]int{upcoming, upcoming - 2}) {
+            if repeat_index < 0 || repeat_index >= repeat_count do continue
+            d := slotmap.get(&game.beatmap.drawables, gfx.repeat_arrows[slider_repeat_arrow_slot(repeat_index)]) or_continue
 
+            scale, alpha := slider_repeat_arrow_look(hobj, repeat_index, map_time)
+            alpha *= hidden_fade
+            at_tail := end == 0
+            slider_drawable_update(d, alpha > 0, at_tail ? end_pos : hobj_pos, at_tail ? path.end_angle_rad : path.head_angle_rad)
+            d.size = repeat_size * scale
+            d.color.a = u8(0xFF * alpha)
+        }
+    }
+
+    // note(isak): sliderball
     ball_active := hobj.start_time_ms <= map_time && map_time < hobj.end_time_ms
     ball_pos := slider_path_pos_at(hobj, map_time) if ball_active else vec2{}
-    slider_handle_update(gfx.ball,   ball_active, ball_pos, ball_active ? slider_ball_angle_at(hobj, map_time) : 0)
+    // note(isak): the sprite faces along the path, so on return spans it points backwards unless the
+    // skin mirrors it (SliderBallFlip)
+    ball_angle: f32
+    ball_mirrored: bool
+    if ball_active {
+        heading_back := int((map_time - hobj.start_time_ms) / slider.duration_ms) % 2 == 1
+        ball_angle = slider_ball_angle_at(hobj, map_time) + (math.PI if heading_back else 0)
+        ball_mirrored = heading_back && game.active_skin.slider_ball_flip
+    }
+    slider_handle_update(gfx.ball, ball_active, ball_pos, ball_angle)
+    if d_ball, ok := slotmap.get(&game.beatmap.drawables, gfx.ball); ok {
+        d_ball.uv = {}
+        if ball_mirrored {
+            uv := game.beatmap.elements.data[d_ball.element].uv
+            if uv.w == 0 && uv.h == 0 do uv = {0, 0, 1, 1}
+            d_ball.uv = {uv.x + uv.w, uv.y, -uv.w, uv.h}
+        }
+    }
 
     ball_frame_count := game.active_skin.elements[.SLIDER_BALL].frame_count
     if ball_frame_count > 1 {
@@ -956,19 +1105,19 @@ slider_update_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
     }
     
     if d_follow, ok := slotmap.get(&game.beatmap.drawables, gfx.follow); ok {
-        slider_drawable_update(d_follow, ball_active && .TRACKING in slider.flags, ball_pos)
-        if .TRACKING in slider.flags {
-            d_follow.start_time_ms = slider.tracked_timestamp_at
-        }
+        scale, alpha := slider_follow_circle_look(hobj, map_time)
+        follow_pos := slider_path_pos_at(hobj, clamp(map_time, hobj.start_time_ms, hobj.end_time_ms))
+        slider_drawable_update(d_follow, alpha > 0, follow_pos)
+        d_follow.start_time_ms = slider.tracked_timestamp_at
+        d_follow.size = slider_follow_circle_size(slider) * scale
+        d_follow.color.a = u8(0xFF * alpha)
     }
 
-    // note(isak): everything riding the body fades with it under hidden; the ball and follow
-    // circle stay visible so the slide remains trackable, like stable
+    // note(isak): scorepoint hidden fade
     if .HIDDEN_FADES in hobj.flags {
-        fade := u8(f32(0xFF) * f32(slider_hidden_fadeout_factor(hobj, map_time)))
+        fade := u8(f32(0xFF) * hidden_fade)
         fading := [?]Drawable_Handle{
             gfx.end_circle, gfx.end_overlay, gfx.head_circle, gfx.head_overlay,
-            gfx.end_repeat, gfx.head_repeat,
         }
         for h in fading {
             if d, ok := slotmap.get(&game.beatmap.drawables, h); ok do d.color.a = fade
@@ -991,12 +1140,22 @@ slider_render_gfx :: proc(hobj: ^Hitobject, map_time: f64) {
     }
     ordered := [?]Drawable_Handle{
         gfx.end_circle, gfx.end_overlay, gfx.head_circle, gfx.head_overlay,
-        gfx.end_repeat, gfx.head_repeat,
     }
     for handle in ordered {
         d, ok := slotmap.get(&game.beatmap.drawables, handle)
         if ok && .ACTIVE in d.flags {
             render_drawable(d, map_time)
+        }
+    }
+
+    // note(isak): a fresh arrow spawns behind the one just hit on the same end
+    for end in 0..<2 {
+        upcoming := slider_upcoming_repeat_on_end(&hobj.slider_state, end)
+        for repeat_index in ([?]int{upcoming, upcoming + 2}) {
+            d, ok := slotmap.get(&game.beatmap.drawables, gfx.repeat_arrows[slider_repeat_arrow_slot(repeat_index)])
+            if ok && .ACTIVE in d.flags {
+                render_drawable(d, map_time)
+            }
         }
     }
 }

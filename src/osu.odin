@@ -229,6 +229,7 @@ Slider_Flag :: enum {
     HEAD_HIT,
     HEAD_CONTINGENCY_WINDOW_PASSED,
     END_TRACKED,
+    EVER_TRACKED, // note(isak): tracked_timestamp_at holds a real press
     FINALIZED, // note(isak): scoring done at end_time; the slider lingers for its fade-out tail
 }
 
@@ -263,6 +264,8 @@ Slider_State :: struct {
     path_travel_count, checked_repeats_count, checked_path_ticks_count: int,
     hit_judgement_count: int,
     tracked_timestamp_at: f64,
+    scorepoint_missed_at: f64,
+    last_repeat_hit_per_end: [2]bool, // note(isak): indexed by repeat index % 2, 0 = tail end, 1 = head
 
     tick_hits: []bool, // note(isak): cleared on repeat. allocated with the mapset allocator
     // note(isak): hitsound timing point per tick, traversal-major in temporal order
@@ -277,8 +280,9 @@ Slider_State :: struct {
 
     gfx: struct {
         ball, follow:                           Drawable_Handle,
-        end_circle, end_overlay, end_repeat:    Drawable_Handle, // tail position
-        head_circle, head_overlay, head_repeat: Drawable_Handle, // head turnaround position
+        end_circle, end_overlay:                Drawable_Handle, // tail position
+        head_circle, head_overlay:              Drawable_Handle, // head turnaround position
+        repeat_arrows:                          [4]Drawable_Handle, // see slider_repeat_arrow_slot
         clicked_circle, clicked_overlay:        Drawable_Handle, // head click animation, owner-drawn under the ball
         ticks: []Drawable_Handle,
     },

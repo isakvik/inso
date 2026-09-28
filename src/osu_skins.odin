@@ -20,6 +20,9 @@ Skin :: struct {
         slider_track_override: Color,
         slider_ball: Color,
         allow_slider_ball_tint: bool,
+        slider_ball_flip: bool,
+        hit_circle_overlay_above_number: bool,
+        layered_hit_sounds: bool,
 
         cursor_expand: bool,
         cursor_rotate: bool,
@@ -315,6 +318,9 @@ skin_handle_ini :: proc(skin: ^Skin) {
         slider_border = color_white,
         slider_track_override = 0,
         slider_ball = color_white,
+        slider_ball_flip = true,
+        hit_circle_overlay_above_number = true,
+        layered_hit_sounds = true,
 
         cursor_expand = true,
         cursor_rotate = true,
@@ -352,6 +358,19 @@ skin_handle_ini :: proc(skin: ^Skin) {
     }
     if v, ok := get(sections, "General", "AllowSliderBallTint"); ok {
         skin.allow_slider_ball_tint = v == "1"
+    }
+    if v, ok := get(sections, "General", "SliderBallFlip"); ok {
+        skin.slider_ball_flip = v == "1"
+    }
+    // note(isak): osu still honors the misspelled key older skins shipped with
+    if v, ok := get(sections, "General", "HitCircleOverlayAboveNumer"); ok {
+        skin.hit_circle_overlay_above_number = v == "1"
+    }
+    if v, ok := get(sections, "General", "HitCircleOverlayAboveNumber"); ok {
+        skin.hit_circle_overlay_above_number = v == "1"
+    }
+    if v, ok := get(sections, "General", "LayeredHitSounds"); ok {
+        skin.layered_hit_sounds = v == "1"
     }
     if v, ok := get(sections, "General", "CursorExpand"); ok {
         skin.cursor_expand = v == "1"

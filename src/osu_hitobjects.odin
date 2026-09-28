@@ -147,7 +147,12 @@ osu_sample_set_to_skin :: proc(osu_set: u8, timing_point: ^Timing_Point) -> Skin
 
 play_hit_hitsounds :: proc(timing_point: ^Timing_Point, normal_set, addition_set: Skin_Sample_Set, hitsounds: Hitsound_Flags) {
     volume := timing_point_volume(timing_point)
-    sample_play(resolve_hitsound(normal_set, .HITNORMAL, timing_point.sample_index), volume)
+    // note(isak): osu layers a hitnormal under bare additions; LayeredHitSounds: 0 skins opt out of that
+    has_additions := hitsounds & {.WHISTLE, .FINISH, .CLAP} != {}
+    normal_is_layered := has_additions && .NORMAL not_in hitsounds
+    if game.active_skin.layered_hit_sounds || !normal_is_layered {
+        sample_play(resolve_hitsound(normal_set, .HITNORMAL, timing_point.sample_index), volume)
+    }
     if .WHISTLE in hitsounds do sample_play(resolve_hitsound(addition_set, .HITWHISTLE, timing_point.sample_index), volume)
     if .FINISH  in hitsounds do sample_play(resolve_hitsound(addition_set, .HITFINISH,  timing_point.sample_index), volume)
     if .CLAP    in hitsounds do sample_play(resolve_hitsound(addition_set, .HITCLAP,    timing_point.sample_index), volume)

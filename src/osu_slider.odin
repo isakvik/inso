@@ -5,7 +5,6 @@ import "core:math"
 
 
 SLIDER_FOLLOW_CIRCLE_DEFAULT_RADIUS_MULT :: 2.4
-SLIDER_FOLLOW_CIRCLE_POP_MS :: 200
 SLIDER_TICK_POP_MS :: 150 // note(isak): how long an individual tick's scale/fade pop-in plays once its turn arrives
 SLIDER_TICK_AT_SLIDEREND_CHECK_LENIENCY_MS :: 3 // note(isak) don't make ticks within n ms of the sliderend
 SLIDER_END_LENIENCY_MS :: 36
@@ -25,12 +24,14 @@ slider_ball_frame_delay_ms :: proc(hobj: ^Hitobject) -> f64 {
 }
 
 
+slider_snakes_in :: proc(hobj: ^Hitobject) -> bool {
+    return .SLIDER_SNAKE_IN in hobj.flags && game.user_config.snaking_in_sliders_enabled
+}
+
 // note(isak): how far the body has grown out of the head during the approach, 0 to 1.
 // 1 outright when snaking in is disabled, so dependent gfx (end circles, repeats) appear immediately
 slider_snake_in_factor :: proc(hobj: ^Hitobject) -> f64 {
-    if .SLIDER_SNAKE_IN not_in hobj.flags || !game.user_config.snaking_in_sliders_enabled {
-        return 1
-    }
+    if !slider_snakes_in(hobj) do return 1
     preempt_ms := hitobject_preempt_ms(hobj)
     snake_duration_ms := preempt_ms * (1.0/3.0)
     time_into_preempt  := beatmap_music_time_ms(&game.beatmap) - hobj.start_time_ms + preempt_ms
@@ -155,13 +156,25 @@ slider_on_click :: proc(hobj: ^Hitobject, result: Judgement_Type, timing_error_m
 // note(isak): commits a scorepoint judgement and reports whether one actually landed - the lua
 // filter can overturn it in either direction, so hit feedback keys off the committed result
 slider_scorepoint_judge :: proc(hobj: ^Hitobject, intended: Judgement_Type) -> (hit: bool) {
+    slider := &hobj.slider_state
     final := judgement_new(hobj, intended, 0)
     #partial switch final {
     case .SLIDER_SMALL_SCOREPOINT, .SLIDER_LARGE_SCOREPOINT:
-        hobj.slider_state.hit_judgement_count += 1
-        return true
+        hit = true
     }
-    return false
+
+    if hit {
+        slider.hit_judgement_count += 1
+    } else {
+        slider.scorepoint_missed_at = beatmap_music_time_ms(&game.beatmap)
+    }
+    return hit
+}
+
+slider_repeat_judge :: proc(hobj: ^Hitobject, repeat_index: int, intended: Judgement_Type) -> (hit: bool) {
+    hit = slider_scorepoint_judge(hobj, intended)
+    hobj.slider_state.last_repeat_hit_per_end[repeat_index % 2] = hit
+    return hit
 }
 
 slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
@@ -214,6 +227,7 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
         slider.flags |= {.TRACKING}
         if !was_tracking {
             slider.tracked_timestamp_at = map_time
+            slider.flags |= {.EVER_TRACKED}
         }
     } 
     else {
@@ -235,7 +249,7 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
             for i in 0..<slider.contingency_window_scorepoint_count {
                 is_repeat := slider.contingency_window_scorepoints & {i} > {}
                 if is_repeat {
-                    if slider_scorepoint_judge(hobj, .SLIDER_LARGE_SCOREPOINT) {
+                    if slider_repeat_judge(hobj, contingency_repeat_edge - 1, .SLIDER_LARGE_SCOREPOINT) {
                         slider_play_edge_hitsound(hobj, contingency_repeat_edge)
                     }
                     contingency_repeat_edge += 1
@@ -315,8 +329,9 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
             // note(isak): ticks reappear each traversal, so clear hit state for the new pass
             for &hit in slider.tick_hits do hit = false
 
+            repeat_index := slider.checked_repeats_count - 1
             if is_tracking && .HEAD_CHECKED in slider.flags  {
-                if slider_scorepoint_judge(hobj, .SLIDER_LARGE_SCOREPOINT) {
+                if slider_repeat_judge(hobj, repeat_index, .SLIDER_LARGE_SCOREPOINT) {
                     slider_play_edge_hitsound(hobj, slider.checked_repeats_count)
                 }
             } else if .HEAD_CONTINGENCY_WINDOW_PASSED not_in slider.flags {
@@ -327,7 +342,7 @@ slider_update :: proc(hobj: ^Hitobject, map_time: f64) {
                 }
                 slider.contingency_window_scorepoint_count += 1
             } else {
-                slider_scorepoint_judge(hobj, .SLIDER_SCOREPOINT_MISS)
+                slider_repeat_judge(hobj, repeat_index, .SLIDER_SCOREPOINT_MISS)
             }
         }
     }
@@ -455,6 +470,8 @@ slider_reset_transient :: proc(hobj: ^Hitobject) {
     slider.checked_path_ticks_count = 0
     slider.hit_judgement_count = 0
     slider.tracked_timestamp_at = 0
+    slider.scorepoint_missed_at = 0
+    slider.last_repeat_hit_per_end = {}
     slider.contingency_window_scorepoint_count = 0
     slider.contingency_window_scorepoints = {}
     for &hit in slider.tick_hits do hit = false

@@ -1,7 +1,9 @@
 # inso
 
+[Official website](https://inso.minusgn.no) / [Discord](https://discord.com/invite/2WrxyQc)
+
 An osu! clone with Lua and GLSL shader support for beatmaps. Made for YEAST3, a sightreading tournament that first ran on stage at [COE2026](https://cavoe.events).
-Integrates with existing osu! maps; documentation is a bit sparse at the moment. Website for the game is currently WIP.
+Integrates with existing osu! maps; check the [docs](https://inso.minusgn.no/docs/) for usage/guides.
 
 Written in [Odin](https://odin-lang.org/).
 

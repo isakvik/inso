@@ -23,6 +23,7 @@ User_Configuration :: struct {
     audio_device: i32, // note(isak): bass device index on linux; -1 = default
     linux_audio_buffer_ms: i32, // note(isak): bass device output buffer (linux); 1-50ms
     audio_backend: Audio_Backend,
+    exclusive_mode_warning_accepted: bool,
     
     vsync_enabled: bool,
     fps_limiter: i32, // 0 = uncapped
@@ -95,6 +96,9 @@ config_load :: proc(path: string) -> (result: User_Configuration) {
         }
         if v, ok := get(gen, "audio_backend"); ok {
             result.audio_backend = audio_backend_from_string(v)
+        }
+        if v, ok := get(gen, "exclusive_mode_warning_accepted"); ok {
+            result.exclusive_mode_warning_accepted = v == "true"
         }
         if v, ok := get(gen, "vsync_enabled"); ok {
             result.vsync_enabled = v == "true"
@@ -200,7 +204,8 @@ config_save :: proc(path: string) {
     ini.write_pair(w, "hitsound_volume_follows_music", cfg.hitsound_volume_follows_music)
     ini.write_pair(w, "audio_device",                  cfg.audio_device)
     ini.write_pair(w, "linux_audio_buffer_ms",         cfg.linux_audio_buffer_ms)
-    ini.write_pair(w, "audio_backend",                 cfg.audio_backend)
+    ini.write_pair(w, "audio_backend",                 audio_backend_keys[cfg.audio_backend])
+    ini.write_pair(w, "exclusive_mode_warning_accepted", cfg.exclusive_mode_warning_accepted)
     ini.write_pair(w, "osu_install_path",              cfg.osu_install_path)
     ini.write_pair(w, "skin_path",                     cfg.skin_path)
     ini.write_pair(w, "use_beatmap_skin",              cfg.use_beatmap_skin)

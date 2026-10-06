@@ -406,10 +406,8 @@ main :: proc() {
             
             handle_debug_ui_events()
             file_dialog_poll()
-            if game.user_config.audio_device == -1 && audio_handle_device_change() {
-                // note(isak): session volume may reset; 
-                audio_set_volume(game.user_config.master_volume)
-            }
+            audio_handle_device_change()
+            when ODIN_OS == .Windows do audio_service_exclusive_retry()
             if key_is_down(.LCTRL) && key_is_pressed(.F5) {
                 discover_maps("songs/")
                 discover_skins("skins/")
@@ -795,20 +793,53 @@ imgui_update :: proc() {
         }
         when ODIN_OS == .Windows {
             backend := &game.user_config.audio_backend
+            EXCLUSIVE_WARNING_POPUP :: "WASAPI exclusive warning"
+            wants_exclusive_warning := false
             if imgui.BeginCombo("Output mode", audio_backend_display_names[backend^]) {
                 for mode in Audio_Backend {
                     is_selected := mode == backend^
                     if imgui.Selectable(audio_backend_display_names[mode], is_selected) && !is_selected {
-                        backend^ = mode
-                        audio_reopen()
+                        if mode == .EXCLUSIVE_MODE && !game.user_config.exclusive_mode_warning_accepted {
+                            wants_exclusive_warning = true
+                        } else {
+                            backend^ = mode
+                            audio_reopen()
+                        }
                     }
                     if is_selected do imgui.SetItemDefaultFocus()
                 }
                 imgui.EndCombo()
             }
 
-            if audio.ready && backend^ != audio.wasapi_status.backend {
-                if audio.exclusive_retry_next_s != 0 {
+            // note(isak): opened outside the combo, since popup ids are scoped to the id stack
+            if wants_exclusive_warning do imgui.OpenPopup(EXCLUSIVE_WARNING_POPUP)
+            if imgui.BeginPopupModal(EXCLUSIVE_WARNING_POPUP, nil, {.AlwaysAutoResize}) {
+                imgui.PushTextWrapPos(imgui.GetFontSize() * 28)
+                imgui.TextUnformatted("Exclusive mode sends audio straight to device memory, bypassing the Windows mixer. " +
+                    "If inso is allowed to use it, it will be the only program that can play audio until the program closes " +
+                    "or you switch modes back.")
+                imgui.Spacing()
+                imgui.TextColored({1.0, 0.75, 0.35, 1.0}, "BETA SOFTWARE WARNING: ")
+                imgui.TextUnformatted("Some drivers misreport the formats they accept. If the wrong format gets through, " +
+                    "you may get loud static at full volume, ")
+                imgui.TextColored({1.0, 0.75, 0.35, 1.0}, "regardless of your software volume setting.")
+                imgui.Spacing()
+                imgui.TextUnformatted("Take off your headphones or turn your speakers down before enabling it.")
+                imgui.PopTextWrapPos()
+                imgui.Separator()
+                if imgui.Button("Enable exclusive mode") {
+                    game.user_config.exclusive_mode_warning_accepted = true
+                    backend^ = .EXCLUSIVE_MODE
+                    audio_reopen()
+                    imgui.CloseCurrentPopup()
+                }
+                imgui.SameLine()
+                if imgui.Button("Cancel") do imgui.CloseCurrentPopup()
+                imgui.EndPopup()
+            }
+
+            if audio.ready && backend^ == .EXCLUSIVE_MODE && !_wasapi_is_exclusive() {
+                if audio.exclusive_retries_left > 0 {
                     imgui.TextDisabled("(waiting for the exclusive device...)")
                 } else {
                     imgui.TextColored({1.0, 0.75, 0.35, 1.0}, "exclusive unavailable right now, running shared")
@@ -839,16 +870,14 @@ imgui_update :: proc() {
             }
         }
         when ODIN_OS == .Windows {
-            audio_service_exclusive_retry(game.frame_clock_s)
-            
             if audio.ready {
-                d := &audio.wasapi_status
+                session := wasapi.session
                 imgui.TextDisabled(fmt.ctprintf("%s: %vhz %vch %s",
-                    audio_backend_keys[audio.wasapi_status.backend], d.freq, d.chans,
-                    _wasapi_format_name(d.wire_format)))
-                imgui.TextDisabled(fmt.ctprintf("buffer %v samples (%.2fms)", d.buffer_samples, audio.output_latency_ms))
+                    audio_backend_keys[_wasapi_backend(session)], session.freq, session.chans,
+                    _wasapi_format_name(i32(session.format))))
+                imgui.TextDisabled(fmt.ctprintf("buffer %v samples (%.2fms)", _wasapi_buffer_samples(session), audio.output_latency_ms))
                 imgui.TextDisabled(fmt.ctprintf("device period min %.2fms / default %.2fms",
-                    d.device_minperiod_ms, d.device_defperiod_ms))
+                    wasapi.min_period_ms, wasapi.default_period_ms))
             }
         }
     }

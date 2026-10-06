@@ -107,7 +107,6 @@ audio_device_dropdown_apply :: proc() {
 
     if audio_set_device(target) {
         game.user_config.audio_device = target
-        audio_apply_config_volumes()
     }
 }
 

@@ -249,13 +249,17 @@ luaapi_schedule_after :: proc "c" (L: ^lua.State) -> i32 {
 luaapi_load_file :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     filename := lua.L_checkstring(L, 1)
-    
-    full_path_str := strings.concatenate({game.active_mapset.folder_path, string(filename)}, context.temp_allocator)
-    _pad := new(byte, context.temp_allocator)
-    full_path := strings.unsafe_string_to_cstring(full_path_str)
-    
-    if lua.L_loadfile(L, full_path) != lua.OK {
-        return lua.L_error(L, "User error - script file not found: %s", full_path)
+    if !mapset_relative_path_stays_inside(string(filename)) {
+        return lua.L_error(L, "User error - load_file path must stay inside the mapset folder: %s", filename)
+    }
+
+    full_path := strings.concatenate({game.active_mapset.folder_path, string(filename)}, context.temp_allocator)
+    source, read_err := read_entire_file(full_path, context.temp_allocator)
+    if read_err != nil {
+        return lua.L_error(L, "User error - script file not found: %s", strings.clone_to_cstring(full_path, context.temp_allocator))
+    }
+    if lua_load_text_chunk(L, source, full_path) != lua.OK {
+        return i32(lua.error(L))
     }
 
     if lua.pcall(L, 0, 1, 0) != lua.OK {
@@ -1870,6 +1874,8 @@ luaapi_element_set_animation :: proc "c" (L: ^lua.State) -> (result: i32) {
     return lua_return_self()
 }
 
+MAX_MESH_VERTEX_COUNT :: 1 << 24
+
 // element:set_mesh(buffer_name, vertex_count)
 // marks the element as mesh-drawn: the vertex shader receives geometry from the named SSBO
 // bound at VERTEX_BUFFER (binding 1), not from the quad batch.
@@ -1887,10 +1893,12 @@ luaapi_element_set_mesh :: proc "c" (L: ^lua.State) -> (result: i32) {
         return lua_return_self()
     }
     // note(isak): mesh buffers loaded from a model are packed Mesh_Vertex, so a caller that
-    // omits the count (or passes <= 0) gets the whole buffer's worth of vertices.
+    // omits the count (or passes <= 0) gets the whole buffer's worth of vertices. explicit counts
+    // can exceed the buffer on purpose (custom layouts, gl_VertexID-generated geometry)
     if vertex_count <= 0 {
         vertex_count = buf.size / size_of(Mesh_Vertex)
     }
+    vertex_count = min(vertex_count, MAX_MESH_VERTEX_COUNT)
     if el_id < game.beatmap.elements.len {
         el := q.get_ptr(&game.beatmap.elements, el_id)
         el.flags |= {.STATIC_GEOMETRY}
@@ -2370,10 +2378,10 @@ luaapi_buffer_write_vec4 :: proc "c" (L: ^lua.State) -> i32 {
     if buf.data == nil {
         return lua.L_error(L, "Buffer:write_vec4: buffer is not writable")
     }
-    byte_offset := vec_index * 16
-    if byte_offset > buf.size - 16 {
+    if vec_index >= buf.size / 16 {
         return lua.L_error(L, "Buffer:write_vec4: write out of bounds")
     }
+    byte_offset := vec_index * 16
     floats := cast(^[4]f32)&buf.data[byte_offset]
     floats[0] = x; floats[1] = y; floats[2] = z; floats[3] = w
     return 0
@@ -2411,7 +2419,7 @@ luaapi_sound_instance_funcs := []Lua_Function {
 luaapi_sound_play :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     name   := lua_string(1)
-    volume := f32(lua.L_optnumber(L, 2, 1.0))
+    volume := clamp(f32(lua.L_optnumber(L, 2, 1.0)), 0, 1)
     pan    := f32(lua.L_optnumber(L, 3, 0.0))
 
     sample, found := mapset_sample(name)
@@ -2428,7 +2436,7 @@ luaapi_sound_play :: proc "c" (L: ^lua.State) -> i32 {
 luaapi_sound_play_loop :: proc "c" (L: ^lua.State) -> i32 {
     context = lua_beatmap.odin_context
     name   := lua_string(1)
-    volume := f32(lua.L_optnumber(L, 2, 1.0))
+    volume := clamp(f32(lua.L_optnumber(L, 2, 1.0)), 0, 1)
 
     sample, found := mapset_sample(name)
     if !found {

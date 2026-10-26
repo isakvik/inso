@@ -604,7 +604,12 @@ osu_on_update :: proc(dt: f64, frame_tsc: i64) {
         r_bind_layer_and_push_current_state(.HITOBJECTS, transform = game.playfield_transform)
         
         playfield_draw(visible_hobjs, map_time)
-        
+
+        if .FLASHLIGHT in game.mods && game.mode == .PLAY {
+            flashlight_update(map_time)
+            flashlight_draw(visible_hobjs, map_time)
+        }
+
         r_bind_layer_and_push_current_state(.UI,
             transform = game.playfield_transform,
             pipeline = { pipeline = builtin_pipeline_slot(.QUAD) })

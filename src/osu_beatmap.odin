@@ -585,6 +585,11 @@ beatmap_music_position_interpolated_ms :: proc(beatmap: ^Beatmap) -> (result: f6
     return result
 }
 
+// todo: parse [Events] break periods ("2,start,end") and check map_time against them
+beatmap_in_break :: proc(beatmap: ^Beatmap, map_time: f64) -> bool {
+    return false
+}
+
 // note(isak): scans from the cached earliest visible object to the earliest unstarted object.
 // assumes the start times of objects are sorted, but doesn't require end times to be.
 // a pathological case might be a 2B element that stretches from the beginning of the map to the end,

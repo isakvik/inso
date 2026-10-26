@@ -117,9 +117,12 @@ score_combo_increment :: proc(score: ^Score_State) {
 score_combo_break :: proc(score: ^Score_State) {
     lost := score.combo
     score.combo = 0
-    if lost == 0 do return
 
     scrubbing := game.paused || game.ui_timeline.dragging || game.ui_timeline.released
+    if !scrubbing do practice_restart_on_miss()
+    if .FLASHLIGHT in game.mods do flashlight_on_combo_break(lost)
+    if lost == 0 do return
+
     if lost >= COMBOBREAK_SOUND_MIN_COMBO && !scrubbing {
         sample_play(&game.active_skin.combobreak)
     }

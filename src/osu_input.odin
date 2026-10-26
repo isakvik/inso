@@ -165,7 +165,8 @@ rebindable_input_key_code :: proc(key: Rebindable_Input_Key) -> cstring {
 
 handle_play_input_events :: proc() {
     if key_is_pressed(.ESCAPE) && !game.tournament_client {
-        game_switch_mode(.EDITOR, beatmap_music_time_ms(&game.beatmap))
+        exit_time := game.mode_seek_time_on_switch if .PRACTICE in game.mods else beatmap_music_time_ms(&game.beatmap)
+        game_switch_mode(.EDITOR, exit_time)
     }
     
     if key_is_pressed(.KP_PLUS) {

@@ -242,6 +242,13 @@ renderer_init :: proc() {
         queue.push(&window.pipelines, sg.make_pipeline(slider_present_pipeline_desc()))
         queue.push(&window.pipelines, sg.make_pipeline(slider_present_pipeline_desc(.PREMULTIPLIED)))
     }
+    {
+        flashlight_shader, err := shader_init(quad_vs_path, flashlight_fs_path, context.temp_allocator)
+        assert(err == .NONE)
+        queue.push(&window.shaders, flashlight_shader)
+        queue.push(&window.pipelines, sg.make_pipeline(flashlight_pipeline_desc()))
+        queue.push(&window.pipelines, sg.make_pipeline(flashlight_pipeline_desc(.PREMULTIPLIED)))
+    }
 
     max_texture_size: i32
     gl.GetIntegerv(gl.MAX_TEXTURE_SIZE, &max_texture_size)
@@ -1024,6 +1031,7 @@ _r_effective_pipeline :: proc(pipeline: Pipeline_ID, write_offscreen: bool) -> P
         if pipeline == builtin_pipeline_slot(.QUAD) do return builtin_pipeline_slot(.QUAD_PREMULTIPLIED)
         if pipeline == builtin_pipeline_slot(.TEXT) do return builtin_pipeline_slot(.TEXT_PREMULTIPLIED)
         if pipeline == builtin_pipeline_slot(.SLIDER_PRESENT) do return builtin_pipeline_slot(.SLIDER_PRESENT_PREMULTIPLIED)
+        if pipeline == builtin_pipeline_slot(.FLASHLIGHT) do return builtin_pipeline_slot(.FLASHLIGHT_PREMULTIPLIED)
     }
     return pipeline
 }

@@ -2,8 +2,10 @@ package inso
 
 import "base:runtime"
 import c "core:c"
+import "core:c/libc"
+import "core:fmt"
 import "core:log"
-import os "core:os"
+import "core:mem"
 import "core:slice"
 import "core:strings"
 import "core:reflect"
@@ -23,6 +25,8 @@ lua_beatmap: struct {
     scheduled_events: [dynamic]Scheduled_Event,
     in_init: bool,
     in_judgement_dispatch: bool,
+    watchdog_depth: int,
+    memory_used: int,
 
     last_callback: cstring,
 
@@ -70,42 +74,43 @@ Scheduled_Event :: struct {
 // note(isak): lua core
 
 LUA_WATCHDOG_INSTRUCTION_COUNT :: 1_000_000
+LUA_MEMORY_BUDGET :: 512 * mem.Megabyte
 
-// note(isak): luajit's dofile/load accept precompiled bytecode (leading signature byte). we error on these
-// so mappers can't hide code
+// note(isak): luajit doesn't verify bytecode, so loading it lets a script corrupt memory and escape
+// the sandbox. every chunk goes through lua_load_text_chunk, which only accepts source text
 LUA_BYTECODE_SIGNATURE :: '\x1b'
 
+// note(isak): unsafe libraries. you want a map where every note you hit deletes a random file from your PC?
+// this is how you get that. the base and string libs also carry a few escape hatches of their own:
+// loaders that accept bytecode or arbitrary paths, string.dump, and newproxy, whose __gc runs
+// script code outside any watchdog dispatch
+LUA_UNSAFE_BASE_GLOBALS :: [?]cstring{ "dofile", "loadfile", "load", "loadstring", "newproxy" }
+
 lua_create_beatmap_script_context :: proc(script_path: string) {
-    script_file_len, err := file_size(script_path)
-    if err != os.General_Error.None {
+    source, err := read_entire_file(script_path, context.temp_allocator)
+    if err != nil {
         log.errorf("loading lua script '{}' failed, error: {}", script_path, err)
         notify_error("loading lua script '%s' failed, error: %v", script_path, err)
         return
     }
-    if script_file_len == 0 {
+    if len(source) == 0 {
         log.errorf("loading lua script '{}' failed, empty file", script_path)
         notify_error("loading lua script '%s' failed, empty file", script_path)
         return
     }
-    if lua_script_is_bytecode(script_path) {
-        log.errorf("loading lua script '{}' failed, precompiled bytecode scripts are not allowed", script_path)
-        notify_error("loading lua script '%s' failed, precompiled bytecode scripts are not allowed", script_path)
+    
+    state := lua.newstate(lua_budgeted_alloc, &lua_beatmap.memory_used)
+    if state == nil {
+        log.errorf("loading lua script '{}' failed, could not create lua state", script_path)
+        notify_error("loading lua script '%s' failed, could not create lua state", script_path)
         return
     }
-    
-    state := lua.L_newstate()
     lua_beatmap.state = state
     lua.open_base(state)
     lua.open_table(state)
     lua.open_string(state)
     lua.open_math(state)
-    
-    // note(isak): unsafe libraries. you want a map where every note you hit deletes a random file from your PC?
-    // this is how you get that
-    //lua.open_debug(state)
-    //lua.open_package(state)
-    //lua.open_io(state) 
-    //lua.open_os(state) 
+    lua_remove_unsafe_globals(state)
         
     lua_beatmap.odin_context = context
     L:= lua_beatmap.state
@@ -116,11 +121,50 @@ lua_create_beatmap_script_context :: proc(script_path: string) {
         lua_register_enum(L, e.t, e.name)
     }
     
-    if lua.L_dofile(L, strings.clone_to_cstring(script_path, context.temp_allocator)) == lua.OK {
-        lua_check_registered_events(L)
-    } else {
+    if lua_load_text_chunk(L, source, script_path) != lua.OK {
         lua_log_error("Lua initialization error:")
+        return
     }
+    if lua_pcall_with_watchdog(L, 0, 0, "Lua initialization error:") {
+        lua_check_registered_events(L)
+    }
+}
+
+lua_remove_unsafe_globals :: proc(L: ^lua.State) {
+    for name in LUA_UNSAFE_BASE_GLOBALS {
+        lua.pushnil(L)
+        lua.setglobal(L, name)
+    }
+    lua.getglobal(L, "string")
+    lua.pushnil(L)
+    lua.setfield(L, -2, "dump")
+    lua.pop(L, 1)
+}
+
+// note(isak): pushes the compiled chunk on success, the error message otherwise
+lua_load_text_chunk :: proc(L: ^lua.State, source: []byte, chunk_name: string) -> lua.Status {
+    if len(source) > 0 && source[0] == LUA_BYTECODE_SIGNATURE {
+        lua.pushstring(L, fmt.ctprintf("%s: precompiled bytecode scripts are not allowed", chunk_name))
+        return lua.ERRSYNTAX
+    }
+    source_text := cast(cstring)raw_data(source)
+    return lua.L_loadbufferx(L, source_text, c.size_t(len(source)), fmt.ctprintf("@%s", chunk_name), "t")
+}
+
+lua_budgeted_alloc :: proc "c" (memory_used: rawptr, ptr: rawptr, old_size, new_size: c.size_t) -> rawptr {
+    used := cast(^int)memory_used
+    if new_size == 0 {
+        used^ -= int(old_size)
+        libc.free(ptr)
+        return nil
+    }
+    previous_size := int(old_size) if ptr != nil else 0
+    growth := int(new_size) - previous_size
+    if growth > 0 && used^ + growth > LUA_MEMORY_BUDGET do return nil
+    
+    result := libc.realloc(ptr, new_size)
+    if result != nil do used^ += growth
+    return result
 }
 
 lua_cleanup :: proc() {
@@ -137,30 +181,24 @@ lua_reload :: proc(script_path: string) {
     lua_create_beatmap_script_context(script_path)
 }
 
-lua_script_is_bytecode :: proc(script_path: string) -> bool {
-    f, open_err := os.open(script_path)
-    if open_err != nil do return false
-    defer os.close(f)
-
-    header: [1]u8
-    n, read_err := os.read(f, header[:])
-    return read_err == nil && n == 1 && header[0] == LUA_BYTECODE_SIGNATURE
+// note(isak): once tripped, the hook re-arms at a 1-instruction interval so every instruction errors
+// until control is back in odin. otherwise a script could pcall its way past the watchdog
+lua_watchdog_hook :: proc "c" (L: ^lua.State, ar: ^lua.Debug) {
+    lua.sethook(L, lua_watchdog_hook, i32(lua.MASKCOUNT), 1)
+    lua.L_error(L, "Lua execution error: Exceeded 1 million instructions. Check for infinite loops or increase frame budget")
 }
 
-
-lua_register_instruction_count_hook :: proc() {
-    L:= lua_beatmap.state
-    lua_watchdog_instruction_count_hook :: proc "c" (L: ^lua.State, ar: ^lua.Debug) {
-        lua.L_error(L, "Lua execution error: Exceeded 1 million instructions. Check for infinite loops or increase frame budget")
-    }
-    lua.sethook(L, lua_watchdog_instruction_count_hook, i32(lua.MASKCOUNT), LUA_WATCHDOG_INSTRUCTION_COUNT)
-}
-
-// note(isak): reset count hook before each protected call so the watchdog counter counts per callback dispatch, 
-// not cumulative across frames
+// note(isak): the instruction budget covers the outermost dispatch. api calls that re-enter lua
+// (trigger_event and friends) nest inside it and share its budget instead of refreshing it
 lua_pcall_with_watchdog :: proc(L: ^lua.State, nargs, nresults: i32, error_prefix: string = "Lua error:") -> bool {
-    lua_register_instruction_count_hook()
-    if lua.pcall(L, nargs, nresults, 0) != lua.OK {
+    if lua_beatmap.watchdog_depth == 0 {
+        lua.sethook(L, lua_watchdog_hook, i32(lua.MASKCOUNT), LUA_WATCHDOG_INSTRUCTION_COUNT)
+    }
+    lua_beatmap.watchdog_depth += 1
+    status := lua.pcall(L, nargs, nresults, 0)
+    lua_beatmap.watchdog_depth -= 1
+    
+    if status != lua.OK {
         lua_log_error(error_prefix)
         return false
     }

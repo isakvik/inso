@@ -95,7 +95,7 @@ Reader :: #type proc "c" (L: ^State, ud: rawptr, sz: ^c.size_t) -> cstring
 Writer :: #type proc "c" (L: ^State, p: rawptr, sz: c.size_t, ud: rawptr) -> c.int
 
 // Prototype for memory-allocation functions
-Alloc :: #type proc "c" (ud: rawptr, ptr: rawptr, osize: c.size_t, nsize: c.size_t)
+Alloc :: #type proc "c" (ud: rawptr, ptr: rawptr, osize: c.size_t, nsize: c.size_t) -> rawptr
 
 // Basic types
 Type :: enum c.int {

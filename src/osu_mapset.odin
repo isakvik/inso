@@ -203,6 +203,21 @@ mapset_buffer :: proc(name: string) -> (result: ^Mapset_Buffer, found: bool) {
     return result, found
 }
 
+// note(isak): lexical, since win32 path normalization is the thing we can't trust. ':' rules out
+// drive letters and ntfs alternate streams, and win32 trims trailing dots and spaces off segments,
+// so ".. " and "..." climb a level just like ".."
+mapset_relative_path_stays_inside :: proc(relative_path: string) -> bool {
+    if relative_path == "" do return false
+    if relative_path[0] == '/' || relative_path[0] == '\\' do return false
+    if strings.contains_rune(relative_path, ':') do return false
+
+    for segment in strings.split_multi(relative_path, {"/", "\\"}, context.temp_allocator) {
+        climbs_or_empty := strings.trim_right(segment, ". ") == ""
+        if climbs_or_empty && segment != "." do return false
+    }
+    return true
+}
+
 mapset_claim_post_pass_slot :: proc(mapset: ^Mapset) -> (slot: u32, ok: bool) {
     for candidate in u32(0)..<u32(MAX_POST_PASSES) {
         taken := false

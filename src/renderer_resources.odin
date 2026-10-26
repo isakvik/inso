@@ -13,6 +13,7 @@ quad_fs_path :: "shaders/quad.fs.glsl"
 slider_vs_path :: "shaders/slider.vs.glsl"
 slider_fs_path :: "shaders/slider.fs.glsl"
 slider_present_fs_path :: "shaders/slider_present.fs.glsl"
+flashlight_fs_path :: "shaders/flashlight.fs.glsl"
 
 text_vs_path :: "shaders/text.vs.glsl"
 text_fs_path :: "shaders/text.fs.glsl"
@@ -35,6 +36,7 @@ Builtin_Shader_Slot :: enum {
     SLIDER,
     TEXT,
     SLIDER_PRESENT,
+    FLASHLIGHT,
 }
 
 builtin_shader_slot :: proc(s: Builtin_Shader_Slot) -> u32 {
@@ -51,6 +53,8 @@ Builtin_Pipeline_Slot :: enum {
     TEXT_PREMULTIPLIED,
     SLIDER_PRESENT,
     SLIDER_PRESENT_PREMULTIPLIED,
+    FLASHLIGHT,
+    FLASHLIGHT_PREMULTIPLIED,
 }
 
 builtin_pipeline_slot :: proc(s: Builtin_Pipeline_Slot) -> u32 {
@@ -316,6 +320,18 @@ slider_present_pipeline_desc :: proc(blend: Blend_Mode = .ALPHA) -> sg.Pipeline_
     return {
         label = "builtin.slider_present",
         shader = window.shaders.data[builtin_shader_slot(.SLIDER_PRESENT)].shader,
+        cull_mode = .NONE,
+        blend_color = {1.0, 1.0, 1.0, 1.0},
+        colors = {
+            0 = { blend = blend_state_for_mode(blend) }
+        },
+    }
+}
+
+flashlight_pipeline_desc :: proc(blend: Blend_Mode = .ALPHA) -> sg.Pipeline_Desc {
+    return {
+        label = "builtin.flashlight",
+        shader = window.shaders.data[builtin_shader_slot(.FLASHLIGHT)].shader,
         cull_mode = .NONE,
         blend_color = {1.0, 1.0, 1.0, 1.0},
         colors = {

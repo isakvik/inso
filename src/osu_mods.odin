@@ -1,13 +1,17 @@
 package inso
 
+import "core:math"
+
 Osu_Mod :: enum {
     EASY,
     HALF_TIME,
     HIDDEN,
     HARD_ROCK,
     DOUBLE_TIME,
+    FLASHLIGHT,
 
     DIFFICULTY_ADJUST,
+    PRACTICE,
 }
 
 Osu_Mods :: distinct bit_set[Osu_Mod]
@@ -24,8 +28,10 @@ osu_mod_table := [Osu_Mod]Osu_Mod_Info {
     .HIDDEN      = { name = "Hidden",      apply_to_graphics = hidden_apply_to_graphics },
     .HARD_ROCK   = { name = "Hard rock",   apply_to_map = hard_rock_apply_to_map },
     .DOUBLE_TIME = { name = "Double time" },
-    
+    .FLASHLIGHT  = { name = "Flashlight",  apply_to_graphics = flashlight_reset },
+
     .DIFFICULTY_ADJUST = { name = "Difficulty adjust", apply_to_map = difficulty_adjust_apply_to_map },
+    .PRACTICE          = { name = "Practice" },
 }
 
 
@@ -56,6 +62,41 @@ mod_time_rate :: proc() -> f32 {
 time_rate_recompute :: proc() {
     game.time_rate = mod_time_rate()
     sound_set_speed(&game.beatmap.music, game.time_rate)
+}
+
+PRACTICE_MISS_LENIENCY_MS :: 1000
+
+// note(isak): the play session's start is wherever we last switched into PLAY, so a restart
+// lands on the same timestamp it came from
+practice_restart_on_miss :: proc() {
+    if .PRACTICE not_in game.mods || game.mode != .PLAY || game.mode_switching_to != .NONE do return
+
+    if practice_in_leniency_window() do return
+    game_switch_mode(.PLAY, game.mode_seek_time_on_switch)
+}
+
+practice_in_leniency_window :: proc() -> bool {
+    if .PRACTICE not_in game.mods do return false
+    return beatmap_music_time_ms(&game.beatmap) < game.mode_seek_time_on_switch + PRACTICE_MISS_LENIENCY_MS
+}
+
+// note: the combo a full combo would be sitting at when practice starts
+practice_combo_before_start :: proc() -> (combo: int) {
+    practice_start_ms := game.mode_seek_time_on_switch
+    for &hobj in game.beatmap.hitobjects {
+        if hobj.start_time_ms >= practice_start_ms do break
+        switch hobj.type {
+        case .CIRCLE:
+            combo += 1
+        case .SLIDER:
+            slider := &hobj.slider_state
+            head_and_tail := 2
+            repeats := slider.path_travel_count - 1
+            combo += head_and_tail + repeats + slider.tick_count * slider.path_travel_count
+        case .SPINNER, .NONE:
+        }
+    }
+    return combo
 }
 
 Difficulty_Setting :: enum {
@@ -145,4 +186,111 @@ hidden_fade_animation_new :: proc(beatmap: ^Beatmap) -> Animation_List_ID {
             start_alpha = 1, end_alpha = 0,
         },
     )
+}
+
+
+FLASHLIGHT_RADIUS_OSUPX      :: 125
+FLASHLIGHT_FOLLOW_DELAY_MS   :: 120
+FLASHLIGHT_RESIZE_DURATION_S :: 0.8
+FLASHLIGHT_BREAK_SCALE       :: 2.5
+FLASHLIGHT_SLIDER_DIM        :: 0.8
+
+Flashlight_State :: struct {
+    follow_from_px, follow_to_px: vec2,
+    follow_start_time_s: f64,
+    scale_from, scale_to: f32,
+    scale_change_time_s: f64,
+
+    // note: combo the light counts on top of score.combo; practice starts with what a full combo
+    // would have reached, and combo broken inside the practice leniency window is kept here
+    practice_carried_combo: int,
+}
+
+flashlight: Flashlight_State
+
+flashlight_reset :: proc() {
+    flashlight.practice_carried_combo = practice_combo_before_start() if .PRACTICE in game.mods else 0
+    scale := flashlight_target_scale(beatmap_music_time_ms(&game.beatmap))
+    flashlight.follow_from_px = mouse.pos
+    flashlight.follow_to_px = mouse.pos
+    flashlight.follow_start_time_s = 0
+    flashlight.scale_from = scale
+    flashlight.scale_to = scale
+    flashlight.scale_change_time_s = 0
+}
+
+flashlight_combo_scale :: proc(combo: int) -> f32 {
+    if combo >= 200 do return 0.625
+    if combo >= 100 do return 0.8125
+    return 1
+}
+
+flashlight_target_scale :: proc(map_time: f64) -> f32 {
+    if beatmap_in_break(&game.beatmap, map_time) do return FLASHLIGHT_BREAK_SCALE
+    return flashlight_combo_scale(game.beatmap.score.combo + flashlight.practice_carried_combo)
+}
+
+flashlight_on_combo_break :: proc(lost: int) {
+    if practice_in_leniency_window() {
+        flashlight.practice_carried_combo += lost
+    } else {
+        flashlight.practice_carried_combo = 0
+    }
+}
+
+flashlight_current_scale :: proc() -> f32 {
+    progress := clamp(f32((game.frame_clock_s - flashlight.scale_change_time_s) / FLASHLIGHT_RESIZE_DURATION_S), 0, 1)
+    return math.lerp(flashlight.scale_from, flashlight.scale_to, progress)
+}
+
+flashlight_current_pos_px :: proc() -> vec2 {
+    progress := clamp(f32((game.frame_clock_s - flashlight.follow_start_time_s) * 1000 / FLASHLIGHT_FOLLOW_DELAY_MS), 0, 1)
+    eased := progress * (2 - progress)
+    return math.lerp(flashlight.follow_from_px, flashlight.follow_to_px, eased)
+}
+
+flashlight_update :: proc(map_time: f64) {
+    target_scale := flashlight_target_scale(map_time)
+    if target_scale != flashlight.scale_to {
+        flashlight.scale_from = flashlight_current_scale()
+        flashlight.scale_to = target_scale
+        flashlight.scale_change_time_s = game.frame_clock_s
+    }
+
+    if mouse.pos != flashlight.follow_to_px {
+        flashlight.follow_from_px = flashlight_current_pos_px()
+        flashlight.follow_to_px = mouse.pos
+        flashlight.follow_start_time_s = game.frame_clock_s
+    }
+}
+
+flashlight_any_slider_tracking :: proc(visible_hobjs: []Hitobject, map_time: f64) -> bool {
+    for &hobj in visible_hobjs {
+        if hobj.type != .SLIDER || .TRACKING not_in hobj.slider_state.flags do continue
+        if hobj.start_time_ms <= map_time && map_time < hobj.end_time_ms do return true
+    }
+    return false
+}
+
+flashlight_draw :: proc(visible_hobjs: []Hitobject, map_time: f64) {
+    r_bind_layer_and_push_current_state(.OVERLAY,
+        transform = window.screenspace_transform,
+        pipeline = { pipeline = builtin_pipeline_slot(.FLASHLIGHT) })
+
+    pos_px := flashlight_current_pos_px()
+    radius_px := FLASHLIGHT_RADIUS_OSUPX * flashlight_current_scale() * playfield_px_per_osupx()
+    screen_size := vec2{window.rect.w, window.rect.h}
+    r_draw_quad_with_uv(&window.renderer.quad_geometry,
+        pos_min = {0, 0},
+        pos_max = screen_size,
+        uv_min  = -pos_px / radius_px,
+        uv_max  = (screen_size - pos_px) / radius_px,
+        color = color_black,
+        tex_index = builtin_texture(.WHITE))
+
+    r_bind_pipeline({ pipeline = builtin_pipeline_slot(.QUAD) })
+    if flashlight_any_slider_tracking(visible_hobjs, map_time) {
+        r_draw_rect(&window.renderer.quad_geometry, {0, 0, screen_size.x, screen_size.y},
+            with_alpha(color_black, FLASHLIGHT_SLIDER_DIM), builtin_texture(.WHITE))
+    }
 }
